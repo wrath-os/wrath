@@ -2,9 +2,12 @@
 
 use std::collections::BTreeMap;
 
-use crate::{ListMerge, MemFs, OptionPath, OptionSpec, Schema, Type, Value, evaluate, explain};
+use crate::{
+    Input, ListMerge, MemFs, Module, OptionPath, OptionSpec, Schema, Sources, Type, Value,
+    evaluate, explain,
+};
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut schema = Schema::default();
     let declare = |schema: &mut Schema, path: &str, spec: OptionSpec| {
         schema.declare(path, spec).unwrap();
@@ -61,7 +64,7 @@ fn schema() -> Schema {
     schema
 }
 
-fn facts() -> Value {
+pub(crate) fn facts() -> Value {
     Value::Table(BTreeMap::from([(
         "cpu".into(),
         Value::Table(BTreeMap::from([("count".into(), Value::Int(32))])),
@@ -69,7 +72,21 @@ fn facts() -> Value {
 }
 
 fn eval(files: &[(&str, &str)]) -> Result<crate::Evaluation, String> {
-    evaluate(&MemFs::new(files.iter().copied()), &schema(), &facts()).map_err(|e| e.to_string())
+    eval_with(files, &[])
+}
+
+pub(crate) fn eval_with(
+    files: &[(&str, &str)],
+    modules: &[Box<dyn Module>],
+) -> Result<crate::Evaluation, String> {
+    evaluate(Input {
+        sources: Sources::default(),
+        config: &MemFs::new(files.iter().copied()),
+        schema: schema(),
+        modules,
+        facts: &facts(),
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn ok(files: &[(&str, &str)]) -> crate::Evaluation {
@@ -453,11 +470,11 @@ fn error_reference_cycle() {
         "system.toml",
         "[system]\nhostname = \"${system.timezone}\"\ntimezone = \"${system.hostname}\"\n",
     )]), @r#"
-    error: reference cycle: system.hostname -> system.timezone -> system.hostname
+    error: cycle: system.hostname -> system.timezone -> system.hostname
      --> system.toml:3:13
       |
     3 | timezone = "${system.hostname}"
-      |             ^^^^^^^^^^^^^^^^^^ this reference closes the cycle
+      |             ^^^^^^^^^^^^^^^^^^ this closes the cycle
     "#);
 }
 
@@ -552,3 +569,5 @@ fn error_required_option_not_set() {
      = help: this option has no default, so the configuration must set it
     ");
 }
+
+mod modules;

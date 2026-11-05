@@ -68,5 +68,19 @@ fn origin(evaluation: &Evaluation, contribution: &Contribution) -> String {
             evaluation.sources().location(span)
         ),
         (Site::Config(span), _, _) => format!("set at {}", evaluation.sources().location(span)),
+        (Site::Module { module, at }, level, _) => {
+            let how = match level {
+                Level::Default => "default from",
+                Level::Normal | Level::Force => "set by",
+            };
+            let name = evaluation.module_name(module);
+            match at {
+                Some(span) => format!(
+                    "{how} module `{name}` at {}",
+                    evaluation.sources().location(span)
+                ),
+                None => format!("{how} module `{name}`"),
+            }
+        }
     }
 }

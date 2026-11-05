@@ -39,6 +39,18 @@ pub enum ListMerge {
     Atomic,
 }
 
+/// A step down from an option to the one a path segment names.
+pub(crate) enum Child<'s> {
+    /// A field of a record.
+    Field(&'s OptionSpec),
+    /// An entry of a map, which exists only when the configuration names it.
+    Entry(&'s OptionSpec),
+    /// Anything inside a freeform option.
+    Freeform,
+    /// The segment names nothing.
+    None,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Record {
     pub fields: BTreeMap<String, OptionSpec>,
@@ -131,6 +143,25 @@ impl Type {
         matches!(self, Self::Record(_) | Self::Map(_))
     }
 
+    /// What `segment` names under an option of this type.
+    pub(crate) fn child(&self, segment: &str) -> Child<'_> {
+        match self {
+            Self::Record(record) => match record.fields.get(segment) {
+                Some(field) => Child::Field(field),
+                None => Child::None,
+            },
+            Self::Map(item) => Child::Entry(item),
+            Self::Freeform => Child::Freeform,
+            Self::Bool
+            | Self::Int { .. }
+            | Self::Float
+            | Self::Str
+            | Self::Path
+            | Self::Enum(_)
+            | Self::List { .. } => Child::None,
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             Self::Bool => "a boolean".into(),
@@ -220,7 +251,10 @@ impl Schema {
 
     /// Declares an option, creating the records above it.
     pub fn declare(&mut self, path: &str, spec: OptionSpec) -> Result<(), String> {
-        let path = OptionPath::parse(path)?;
+        self.declare_at(&OptionPath::parse(path)?, spec)
+    }
+
+    pub fn declare_at(&mut self, path: &OptionPath, spec: OptionSpec) -> Result<(), String> {
         let (name, parents) = path
             .segments()
             .split_last()

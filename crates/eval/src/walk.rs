@@ -8,8 +8,9 @@ use toml::de::{DeTable, DeValue};
 
 use crate::diag::Diagnostic;
 use crate::load::{INCLUDE, LoadedFile};
+use crate::module::ModuleId;
 use crate::path::OptionPath;
-use crate::schema::{OptionSpec, Schema, Type};
+use crate::schema::{Child, OptionSpec, Schema, Type};
 use crate::source::{FileId, Sources, Span};
 use crate::suggest::did_you_mean;
 use crate::template::{self, Part};
@@ -40,12 +41,18 @@ pub enum Site {
     Config(Span),
     /// The option's declared default.
     Default,
+    /// Set by a module while rendering. `at` is where in the module, when the language knows.
+    Module {
+        module: ModuleId,
+        at: Option<Span>,
+    },
 }
 
 impl Site {
     pub fn span(self) -> Option<Span> {
         match self {
             Self::Config(span) => Some(span),
+            Self::Module { at, .. } => at,
             Self::Default => None,
         }
     }
@@ -99,26 +106,7 @@ impl Walker<'_> {
             )));
             return;
         };
-        let mut spec_at = schema.root();
-        let mut path = OptionPath::root();
-        for segment in loaded.root.segments() {
-            path = path.child(segment.as_str());
-            spec_at = match &spec_at.ty {
-                Type::Map(item) => {
-                    self.out.instances.insert(path.clone());
-                    item
-                }
-                Type::Record(record) => &record.fields[segment],
-                Type::Bool
-                | Type::Int { .. }
-                | Type::Float
-                | Type::Str
-                | Type::Path
-                | Type::Enum(_)
-                | Type::List { .. }
-                | Type::Freeform => unreachable!("the lookup above found a table"),
-            };
-        }
+        mark_instances(schema, &loaded.root, &mut self.out.instances);
         if !spec.ty.is_table() {
             self.out.diagnostics.push(Diagnostic::error(format!(
                 "`{}` is not a table of options, so `{}` cannot configure it",
@@ -308,5 +296,27 @@ impl Walker<'_> {
         let exact = source.len() == text.len() + 2 && &source[1..source.len() - 1] == text;
         template::parse(text, exact.then_some(span.start + 1), span)
             .map_err(|(message, span)| Diagnostic::error(message).label(span, "in this reference"))
+    }
+}
+
+/// Records the map entries along `path`, such as `services.nginx.main` in
+/// `services.nginx.main.port`, so they exist even when nothing under them is set.
+pub(crate) fn mark_instances(
+    schema: &Schema,
+    path: &OptionPath,
+    instances: &mut BTreeSet<OptionPath>,
+) {
+    let mut spec = schema.root();
+    let mut prefix = OptionPath::root();
+    for segment in path.segments() {
+        prefix = prefix.child(segment.as_str());
+        spec = match spec.ty.child(segment) {
+            Child::Field(field) => field,
+            Child::Entry(item) => {
+                instances.insert(prefix.clone());
+                item
+            }
+            Child::Freeform | Child::None => return,
+        };
     }
 }

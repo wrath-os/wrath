@@ -1,28 +1,57 @@
-//! Merging definitions and resolving references into one value per option.
+//! Merging definitions and resolving references and modules into one value per option.
+//!
+//! Options are resolved on demand. Before anything under a prefix is read, every module that
+//! may set something under it renders, so its settings, and the map entries they create, are in
+//! place. A cycle between options and modules is an error naming each step.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::rc::Rc;
 
 use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
 use crate::load;
+use crate::module::{ConfigReader, Module, ModuleId, Output, ReadError, RenderError, Setting};
 use crate::path::OptionPath;
-use crate::schema::{ListMerge, OptionSpec, Schema, Type};
+use crate::schema::{Child, ListMerge, OptionSpec, Schema, Type};
 use crate::source::{Sources, Span};
 use crate::suggest::did_you_mean;
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
-use crate::walk::{self, Definition, Level, Raw, Site};
+use crate::walk::{self, Definition, Level, Raw, Site, mark_instances};
 
 /// The root of `${facts.…}` references.
 const FACTS: &str = "facts";
 
-/// The result of evaluating a configuration: one resolved value per option that has one.
+pub struct Input<'a> {
+    /// Sources so far, normally the modules' own files, so module spans resolve.
+    pub sources: Sources,
+    pub config: &'a dyn ConfigFs,
+    /// Options declared outside modules. Module options are added to it.
+    pub schema: Schema,
+    pub modules: &'a [Box<dyn Module>],
+    /// A table of machine facts.
+    pub facts: &'a Value,
+}
+
+/// The result of evaluating a configuration: one resolved value per option that has one, and
+/// what each module rendered.
 #[derive(Debug)]
 pub struct Evaluation {
     sources: Sources,
     options: BTreeMap<OptionPath, Resolved>,
     facts: BTreeMap<OptionPath, Value>,
+    modules: Vec<Rendered>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rendered {
+    pub name: String,
+    /// The module's output, without its settings, which are part of the options.
+    pub output: Output,
+    /// Options and tables of options the module read.
+    pub reads: BTreeSet<OptionPath>,
 }
 
 /// An option's value and where it came from.
@@ -31,7 +60,7 @@ pub struct Resolved {
     pub value: Value,
     /// The definitions that make up the value: one, or several that agree or merge.
     pub set_by: Vec<Contribution>,
-    /// Definitions at a lower level that lost.
+    /// Definitions that lost to a stronger one.
     pub overridden: Vec<Contribution>,
     /// Options and facts the value's references read.
     pub uses: Vec<Use>,
@@ -70,6 +99,15 @@ impl Evaluation {
     pub fn facts_used(&self) -> &BTreeMap<OptionPath, Value> {
         &self.facts
     }
+
+    /// What each module rendered, in the order the modules were given.
+    pub fn modules(&self) -> &[Rendered] {
+        &self.modules
+    }
+
+    pub fn module_name(&self, module: ModuleId) -> &str {
+        &self.modules[module.index()].name
+    }
 }
 
 #[derive(Debug)]
@@ -86,190 +124,539 @@ impl fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
-/// Evaluates the configuration in `fs` against `schema`. `facts` is a table of machine facts.
-pub fn evaluate(
-    fs: &dyn ConfigFs,
-    schema: &Schema,
-    facts: &Value,
-) -> Result<Evaluation, EvalError> {
-    let mut sources = Sources::default();
-    let (files, mut diagnostics) = load::load(fs, &mut sources);
-    let walked = walk::walk(schema, &sources, &files);
+pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
+    let Input {
+        mut sources,
+        config,
+        mut schema,
+        modules,
+        facts,
+    } = input;
+    let mut diagnostics = Vec::new();
+    for module in modules {
+        for (path, spec) in module.options() {
+            if let Err(e) = schema.declare_at(&path, spec) {
+                diagnostics.push(Diagnostic::error(format!(
+                    "module `{}`: {e}",
+                    module.name()
+                )));
+            }
+        }
+    }
+    let (files, load_diagnostics) = load::load(config, &mut sources);
+    diagnostics.extend(load_diagnostics);
+    let walked = walk::walk(&schema, &sources, &files);
     diagnostics.extend(walked.diagnostics);
 
-    let defined: BTreeSet<OptionPath> = walked
-        .definitions
-        .iter()
-        .map(|definition| definition.path.clone())
-        .collect();
-    let mut specs = BTreeMap::new();
-    collect_leaves(
-        schema.root(),
-        OptionPath::root(),
-        &defined,
-        &walked.instances,
-        &mut specs,
-    );
-
-    let mut grouped: BTreeMap<OptionPath, Vec<Definition>> = BTreeMap::new();
+    let mut definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>> = BTreeMap::new();
     for definition in walked.definitions {
-        grouped
+        definitions
             .entry(definition.path.clone())
             .or_default()
-            .push(definition);
+            .push(Rc::new(definition));
     }
-    // A definition that failed to load may be the one that sets a required option, so missing
-    // options are only reported when everything loaded.
-    let report_missing = diagnostics.is_empty();
-    let mut leaves = BTreeMap::new();
-    for (path, spec) in specs {
-        let mut definitions = grouped.remove(&path).unwrap_or_default();
-        if let Some(default) = &spec.default {
-            definitions.push(Definition {
-                path: path.clone(),
-                value: Raw::Literal(default.clone()),
-                level: Level::Default,
-                site: Site::Default,
-                reason: None,
-            });
-        }
-        if definitions.is_empty() {
-            if report_missing && !spec.optional {
-                diagnostics
-                    .push(Diagnostic::error(format!("`{path}` is not set")).note(
-                        "help: this option has no default, so the configuration must set it",
-                    ));
-            }
-            continue;
-        }
-        leaves.insert(path, Leaf { spec, definitions });
-    }
-
     let mut resolver = Resolver {
-        leaves: &leaves,
+        schema: &schema,
+        modules,
+        writes: modules.iter().map(|module| module.writes()).collect(),
         facts,
+        // A definition that failed to load may be the one that sets a required option, so
+        // missing options are only reported when everything loaded.
+        report_missing: diagnostics.is_empty(),
+        definitions,
+        instances: walked.instances,
         state: HashMap::new(),
+        modules_state: vec![ModuleState::NotRun; modules.len()],
+        rendered: vec![None; modules.len()],
         stack: Vec::new(),
         options: BTreeMap::new(),
         facts_used: BTreeMap::new(),
         diagnostics: Vec::new(),
     };
-    for path in leaves.keys() {
-        resolver.resolve(path);
+    for id in 0..modules.len() {
+        // Failures are reported by the resolver.
+        let _ = resolver.run(ModuleId::from_index(id));
+    }
+    for (path, spec) in resolver.leaves_under(schema.root(), OptionPath::root()) {
+        let _ = resolver.resolve(&path, &spec, None);
     }
     diagnostics.extend(resolver.diagnostics);
 
-    if diagnostics.is_empty() {
-        Ok(Evaluation {
-            sources,
-            options: resolver.options,
-            facts: resolver.facts_used,
-        })
-    } else {
-        Err(EvalError {
+    if !diagnostics.is_empty() {
+        return Err(EvalError {
             sources,
             diagnostics,
-        })
+        });
     }
+    Ok(Evaluation {
+        sources,
+        options: resolver.options,
+        facts: resolver.facts_used,
+        modules: resolver
+            .rendered
+            .into_iter()
+            .map(|rendered| rendered.expect("every module rendered without errors"))
+            .collect(),
+    })
 }
 
-/// Finds every option that can hold a value: scalars and lists in records, in the map entries the
-/// configuration names, and every value set inside freeform options.
-fn collect_leaves(
-    spec: &OptionSpec,
-    path: OptionPath,
-    defined: &BTreeSet<OptionPath>,
-    instances: &BTreeSet<OptionPath>,
-    out: &mut BTreeMap<OptionPath, OptionSpec>,
-) {
-    let under = |set: &'_ BTreeSet<OptionPath>, path: &OptionPath| {
-        set.range(path.clone()..)
-            .take_while(|candidate| candidate.starts_with(path))
-            .cloned()
-            .collect::<Vec<_>>()
-    };
-    match &spec.ty {
-        Type::Record(record) => {
-            for (name, field) in &record.fields {
-                collect_leaves(field, path.child(name.as_str()), defined, instances, out);
-            }
-        }
-        Type::Map(item) => {
-            for instance in under(instances, &path) {
-                if instance.len() == path.len() + 1 {
-                    collect_leaves(item, instance, defined, instances, out);
-                }
-            }
-        }
-        Type::Freeform => {
-            let set = under(defined, &path);
-            if set.is_empty() {
-                if spec.default.is_some() {
-                    out.insert(path, spec.clone());
-                }
-            } else {
-                out.extend(set.into_iter().map(|leaf| (leaf, OptionSpec::freeform())));
-            }
-        }
-        Type::Bool
-        | Type::Int { .. }
-        | Type::Float
-        | Type::Str
-        | Type::Path
-        | Type::Enum(_)
-        | Type::List { .. } => {
-            out.insert(path, spec.clone());
-        }
-    }
+fn overlaps(a: &OptionPath, b: &OptionPath) -> bool {
+    a.starts_with(b) || b.starts_with(a)
 }
 
-struct Leaf {
-    spec: OptionSpec,
-    definitions: Vec<Definition>,
+/// The option, or the failure that is already reported.
+type Resolution = Result<Option<Value>, Failed>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Failed;
+
+/// Fails if any step failed. Every step runs, so each failure is reported.
+fn all(steps: impl IntoIterator<Item = Result<(), Failed>>) -> Result<(), Failed> {
+    steps.into_iter().fold(Ok(()), Result::and)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModuleState {
+    NotRun,
+    Running,
+    Done(Result<(), Failed>),
 }
 
 enum State {
     InProgress,
-    /// `None` when the option failed; the failure is already reported.
-    Done(Option<Value>),
+    Done(Resolution),
+}
+
+/// A step in a chain of dependencies, for reporting cycles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Frame {
+    Option(OptionPath),
+    Module(ModuleId),
+}
+
+/// What a path names, given the map entries and freeform values that exist.
+enum Known<'s> {
+    Leaf(Cow<'s, OptionSpec>),
+    Table(Cow<'s, OptionSpec>),
+    /// A map entry or freeform value that the configuration doesn't have.
+    Absent,
+    Unknown,
 }
 
 struct Resolver<'a> {
-    leaves: &'a BTreeMap<OptionPath, Leaf>,
+    schema: &'a Schema,
+    modules: &'a [Box<dyn Module>],
+    writes: Vec<Vec<OptionPath>>,
     facts: &'a Value,
+    report_missing: bool,
+    definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>>,
+    instances: BTreeSet<OptionPath>,
     state: HashMap<OptionPath, State>,
-    /// Options being resolved, outermost first, for reporting cycles.
-    stack: Vec<OptionPath>,
+    modules_state: Vec<ModuleState>,
+    rendered: Vec<Option<Rendered>>,
+    stack: Vec<Frame>,
     options: BTreeMap<OptionPath, Resolved>,
     facts_used: BTreeMap<OptionPath, Value>,
     diagnostics: Vec<Diagnostic>,
 }
 
 impl<'a> Resolver<'a> {
-    fn resolve(&mut self, path: &OptionPath) -> Option<Value> {
-        if let Some(State::Done(value)) = self.state.get(path) {
-            return value.clone();
-        }
-        let leaf: &'a Leaf = &self.leaves[path];
-        self.state.insert(path.clone(), State::InProgress);
-        self.stack.push(path.clone());
+    fn module_name(&self, module: ModuleId) -> &'a str {
+        self.modules[module.index()].name()
+    }
 
-        let top = leaf.definitions.iter().map(|d| d.level).max();
+    fn writes(&self, module: ModuleId) -> &[OptionPath] {
+        &self.writes[module.index()]
+    }
+
+    /// Renders every module that may set something under `path`.
+    fn run_writers(&mut self, path: &OptionPath) -> Result<(), Failed> {
+        let writers: Vec<ModuleId> = (0..self.writes.len())
+            .map(ModuleId::from_index)
+            .filter(|&id| self.writes(id).iter().any(|write| overlaps(write, path)))
+            .collect();
+        all(writers.into_iter().map(|writer| self.run(writer)))
+    }
+
+    fn run(&mut self, id: ModuleId) -> Result<(), Failed> {
+        let index = id.index();
+        match self.modules_state[index] {
+            ModuleState::Done(result) => return result,
+            ModuleState::Running => {
+                self.cycle(&Frame::Module(id), None);
+                return Err(Failed);
+            }
+            ModuleState::NotRun => {}
+        }
+        self.modules_state[index] = ModuleState::Running;
+        self.stack.push(Frame::Module(id));
+        let mut reads = BTreeSet::new();
+        let modules = self.modules;
+        let module = &modules[index];
+        let rendered = module.render(&mut Reader {
+            resolver: self,
+            module: id,
+            reads: &mut reads,
+        });
+        self.stack.pop();
+        let result = match rendered {
+            Ok(mut output) => {
+                let settings = std::mem::take(&mut output.settings);
+                let applied = self.apply(id, settings);
+                self.rendered[index] = Some(Rendered {
+                    name: module.name().to_owned(),
+                    output,
+                    reads,
+                });
+                applied
+            }
+            Err(RenderError::Failed) => Err(Failed),
+            Err(RenderError::Error(diagnostic)) => {
+                self.diagnostics.push(diagnostic);
+                Err(Failed)
+            }
+        };
+        self.modules_state[index] = ModuleState::Done(result);
+        result
+    }
+
+    /// Adds a module's settings as definitions.
+    fn apply(&mut self, id: ModuleId, settings: Vec<Setting>) -> Result<(), Failed> {
+        all(settings
+            .into_iter()
+            .map(|setting| self.apply_setting(id, setting)))
+    }
+
+    fn apply_setting(&mut self, id: ModuleId, setting: Setting) -> Result<(), Failed> {
+        let writes = self.writes(id);
+        if !writes.iter().any(|write| setting.path.starts_with(write)) {
+            let declared = if writes.is_empty() {
+                "nothing".to_owned()
+            } else {
+                let writes: Vec<String> = writes.iter().map(|write| format!("`{write}`")).collect();
+                writes.join(", ")
+            };
+            self.diagnostics.push(
+                Diagnostic::error(format!(
+                    "module `{}` sets `{}`, but only declares that it writes {declared}",
+                    self.module_name(id),
+                    setting.path,
+                ))
+                .label_opt(setting.at, "set here"),
+            );
+            return Err(Failed);
+        }
+        let Some(spec) = spec_at(self.schema, &setting.path) else {
+            self.diagnostics.push(
+                Diagnostic::error(format!(
+                    "module `{}` sets unknown option `{}`",
+                    self.module_name(id),
+                    setting.path
+                ))
+                .label_opt(setting.at, "set here"),
+            );
+            return Err(Failed);
+        };
+        mark_instances(self.schema, &setting.path, &mut self.instances);
+        let site = Site::Module {
+            module: id,
+            at: setting.at,
+        };
+        self.flatten(&spec, setting.path, &setting.value, site, setting.level)
+    }
+
+    /// Splits a value for a table of options into definitions of the options in it.
+    fn flatten(
+        &mut self,
+        spec: &OptionSpec,
+        path: OptionPath,
+        value: &Value,
+        site: Site,
+        level: Level,
+    ) -> Result<(), Failed> {
+        match (&spec.ty, value) {
+            (Type::Record(record), Value::Table(entries)) => {
+                all(entries.iter().map(|(key, value)| {
+                    let child = path.child(key.as_str());
+                    if let Some(field) = record.fields.get(key) {
+                        return self.flatten(field, child, value, site, level);
+                    }
+                    let mut diagnostic = Diagnostic::error(format!("unknown option `{child}`"));
+                    diagnostic = self.locate(diagnostic, site, "set here");
+                    if let Some(note) = did_you_mean(key, record.fields.keys()) {
+                        diagnostic = diagnostic.note(note);
+                    }
+                    self.diagnostics.push(diagnostic);
+                    Err(Failed)
+                }))
+            }
+            (Type::Map(item), Value::Table(entries)) => all(entries.iter().map(|(key, value)| {
+                let child = path.child(key.as_str());
+                self.instances.insert(child.clone());
+                self.flatten(item, child, value, site, level)
+            })),
+            (Type::Freeform, Value::Table(entries)) => {
+                let freeform = OptionSpec::freeform();
+                all(entries.iter().map(|(key, value)| {
+                    self.flatten(&freeform, path.child(key.as_str()), value, site, level)
+                }))
+            }
+            (Type::Record(_) | Type::Map(_), other) => {
+                let diagnostic = Diagnostic::error(format!(
+                    "`{path}` is a table of options, found {}",
+                    other.kind()
+                ));
+                let diagnostic = self.locate(diagnostic, site, "set here");
+                self.diagnostics.push(diagnostic);
+                Err(Failed)
+            }
+            (
+                Type::Bool
+                | Type::Int { .. }
+                | Type::Float
+                | Type::Str
+                | Type::Path
+                | Type::Enum(_)
+                | Type::List { .. }
+                | Type::Freeform,
+                value,
+            ) => {
+                self.definitions
+                    .entry(path.clone())
+                    .or_default()
+                    .push(Rc::new(Definition {
+                        path,
+                        value: Raw::Literal(value.clone()),
+                        level,
+                        site,
+                        reason: None,
+                    }));
+                Ok(())
+            }
+        }
+    }
+
+    /// Every option under `path` that can hold a value: scalars and lists in records, in the map
+    /// entries that exist, and every value set inside freeform options.
+    fn leaves_under(&self, spec: &OptionSpec, path: OptionPath) -> Vec<(OptionPath, OptionSpec)> {
+        let mut out = Vec::new();
+        self.collect_leaves(spec, path, &mut out);
+        out
+    }
+
+    fn collect_leaves(
+        &self,
+        spec: &OptionSpec,
+        path: OptionPath,
+        out: &mut Vec<(OptionPath, OptionSpec)>,
+    ) {
+        match &spec.ty {
+            Type::Record(record) => {
+                for (name, field) in &record.fields {
+                    self.collect_leaves(field, path.child(name.as_str()), out);
+                }
+            }
+            Type::Map(item) => {
+                for entry in self
+                    .instances
+                    .range(path.clone()..)
+                    .take_while(|instance| instance.starts_with(&path))
+                    .filter(|instance| instance.len() == path.len() + 1)
+                {
+                    self.collect_leaves(item, entry.clone(), out);
+                }
+            }
+            Type::Freeform => {
+                let start = out.len();
+                out.extend(
+                    self.defined_under(&path)
+                        .map(|leaf| (leaf.clone(), OptionSpec::freeform())),
+                );
+                if out.len() == start && spec.default.is_some() {
+                    out.push((path, spec.clone()));
+                }
+            }
+            Type::Bool
+            | Type::Int { .. }
+            | Type::Float
+            | Type::Str
+            | Type::Path
+            | Type::Enum(_)
+            | Type::List { .. } => out.push((path, spec.clone())),
+        }
+    }
+
+    /// Options defined at or under `path`, in order.
+    fn defined_under<'s>(&'s self, path: &'s OptionPath) -> impl Iterator<Item = &'s OptionPath> {
+        self.definitions
+            .range(path.clone()..)
+            .map(|(defined, _)| defined)
+            .take_while(move |defined| defined.starts_with(path))
+    }
+
+    /// What `path` names. Writers under it must have run.
+    fn known(&self, path: &OptionPath) -> Known<'a> {
+        let mut spec = self.schema.root();
+        let mut prefix = OptionPath::root();
+        for segment in path.segments() {
+            prefix = prefix.child(segment.as_str());
+            spec = match spec.ty.child(segment) {
+                Child::Field(field) => field,
+                Child::Entry(item) => {
+                    if !self.instances.contains(&prefix) {
+                        return Known::Absent;
+                    }
+                    item
+                }
+                Child::Freeform => {
+                    return if self.definitions.contains_key(path) {
+                        Known::Leaf(Cow::Owned(OptionSpec::freeform()))
+                    } else if self.defined_under(path).next().is_some() {
+                        Known::Table(Cow::Owned(OptionSpec::freeform()))
+                    } else {
+                        Known::Absent
+                    };
+                }
+                Child::None => return Known::Unknown,
+            };
+        }
+        if spec.ty.is_table() {
+            Known::Table(Cow::Borrowed(spec))
+        } else {
+            Known::Leaf(Cow::Borrowed(spec))
+        }
+    }
+
+    /// Reads an option or a table of options for a module.
+    fn module_read(
+        &mut self,
+        module: ModuleId,
+        path: &OptionPath,
+        at: Option<Span>,
+        reads: &mut BTreeSet<OptionPath>,
+    ) -> Result<Option<Value>, ReadError> {
+        let name = self.module_name(module);
+        if let Some(write) = self
+            .writes(module)
+            .iter()
+            .find(|write| overlaps(write, path))
+        {
+            return Err(ReadError::Invalid(format!(
+                "module `{name}` sets `{write}`, so it cannot read `{path}`"
+            )));
+        }
+        self.run_writers(path).map_err(|Failed| ReadError::Failed)?;
+        reads.insert(path.clone());
+        match self.known(path) {
+            Known::Leaf(spec) => self
+                .resolve(path, &spec, at)
+                .map_err(|Failed| ReadError::Failed),
+            Known::Table(spec) => {
+                let mut table = BTreeMap::new();
+                let mut failed = false;
+                for (leaf, spec) in self.leaves_under(&spec, path.clone()) {
+                    match self.resolve(&leaf, &spec, at) {
+                        Ok(Some(value)) => {
+                            insert_nested(&mut table, &leaf.segments()[path.len()..], value)
+                        }
+                        Ok(None) => {}
+                        Err(Failed) => failed = true,
+                    }
+                }
+                if failed {
+                    Err(ReadError::Failed)
+                } else {
+                    Ok(Some(Value::Table(table)))
+                }
+            }
+            Known::Absent => Ok(None),
+            Known::Unknown => {
+                let mut message = format!("unknown option `{path}`");
+                if let Some(note) = self.suggest(path) {
+                    message = format!("{message}; {}", note.trim_start_matches("help: "));
+                }
+                Err(ReadError::Invalid(message))
+            }
+        }
+    }
+
+    fn suggest(&self, path: &OptionPath) -> Option<String> {
+        let names: Vec<String> = self
+            .leaves_under(self.schema.root(), OptionPath::root())
+            .into_iter()
+            .map(|(leaf, _)| leaf.to_string())
+            .collect();
+        did_you_mean(&path.to_string(), &names)
+    }
+
+    /// Resolves one option. `at` is the reference or read that needs it, for errors.
+    fn resolve(&mut self, path: &OptionPath, spec: &OptionSpec, at: Option<Span>) -> Resolution {
+        match self.state.get(path) {
+            Some(State::Done(resolution)) => return resolution.clone(),
+            Some(State::InProgress) => {
+                self.cycle(&Frame::Option(path.clone()), at);
+                return Err(Failed);
+            }
+            None => {}
+        }
+        self.state.insert(path.clone(), State::InProgress);
+        self.stack.push(Frame::Option(path.clone()));
+        let resolution = self.resolve_definitions(path, spec, at);
+        self.stack.pop();
+        self.state
+            .insert(path.clone(), State::Done(resolution.clone()));
+        resolution
+    }
+
+    fn resolve_definitions(
+        &mut self,
+        path: &OptionPath,
+        spec: &OptionSpec,
+        at: Option<Span>,
+    ) -> Resolution {
+        self.run_writers(path)?;
+        let mut definitions = self.definitions.get(path).cloned().unwrap_or_default();
+        if let Some(default) = &spec.default {
+            definitions.push(Rc::new(Definition {
+                path: path.clone(),
+                value: Raw::Literal(default.clone()),
+                level: Level::Default,
+                site: Site::Default,
+                reason: None,
+            }));
+        }
+        if definitions.is_empty() {
+            if spec.optional {
+                return Ok(None);
+            }
+            if self.report_missing {
+                self.diagnostics.push(
+                    Diagnostic::error(format!("`{path}` is not set"))
+                        .label_opt(at, "needed here")
+                        .note("help: this option has no default, so the configuration must set it"),
+                );
+            }
+            return Err(Failed);
+        }
+
+        // A declared default only applies when nothing else sets the option.
+        let rank =
+            |definition: &Definition| (definition.level, !matches!(definition.site, Site::Default));
+        let top = definitions.iter().map(|definition| rank(definition)).max();
         let mut set_by = Vec::new();
         let mut overridden = Vec::new();
         let mut uses = Vec::new();
         let mut failed = false;
-        for definition in &leaf.definitions {
+        for definition in &definitions {
             let mut definition_uses = Vec::new();
             let Some(value) = self.eval(&definition.value, &mut definition_uses) else {
                 failed = true;
                 continue;
             };
-            if let Err(message) = check(path, &leaf.spec, &value) {
-                self.diagnostics.push(
-                    Diagnostic::error(format!("invalid value for `{path}`"))
-                        .label_opt(definition.site.span(), message),
-                );
+            if let Err(message) = check(path, spec, &value) {
+                let diagnostic = Diagnostic::error(format!("invalid value for `{path}`"));
+                let diagnostic = self.locate(diagnostic, definition.site, message);
+                self.diagnostics.push(diagnostic);
                 failed = true;
                 continue;
             }
@@ -279,33 +666,67 @@ impl<'a> Resolver<'a> {
                 reason: definition.reason.clone(),
                 value,
             };
-            if Some(definition.level) == top {
+            if Some(rank(definition)) == top {
                 uses.extend(definition_uses);
                 set_by.push(contribution);
             } else {
                 overridden.push(contribution);
             }
         }
-        let value = if failed {
-            None
-        } else {
-            self.merge(path, &leaf.spec, &set_by)
-        };
-
-        self.stack.pop();
-        self.state.insert(path.clone(), State::Done(value.clone()));
-        if let Some(value) = &value {
-            self.options.insert(
-                path.clone(),
-                Resolved {
-                    value: value.clone(),
-                    set_by,
-                    overridden,
-                    uses,
-                },
-            );
+        if failed {
+            return Err(Failed);
         }
-        value
+        let value = self.merge(path, spec, &set_by).ok_or(Failed)?;
+        self.options.insert(
+            path.clone(),
+            Resolved {
+                value: value.clone(),
+                set_by,
+                overridden,
+                uses,
+            },
+        );
+        Ok(Some(value))
+    }
+
+    /// Points a diagnostic at a definition's site: its span when there is one, otherwise a note
+    /// naming the module.
+    fn locate(&self, diagnostic: Diagnostic, site: Site, message: impl Into<String>) -> Diagnostic {
+        let message = message.into();
+        match site {
+            Site::Config(span) => diagnostic.label(span, message),
+            Site::Module {
+                module,
+                at: Some(span),
+            } => diagnostic.label(
+                span,
+                format!("{message} (module `{}`)", self.module_name(module)),
+            ),
+            Site::Module { module, at: None } => {
+                diagnostic.note(format!("module `{}`: {message}", self.module_name(module)))
+            }
+            Site::Default => diagnostic.note(format!("the declared default: {message}")),
+        }
+    }
+
+    fn cycle(&mut self, closing: &Frame, at: Option<Span>) {
+        let start = self
+            .stack
+            .iter()
+            .position(|frame| frame == closing)
+            .unwrap_or(0);
+        let steps: Vec<String> = self.stack[start..]
+            .iter()
+            .chain(std::iter::once(closing))
+            .map(|frame| match frame {
+                Frame::Option(path) => path.to_string(),
+                Frame::Module(module) => format!("module `{}`", self.module_name(*module)),
+            })
+            .collect();
+        self.diagnostics.push(
+            Diagnostic::error(format!("cycle: {}", steps.join(" -> ")))
+                .label_opt(at, "this closes the cycle"),
+        );
     }
 
     /// Combines the definitions at the winning level.
@@ -343,8 +764,9 @@ impl<'a> Resolver<'a> {
         }
         let mut diagnostic = Diagnostic::error(format!("conflicting values for `{path}`"));
         for contribution in set_by {
-            diagnostic = diagnostic.label_opt(
-                contribution.site.span(),
+            diagnostic = self.locate(
+                diagnostic,
+                contribution.site,
                 format!("set to {} here", contribution.value),
             );
         }
@@ -358,29 +780,18 @@ impl<'a> Resolver<'a> {
         match raw {
             Raw::Literal(value) => Some(value.clone()),
             Raw::Secret(name) => Some(Value::Runtime(vec![RuntimePart::Secret(name.clone())])),
+            // Every item is evaluated, even after one fails, so each failure is reported.
             Raw::List(items) => {
-                let mut values = Vec::with_capacity(items.len());
-                let mut failed = false;
-                for item in items {
-                    match self.eval(item, uses) {
-                        Some(value) => values.push(value),
-                        None => failed = true,
-                    }
-                }
-                (!failed).then_some(Value::List(values))
+                let values: Vec<Option<Value>> =
+                    items.iter().map(|item| self.eval(item, uses)).collect();
+                values.into_iter().collect::<Option<_>>().map(Value::List)
             }
             Raw::Table(entries) => {
-                let mut values = BTreeMap::new();
-                let mut failed = false;
-                for (key, item) in entries {
-                    match self.eval(item, uses) {
-                        Some(value) => {
-                            values.insert(key.clone(), value);
-                        }
-                        None => failed = true,
-                    }
-                }
-                (!failed).then_some(Value::Table(values))
+                let values: Vec<Option<(String, Value)>> = entries
+                    .iter()
+                    .map(|(key, item)| Some((key.clone(), self.eval(item, uses)?)))
+                    .collect();
+                values.into_iter().collect::<Option<_>>().map(Value::Table)
             }
             Raw::Template(parts) => self.template(parts, uses),
         }
@@ -444,41 +855,30 @@ impl<'a> Resolver<'a> {
         {
             return self.fact(path, fact, span, uses);
         }
-        if matches!(self.state.get(path), Some(State::InProgress)) {
-            let start = self
-                .stack
-                .iter()
-                .position(|candidate| candidate == path)
-                .unwrap_or(0);
-            let cycle: Vec<String> = self.stack[start..]
-                .iter()
-                .chain(std::iter::once(path))
-                .map(ToString::to_string)
-                .collect();
-            self.diagnostics.push(
-                Diagnostic::error(format!("reference cycle: {}", cycle.join(" -> ")))
-                    .label(span, "this reference closes the cycle"),
-            );
-            return None;
-        }
-        if self.leaves.contains_key(path) {
-            let value = self.resolve(path)?;
-            uses.push(Use {
-                path: path.clone(),
-                span,
-            });
-            return Some(value);
-        }
-        let diagnostic = if self.leaves.keys().any(|leaf| leaf.starts_with(path)) {
-            Diagnostic::error(format!("`{path}` is a table of options"))
-                .label(span, "a reference must name a single option")
-        } else {
-            let names: Vec<String> = self.leaves.keys().map(ToString::to_string).collect();
-            let diagnostic = Diagnostic::error(format!("unknown option `{path}`"))
-                .label(span, "referenced here");
-            match did_you_mean(&path.to_string(), &names) {
-                Some(note) => diagnostic.note(note),
-                None => diagnostic,
+        self.run_writers(path).ok()?;
+        let diagnostic = match self.known(path) {
+            Known::Leaf(spec) => match self.resolve(path, &spec, Some(span)) {
+                Ok(Some(value)) => {
+                    uses.push(Use {
+                        path: path.clone(),
+                        span,
+                    });
+                    return Some(value);
+                }
+                Ok(None) => Diagnostic::error(format!("`{path}` is not set"))
+                    .label(span, "referenced here")
+                    .note("help: set it, or stop referencing it"),
+                Err(Failed) => return None,
+            },
+            Known::Table(_) => Diagnostic::error(format!("`{path}` is a table of options"))
+                .label(span, "a reference must name a single option"),
+            Known::Absent | Known::Unknown => {
+                let diagnostic = Diagnostic::error(format!("unknown option `{path}`"))
+                    .label(span, "referenced here");
+                match self.suggest(path) {
+                    Some(note) => diagnostic.note(note),
+                    None => diagnostic,
+                }
             }
         };
         self.diagnostics.push(diagnostic);
@@ -513,6 +913,49 @@ impl<'a> Resolver<'a> {
                         .label(span, "referenced here"),
                 );
                 None
+            }
+        }
+    }
+}
+
+/// A module's view of the configuration while it renders.
+struct Reader<'r, 'a> {
+    resolver: &'r mut Resolver<'a>,
+    module: ModuleId,
+    reads: &'r mut BTreeSet<OptionPath>,
+}
+
+impl ConfigReader for Reader<'_, '_> {
+    fn read(&mut self, path: &OptionPath, at: Option<Span>) -> Result<Option<Value>, ReadError> {
+        self.resolver.module_read(self.module, path, at, self.reads)
+    }
+}
+
+/// The spec of the option at `path`. Inside freeform options every path is a freeform option.
+fn spec_at<'s>(schema: &'s Schema, path: &OptionPath) -> Option<Cow<'s, OptionSpec>> {
+    let mut spec = schema.root();
+    for segment in path.segments() {
+        spec = match spec.ty.child(segment) {
+            Child::Field(spec) | Child::Entry(spec) => spec,
+            Child::Freeform => return Some(Cow::Owned(OptionSpec::freeform())),
+            Child::None => return None,
+        };
+    }
+    Some(Cow::Borrowed(spec))
+}
+
+fn insert_nested(table: &mut BTreeMap<String, Value>, segments: &[String], value: Value) {
+    match segments {
+        [] => {}
+        [last] => {
+            table.insert(last.clone(), value);
+        }
+        [first, rest @ ..] => {
+            let entry = table
+                .entry(first.clone())
+                .or_insert_with(|| Value::Table(BTreeMap::new()));
+            if let Value::Table(inner) = entry {
+                insert_nested(inner, rest, value);
             }
         }
     }

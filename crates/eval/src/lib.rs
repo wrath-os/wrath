@@ -8,6 +8,7 @@ mod diag;
 mod eval;
 mod fs;
 mod load;
+mod module;
 mod path;
 mod schema;
 mod source;
@@ -18,8 +19,11 @@ mod walk;
 mod why;
 
 pub use diag::{Diagnostic, Label, render};
-pub use eval::{Contribution, EvalError, Evaluation, Resolved, Use, evaluate};
+pub use eval::{Contribution, EvalError, Evaluation, Input, Rendered, Resolved, Use, evaluate};
 pub use fs::{ConfigFs, DirFs, MemFs};
+pub use module::{
+    ConfigReader, File, Module, ModuleId, Output, ReadError, RenderError, Section, Setting, Unit,
+};
 pub use path::OptionPath;
 pub use schema::{ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};
