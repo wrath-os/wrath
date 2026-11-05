@@ -7,6 +7,7 @@ use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath};
 use distro_model::Model;
 
+mod bench;
 mod checks;
 mod system;
 
@@ -68,6 +69,21 @@ enum Command {
         #[arg(long)]
         modules: Option<PathBuf>,
     },
+    /// Measure how long `plan` takes with many synthetic modules in each module language
+    Bench {
+        /// Directory with a subdirectory of real modules per language
+        #[arg(long, default_value = "modules")]
+        modules: PathBuf,
+        /// How many synthetic service modules to add
+        #[arg(long, default_value_t = 150)]
+        synthetic: usize,
+        /// How many times to measure
+        #[arg(long, default_value_t = 5)]
+        runs: usize,
+        /// The most the median plan may take, in milliseconds
+        #[arg(long, default_value_t = 500)]
+        budget_ms: u64,
+    },
     /// Show where option values come from
     Why {
         /// The configuration to explain
@@ -121,6 +137,18 @@ fn main() -> ExitCode {
             against.as_deref(),
             &modules_dir(&cli.root, modules),
         ),
+        Command::Bench {
+            modules,
+            synthetic,
+            runs,
+            budget_ms,
+        } => bench::plan_time(&bench::Options {
+            modules: &under_root(&cli.root, &modules),
+            synthetic,
+            runs: runs.max(1),
+            budget: std::time::Duration::from_millis(budget_ms),
+        })
+        .map(exit_code),
         Command::Why {
             config,
             modules,

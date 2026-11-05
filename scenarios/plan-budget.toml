@@ -1,0 +1,7 @@
+title = "plan after a one-line change stays within budget with about 150 modules in every module language"
+notes = "The budget is provisional (spike S1). Measured on the release build: 48 ms Luau, 20 ms Starlark."
+
+[command]
+run = ["distro", "bench", "--synthetic", "150", "--runs", "5", "--budget-ms", "500"]
+stdout_contains = ["PASS luau", "PASS starlark"]
+timeout_secs = 300

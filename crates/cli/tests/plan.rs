@@ -111,3 +111,19 @@ fn a_bad_config_whose_error_changed_fails_until_blessed() {
         "{expected}"
     );
 }
+
+#[test]
+fn bench_measures_plan_time_in_every_language() {
+    let output = stdout(&distro(&[
+        "bench",
+        "--synthetic",
+        "4",
+        "--runs",
+        "1",
+        "--budget-ms",
+        "60000",
+    ]));
+
+    assert!(output.contains("PASS luau      13 modules"), "{output}");
+    assert!(output.contains("PASS starlark  13 modules"), "{output}");
+}

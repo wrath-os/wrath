@@ -36,3 +36,8 @@ unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Dependencies such as the Luau VM and Starlark interpreter are optimized even in dev builds, so
+# tests and benchmarks run at a realistic speed. The workspace's own crates stay unoptimized.
+[profile.dev.package."*"]
+opt-level = 2
