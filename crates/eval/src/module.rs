@@ -99,3 +99,122 @@ pub struct Section {
     pub name: String,
     pub entries: Vec<(String, String)>,
 }
+
+impl Unit {
+    /// A unit from a table of sections, each a table of keys. A list value repeats its key.
+    /// `[Unit]` comes first and `[Install]` last; other sections and all keys are sorted, so the
+    /// result doesn't depend on how a module built the table.
+    pub fn from_value(value: &Value) -> Result<Self, String> {
+        let Value::Table(sections) = value else {
+            return Err(format!("a unit is a table of sections, found {value}"));
+        };
+        let rank = |name: &str| match name {
+            "Unit" => 0,
+            "Install" => 2,
+            _ => 1,
+        };
+        let mut names: Vec<&String> = sections.keys().collect();
+        names.sort_by_key(|name| (rank(name), name.as_str()));
+        let sections = names
+            .into_iter()
+            .map(|name| {
+                let Value::Table(keys) = &sections[name] else {
+                    return Err(format!("section `{name}` must be a table of keys"));
+                };
+                let mut entries = Vec::new();
+                for (key, value) in keys {
+                    let values = match value {
+                        Value::List(values) => values.as_slice(),
+                        single => std::slice::from_ref(single),
+                    };
+                    for value in values {
+                        entries.push((
+                            key.clone(),
+                            unit_value(value).map_err(|e| format!("`{name}.{key}`: {e}"))?,
+                        ));
+                    }
+                }
+                Ok(Section {
+                    name: name.clone(),
+                    entries,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(Self { sections })
+    }
+}
+
+fn unit_value(value: &Value) -> Result<String, String> {
+    match value {
+        Value::Str(text) => Ok(text.clone()),
+        Value::Int(int) => Ok(int.to_string()),
+        Value::Float(float) => Ok(float.to_string()),
+        Value::Bool(b) => Ok(if *b { "yes" } else { "no" }.to_owned()),
+        Value::List(_) | Value::Table(_) | Value::Runtime(_) => Err(format!(
+            "expected a string, number or boolean, found {value}"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
+        Value::Table(
+            entries
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    }
+
+    #[test]
+    fn units_have_a_canonical_section_and_key_order() {
+        let value = table([
+            (
+                "Install",
+                table([("WantedBy", Value::Str("multi-user.target".into()))]),
+            ),
+            (
+                "Service",
+                table([
+                    (
+                        "ExecStartPre",
+                        Value::List(vec![Value::Str("a".into()), Value::Str("b".into())]),
+                    ),
+                    ("Restart", Value::Bool(true)),
+                ]),
+            ),
+            ("Unit", table([("Description", Value::Str("x".into()))])),
+        ]);
+
+        let unit = Unit::from_value(&value).unwrap();
+        let rendered: Vec<String> = unit
+            .sections
+            .iter()
+            .flat_map(|section| {
+                section
+                    .entries
+                    .iter()
+                    .map(move |(key, value)| format!("{}.{key}={value}", section.name))
+            })
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                "Unit.Description=x",
+                "Service.ExecStartPre=a",
+                "Service.ExecStartPre=b",
+                "Service.Restart=yes",
+                "Install.WantedBy=multi-user.target",
+            ]
+        );
+        assert_eq!(
+            Unit::from_value(&table([("Service", table([("X", table([]))]))])).unwrap_err(),
+            "`Service.X`: expected a string, number or boolean, found {}"
+        );
+    }
+}

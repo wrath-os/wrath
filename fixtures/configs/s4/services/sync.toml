@@ -1,0 +1,6 @@
+[services.syncthing.main]
+open_firewall = true
+
+[services.syncthing.main.folders.notes]
+path = "/home/john/notes"
+devices = ["desktop", "phone"]

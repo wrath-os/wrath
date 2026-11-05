@@ -1,0 +1,17 @@
+[package]
+name = "distro-luau"
+description = "Runs modules written in Luau, locked down to behave deterministically"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+distro-eval.workspace = true
+mlua.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+
+[lints]
+workspace = true

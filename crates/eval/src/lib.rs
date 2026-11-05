@@ -6,6 +6,7 @@
 
 mod diag;
 mod eval;
+pub mod formats;
 mod fs;
 mod load;
 mod module;
@@ -31,7 +32,7 @@ pub use source::{FileId, Position, Sources, Span};
 pub use template::Part;
 pub use value::{RuntimePart, Value};
 pub use walk::{Action, Definition, Level, Raw, Site};
-pub use why::explain;
+pub use why::{describe_outputs, explain};
 
 #[cfg(test)]
 mod tests;

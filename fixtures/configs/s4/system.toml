@@ -1,0 +1,9 @@
+[system]
+hostname = "box"
+
+[services.fprintd]
+enable = true
+
+# sudo asks for a fingerprint or a password, never falls through to deny.
+[security.pam.services.sudo]
+auth = { remove = ["deny"] }

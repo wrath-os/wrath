@@ -1,0 +1,3 @@
+description = "John"
+extra_groups = ["wheel"]
+packages = ["helix", "ripgrep"]

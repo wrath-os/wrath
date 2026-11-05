@@ -1,5 +1,6 @@
 //! Explaining where option values came from.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use crate::eval::{Contribution, Evaluation};
@@ -91,4 +92,46 @@ fn origin(evaluation: &Evaluation, contribution: &Contribution) -> String {
             }
         }
     }
+}
+
+/// Everything the modules rendered, as text: packages, then files, then units, each sorted.
+pub fn describe_outputs(evaluation: &Evaluation) -> String {
+    let mut packages = BTreeSet::new();
+    let mut files = BTreeMap::new();
+    let mut units = BTreeMap::new();
+    for rendered in evaluation.modules() {
+        packages.extend(rendered.output.packages.iter());
+        files.extend(
+            rendered
+                .output
+                .files
+                .iter()
+                .map(|(path, file)| (path, (&rendered.name, file))),
+        );
+        units.extend(
+            rendered
+                .output
+                .units
+                .iter()
+                .map(|(name, unit)| (name, (&rendered.name, unit))),
+        );
+    }
+    let mut out = String::new();
+    let packages: Vec<&str> = packages.into_iter().map(String::as_str).collect();
+    // Writing to a String cannot fail.
+    let _ = writeln!(out, "packages: {}", packages.join(" "));
+    for (path, (module, file)) in files {
+        let _ = writeln!(out, "\nfile {path} (mode {:o}, from {module})", file.mode);
+        out.push_str(&file.text);
+    }
+    for (name, (module, unit)) in units {
+        let _ = writeln!(out, "\nunit {name} (from {module})");
+        for section in &unit.sections {
+            let _ = writeln!(out, "[{}]", section.name);
+            for (key, value) in &section.entries {
+                let _ = writeln!(out, "{key}={value}");
+            }
+        }
+    }
+    out
 }

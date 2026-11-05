@@ -1,0 +1,83 @@
+---
+source: crates/luau/src/tests.rs
+expression: describe_outputs(&evaluation)
+---
+packages: fprintd nftables syncthing
+
+file /etc/nftables.conf (mode 644, from firewall)
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+    tcp dport 22000 accept
+  }
+}
+
+file /etc/pam.d/login (mode 644, from pam)
+account required pam_unix.so
+auth required pam_env.so
+auth sufficient pam_fprintd.so
+auth sufficient pam_unix.so likeauth try_first_pass
+auth required pam_deny.so
+password sufficient pam_unix.so nullok yescrypt
+session required pam_env.so
+session required pam_unix.so
+session optional pam_systemd.so
+
+file /etc/pam.d/sudo (mode 644, from pam)
+account required pam_unix.so
+auth required pam_env.so
+auth sufficient pam_fprintd.so
+auth sufficient pam_unix.so likeauth try_first_pass
+password sufficient pam_unix.so nullok yescrypt
+session required pam_env.so
+session required pam_unix.so
+session optional pam_systemd.so
+
+file /etc/sysusers.d/distro.conf (mode 644, from users)
+u john - "John" /home/john /run/current-system/sw/bin/bash
+m john wheel
+u syncthing - "Syncthing service" /var/lib/syncthing /run/current-system/sw/bin/bash
+
+file /var/lib/syncthing/folders.json (mode 644, from syncthing)
+{
+  "notes": {
+    "devices": [
+      "desktop",
+      "phone"
+    ],
+    "path": "/home/john/notes"
+  }
+}
+
+unit fprintd.service (from fprintd)
+[Unit]
+Description=Fingerprint authentication daemon
+[Service]
+BusName=net.reactivated.Fprint
+ExecStart=fprintd
+Type=dbus
+
+unit nftables.service (from firewall)
+[Unit]
+Before=network-pre.target
+Description=nftables firewall
+[Service]
+ExecStart=nft -f /etc/nftables.conf
+ExecStop=nft flush ruleset
+RemainAfterExit=yes
+Type=oneshot
+[Install]
+WantedBy=multi-user.target
+
+unit syncthing-main.service (from syncthing)
+[Unit]
+After=network.target
+Description=Syncthing (main)
+[Service]
+ExecStart=syncthing serve --no-browser --gui-address=127.0.0.1:8384 --home=/var/lib/syncthing
+Restart=on-failure
+User=syncthing
+[Install]
+WantedBy=multi-user.target
