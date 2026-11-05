@@ -164,7 +164,7 @@ fn install_std(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     types.set(
-        "enum",
+        "one_of",
         lua.create_function(|_, choices: Vec<String>| Ok(LuaType(Type::Enum(choices))))?,
     )?;
     types.set(

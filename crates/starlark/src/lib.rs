@@ -1,0 +1,587 @@
+//! Modules written in Starlark.
+//!
+//! Starlark is deterministic by design: dictionaries keep insertion order, there is no I/O,
+//! clock or randomness, and values are frozen once a file has been evaluated. A module file
+//! calls `module(...)`:
+//!
+//! ```python
+//! module(
+//!     name = "syncthing",
+//!     options = {"services.syncthing": types.map(instance)},
+//!     writes = ["users"],
+//!     render = render,
+//! )
+//! ```
+
+// starlark-rust's derive macros (`ProvidesStaticType`, `starlark_value`) emit `unsafe impl`s.
+#![allow(unsafe_code)]
+
+mod convert;
+
+use std::cell::RefCell;
+use std::fmt;
+use std::time::{Duration, Instant};
+
+use allocative::Allocative;
+use distro_eval::{
+    ConfigReader, Diagnostic, File, FileId, Level, ListMerge, Module, OptionPath, OptionSpec,
+    Output, ReadError, RenderError, Setting, Sources, Span, Type, Unit, Value, formats,
+};
+use starlark::any::ProvidesStaticType;
+use starlark::codemap::FileSpan;
+use starlark::collections::SmallMap;
+use starlark::environment::{
+    Globals, GlobalsBuilder, LibraryExtension, Methods, MethodsBuilder, MethodsStatic,
+    Module as StarModule,
+};
+use starlark::eval::Evaluator;
+use starlark::starlark_module;
+use starlark::starlark_simple_value;
+use starlark::syntax::{AstModule, Dialect};
+use starlark::values::none::NoneType;
+use starlark::values::{
+    NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue, ValueLike,
+};
+use starlark_derive::starlark_value;
+
+/// The module variable that holds the render function after `module(...)` runs.
+const RENDER: &str = "module_render";
+
+#[cfg(not(test))]
+const TIME_LIMIT: Duration = Duration::from_secs(10);
+#[cfg(test)]
+const TIME_LIMIT: Duration = Duration::from_secs(1);
+
+/// Loads a module from source. `path` is how errors refer to the file.
+pub fn load(
+    sources: &mut Sources,
+    path: &str,
+    text: String,
+) -> Result<Box<dyn Module>, Diagnostic> {
+    let file = sources.add(path, text);
+    let locate = Locate {
+        file,
+        path: path.to_owned(),
+    };
+    let ast = parse(path, sources.text(file)).map_err(|e| locate.diagnostic(&e))?;
+    let globals = globals();
+    let declared = RefCell::new(None);
+    StarModule::with_temp_heap(|module| {
+        let loading = Loading(&declared);
+        let mut eval = Evaluator::new(&module);
+        eval.extra = Some(&loading);
+        set_time_limit(&mut eval);
+        eval.eval_module(ast, &globals)
+            .map(|_| ())
+            .map_err(|e| locate.diagnostic(&e))
+    })?;
+    let declared = declared.into_inner().ok_or_else(|| {
+        Diagnostic::error(format!("{path}: the module never calls `module(...)`"))
+    })?;
+    Ok(Box::new(StarlarkModule {
+        declared,
+        source: sources.text(file).to_owned(),
+        globals,
+        locate,
+    }))
+}
+
+fn parse(path: &str, source: &str) -> starlark::Result<AstModule> {
+    AstModule::parse(path, source.to_owned(), &Dialect::Standard)
+}
+
+fn set_time_limit(eval: &mut Evaluator<'_, '_, '_>) {
+    let deadline = Instant::now() + TIME_LIMIT;
+    eval.set_check_cancelled(Box::new(move || Instant::now() > deadline));
+}
+
+/// What `module(...)` declared.
+struct Declared {
+    name: String,
+    options: Vec<(OptionPath, OptionSpec)>,
+    writes: Vec<OptionPath>,
+}
+
+/// The evaluator's `extra` while a module file loads.
+#[derive(ProvidesStaticType)]
+struct Loading<'a>(&'a RefCell<Option<Declared>>);
+
+/// Turns Starlark locations into spans in the module's source file.
+struct Locate {
+    file: FileId,
+    path: String,
+}
+
+impl Locate {
+    fn span(&self, span: &FileSpan) -> Option<Span> {
+        (span.filename() == self.path).then(|| Span {
+            file: self.file,
+            start: span.span.begin().get() as usize,
+            end: span.span.end().get() as usize,
+        })
+    }
+
+    fn diagnostic(&self, error: &starlark::Error) -> Diagnostic {
+        let message = error.kind().to_string();
+        let message = message.lines().next().unwrap_or_default().to_owned();
+        Diagnostic::error(message).label_opt(error.span().and_then(|span| self.span(span)), "here")
+    }
+}
+
+/// A type in a module's option declarations.
+#[derive(Debug, ProvidesStaticType, NoSerialize, StarlarkPagablePanic, Allocative)]
+struct StarType(#[allocative(skip)] Type);
+
+starlark_simple_value!(StarType);
+
+impl fmt::Display for StarType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<type: {}>", self.0.describe())
+    }
+}
+
+#[starlark_value(type = "type")]
+impl<'v> StarlarkValue<'v> for StarType {}
+
+/// An option: a type with a default, documentation and flags.
+#[derive(Debug, ProvidesStaticType, NoSerialize, StarlarkPagablePanic, Allocative)]
+struct StarOption(#[allocative(skip)] OptionSpec);
+
+starlark_simple_value!(StarOption);
+
+impl fmt::Display for StarOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<option: {}>", self.0.ty.describe())
+    }
+}
+
+#[starlark_value(type = "option")]
+impl<'v> StarlarkValue<'v> for StarOption {}
+
+fn type_of(value: StarValue<'_>) -> anyhow::Result<Type> {
+    match value.downcast_ref::<StarType>() {
+        Some(ty) => Ok(ty.0.clone()),
+        None => Err(anyhow::anyhow!(
+            "expected a type such as `types.str`, found a {}; options only go in records, maps and `options`",
+            value.get_type()
+        )),
+    }
+}
+
+/// A type or an option, as an option.
+fn spec_of(value: StarValue<'_>) -> anyhow::Result<OptionSpec> {
+    match value.downcast_ref::<StarOption>() {
+        Some(option) => Ok(option.0.clone()),
+        None => type_of(value).map(OptionSpec::new),
+    }
+}
+
+/// A list of strings, such as `writes`.
+fn strings(value: StarValue<'_>) -> anyhow::Result<Vec<String>> {
+    match convert::from_starlark(value) {
+        Ok(Value::List(items)) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::Str(text) => Ok(text),
+                other => Err(anyhow::anyhow!("expected a string, found {other}")),
+            })
+            .collect(),
+        _ => Err(anyhow::anyhow!(
+            "expected a list of strings, found a {}",
+            value.get_type()
+        )),
+    }
+}
+
+fn globals() -> Globals {
+    GlobalsBuilder::extended_by(&[LibraryExtension::StructType, LibraryExtension::Json])
+        .with(std_globals)
+        .with_namespace("types", |builder| {
+            types_functions(builder);
+            for (name, ty) in [
+                ("bool", Type::Bool),
+                ("int", Type::int()),
+                ("float", Type::Float),
+                ("str", Type::Str),
+                ("path", Type::Path),
+                ("port", Type::port()),
+                ("freeform", Type::Freeform),
+            ] {
+                builder.set(name, StarType(ty));
+            }
+        })
+        .with_namespace("formats", formats_functions)
+        .build()
+}
+
+#[starlark_module]
+fn std_globals(builder: &mut GlobalsBuilder) {
+    /// Declares an option: a type with a default, documentation and flags.
+    fn option<'v>(
+        #[starlark(require = pos)] r#type: StarValue<'v>,
+        #[starlark(require = named)] default: Option<StarValue<'v>>,
+        #[starlark(require = named, default = false)] optional: bool,
+        #[starlark(require = named, default = false)] runtime: bool,
+        #[starlark(require = named, default = "")] doc: &str,
+    ) -> anyhow::Result<StarOption> {
+        let mut spec = OptionSpec::new(type_of(r#type)?);
+        spec.default = default
+            .map(convert::from_starlark)
+            .transpose()
+            .map_err(anyhow::Error::msg)?;
+        spec.optional = optional;
+        spec.runtime = runtime;
+        spec.doc = doc.to_owned();
+        Ok(StarOption(spec))
+    }
+
+    /// Declares the module. Every module file calls this once.
+    fn module<'v>(
+        #[starlark(require = named)] name: &str,
+        #[starlark(require = named)] options: SmallMap<String, StarValue<'v>>,
+        #[starlark(require = named)] writes: StarValue<'v>,
+        #[starlark(require = named)] render: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let mut declared_options = options
+            .into_iter()
+            .map(|(path, spec)| {
+                let path = OptionPath::parse(&path).map_err(anyhow::Error::msg)?;
+                Ok((path, spec_of(spec)?))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        declared_options.sort_by(|a, b| a.0.cmp(&b.0));
+        let writes = strings(writes)?
+            .iter()
+            .map(|path| OptionPath::parse(path))
+            .collect::<Result<_, _>>()
+            .map_err(anyhow::Error::msg)?;
+        // While rendering, the file runs again; only the render function matters then.
+        if let Some(loading) = eval.extra.and_then(|extra| extra.downcast_ref::<Loading>()) {
+            if loading.0.borrow().is_some() {
+                return Err(anyhow::anyhow!("`module(...)` is called twice"));
+            }
+            *loading.0.borrow_mut() = Some(Declared {
+                name: name.to_owned(),
+                options: declared_options,
+                writes,
+            });
+        }
+        eval.module().set(RENDER, render);
+        Ok(NoneType)
+    }
+}
+
+#[starlark_module]
+fn types_functions(builder: &mut GlobalsBuilder) {
+    /// A list where one value wins as a whole.
+    fn list<'v>(item: StarValue<'v>) -> anyhow::Result<StarType> {
+        Ok(StarType(Type::list(type_of(item)?, ListMerge::Atomic)))
+    }
+
+    /// A list merged from every definition, sorted and without duplicates.
+    fn set<'v>(item: StarValue<'v>) -> anyhow::Result<StarType> {
+        Ok(StarType(Type::list(type_of(item)?, ListMerge::Set)))
+    }
+
+    /// A list of named items placed with `before` and `after` anchors.
+    fn ordered<'v>(item: StarValue<'v>) -> anyhow::Result<StarType> {
+        Ok(StarType(Type::list(type_of(item)?, ListMerge::Ordered)))
+    }
+
+    /// Named entries chosen by the configuration.
+    fn map<'v>(item: StarValue<'v>) -> anyhow::Result<StarType> {
+        Ok(StarType(Type::map(spec_of(item)?)))
+    }
+
+    /// A table with these fields.
+    fn record<'v>(
+        #[starlark(kwargs)] fields: SmallMap<String, StarValue<'v>>,
+    ) -> anyhow::Result<StarType> {
+        let fields = fields
+            .iter()
+            .map(|(name, field)| Ok((name.as_str(), spec_of(*field)?)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(StarType(Type::record(fields)))
+    }
+
+    /// One of these strings.
+    fn one_of<'v>(choices: StarValue<'v>) -> anyhow::Result<StarType> {
+        Ok(StarType(Type::Enum(strings(choices)?)))
+    }
+
+    /// An integer from `min` to `max`.
+    fn range(min: i64, max: i64) -> anyhow::Result<StarType> {
+        Ok(StarType(Type::Int {
+            min: Some(min),
+            max: Some(max),
+        }))
+    }
+}
+
+#[starlark_module]
+fn formats_functions(builder: &mut GlobalsBuilder) {
+    /// Pretty-printed JSON with sorted keys.
+    fn json<'v>(value: StarValue<'v>) -> anyhow::Result<String> {
+        let value = convert::from_starlark(value).map_err(anyhow::Error::msg)?;
+        formats::json(&value).map_err(anyhow::Error::msg)
+    }
+}
+
+/// A loaded module. Each render evaluates the file again on a fresh heap and calls the render
+/// function it declares, so no Starlark values outlive a render.
+struct StarlarkModule {
+    declared: Declared,
+    source: String,
+    globals: Globals,
+    locate: Locate,
+}
+
+/// Why a render stopped early from inside a method.
+enum Stop {
+    /// Something the module read failed; the error is already reported.
+    Failed,
+    Error(Diagnostic),
+}
+
+/// The evaluator's `extra` while a module renders.
+#[derive(ProvidesStaticType)]
+struct Rendering<'a> {
+    config: RefCell<&'a mut dyn ConfigReader>,
+    output: RefCell<Output>,
+    stop: RefCell<Option<Stop>>,
+    locate: &'a Locate,
+}
+
+impl Rendering<'_> {
+    /// Records why a method failed and returns the error that unwinds the module.
+    fn stop(&self, stop: Stop) -> anyhow::Error {
+        let message = match &stop {
+            Stop::Failed => "stopped because a value it read failed".to_owned(),
+            Stop::Error(diagnostic) => diagnostic.message.clone(),
+        };
+        self.stop.borrow_mut().get_or_insert(stop);
+        anyhow::Error::msg(message)
+    }
+
+    fn invalid(&self, at: Option<Span>, message: impl Into<String>) -> anyhow::Error {
+        self.stop(Stop::Error(
+            Diagnostic::error(message).label_opt(at, "here"),
+        ))
+    }
+}
+
+/// The current render and where in the module the running method was called from.
+fn rendering<'a, 'e>(
+    eval: &'a Evaluator<'_, 'a, 'e>,
+) -> anyhow::Result<(&'a Rendering<'e>, Option<Span>)> {
+    let rendering = eval
+        .extra
+        .and_then(|extra| extra.downcast_ref::<Rendering>())
+        .ok_or_else(|| anyhow::anyhow!("`ctx` can only be used while a module renders"))?;
+    let at = eval
+        .call_stack_top_location()
+        .and_then(|span| rendering.locate.span(&span));
+    Ok((rendering, at))
+}
+
+/// The `ctx` argument of a module's render function.
+#[derive(Debug, ProvidesStaticType, NoSerialize, StarlarkPagablePanic, Allocative)]
+struct Ctx;
+
+starlark_simple_value!(Ctx);
+
+impl fmt::Display for Ctx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<ctx>")
+    }
+}
+
+#[starlark_value(type = "ctx")]
+impl<'v> StarlarkValue<'v> for Ctx {
+    fn get_methods() -> Option<&'static Methods> {
+        static METHODS: MethodsStatic = MethodsStatic::new("ctx", ctx_methods);
+        Some(METHODS.methods())
+    }
+}
+
+fn set_option(
+    eval: &mut Evaluator<'_, '_, '_>,
+    path: &str,
+    value: StarValue<'_>,
+    level: Level,
+    removes: bool,
+) -> anyhow::Result<NoneType> {
+    let (rendering, at) = rendering(eval)?;
+    let path = OptionPath::parse(path).map_err(|e| rendering.invalid(at, e))?;
+    let mut value = convert::from_starlark(value).map_err(|e| rendering.invalid(at, e))?;
+    if removes {
+        value = Value::Table([("remove".to_owned(), value)].into_iter().collect());
+    }
+    rendering.output.borrow_mut().settings.push(Setting {
+        path,
+        value,
+        level,
+        at,
+    });
+    Ok(NoneType)
+}
+
+#[starlark_module]
+fn ctx_methods(builder: &mut MethodsBuilder) {
+    /// The value of an option, or a dictionary of everything under a table of options.
+    fn read<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] path: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<StarValue<'v>> {
+        let heap = eval.heap();
+        let (rendering, at) = rendering(eval)?;
+        let path = OptionPath::parse(path).map_err(|e| rendering.invalid(at, e))?;
+        let read = rendering.config.borrow_mut().read(&path, at);
+        match read {
+            Ok(Some(value)) => Ok(convert::to_starlark(heap, &value)),
+            Ok(None) => Ok(StarValue::new_none()),
+            Err(ReadError::Invalid(message)) => Err(rendering.invalid(at, message)),
+            Err(ReadError::Failed) => Err(rendering.stop(Stop::Failed)),
+        }
+    }
+
+    /// Sets an option.
+    fn set<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] path: &str,
+        #[starlark(require = pos)] value: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        set_option(eval, path, value, Level::Normal, false)
+    }
+
+    /// Sets an option at the default level, so configuration overrides it.
+    fn default<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] path: &str,
+        #[starlark(require = pos)] value: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        set_option(eval, path, value, Level::Default, false)
+    }
+
+    /// Removes items from a set or ordered list.
+    fn remove<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] path: &str,
+        #[starlark(require = pos)] items: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        set_option(eval, path, items, Level::Normal, true)
+    }
+
+    /// Renders a systemd unit from a dictionary of sections.
+    fn unit<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] name: &str,
+        #[starlark(require = pos)] sections: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, at) = rendering(eval)?;
+        let unit = convert::from_starlark(sections)
+            .and_then(|sections| Unit::from_value(&sections))
+            .map_err(|e| rendering.invalid(at, format!("unit `{name}`: {e}")))?;
+        let replaced = rendering
+            .output
+            .borrow_mut()
+            .units
+            .insert(name.to_owned(), unit);
+        if replaced.is_some() {
+            return Err(rendering.invalid(at, format!("unit `{name}` is rendered twice")));
+        }
+        Ok(NoneType)
+    }
+
+    /// Renders a file.
+    fn file<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] path: &str,
+        #[starlark(require = pos)] text: &str,
+        #[starlark(require = pos)] mode: Option<u32>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, at) = rendering(eval)?;
+        let file = File {
+            text: text.to_owned(),
+            mode: mode.unwrap_or(0o644),
+        };
+        let replaced = rendering
+            .output
+            .borrow_mut()
+            .files
+            .insert(path.to_owned(), file);
+        if replaced.is_some() {
+            return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
+        }
+        Ok(NoneType)
+    }
+
+    /// Adds a package to the system.
+    fn package<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, _) = rendering(eval)?;
+        rendering
+            .output
+            .borrow_mut()
+            .packages
+            .insert(name.to_owned());
+        Ok(NoneType)
+    }
+}
+
+impl Module for StarlarkModule {
+    fn name(&self) -> &str {
+        &self.declared.name
+    }
+
+    fn options(&self) -> Vec<(OptionPath, OptionSpec)> {
+        self.declared.options.clone()
+    }
+
+    fn writes(&self) -> Vec<OptionPath> {
+        self.declared.writes.clone()
+    }
+
+    fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError> {
+        let rendering = Rendering {
+            config: RefCell::new(config),
+            output: RefCell::new(Output::default()),
+            stop: RefCell::new(None),
+            locate: &self.locate,
+        };
+        let ast = parse(&self.locate.path, &self.source);
+        let result = StarModule::with_temp_heap(|module| {
+            let mut eval = Evaluator::new(&module);
+            eval.extra = Some(&rendering);
+            set_time_limit(&mut eval);
+            eval.eval_module(ast?, &self.globals)?;
+            let render = module.get(RENDER).ok_or_else(|| {
+                starlark::Error::new_other(anyhow::anyhow!(
+                    "the module no longer calls `module(...)`"
+                ))
+            })?;
+            let ctx = module.heap().alloc(Ctx);
+            eval.eval_function(render, &[ctx], &[]).map(|_| ())
+        });
+        let Rendering { output, stop, .. } = rendering;
+        match (stop.into_inner(), result) {
+            (Some(Stop::Failed), _) => Err(RenderError::Failed),
+            (Some(Stop::Error(diagnostic)), _) => Err(RenderError::Error(diagnostic)),
+            (None, Err(e)) => Err(RenderError::Error(self.locate.diagnostic(&e))),
+            (None, Ok(())) => Ok(output.into_inner()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
