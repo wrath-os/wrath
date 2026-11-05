@@ -380,3 +380,44 @@ fn a_module_removes_items_like_config_does() {
       removes ["nano"], default from module `trim`
     "#);
 }
+
+#[test]
+fn table_reads_include_empty_maps_and_unset_records() {
+    let probe = module("probe", vec![], &[], |config| {
+        let Some(Value::Table(instance)) = read(config, "services.nginx.main")? else {
+            panic!("expected a table");
+        };
+        assert_eq!(
+            instance.get("sites"),
+            Some(&Value::Table(Default::default()))
+        );
+        assert_eq!(instance.get("port"), Some(&Value::Int(80)));
+        Ok(Output::default())
+    });
+
+    eval_with(
+        &[SYSTEM, ("services/web.toml", "[services.nginx.main]\n")],
+        &[probe],
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_empty_table_from_a_module_is_an_empty_list_where_a_list_is_expected() {
+    let empty = module("empty", vec![], &["users.john.packages"], |_| {
+        Ok(Output {
+            settings: vec![set(
+                "users.john.packages",
+                Value::Table(Default::default()),
+                Level::Normal,
+            )],
+            ..Output::default()
+        })
+    });
+    let evaluation = eval_with(&[SYSTEM], &[empty]).unwrap();
+
+    assert_eq!(
+        evaluation.get("users.john.packages"),
+        Some(&Value::List(vec![]))
+    );
+}

@@ -459,6 +459,14 @@ impl<'a> Resolver<'a> {
         out
     }
 
+    /// The entries that exist directly under the map option at `path`.
+    fn map_entries<'p>(&'p self, path: &'p OptionPath) -> impl Iterator<Item = &'p OptionPath> {
+        self.instances
+            .range(path.clone()..)
+            .take_while(move |instance| instance.starts_with(path))
+            .filter(move |instance| instance.len() == path.len() + 1)
+    }
+
     fn collect_leaves(
         &self,
         spec: &OptionSpec,
@@ -472,12 +480,7 @@ impl<'a> Resolver<'a> {
                 }
             }
             Type::Map(item) => {
-                for entry in self
-                    .instances
-                    .range(path.clone()..)
-                    .take_while(|instance| instance.starts_with(&path))
-                    .filter(|instance| instance.len() == path.len() + 1)
-                {
+                for entry in self.map_entries(&path) {
                     self.collect_leaves(item, entry.clone(), out);
                 }
             }
@@ -567,7 +570,7 @@ impl<'a> Resolver<'a> {
                 .resolve(path, &spec, at)
                 .map_err(|Failed| ReadError::Failed),
             Known::Table(spec) => {
-                let mut table = BTreeMap::new();
+                let mut table = self.skeleton(&spec, path);
                 let mut failed = false;
                 for (leaf, spec) in self.leaves_under(&spec, path.clone()) {
                     match self.resolve(&leaf, &spec, at) {
@@ -593,6 +596,38 @@ impl<'a> Resolver<'a> {
                 Err(ReadError::Invalid(message))
             }
         }
+    }
+
+    /// Empty tables for every record and map entry under a table of options, so a module reading
+    /// it sees `{}` for an empty map or an unset record instead of nothing.
+    fn skeleton(&self, spec: &OptionSpec, path: &OptionPath) -> BTreeMap<String, Value> {
+        let children: Vec<(String, &OptionSpec)> = match &spec.ty {
+            Type::Record(record) => record
+                .fields
+                .iter()
+                .map(|(name, field)| (name.clone(), field))
+                .collect(),
+            Type::Map(item) => self
+                .map_entries(path)
+                .map(|entry| (entry.segments()[path.len()].clone(), item.as_ref()))
+                .collect(),
+            Type::Bool
+            | Type::Int { .. }
+            | Type::Float
+            | Type::Str
+            | Type::Path
+            | Type::Enum(_)
+            | Type::List { .. }
+            | Type::Freeform => Vec::new(),
+        };
+        children
+            .into_iter()
+            .filter(|(_, child)| child.ty.is_table())
+            .map(|(name, child)| {
+                let inner = self.skeleton(child, &path.child(name.as_str()));
+                (name, Value::Table(inner))
+            })
+            .collect()
     }
 
     fn suggest(&self, path: &OptionPath) -> Option<String> {
@@ -675,6 +710,7 @@ impl<'a> Resolver<'a> {
                 failed = true;
                 continue;
             };
+            let value = spec.ty.normalize(value);
             let checked = match definition.action {
                 Action::Set => check(path, spec, &value),
                 Action::Remove => check_removal(spec, &value),

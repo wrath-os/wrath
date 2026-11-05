@@ -206,6 +206,44 @@ impl Type {
         }
     }
 
+    /// Fills in record defaults, and reads an empty table as an empty list where a list is
+    /// expected, since some module languages can't tell the two apart.
+    pub(crate) fn normalize(&self, value: Value) -> Value {
+        match (self, value) {
+            (Self::List { .. }, Value::Table(entries)) if entries.is_empty() => {
+                Value::List(Vec::new())
+            }
+            (Self::List { item, .. }, Value::List(items)) => Value::List(
+                items
+                    .into_iter()
+                    .map(|value| item.normalize(value))
+                    .collect(),
+            ),
+            (Self::Map(item), Value::Table(entries)) => Value::Table(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, item.ty.normalize(value)))
+                    .collect(),
+            ),
+            (Self::Record(record), Value::Table(mut entries)) => {
+                for (name, field) in &record.fields {
+                    match entries.remove(name) {
+                        Some(value) => {
+                            entries.insert(name.clone(), field.ty.normalize(value));
+                        }
+                        None => {
+                            if let Some(default) = &field.default {
+                                entries.insert(name.clone(), default.clone());
+                            }
+                        }
+                    }
+                }
+                Value::Table(entries)
+            }
+            (_, value) => value,
+        }
+    }
+
     /// Checks that a resolved value has this type. Runtime values pass where strings do.
     pub fn check(&self, value: &Value) -> Result<(), String> {
         let ok = match (self, value) {
@@ -383,6 +421,33 @@ mod tests {
             Type::list(Type::port(), ListMerge::Set).describe(),
             "a list of items that are each an integer from 1 to 65535"
         );
+    }
+
+    #[test]
+    fn normalize_fills_record_defaults_in_lists_and_reads_empty_tables_as_lists() {
+        let item = Type::record([
+            ("name", OptionSpec::new(Type::Str)),
+            (
+                "args",
+                OptionSpec::new(Type::list(Type::Str, ListMerge::Atomic))
+                    .default(Value::List(vec![])),
+            ),
+        ]);
+        let list = Type::list(item, ListMerge::Ordered);
+        let value = Value::List(vec![Value::Table(BTreeMap::from([
+            ("name".to_owned(), Value::Str("a".into())),
+            ("before".to_owned(), Value::Str("b".into())),
+        ]))]);
+
+        assert_eq!(
+            list.normalize(value).to_string(),
+            r#"[{ args = [], before = "b", name = "a" }]"#
+        );
+        assert_eq!(
+            list.normalize(Value::Table(BTreeMap::new())),
+            Value::List(vec![])
+        );
+        assert_eq!(Type::Str.normalize(Value::Int(1)), Value::Int(1));
     }
 
     #[test]
