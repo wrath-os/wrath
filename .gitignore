@@ -6,3 +6,5 @@
 devenv.local.nix
 devenv.local.yaml
 .direnv
+*.pending-snap
+*.snap.new
