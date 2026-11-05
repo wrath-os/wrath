@@ -1,0 +1,5 @@
+error: cannot remove 8080 from `networking.firewall.allowed_tcp_ports`, it is not there
+ --> fixtures/bad-configs/remove-missing/system.toml:5:21
+  |
+5 | allowed_tcp_ports = { remove = [8080] }
+  |                     ^^^^^^^^^^^^^^^^^^^ removed here

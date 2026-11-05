@@ -1,0 +1,6 @@
+error: unknown option `system.hostnam`
+ --> fixtures/bad-configs/unknown-reference/services/web.toml:2:13
+  |
+2 | domains = ["${system.hostnam}.lan"]
+  |             ^^^^^^^^^^^^^^^^^ referenced here
+  = help: did you mean `system.hostname`?

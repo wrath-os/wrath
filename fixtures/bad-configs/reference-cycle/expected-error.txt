@@ -1,0 +1,5 @@
+error: cycle: system.hostname -> system.timezone -> system.hostname
+ --> fixtures/bad-configs/reference-cycle/system.toml:3:13
+  |
+3 | timezone = "${system.hostname}"
+  |             ^^^^^^^^^^^^^^^^^^ this closes the cycle

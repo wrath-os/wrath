@@ -1,0 +1,10 @@
+error: conflicting values for `services.nginx.main.port`
+ --> fixtures/bad-configs/conflicting-values/services/a.toml:2:8
+  |
+2 | port = 8080
+  |        ^^^^ set to 8080 here
+ --> fixtures/bad-configs/conflicting-values/services/b.toml:2:8
+  |
+2 | port = 8081
+  |        ^^^^ set to 8081 here
+  = help: remove all but one, or force one with `{ value = ..., force = "reason" }`

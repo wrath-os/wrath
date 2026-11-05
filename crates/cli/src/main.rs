@@ -7,7 +7,11 @@ use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath};
 use distro_model::Model;
 
+mod checks;
 mod system;
+
+/// How many times `check --determinism` evaluates each configuration per language.
+const DETERMINISM_RUNS: u64 = 5;
 
 #[derive(Parser)]
 #[command(name = "distro", version, about = "Declarative system configuration")]
@@ -29,9 +33,22 @@ enum Command {
     },
     /// Run scenario files and report each result
     Check {
-        /// Scenario files to run
-        #[arg(required = true)]
+        /// Scenario files to run, or directories of bad configs to compare with their golden errors
+        #[arg(required_unless_present = "determinism")]
         files: Vec<PathBuf>,
+        /// Check that every language directory of modules under this directory renders the
+        /// fixture configs byte for byte the same across fresh interpreters and module orders
+        #[arg(long, conflicts_with = "files")]
+        determinism: Option<PathBuf>,
+        /// Configurations for --determinism
+        #[arg(long, default_value = "fixtures/configs")]
+        configs: PathBuf,
+        /// Directory of modules for bad configs [default: modules/luau under the root]
+        #[arg(long)]
+        modules: Option<PathBuf>,
+        /// Write the actual errors of bad configs as their expected errors
+        #[arg(long)]
+        bless: bool,
         /// Run VM scenarios against this built image instead of building one
         #[arg(long)]
         image: Option<PathBuf>,
@@ -73,9 +90,28 @@ fn main() -> ExitCode {
         Command::Status { milestone } => status(&cli.root, milestone.as_deref()),
         Command::Check {
             files,
+            determinism,
+            configs,
+            modules,
+            bless,
             image,
             run_reproduction,
-        } => check(&cli.root, &files, image, run_reproduction),
+        } => match determinism {
+            Some(languages) => checks::determinism(
+                &under_root(&cli.root, &languages),
+                &under_root(&cli.root, &configs),
+                DETERMINISM_RUNS,
+            )
+            .map(exit_code),
+            None => check(
+                &cli.root,
+                &files,
+                &modules_dir(&cli.root, modules),
+                bless,
+                image,
+                run_reproduction,
+            ),
+        },
         Command::Plan {
             config,
             against,
@@ -140,16 +176,24 @@ fn status(root: &Path, milestone: Option<&str>) -> Result<ExitCode, String> {
 fn check(
     root: &Path,
     files: &[PathBuf],
+    modules: &Path,
+    bless: bool,
     image: Option<PathBuf>,
     run_reproduction: bool,
 ) -> Result<ExitCode, String> {
+    let (dirs, files): (Vec<&PathBuf>, Vec<&PathBuf>) = files
+        .iter()
+        .partition(|file| under_root(root, file).is_dir());
     let scenarios = files
         .iter()
         .map(|file| load_scenario(root, file))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let ctx = context(root, image)?;
     let mut all_passed = true;
+    for dir in dirs {
+        all_passed &= checks::bad_configs(&under_root(root, dir), modules, bless)?;
+    }
+    let ctx = context(root, image)?;
     for scenario in &scenarios {
         let outcome = distro_check::run(scenario, &ctx);
         all_passed &= outcome.is_pass();
@@ -161,11 +205,24 @@ fn check(
             println!("        {}", reproduce(scenario, failure, &ctx));
         }
     }
-    Ok(if all_passed {
+    Ok(exit_code(all_passed))
+}
+
+fn exit_code(passed: bool) -> ExitCode {
+    if passed {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
-    })
+    }
+}
+
+/// A path relative to the root, without a leading `./` so locations in messages stay short.
+fn under_root(root: &Path, path: &Path) -> PathBuf {
+    let joined = root.join(path);
+    joined
+        .strip_prefix(".")
+        .map(Path::to_path_buf)
+        .unwrap_or(joined)
 }
 
 /// Reruns a failed scenario against the image of the failed run and reports whether it fails
@@ -198,15 +255,12 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
 }
 
 fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
-    modules.unwrap_or_else(|| {
-        let dir = root.join("modules/luau");
-        dir.strip_prefix(".").map(Path::to_path_buf).unwrap_or(dir)
-    })
+    modules.unwrap_or_else(|| under_root(root, Path::new("modules/luau")))
 }
 
 /// Evaluates a configuration, or prints why it can't and returns `None`.
 fn evaluate(config: &Path, modules: &Path) -> Option<Evaluation> {
-    system::evaluate_dir(config, modules)
+    system::evaluate_dir(config, modules, system::ModuleOrder::Sorted)
         .inspect_err(|errors| eprint!("{errors}"))
         .ok()
 }

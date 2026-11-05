@@ -87,3 +87,27 @@ fn why_needs_an_option_or_all() {
 
     assert!(!output.status.success());
 }
+
+#[test]
+fn a_bad_config_whose_error_changed_fails_until_blessed() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = dir.path().join("typo");
+    std::fs::create_dir_all(&case).unwrap();
+    std::fs::write(case.join("system.toml"), "[system]\nhostnme = \"box\"\n").unwrap();
+    std::fs::write(case.join("expected-error.txt"), "an older message\n").unwrap();
+    let dir = dir.path().to_str().unwrap();
+
+    let failed = distro(&["check", dir]);
+    let stdout = String::from_utf8(failed.stdout).unwrap();
+    assert!(!failed.status.success());
+    assert!(stdout.contains("FAIL  typo: the error differs"), "{stdout}");
+
+    assert!(distro(&["check", dir, "--bless"]).status.success());
+    let passed = distro(&["check", dir]);
+    assert!(passed.status.success());
+    let expected = std::fs::read_to_string(case.join("expected-error.txt")).unwrap();
+    assert!(
+        expected.starts_with("error: unknown option `system.hostnme`"),
+        "{expected}"
+    );
+}

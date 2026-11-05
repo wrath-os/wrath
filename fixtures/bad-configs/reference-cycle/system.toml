@@ -1,0 +1,3 @@
+[system]
+hostname = "${system.timezone}"
+timezone = "${system.hostname}"

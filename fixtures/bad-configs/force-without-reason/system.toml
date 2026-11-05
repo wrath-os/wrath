@@ -1,0 +1,2 @@
+[system]
+hostname = { value = "box", force = "" }

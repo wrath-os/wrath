@@ -1,0 +1,11 @@
+error: invalid value for `services.nginx.main.enable`
+ --> fixtures/bad-configs/wrong-type/services/web.toml:2:10
+  |
+2 | enable = "yes"
+  |          ^^^^^ expected a boolean, found "yes"
+
+error: invalid value for `services.nginx.main.port`
+ --> fixtures/bad-configs/wrong-type/services/web.toml:3:8
+  |
+3 | port = 70000
+  |        ^^^^^ expected an integer from 1 to 65535, found 70000

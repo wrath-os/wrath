@@ -1,0 +1,2 @@
+error: `system.hostname` is not set
+ = help: this option has no default, so the configuration must set it

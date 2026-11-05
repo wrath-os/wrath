@@ -1,0 +1,8 @@
+[system]
+hostname = "box"
+
+[[security.pam.services.login.auth]]
+name = "yubikey"
+control = "sufficient"
+module = "pam_u2f.so"
+before = "unx"

@@ -1,0 +1,5 @@
+error: invalid value for `system.hostname`
+ --> fixtures/bad-configs/secret-in-build-option/system.toml:2:12
+  |
+2 | hostname = { secret = "name" }
+  |            ^^^^^^^^^^^^^^^^^^^ `system.hostname` is fixed when the system is built, so it cannot hold a value only known at service start

@@ -651,19 +651,14 @@ impl<'a> Resolver<'a> {
         }
         self.state.insert(path.clone(), State::InProgress);
         self.stack.push(Frame::Option(path.clone()));
-        let resolution = self.resolve_definitions(path, spec, at);
+        let resolution = self.resolve_definitions(path, spec);
         self.stack.pop();
         self.state
             .insert(path.clone(), State::Done(resolution.clone()));
         resolution
     }
 
-    fn resolve_definitions(
-        &mut self,
-        path: &OptionPath,
-        spec: &OptionSpec,
-        at: Option<Span>,
-    ) -> Resolution {
+    fn resolve_definitions(&mut self, path: &OptionPath, spec: &OptionSpec) -> Resolution {
         self.run_writers(path)?;
         let mut definitions = self.definitions.get(path).cloned().unwrap_or_default();
         if let Some(default) = &spec.default {
@@ -681,11 +676,10 @@ impl<'a> Resolver<'a> {
                 return Ok(None);
             }
             if self.report_missing {
-                self.diagnostics.push(
-                    Diagnostic::error(format!("`{path}` is not set"))
-                        .label_opt(at, "needed here")
-                        .note("help: this option has no default, so the configuration must set it"),
-                );
+                self.diagnostics
+                    .push(Diagnostic::error(format!("`{path}` is not set")).note(
+                        "help: this option has no default, so the configuration must set it",
+                    ));
             }
             return Err(Failed);
         }

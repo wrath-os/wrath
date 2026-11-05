@@ -1,0 +1,5 @@
+error: invalid TOML
+ --> fixtures/bad-configs/invalid-toml/system.toml:1:8
+  |
+1 | [system
+  |        ^ unclosed table, expected `]`

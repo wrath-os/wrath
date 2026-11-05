@@ -50,6 +50,15 @@ impl Diagnostic {
     }
 }
 
+/// How a tab in a source line is shown, so markers under the line stay aligned.
+const TAB: &str = "    ";
+
+fn display_width(text: &str) -> usize {
+    text.chars()
+        .map(|c| if c == '\t' { TAB.len() } else { 1 })
+        .sum()
+}
+
 /// Renders diagnostics in the style of compiler errors, without colour.
 pub fn render(diagnostics: &[Diagnostic], sources: &Sources) -> String {
     let mut out = String::new();
@@ -81,13 +90,18 @@ fn render_one(diagnostic: &Diagnostic, sources: &Sources, out: &mut String) {
         let start = sources.position(file, label.span.start);
         let end = sources.position(file, label.span.end);
         let text = sources.line(file, start.line);
-        let underline = if end.line == start.line {
-            end.column.saturating_sub(start.column).max(1)
+        let before: String = text.chars().take(start.column - 1).collect();
+        let spanned: String = if end.line == start.line {
+            text.chars()
+                .skip(start.column - 1)
+                .take(end.column.saturating_sub(start.column))
+                .collect()
         } else {
-            (text.chars().count() + 1)
-                .saturating_sub(start.column)
-                .max(1)
+            text.chars().skip(start.column - 1).collect()
         };
+        let indent = display_width(&before);
+        let underline = display_width(&spanned).max(1);
+        let text = text.replace('\t', TAB);
         let _ = writeln!(
             out,
             "{pad}--> {}:{}:{}",
@@ -99,7 +113,7 @@ fn render_one(diagnostic: &Diagnostic, sources: &Sources, out: &mut String) {
         let _ = writeln!(out, "{:>width$} | {text}", start.line);
         let marker = format!(
             "{}{} {}",
-            " ".repeat(start.column - 1),
+            " ".repeat(indent),
             "^".repeat(underline),
             label.message
         );
@@ -136,6 +150,20 @@ error: unknown option `system.hostnme`
   | ^^^^^^^ no option with this name
   = help: did you mean `hostname`?
 "
+        );
+    }
+
+    #[test]
+    fn tabs_are_expanded_so_markers_line_up() {
+        let mut sources = Sources::default();
+        let file = sources.add("m.luau", "\t\tlocal x = y\n");
+        let start = sources.text(file).find('y').unwrap();
+        let diagnostic =
+            Diagnostic::error("unknown").label(Span::new(file, start..start + 1), "here");
+
+        assert_eq!(
+            render(&[diagnostic], &sources),
+            "error: unknown\n --> m.luau:1:13\n  |\n1 |         local x = y\n  |                   ^ here\n"
         );
     }
 

@@ -1,0 +1,3 @@
+[services.nginx.main]
+enable = "yes"
+port = 70000

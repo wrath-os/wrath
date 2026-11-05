@@ -1,0 +1,2 @@
+[services.nginx.main.sites.blog]
+domains = ["${system.hostnam}.lan"]

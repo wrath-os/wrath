@@ -1,0 +1,5 @@
+error: `yubikey` is placed relative to `unx`, which is not in `security.pam.services.login.auth`
+ --> fixtures/bad-configs/unknown-anchor/system.toml:4:1
+  |
+4 | [[security.pam.services.login.auth]]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ placed here

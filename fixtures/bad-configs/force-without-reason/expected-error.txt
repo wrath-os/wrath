@@ -1,0 +1,6 @@
+error: `force` needs a reason
+ --> fixtures/bad-configs/force-without-reason/system.toml:2:37
+  |
+2 | hostname = { value = "box", force = "" }
+  |                                     ^^ expected a non-empty string
+  = help: for example `force = "the vendor default breaks suspend"`
