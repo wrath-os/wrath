@@ -124,6 +124,7 @@ fn bench_measures_plan_time_in_every_language() {
         "60000",
     ]));
 
-    assert!(output.contains("PASS luau      13 modules"), "{output}");
-    assert!(output.contains("PASS starlark  13 modules"), "{output}");
+    assert!(output.contains("PASS luau       13 modules"), "{output}");
+    assert!(output.contains("PASS starlark   13 modules"), "{output}");
+    assert!(output.contains("PASS typescript 13 modules"), "{output}");
 }

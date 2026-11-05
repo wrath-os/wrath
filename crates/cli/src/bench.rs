@@ -20,16 +20,18 @@ use crate::system::{self, ModuleOrder};
 enum Language {
     Luau,
     Starlark,
+    TypeScript,
 }
 
 impl Language {
-    const ALL: [Language; 2] = [Language::Luau, Language::Starlark];
+    const ALL: [Language; 3] = [Language::Luau, Language::Starlark, Language::TypeScript];
 
     /// The module directory name, also printed in the report.
     fn name(self) -> &'static str {
         match self {
             Language::Luau => "luau",
             Language::Starlark => "starlark",
+            Language::TypeScript => "typescript",
         }
     }
 
@@ -37,6 +39,7 @@ impl Language {
         match self {
             Language::Luau => "luau",
             Language::Starlark => "star",
+            Language::TypeScript => "ts",
         }
     }
 }
@@ -73,6 +76,7 @@ pub fn plan_time(options: &Options<'_>) -> Result<bool, String> {
             .map(|evaluation| Model::from_evaluation(&evaluation))?;
         let mut times = Vec::with_capacity(options.runs);
         let mut changes = 0;
+        let mut module_count = 0;
         for _ in 0..options.runs {
             let start = Instant::now();
             let evaluation =
@@ -81,14 +85,14 @@ pub fn plan_time(options: &Options<'_>) -> Result<bool, String> {
             let diff = plan(&before, &after);
             times.push(start.elapsed());
             changes = diff.to_string().lines().count();
+            module_count = evaluation.modules().len();
         }
         times.sort();
         let median = times[times.len() / 2];
         let fits = median <= options.budget;
         within &= fits;
-        let module_count = fs::read_dir(&modules).map_err(|e| e.to_string())?.count();
         println!(
-            "{} {name:<9} {module_count} modules: plan after a one-line change takes {} ms \
+            "{} {name:<10} {module_count} modules: plan after a one-line change takes {} ms \
              (median of {}, fastest {} ms, slowest {} ms); budget {} ms; plan has {changes} lines",
             if fits { "PASS" } else { "FAIL" },
             median.as_millis(),
@@ -232,6 +236,46 @@ module(
 )
 "#
         ),
+        Language::TypeScript => format!(
+            r#"// A synthetic service for measuring plan time.
+
+const instance = types.record({{
+	enable: option(types.bool, {{ default: false }}),
+	port: option(types.port, {{ default: {port} }}),
+	user: option(types.str, {{ default: "{name}" }}),
+	extra_args: option(types.list(types.str), {{ default: [] }}),
+	settings: option(types.freeform, {{ optional: true }}),
+}});
+
+export default module({{
+	name: "{name}",
+	options: {{ "services.{name}": types.map(instance) }},
+	writes: ["users", "networking.firewall.allowed_tcp_ports"],
+	render(ctx) {{
+		const ports: number[] = [];
+		const instances = ctx.read<Record<string, Infer<typeof instance>>>("services.{name}");
+		for (const [instanceName, cfg] of Object.entries(instances)) {{
+			if (!cfg.enable) continue;
+			const config = `/etc/{name}/${{instanceName}}.json`;
+			ctx.file(config, formats.json(cfg.settings ?? {{}}));
+			ctx.unit(`{name}-${{instanceName}}.service`, {{
+				Unit: {{ Description: `{name} (${{instanceName}})` }},
+				Service: {{
+					User: cfg.user,
+					ExecStart: `{name} --config ${{config}} ${{cfg.extra_args.join(" ")}}`,
+				}},
+				Install: {{ WantedBy: "multi-user.target" }},
+			}});
+			ctx.default(`users.${{cfg.user}}`, {{ system: true, description: "{name}" }});
+			ports.push(cfg.port);
+		}}
+		if (ports.length > 0) {{
+			ctx.set("networking.firewall.allowed_tcp_ports", ports);
+		}}
+	}},
+}});
+"#
+        ),
     }
 }
 
@@ -268,6 +312,26 @@ def render(ctx):
     ctx.file("/etc/distro/inventory", "\n".join(lines) + "\n")
 
 module(name = "inventory", options = {}, writes = [], render = render)
+"#
+        }
+        Language::TypeScript => {
+            r#"// Lists every configured service instance.
+
+export default module({
+	name: "inventory",
+	options: {},
+	writes: [],
+	render(ctx) {
+		const lines: string[] = [];
+		const services = ctx.read<Record<string, Record<string, unknown>>>("services");
+		for (const [service, instances] of Object.entries(services)) {
+			for (const instanceName of Object.keys(instances)) {
+				lines.push(`${service}.${instanceName}`);
+			}
+		}
+		ctx.file("/etc/distro/inventory", lines.join("\n") + "\n");
+	},
+});
 "#
         }
     }

@@ -1,0 +1,20 @@
+[package]
+name = "distro-typescript"
+description = "Runs modules written in TypeScript, with types stripped, on QuickJS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+distro-eval.workspace = true
+rquickjs.workspace = true
+swc_common.workspace = true
+swc_ts_fast_strip.workspace = true
+
+[dev-dependencies]
+distro-luau.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true

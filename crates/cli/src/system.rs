@@ -9,7 +9,11 @@ use distro_eval::{
 };
 
 /// The module languages, by file extension.
-const LOADERS: [(&str, Loader); 2] = [("luau", distro_luau::load), ("star", distro_starlark::load)];
+const LOADERS: [(&str, Loader); 3] = [
+    ("luau", distro_luau::load),
+    ("star", distro_starlark::load),
+    ("ts", distro_typescript::load),
+];
 
 type Loader = fn(&mut Sources, &str, String) -> Result<Box<dyn Module>, Diagnostic>;
 
@@ -60,8 +64,11 @@ fn load_modules(
     let mut modules = Vec::new();
     let mut errors = Vec::new();
     for path in paths {
+        // Type declarations such as `distro.d.ts` describe the host API; they aren't modules.
+        let declarations = path.to_str().is_some_and(|path| path.ends_with(".d.ts"));
         let Some(loader) = path
             .extension()
+            .filter(|_| !declarations)
             .and_then(|extension| LOADERS.iter().find(|(known, _)| extension == *known))
             .map(|(_, loader)| loader)
         else {
