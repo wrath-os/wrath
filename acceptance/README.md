@@ -48,5 +48,6 @@ title = "The author runs the laptop on this config daily"
 confirm = "Used daily for two weeks, repair log reviewed."
 ```
 
-`[vm]` and `[nspawn]` describe system scenarios. They show as `TODO` until the harness can run
-them (milestone m1). Their keys aren't validated yet.
+`[vm]` scenarios boot a test image under QEMU and run checks through the guest agent. `[vm]`
+scenarios with a `config` key and `[nspawn]` scenarios show as `TODO` until a later milestone can
+run them.

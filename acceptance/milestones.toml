@@ -13,3 +13,7 @@ title = "NixOS backend in a VM"
 [[milestone]]
 id = "m4"
 title = "Daily driver"
+
+[[milestone]]
+id = "m6"
+title = "Activator"
