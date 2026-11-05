@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+distro-backend-nixos.workspace = true
 distro-check.workspace = true
 distro-eval.workspace = true
 distro-model.workspace = true

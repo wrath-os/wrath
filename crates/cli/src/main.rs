@@ -9,6 +9,7 @@ use distro_model::Model;
 
 mod bench;
 mod checks;
+mod generations;
 mod system;
 
 /// How many times `check --determinism` evaluates each configuration.
@@ -84,6 +85,35 @@ enum Command {
         #[arg(long, default_value_t = 500)]
         budget_ms: u64,
     },
+    /// Build the system for a configuration and print its store path, without switching to it
+    Build {
+        /// The configuration to build
+        #[arg(long)]
+        config: PathBuf,
+        /// Directory of modules [default: modules under the root]
+        #[arg(long)]
+        modules: Option<PathBuf>,
+        #[arg(long, value_enum, default_value = "system")]
+        target: generations::BuildTarget,
+    },
+    /// Build the system for a configuration and switch to it
+    Apply {
+        /// The configuration to apply
+        #[arg(long)]
+        config: PathBuf,
+        /// Directory of modules [default: modules under the root]
+        #[arg(long)]
+        modules: Option<PathBuf>,
+    },
+    /// Switch to a system that is already built, such as one `build` made on another machine
+    Activate {
+        /// The system's store path
+        system: PathBuf,
+    },
+    /// Show the system's generations
+    History,
+    /// Switch back to the previous generation
+    Rollback,
     /// Show where option values come from
     Why {
         /// The configuration to explain
@@ -155,6 +185,26 @@ fn main() -> ExitCode {
             all: _,
             option,
         } => why(&config, &modules_dir(&cli.root, modules), option.as_deref()),
+        Command::Build {
+            config,
+            modules,
+            target,
+        } => match model(&config, &modules_dir(&cli.root, modules)) {
+            Some(model) => generations::build(&cli.root, &model, target).map(|path| {
+                println!("{}", path.display());
+                ExitCode::SUCCESS
+            }),
+            None => Ok(ExitCode::FAILURE),
+        },
+        Command::Apply { config, modules } => {
+            match model(&config, &modules_dir(&cli.root, modules)) {
+                Some(model) => generations::apply(&cli.root, &model),
+                None => Ok(ExitCode::FAILURE),
+            }
+        }
+        Command::Activate { system } => generations::activate(&system),
+        Command::History => generations::history(),
+        Command::Rollback => generations::rollback(),
     };
     match result {
         Ok(code) => code,

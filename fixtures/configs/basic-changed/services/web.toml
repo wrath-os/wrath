@@ -5,3 +5,6 @@ port = 8081
 [services.nginx.main.sites.blog]
 domains = ["blog.example.com", "${system.hostname}.lan"]
 root = "/srv/blog"
+
+[files."/srv/blog/index.html"]
+text = "<h1>blog</h1>\n"

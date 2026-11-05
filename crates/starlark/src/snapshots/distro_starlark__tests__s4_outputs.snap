@@ -4,9 +4,6 @@ expression: describe_outputs(&evaluation)
 ---
 packages: fprintd nftables nginx syncthing
 
-file /etc/hostname (mode 644, from system)
-box
-
 file /etc/nftables.conf (mode 644, from firewall)
 table inet filter {
   chain input {
@@ -19,8 +16,11 @@ table inet filter {
 }
 
 file /etc/nginx/main.conf (mode 644, from nginx)
+pid /run/nginx-main/nginx.pid;
+error_log /var/log/nginx/main-error.log;
 events {}
 http {
+  access_log /var/log/nginx/main-access.log;
   server {
     listen 80;
     server_name sync.box.lan;
@@ -48,14 +48,6 @@ password sufficient pam_unix.so nullok yescrypt
 session required pam_env.so
 session required pam_unix.so
 session optional pam_systemd.so
-
-file /etc/sysusers.d/distro.conf (mode 644, from users)
-u john - "John" /home/john /run/current-system/sw/bin/bash
-m john wheel
-u syncthing - "Syncthing service" /var/lib/syncthing /run/current-system/sw/bin/bash
-
-file /etc/timezone (mode 644, from system)
-UTC
 
 file /var/lib/syncthing/folders.json (mode 644, from syncthing)
 {
@@ -95,7 +87,10 @@ Description=nginx (main)
 [Service]
 ExecReload=nginx -c /etc/nginx/main.conf -s reload
 ExecStart=nginx -c /etc/nginx/main.conf -g 'daemon off;'
+LogsDirectory=nginx
+PrivateTmp=yes
 Restart=on-failure
+RuntimeDirectory=nginx-main
 [Install]
 WantedBy=multi-user.target
 
@@ -109,3 +104,7 @@ Restart=on-failure
 User=syncthing
 [Install]
 WantedBy=multi-user.target
+
+base system (from system): { hostname = "box", timezone = "UTC" }
+
+base users (from users): { john = { description = "John", extra_groups = ["wheel"], group = "users", home = "/home/john", packages = ["helix", "ripgrep"], shell = "/run/current-system/sw/bin/bash", system = false }, syncthing = { description = "Syncthing service", extra_groups = [], group = "users", home = "/var/lib/syncthing", packages = [], shell = "/run/current-system/sw/bin/bash", system = true } }

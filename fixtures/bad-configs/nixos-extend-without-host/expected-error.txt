@@ -1,0 +1,5 @@
+error: fail: nixos.extend: expected `<flake>#<host>`, such as `/etc/nixos#laptop`, got `/etc/nixos`
+  --> modules/nixos.star:12:13
+   |
+12 |             fail("nixos.extend: expected `<flake>#<host>`, such as `/etc/nixos#laptop`, got `%s`" % extend)
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here

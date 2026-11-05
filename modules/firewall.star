@@ -28,7 +28,7 @@ def render(ctx):
             "ExecStop": "nft flush ruleset",
         },
         "Install": {"WantedBy": "multi-user.target"},
-    })
+    }, restart_on = ["/etc/nftables.conf"])
 
 module(
     name = "firewall",

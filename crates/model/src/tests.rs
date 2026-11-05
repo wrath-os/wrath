@@ -1,4 +1,4 @@
-use distro_eval::{RuntimePart, Section, Value};
+use distro_eval::{RuntimePart, Section, Unit, Value};
 
 use crate::{File, Model, plan};
 
@@ -20,10 +20,13 @@ fn model(port: i64) -> Model {
     );
     model.units.insert(
         "nginx-main.service".into(),
-        vec![Section {
-            name: "Service".into(),
-            entries: vec![("ExecStart".into(), format!("nginx -p {port}"))],
-        }],
+        Unit {
+            sections: vec![Section {
+                name: "Service".into(),
+                entries: vec![("ExecStart".into(), format!("nginx -p {port}"))],
+            }],
+            restart_on: ["/etc/nginx/main.conf".into()].into(),
+        },
     );
     model
 }
@@ -48,6 +51,8 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
 
     insta::assert_snapshot!(model.canonical(), @r#"
     {
+      "backends": {},
+      "base": {},
       "facts": {},
       "files": {},
       "options": {
@@ -64,7 +69,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       },
       "packages": [],
       "units": {},
-      "version": 1
+      "version": 2
     }
     "#);
 }
@@ -121,4 +126,57 @@ fn an_unchanged_model_has_an_empty_plan() {
             .to_string()
             .ends_with("1 change, nothing to apply\n")
     );
+}
+
+#[test]
+fn base_changes_show_their_tier_and_boot_needs_a_reboot() {
+    let mut before = model(80);
+    before.base.insert("audio".into(), Value::Bool(false));
+    before
+        .base
+        .insert("boot".into(), Value::Str("systemd-boot".into()));
+    let mut after = before.clone();
+    after.base.insert("audio".into(), Value::Bool(true));
+    after.base.insert("boot".into(), Value::Str("grub".into()));
+
+    insta::assert_snapshot!(plan(&before, &after).to_string(), @r#"
+    base
+      ~ audio (tier: live)
+          false -> true
+      ~ boot (tier: reboot)
+          "systemd-boot" -> "grub"
+    2 changes, tier: reboot
+    "#);
+}
+
+#[test]
+fn a_unit_restarts_when_a_file_it_reads_changes() {
+    let before = model(80);
+    let mut after = before.clone();
+    after.files.get_mut("/etc/nginx/main.conf").unwrap().text = "listen 80; # changed\n".into();
+
+    insta::assert_snapshot!(plan(&before, &after).to_string(), @"
+    files
+      ~ /etc/nginx/main.conf (tier: live)
+    units
+      ~ nginx-main.service (tier: live)
+          restarts: /etc/nginx/main.conf changed
+    2 changes, tier: live
+    ");
+}
+
+#[test]
+fn a_change_to_a_backend_setting_may_need_a_reboot() {
+    let before = model(80);
+    let mut after = before.clone();
+    after
+        .backends
+        .insert("nixos".into(), Value::Str("/srv/world#neptune".into()));
+
+    insta::assert_snapshot!(plan(&before, &after).to_string(), @r#"
+    backends
+      + nixos (tier: reboot)
+          "/srv/world#neptune"
+    1 change, tier: reboot
+    "#);
 }

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use distro_eval::Section;
+use distro_eval::{Unit, Value};
 
 use crate::Model;
 
@@ -55,6 +55,8 @@ pub struct Plan {
     pub packages: Vec<Change>,
     pub files: Vec<Change>,
     pub units: Vec<Change>,
+    pub base: Vec<Change>,
+    pub backends: Vec<Change>,
 }
 
 impl Plan {
@@ -76,6 +78,8 @@ impl Plan {
             ("packages", self.packages.as_slice()),
             ("files", self.files.as_slice()),
             ("units", self.units.as_slice()),
+            ("base", self.base.as_slice()),
+            ("backends", self.backends.as_slice()),
         ]
         .into_iter()
     }
@@ -121,32 +125,75 @@ impl fmt::Display for Plan {
 
 /// What changes going from `before` to `after`.
 pub fn plan(before: &Model, after: &Model) -> Plan {
+    let files = diff(&before.files, &after.files, |before, after| {
+        let detail = match (before, after) {
+            (Some(before), Some(after)) if before.mode != after.mode => {
+                vec![format!("mode {:o} -> {:o}", before.mode, after.mode)]
+            }
+            _ => Vec::new(),
+        };
+        (detail, Some(Tier::Live))
+    });
+    let mut units = diff(&before.units, &after.units, |before, after| {
+        (unit_details(before, after), Some(Tier::Live))
+    });
+    units.extend(restarts(before, after, &files));
+    units.sort_by(|a, b| a.name.cmp(&b.name));
     Plan {
         options: diff(&before.options, &after.options, |before, after| {
-            let detail = match (before, after) {
-                (Some(before), Some(after)) => format!("{before} -> {after}"),
-                (None, Some(value)) | (Some(value), None) => value.to_string(),
-                (None, None) => unreachable!("one side has the option"),
-            };
-            (vec![detail], None)
+            (vec![value_change(before, after)], None)
         }),
         packages: diff(
             &as_map(&before.packages),
             &as_map(&after.packages),
             |_, _| (Vec::new(), Some(Tier::Live)),
         ),
-        files: diff(&before.files, &after.files, |before, after| {
-            let detail = match (before, after) {
-                (Some(before), Some(after)) if before.mode != after.mode => {
-                    vec![format!("mode {:o} -> {:o}", before.mode, after.mode)]
-                }
-                _ => Vec::new(),
+        files,
+        units,
+        base: diff_with_names(&before.base, &after.base, |name, before, after| {
+            // The bootloader and kernel only change on the next boot.
+            let tier = if name == "boot" {
+                Tier::Reboot
+            } else {
+                Tier::Live
             };
-            (detail, Some(Tier::Live))
+            (vec![value_change(before, after)], Some(tier))
         }),
-        units: diff(&before.units, &after.units, |before, after| {
-            (unit_details(before, after), Some(Tier::Live))
+        // Nothing is known about what a backend-specific setting changes underneath.
+        backends: diff(&before.backends, &after.backends, |before, after| {
+            (vec![value_change(before, after)], Some(Tier::Reboot))
         }),
+    }
+}
+
+/// Units that are the same in both models but restart because a file they read changed.
+fn restarts(before: &Model, after: &Model, files: &[Change]) -> Vec<Change> {
+    after
+        .units
+        .iter()
+        .filter(|(name, unit)| before.units.get(*name) == Some(unit))
+        .filter_map(|(name, unit)| {
+            let changed: Vec<&str> = files
+                .iter()
+                .map(|change| change.name.as_str())
+                .filter(|path| unit.restart_on.contains(*path))
+                .collect();
+            (!changed.is_empty()).then(|| Change {
+                kind: ChangeKind::Changed,
+                name: name.clone(),
+                details: vec![format!("restarts: {} changed", changed.join(", "))],
+                tier: Some(Tier::Live),
+            })
+        })
+        .collect()
+}
+
+/// `old -> new`, or the one value when the other side has none.
+fn value_change(before: Option<&Value>, after: Option<&Value>) -> String {
+    match (before, after) {
+        (Some(before), Some(after)) => format!("{before} -> {after}"),
+        (None, Some(value)) | (Some(value), None) => value.to_string(),
+        (None, None) => unreachable!("one side has a value"),
     }
 }
 
@@ -160,6 +207,15 @@ fn diff<T: PartialEq>(
     after: &BTreeMap<String, T>,
     describe: impl Fn(Option<&T>, Option<&T>) -> (Vec<String>, Option<Tier>),
 ) -> Vec<Change> {
+    diff_with_names(before, after, |_, old, new| describe(old, new))
+}
+
+/// Like [`diff`], with the key passed to `describe` as well.
+fn diff_with_names<T: PartialEq>(
+    before: &BTreeMap<String, T>,
+    after: &BTreeMap<String, T>,
+    describe: impl Fn(&str, Option<&T>, Option<&T>) -> (Vec<String>, Option<Tier>),
+) -> Vec<Change> {
     let names: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
     names
         .into_iter()
@@ -171,7 +227,7 @@ fn diff<T: PartialEq>(
                 (Some(old), Some(new)) if old != new => ChangeKind::Changed,
                 _ => return None,
             };
-            let (details, tier) = describe(old, new);
+            let (details, tier) = describe(name, old, new);
             Some(Change {
                 kind,
                 name: name.clone(),
@@ -183,12 +239,12 @@ fn diff<T: PartialEq>(
 }
 
 /// The unit entries that differ, as `- Section.Key=value` and `+ Section.Key=value` lines.
-fn unit_details(before: Option<&Vec<Section>>, after: Option<&Vec<Section>>) -> Vec<String> {
+fn unit_details(before: Option<&Unit>, after: Option<&Unit>) -> Vec<String> {
     let (Some(before), Some(after)) = (before, after) else {
         return Vec::new();
     };
-    let entries = |sections: &Vec<Section>| -> Vec<String> {
-        sections
+    let entries = |unit: &Unit| -> Vec<String> {
+        unit.sections
             .iter()
             .flat_map(|section| {
                 section
@@ -196,6 +252,11 @@ fn unit_details(before: Option<&Vec<Section>>, after: Option<&Vec<Section>>) -> 
                     .iter()
                     .map(move |(key, value)| format!("{}.{key}={value}", section.name))
             })
+            .chain(
+                unit.restart_on
+                    .iter()
+                    .map(|path| format!("restarts on {path}")),
+            )
             .collect()
     };
     let (old, new) = (entries(before), entries(after));

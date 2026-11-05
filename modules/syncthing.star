@@ -31,7 +31,7 @@ def render(ctx):
                 "Restart": "on-failure",
             },
             "Install": {"WantedBy": "multi-user.target"},
-        })
+        }, restart_on = [cfg["data_dir"] + "/folders.json"])
         ctx.file(cfg["data_dir"] + "/folders.json", formats.json(cfg["folders"]))
         if cfg["user"] == "syncthing":
             ctx.default("users.syncthing", {

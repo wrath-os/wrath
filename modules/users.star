@@ -1,4 +1,4 @@
-# Users and groups, rendered as a sysusers.d file.
+# Users. The backend creates them and their home directories.
 
 user = types.record(
     description = option(types.str, optional = True),
@@ -15,18 +15,25 @@ def home_of(name, u):
     if "home" in u:
         return u["home"]
     if u["system"]:
-        return "/"
+        return "/var/empty"
     return "/home/" + name
 
 def render(ctx):
-    lines = []
+    users = {}
     for name, u in ctx.read("users").items():
-        uid = str(u["uid"]) if "uid" in u else "-"
-        description = u.get("description", "")
-        lines.append('u %s %s "%s" %s %s' % (name, uid, description, home_of(name, u), u["shell"]))
-        for group in u["extra_groups"]:
-            lines.append("m %s %s" % (name, group))
-    ctx.file("/etc/sysusers.d/distro.conf", "\n".join(lines) + "\n")
+        record = {
+            "description": u.get("description", ""),
+            "group": u["group"],
+            "extra_groups": u["extra_groups"],
+            "home": home_of(name, u),
+            "shell": u["shell"],
+            "system": u["system"],
+            "packages": u["packages"],
+        }
+        if "uid" in u:
+            record["uid"] = u["uid"]
+        users[name] = record
+    ctx.base("users", users)
 
 module(
     name = "users",

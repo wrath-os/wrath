@@ -41,7 +41,10 @@ fn plan_shows_the_changed_option_and_what_it_renders() {
       ~ services.nginx.main.port: 8080 -> 8081
     files
       ~ /etc/nginx/main.conf (tier: live)
-    2 changes, tier: live
+    units
+      ~ nginx-main.service (tier: live)
+          restarts: /etc/nginx/main.conf changed
+    3 changes, tier: live
     ");
 }
 
@@ -51,6 +54,22 @@ fn modules_render_the_same_model_in_any_load_order() {
 
     assert!(output.contains("PASS  s4"), "{output}");
     assert!(!output.contains("FAIL"), "{output}");
+}
+
+#[test]
+fn a_hybrid_system_names_its_nixos_configuration_and_modules() {
+    let plan = stdout(&distro(&["plan", "--config", "fixtures/configs/hybrid"]));
+    let backends: Vec<_> = plan
+        .lines()
+        .skip_while(|line| *line != "backends")
+        .skip(1)
+        .take_while(|line| line.starts_with(' '))
+        .collect();
+
+    insta::assert_snapshot!(backends.join("\n"), @r#"
+    + nixos (tier: reboot)
+        { flake = "/etc/nixos", host = "box", modules = ["/etc/nixos/vm-stubs.nix"] }
+    "#);
 }
 
 #[test]
@@ -127,5 +146,9 @@ fn bench_measures_plan_time() {
         "60000",
     ]));
 
-    assert!(output.contains("PASS 13 modules"), "{output}");
+    assert!(output.starts_with("PASS "), "{output}");
+    assert!(
+        output.contains(" modules: plan after a one-line change takes"),
+        "{output}"
+    );
 }

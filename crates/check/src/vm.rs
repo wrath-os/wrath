@@ -19,22 +19,140 @@ use serde::Deserialize;
 use vsock::VsockStream;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawVmSpec")]
 pub struct VmSpec {
-    /// Flake reference to a test image, relative to the repository root.
-    pub image: String,
-    #[serde(default)]
+    pub system: System,
     pub firmware: Firmware,
-    #[serde(default)]
     pub tpm: bool,
     /// Conditions to wait for, in order, before the expectations run.
-    #[serde(default)]
     pub wait_for: Vec<WaitFor>,
-    #[serde(default)]
     pub expect: Vec<Expect>,
-    /// Limit for booting and checking. Building the image is not counted.
-    #[serde(default = "default_timeout_secs")]
+    /// Run in order after the expectations.
+    pub steps: Vec<Step>,
+    /// Where the guest's store comes from.
+    pub store: Store,
+    /// Limit for booting and checking. Building the image and systems is not counted.
     pub timeout_secs: u64,
+}
+
+/// What the VM boots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum System {
+    /// A flake reference to a test image, relative to the repository root.
+    Image(String),
+    /// A configuration directory, built into a test image by `distro build`.
+    Config(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// Builds the configuration on the host, copies the system into the VM and switches to it.
+    /// The plan from the configuration before must contain each of `expect_plan`.
+    ApplyConfig {
+        config: String,
+        expect_plan: Vec<String>,
+    },
+    /// Runs a command in the VM, like an expectation.
+    Run(Expect),
+    /// The VM has not rebooted since it booted for the scenario.
+    ExpectNoReboot,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawVmSpec {
+    image: Option<String>,
+    config: Option<String>,
+    #[serde(default)]
+    firmware: Firmware,
+    #[serde(default)]
+    tpm: bool,
+    #[serde(default)]
+    wait_for: Vec<WaitFor>,
+    #[serde(default)]
+    expect: Vec<Expect>,
+    #[serde(default)]
+    steps: Vec<RawStep>,
+    #[serde(default)]
+    store: Store,
+    #[serde(default = "default_timeout_secs")]
+    timeout_secs: u64,
+}
+
+impl TryFrom<RawVmSpec> for VmSpec {
+    type Error = String;
+
+    fn try_from(raw: RawVmSpec) -> Result<Self, Self::Error> {
+        let system = match (raw.image, raw.config) {
+            (Some(image), None) => System::Image(image),
+            (None, Some(config)) => System::Config(config),
+            _ => return Err("name exactly one of `image` or `config`".into()),
+        };
+        Ok(Self {
+            system,
+            firmware: raw.firmware,
+            tpm: raw.tpm,
+            wait_for: raw.wait_for,
+            expect: raw.expect,
+            steps: raw
+                .steps
+                .into_iter()
+                .map(Step::try_from)
+                .collect::<Result<_, _>>()?,
+            store: raw.store,
+            timeout_secs: raw.timeout_secs,
+        })
+    }
+}
+
+/// Every field a step may have, so scenarios using steps from later milestones can wait for them.
+pub const STEP_FIELDS: [&str; 6] = [
+    "apply_config",
+    "expect_plan",
+    "run",
+    "exit",
+    "stdout_contains",
+    "expect_no_reboot",
+];
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStep {
+    apply_config: Option<String>,
+    #[serde(default)]
+    expect_plan: Vec<String>,
+    run: Option<String>,
+    #[serde(default)]
+    exit: i32,
+    stdout_contains: Option<String>,
+    expect_no_reboot: Option<bool>,
+}
+
+impl TryFrom<RawStep> for Step {
+    type Error = String;
+
+    fn try_from(raw: RawStep) -> Result<Self, Self::Error> {
+        let run_fields = raw.exit != 0 || raw.stdout_contains.is_some();
+        match (raw.apply_config, raw.run, raw.expect_no_reboot) {
+            (Some(config), None, None) if !run_fields => Ok(Self::ApplyConfig {
+                config,
+                expect_plan: raw.expect_plan,
+            }),
+            (None, Some(run), None) if raw.expect_plan.is_empty() => Ok(Self::Run(Expect {
+                run,
+                exit: raw.exit,
+                stdout_contains: raw.stdout_contains,
+            })),
+            (None, None, Some(true)) if !run_fields && raw.expect_plan.is_empty() => {
+                Ok(Self::ExpectNoReboot)
+            }
+            _ => Err(
+                "a step is one of `apply_config` (with `expect_plan`), `run` (with `exit` \
+                 and `stdout_contains`) or `expect_no_reboot = true`"
+                    .into(),
+            ),
+        }
+    }
 }
 
 fn default_timeout_secs() -> u64 {
@@ -48,6 +166,52 @@ pub enum Firmware {
     Uefi,
 }
 
+/// Where the guest's store comes from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Store {
+    /// A disk image holding the system's whole closure, booted with UEFI.
+    #[default]
+    Image,
+    /// The host's store, mounted read-only with the kernel booted directly. For systems too
+    /// large to copy into an image.
+    Host,
+}
+
+impl Store {
+    /// The build targets for booting and for switching to a system.
+    fn targets(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Image => ("test-image", "test-system"),
+            Self::Host => ("test-vm", "test-vm-system"),
+        }
+    }
+}
+
+/// How an image output directory boots, from what it contains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Boot {
+    /// `disk.qcow2`, a UEFI-bootable disk.
+    Disk,
+    /// `kernel`, `initrd` and `kernel-params`, for a system in the host's store.
+    Kernel,
+}
+
+impl Boot {
+    pub fn of(image: &Path) -> Result<Self, String> {
+        if image.join("disk.qcow2").is_file() {
+            Ok(Self::Disk)
+        } else if image.join("kernel").is_file() {
+            Ok(Self::Kernel)
+        } else {
+            Err(format!(
+                "{} has neither disk.qcow2 nor kernel",
+                image.display()
+            ))
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
 pub enum WaitFor {
@@ -55,6 +219,8 @@ pub enum WaitFor {
     Agent,
     /// A systemd unit is active.
     Unit(String),
+    /// A unit of a user's systemd instance is active.
+    UserUnit { user: String, unit: String },
 }
 
 impl TryFrom<String> for WaitFor {
@@ -64,12 +230,26 @@ impl TryFrom<String> for WaitFor {
         if value == "agent" {
             return Ok(Self::Agent);
         }
-        match value.strip_prefix("unit:") {
-            Some(unit) if !unit.is_empty() => Ok(Self::Unit(unit.to_owned())),
-            _ => Err(format!(
-                "unknown wait condition `{value}`: use `agent` or `unit:<name>`"
-            )),
+        if let Some(unit) = value.strip_prefix("unit:")
+            && !unit.is_empty()
+        {
+            return Ok(Self::Unit(unit.to_owned()));
         }
+        if let Some((user, unit)) = value
+            .strip_prefix("user-unit:")
+            .and_then(|rest| rest.split_once(':'))
+            && !user.is_empty()
+            && !unit.is_empty()
+        {
+            return Ok(Self::UserUnit {
+                user: user.to_owned(),
+                unit: unit.to_owned(),
+            });
+        }
+        Err(format!(
+            "unknown wait condition `{value}`: use `agent`, `unit:<name>` or \
+             `user-unit:<user>:<name>`"
+        ))
     }
 }
 
@@ -97,6 +277,17 @@ pub struct VmRun<'a> {
     pub image: &'a Path,
     /// Directory for this run's state and logs. Emptied before the run.
     pub dir: &'a Path,
+    /// For steps that build on the host.
+    pub host: Host<'a>,
+}
+
+/// Where host-side steps run.
+#[derive(Debug, Clone, Copy)]
+pub struct Host<'a> {
+    /// The `distro` binary that builds and plans configurations.
+    pub distro: &'a Path,
+    /// The repository root, which configuration paths are relative to.
+    pub workdir: &'a Path,
 }
 
 /// Builds a test image and returns its output directory.
@@ -118,12 +309,18 @@ pub fn build_image(reference: &str, workdir: &Path) -> Result<PathBuf, String> {
         ));
     }
     let out = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    if !out.join("disk.qcow2").is_file() {
-        return Err(format!(
-            "image `{reference}` has no disk.qcow2 in {}",
-            out.display()
-        ));
-    }
+    Boot::of(&out)?;
+    Ok(out)
+}
+
+/// Builds the test image for a configuration with `distro build`.
+pub fn build_config_image(host: Host<'_>, config: &str, store: Store) -> Result<PathBuf, String> {
+    let (image, _) = store.targets();
+    let out = PathBuf::from(
+        host.distro(&["build", "--config", config, "--target", image])?
+            .trim(),
+    );
+    Boot::of(&out)?;
     Ok(out)
 }
 
@@ -144,10 +341,11 @@ impl VmRun<'_> {
     pub fn execute(&self) -> Result<(), String> {
         let firmware = FirmwarePaths::from_env()?;
         check_kvm()?;
-        self.prepare_dir(&firmware)?;
+        let boot = Boot::of(self.image)?;
+        self.prepare_dir(boot, &firmware)?;
 
         let _tpm = self.spec.tpm.then(|| self.start_swtpm()).transpose()?;
-        let args = self.qemu_args(&firmware, pick_cid());
+        let args = self.qemu_args(boot, &firmware, pick_cid())?;
         self.write_interactive_script(&args)?;
 
         let log = fs::File::create(self.dir.join("qemu.log")).map_err(io_err("qemu.log"))?;
@@ -178,11 +376,15 @@ impl VmRun<'_> {
         result
     }
 
-    fn prepare_dir(&self, firmware: &FirmwarePaths) -> Result<(), String> {
+    fn prepare_dir(&self, boot: Boot, firmware: &FirmwarePaths) -> Result<(), String> {
         if self.dir.exists() {
             fs::remove_dir_all(self.dir).map_err(io_err("the old run directory"))?;
         }
         fs::create_dir_all(self.dir).map_err(io_err("the run directory"))?;
+        fs::create_dir(self.dir.join(SHARE)).map_err(io_err("the share directory"))?;
+        if boot == Boot::Kernel {
+            return Ok(());
+        }
 
         let backing = self.image.join("disk.qcow2");
         let status = Command::new("qemu-img")
@@ -227,14 +429,17 @@ impl VmRun<'_> {
         Ok(swtpm)
     }
 
-    fn qemu_args(&self, firmware: &FirmwarePaths, cid: u32) -> QemuArgs {
+    fn qemu_args(
+        &self,
+        boot: Boot,
+        firmware: &FirmwarePaths,
+        cid: u32,
+    ) -> Result<QemuArgs, String> {
         let mut argv: Vec<String> = [
             "-machine",
             "q35,accel=kvm",
             "-cpu",
             "host",
-            "-m",
-            "2048",
             "-smp",
             "2",
             "-display",
@@ -245,22 +450,45 @@ impl VmRun<'_> {
             "unix:qmp.sock,server=on,wait=off",
             "-serial",
             "file:console.log",
-            "-drive",
-            "if=virtio,format=qcow2,file=disk.qcow2",
-            "-drive",
-            "if=pflash,format=raw,unit=1,file=ovmf-vars.fd",
+            "-virtfs",
+            "local,path=share,mount_tag=distro-share,security_model=none,readonly=on",
         ]
         .map(str::to_owned)
         .into();
-        argv.extend([
-            "-drive".into(),
-            format!(
-                "if=pflash,format=raw,unit=0,readonly=on,file={}",
-                firmware.code.display()
-            ),
-            "-device".into(),
-            format!("vhost-vsock-pci,guest-cid={cid}"),
-        ]);
+        match boot {
+            Boot::Disk => argv.extend([
+                "-m".into(),
+                "2048".into(),
+                "-drive".into(),
+                "if=virtio,format=qcow2,file=disk.qcow2".into(),
+                "-drive".into(),
+                "if=pflash,format=raw,unit=1,file=ovmf-vars.fd".into(),
+                "-drive".into(),
+                format!(
+                    "if=pflash,format=raw,unit=0,readonly=on,file={}",
+                    firmware.code.display()
+                ),
+            ]),
+            Boot::Kernel => {
+                let params = fs::read_to_string(self.image.join("kernel-params"))
+                    .map_err(io_err("kernel-params"))?;
+                argv.extend([
+                    // The root filesystem and the store's writable layer are in memory.
+                    "-m".into(),
+                    "4096".into(),
+                    "-kernel".into(),
+                    self.image.join("kernel").display().to_string(),
+                    "-initrd".into(),
+                    self.image.join("initrd").display().to_string(),
+                    "-append".into(),
+                    params.trim().to_owned(),
+                    "-virtfs".into(),
+                    "local,path=/nix/store,mount_tag=nix-store,security_model=none,readonly=on"
+                        .into(),
+                ]);
+            }
+        }
+        argv.extend(["-device".into(), format!("vhost-vsock-pci,guest-cid={cid}")]);
         if self.spec.tpm {
             argv.extend(
                 [
@@ -274,7 +502,7 @@ impl VmRun<'_> {
                 .map(str::to_owned),
             );
         }
-        QemuArgs { argv, cid }
+        Ok(QemuArgs { argv, cid })
     }
 
     /// Writes `interactive.sh`, which boots this run's VM with the serial console on the terminal.
@@ -348,18 +576,37 @@ impl VmRun<'_> {
         for condition in &self.spec.wait_for {
             match condition {
                 WaitFor::Agent => {}
-                WaitFor::Unit(unit) => wait_for_unit(agent, unit, deadline)?,
+                WaitFor::Unit(unit) => {
+                    let argv = argv(&["systemctl", "is-active", unit]);
+                    wait_for_active(agent, argv, &format!("unit `{unit}`"), deadline)?;
+                }
+                WaitFor::UserUnit { user, unit } => {
+                    let machine = format!("{user}@");
+                    let argv = argv(&[
+                        "systemctl",
+                        "--user",
+                        "--machine",
+                        &machine,
+                        "is-active",
+                        unit,
+                    ]);
+                    let what = format!("unit `{unit}` of user `{user}`");
+                    wait_for_active(agent, argv, &what, deadline)?;
+                }
             }
         }
         for expect in &self.spec.expect {
             check_expect(agent, expect, deadline)?;
+        }
+        if !self.spec.steps.is_empty() {
+            self.run_steps(agent, deadline)?;
         }
         Ok(())
     }
 
     fn save_journal(&self, agent: &mut Client<VsockStream>) {
         let journal = Request::Run {
-            argv: ["journalctl", "-b", "--no-pager"].map(str::to_owned).into(),
+            argv: argv(&["journalctl", "-b", "--no-pager"]),
         };
         let deadline = Instant::now() + Duration::from_secs(30);
         if let Ok(Response::Exited { stdout, .. }) = request(agent, &journal, deadline) {
@@ -367,6 +614,171 @@ impl VmRun<'_> {
             let _ = fs::write(self.dir.join("journal.log"), stdout);
         }
     }
+}
+
+/// The directory in a run that the guest mounts read-only at [`GUEST_SHARE`].
+const SHARE: &str = "share";
+
+/// Where the guest sees the share.
+const GUEST_SHARE: &str = "/run/distro-share";
+
+/// The file in the share holding store paths for the guest to import.
+const EXPORT: &str = "paths.nar";
+
+impl VmRun<'_> {
+    fn run_steps(&self, agent: &mut Client<VsockStream>, deadline: Instant) -> Result<(), String> {
+        let booted = boot_id(agent, deadline)?;
+        let System::Config(initial) = &self.spec.system else {
+            return Err("steps need a scenario with `config`".into());
+        };
+        let mut current = initial.as_str();
+        for step in &self.spec.steps {
+            match step {
+                Step::ApplyConfig {
+                    config,
+                    expect_plan,
+                } => {
+                    self.apply_config(agent, current, config, expect_plan, deadline)?;
+                    current = config;
+                }
+                Step::Run(expect) => check_expect(agent, expect, deadline)?,
+                Step::ExpectNoReboot => {
+                    if boot_id(agent, deadline)? != booted {
+                        return Err("the VM rebooted".into());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks the plan from `current` to `config`, then builds `config` on the host, copies it
+    /// into the VM and switches to it.
+    fn apply_config(
+        &self,
+        agent: &mut Client<VsockStream>,
+        current: &str,
+        config: &str,
+        expect_plan: &[String],
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let plan = self
+            .host
+            .distro(&["plan", "--config", config, "--against", current])?;
+        if let Some(missing) = expect_plan
+            .iter()
+            .find(|needle| !plan.contains(needle.as_str()))
+        {
+            return Err(format!(
+                "the plan for `{config}` does not contain {missing:?}:\n{plan}"
+            ));
+        }
+        let (_, target) = self.spec.store.targets();
+        let system = self
+            .host
+            .distro(&["build", "--config", config, "--target", target])?;
+        let system = system.trim();
+        self.copy_in(agent, system, deadline)?;
+        let (code, _, stderr) = run_shell(agent, argv(&["distro", "activate", system]), deadline)?;
+        if code != Some(0) {
+            return Err(format!("switching to `{config}` failed: {}", stderr.trim()));
+        }
+        Ok(())
+    }
+
+    /// Copies the store paths of `system` that the guest lacks into the guest's store, as an
+    /// export in the share. The guest already has everything else they refer to.
+    fn copy_in(
+        &self,
+        agent: &mut Client<VsockStream>,
+        system: &str,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        // Dependencies come before the paths that refer to them, as importing needs.
+        let closure =
+            host_command(Command::new("nix-store").args(["--query", "--requisites", system]))?;
+        let mut check = argv(&["nix-store", "--check-validity", "--print-invalid"]);
+        check.extend(closure.lines().map(str::to_owned));
+        let (_, missing, _) = run_shell(agent, check, deadline)?;
+        if missing.trim().is_empty() {
+            return Ok(());
+        }
+        // A guest on the host's store already sees the paths and only needs them registered.
+        let (export, import) = match self.spec.store {
+            Store::Image => ("--export", "--import"),
+            Store::Host => ("--dump-db", "--load-db"),
+        };
+        let file =
+            fs::File::create(self.dir.join(SHARE).join(EXPORT)).map_err(io_err("the export"))?;
+        host_command(
+            Command::new("nix-store")
+                .arg(export)
+                .args(missing.lines())
+                .stdout(file),
+        )?;
+        let import = format!("nix-store {import} < {GUEST_SHARE}/{EXPORT}");
+        let (code, _, stderr) = run_shell(agent, argv(&["/bin/sh", "-c", &import]), deadline)?;
+        if code != Some(0) {
+            return Err(format!(
+                "copying {system} into the VM failed: {}",
+                stderr.trim()
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Host<'_> {
+    /// Runs `distro` on the host and returns its output.
+    fn distro(&self, args: &[&str]) -> Result<String, String> {
+        host_command(
+            Command::new(self.distro)
+                .args(args)
+                .current_dir(self.workdir),
+        )
+    }
+}
+
+/// Runs a host command to completion and returns its stdout, or its stderr on failure.
+fn host_command(command: &mut Command) -> Result<String, String> {
+    let shown = format!(
+        "{} {}",
+        command.get_program().to_string_lossy(),
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let output = command
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("could not run `{shown}`: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if output.status.success() {
+        return Ok(stdout);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "`{shown}` failed ({}):\n{}{}",
+        output.status,
+        stdout,
+        stderr.trim_end()
+    ))
+}
+
+/// Identifies the current boot of the guest.
+fn boot_id(agent: &mut Client<VsockStream>, deadline: Instant) -> Result<String, String> {
+    let (_, stdout, _) = run_shell(
+        agent,
+        argv(&["cat", "/proc/sys/kernel/random/boot_id"]),
+        deadline,
+    )?;
+    Ok(stdout.trim().to_owned())
+}
+
+fn argv(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
 struct QemuArgs {
@@ -465,20 +877,21 @@ fn run_shell(
     }
 }
 
-fn wait_for_unit(
+/// Polls `argv`, a `systemctl is-active` command, until it prints `active`.
+fn wait_for_active(
     agent: &mut Client<VsockStream>,
-    unit: &str,
+    argv: Vec<String>,
+    what: &str,
     deadline: Instant,
 ) -> Result<(), String> {
     loop {
-        let argv = ["systemctl", "is-active", unit].map(str::to_owned).into();
-        let (_, stdout, _) = run_shell(agent, argv, deadline)?;
+        let (_, stdout, _) = run_shell(agent, argv.clone(), deadline)?;
         let state = stdout.trim();
         if state == "active" {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("unit `{unit}` is not active (state: {state})"));
+            return Err(format!("{what} is not active (state: {state})"));
         }
         thread::sleep(Duration::from_millis(500));
     }
@@ -489,8 +902,7 @@ fn check_expect(
     expect: &Expect,
     deadline: Instant,
 ) -> Result<(), String> {
-    let argv = vec!["/bin/sh".into(), "-c".into(), expect.run.clone()];
-    let (code, stdout, stderr) = run_shell(agent, argv, deadline)?;
+    let (code, stdout, stderr) = run_shell(agent, argv(&["/bin/sh", "-c", &expect.run]), deadline)?;
     if code != Some(expect.exit) {
         let got = code.map_or_else(
             || "killed by a signal".to_owned(),
@@ -572,6 +984,33 @@ mod tests {
         assert!(spec.wait_for.is_empty());
         assert!(spec.expect.is_empty());
         assert_eq!(spec.timeout_secs, 300);
+        assert_eq!(spec.store, Store::Image);
+    }
+
+    #[test]
+    fn a_config_scenario_can_boot_from_the_host_store() {
+        let spec = spec("config = \"local/configs/x\"\nstore = \"host\"\n").unwrap();
+        assert_eq!(spec.store, Store::Host);
+
+        let err = spec_err("config = \"x\"\nstore = \"nfs\"\n");
+        assert!(err.contains("unknown variant `nfs`"), "{err}");
+    }
+
+    #[test]
+    fn an_image_directory_says_how_it_boots() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = Boot::of(dir.path()).unwrap_err();
+        assert!(err.contains("neither disk.qcow2 nor kernel"), "{err}");
+
+        fs::write(dir.path().join("kernel"), "").unwrap();
+        assert_eq!(Boot::of(dir.path()), Ok(Boot::Kernel));
+
+        fs::write(dir.path().join("disk.qcow2"), "").unwrap();
+        assert_eq!(Boot::of(dir.path()), Ok(Boot::Disk));
+    }
+
+    fn spec_err(text: &str) -> String {
+        spec(text).unwrap_err().message().to_owned()
     }
 
     #[test]
@@ -636,5 +1075,75 @@ mod tests {
     #[test]
     fn cids_are_never_reserved() {
         assert!(pick_cid() >= 1000);
+    }
+
+    #[test]
+    fn a_config_scenario_has_steps() {
+        let spec = spec(
+            r#"
+            config = "fixtures/configs/basic"
+            wait_for = ["user-unit:demo:niri.service"]
+            steps = [
+              { apply_config = "fixtures/configs/basic-changed", expect_plan = ["8081"] },
+              { run = "curl localhost", stdout_contains = "200" },
+              { expect_no_reboot = true },
+            ]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(spec.system, System::Config("fixtures/configs/basic".into()));
+        assert_eq!(
+            spec.wait_for,
+            [WaitFor::UserUnit {
+                user: "demo".into(),
+                unit: "niri.service".into()
+            }]
+        );
+        assert_eq!(
+            spec.steps,
+            [
+                Step::ApplyConfig {
+                    config: "fixtures/configs/basic-changed".into(),
+                    expect_plan: vec!["8081".into()],
+                },
+                Step::Run(Expect {
+                    run: "curl localhost".into(),
+                    exit: 0,
+                    stdout_contains: Some("200".into()),
+                }),
+                Step::ExpectNoReboot,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_scenario_names_an_image_or_a_config() {
+        for bad in ["", "image = \"x\"\nconfig = \"y\"\n"] {
+            let err = spec(bad).unwrap_err();
+            assert!(
+                err.message().contains("exactly one of `image` or `config`"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_step_does_one_thing() {
+        for bad in [
+            "config = \"c\"\nsteps = [{ run = \"x\", apply_config = \"y\" }]\n",
+            "config = \"c\"\nsteps = [{}]\n",
+            "config = \"c\"\nsteps = [{ expect_no_reboot = false }]\n",
+            "config = \"c\"\nsteps = [{ run = \"x\", expect_plan = [\"y\"] }]\n",
+        ] {
+            let err = spec(bad).unwrap_err();
+            assert!(err.message().contains("step"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn user_units_name_the_user() {
+        let err = spec("image = \"x\"\nwait_for = [\"user-unit:niri.service\"]\n").unwrap_err();
+        assert!(err.message().starts_with("unknown wait condition"), "{err}");
     }
 }

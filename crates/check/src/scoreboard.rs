@@ -99,7 +99,9 @@ mod tests {
             id: id.into(),
             milestone: milestone.into(),
             title: title.into(),
-            runner: Runner::Pending { reason: "later" },
+            runner: Runner::Pending {
+                reason: "later".into(),
+            },
             source: PathBuf::from(format!("acceptance/{milestone}/{id}.toml")),
         }
     }

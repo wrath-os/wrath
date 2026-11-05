@@ -184,6 +184,10 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         let _ = resolver.resolve(&path, &spec, None);
     }
     diagnostics.extend(resolver.diagnostics);
+    if diagnostics.is_empty() {
+        diagnostics.extend(shared_outputs(&resolver.rendered));
+        diagnostics.extend(unknown_restart_files(&resolver.rendered));
+    }
 
     if !diagnostics.is_empty() {
         return Err(EvalError {
@@ -201,6 +205,67 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             .map(|rendered| rendered.expect("every module rendered without errors"))
             .collect(),
     })
+}
+
+/// Files, units and base settings that more than one module renders. Each has one owner, so
+/// the modules have to settle it between them.
+fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
+    let mut owners: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+    for rendered in rendered.iter().flatten() {
+        let output = &rendered.output;
+        let names = [
+            ("file", output.files.keys().collect::<Vec<_>>()),
+            ("unit", output.units.keys().collect()),
+            ("base setting", output.base.keys().collect()),
+            ("backend setting", output.backends.keys().collect()),
+        ];
+        for (kind, keys) in names {
+            for key in keys {
+                owners
+                    .entry((kind, key.as_str()))
+                    .or_default()
+                    .push(&rendered.name);
+            }
+        }
+    }
+    owners
+        .into_iter()
+        .filter(|(_, modules)| modules.len() > 1)
+        .map(|((kind, key), modules)| {
+            let modules: Vec<String> = modules.iter().map(|name| format!("`{name}`")).collect();
+            Diagnostic::error(format!(
+                "{kind} `{key}` is rendered by modules {}",
+                modules.join(" and ")
+            ))
+            .note("each one belongs to a single module; the others can set its options instead")
+        })
+        .collect()
+}
+
+/// Units that restart on files no module renders, which is most likely a typo.
+fn unknown_restart_files(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
+    let files: BTreeSet<&String> = rendered
+        .iter()
+        .flatten()
+        .flat_map(|rendered| rendered.output.files.keys())
+        .collect();
+    rendered
+        .iter()
+        .flatten()
+        .flat_map(|rendered| {
+            rendered.output.units.iter().flat_map(move |(name, unit)| {
+                unit.restart_on
+                    .iter()
+                    .map(move |path| (&rendered.name, name, path))
+            })
+        })
+        .filter(|(_, _, path)| !files.contains(path))
+        .map(|(module, unit, path)| {
+            Diagnostic::error(format!(
+                "unit `{unit}` from module `{module}` restarts on `{path}`, which no module renders"
+            ))
+        })
+        .collect()
 }
 
 fn overlaps(a: &OptionPath, b: &OptionPath) -> bool {

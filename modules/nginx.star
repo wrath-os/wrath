@@ -34,16 +34,26 @@ def render(ctx):
         servers = [server(cfg["port"], s) for s in cfg["sites"].values()]
         path = "/etc/nginx/%s.conf" % name
         ctx.package("nginx")
-        ctx.file(path, "events {}\nhttp {\n" + "\n".join(servers) + "\n}\n")
+        logs = "/var/log/nginx/" + name
+        ctx.file(path, "\n".join([
+            "pid /run/nginx-%s/nginx.pid;" % name,
+            "error_log %s-error.log;" % logs,
+            "events {}",
+            "http {",
+            "  access_log %s-access.log;" % logs,
+        ] + servers + ["}"]) + "\n")
         ctx.unit("nginx-%s.service" % name, {
             "Unit": {"Description": "nginx (%s)" % name, "After": "network.target"},
             "Service": {
                 "ExecStart": "nginx -c %s -g 'daemon off;'" % path,
                 "ExecReload": "nginx -c %s -s reload" % path,
                 "Restart": "on-failure",
+                "RuntimeDirectory": "nginx-%s" % name,
+                "LogsDirectory": "nginx",
+                "PrivateTmp": "yes",
             },
             "Install": {"WantedBy": "multi-user.target"},
-        })
+        }, restart_on = [path])
         if cfg["open_firewall"]:
             ports.append(cfg["port"])
     if ports:

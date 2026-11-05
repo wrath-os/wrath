@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::scenario::{CommandSpec, Runner, Scenario};
-use crate::vm::{self, Reproduction, VmRun, VmSpec};
+use crate::vm::{self, Host, Reproduction, System, VmRun, VmSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -77,17 +77,23 @@ pub fn run(scenario: &Scenario, ctx: &RunContext) -> Outcome {
             }
         }
         Runner::Vm(spec) => run_vm(scenario, spec, ctx),
-        Runner::Pending { reason } => Outcome::Pending((*reason).to_owned()),
+        Runner::Pending { reason } => Outcome::Pending(reason.clone()),
     }
 }
 
 fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
-    let image = match &ctx.image_override {
-        Some(image) => image.clone(),
-        None => match vm::build_image(&spec.image, &ctx.workdir) {
-            Ok(image) => image,
-            Err(reason) => return fail(reason),
-        },
+    let host = Host {
+        distro: &ctx.distro_exe,
+        workdir: &ctx.workdir,
+    };
+    let built = match (&ctx.image_override, &spec.system) {
+        (Some(image), _) => Ok(image.clone()),
+        (None, System::Image(reference)) => vm::build_image(reference, &ctx.workdir),
+        (None, System::Config(config)) => vm::build_config_image(host, config, spec.store),
+    };
+    let image = match built {
+        Ok(image) => image,
+        Err(reason) => return fail(reason),
     };
     let name = if scenario.milestone.is_empty() {
         scenario.id.clone()
@@ -99,6 +105,7 @@ fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
         spec,
         image: &image,
         dir: &dir,
+        host,
     };
     match run.execute() {
         Ok(()) => Outcome::Pass,
@@ -357,7 +364,7 @@ mod tests {
     #[test]
     fn pending_runner_reports_its_reason() {
         let pending = scenario(Runner::Pending {
-            reason: "no `nspawn` runner yet",
+            reason: "no `nspawn` runner yet".into(),
         });
 
         assert_eq!(

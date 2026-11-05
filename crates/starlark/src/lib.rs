@@ -427,6 +427,25 @@ fn set_option(
     Ok(NoneType)
 }
 
+/// Inserts a keyed setting into the map of the output that `pick` selects. Each key can be set
+/// once per module.
+fn insert_setting(
+    eval: &mut Evaluator<'_, '_, '_>,
+    what: &str,
+    key: &str,
+    value: StarValue<'_>,
+    pick: fn(&mut Output) -> &mut std::collections::BTreeMap<String, Value>,
+) -> anyhow::Result<NoneType> {
+    let (rendering, at) = rendering(eval)?;
+    let value = convert::from_starlark(value)
+        .map_err(|e| rendering.invalid(at, format!("{what} `{key}`: {e}")))?;
+    let replaced = pick(&mut rendering.output.borrow_mut()).insert(key.to_owned(), value);
+    if replaced.is_some() {
+        return Err(rendering.invalid(at, format!("{what} `{key}` is set twice")));
+    }
+    Ok(NoneType)
+}
+
 #[starlark_module]
 fn ctx_methods(builder: &mut MethodsBuilder) {
     /// The value of an option, or a dictionary of everything under a table of options.
@@ -477,17 +496,25 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         set_option(eval, path, items, Level::Normal, true)
     }
 
-    /// Renders a systemd unit from a dictionary of sections.
+    /// Renders a systemd unit from a dictionary of sections. `restart_on` lists files the unit
+    /// reads, so it restarts when one of them changes.
     fn unit<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] name: &str,
         #[starlark(require = pos)] sections: StarValue<'v>,
+        #[starlark(require = named)] restart_on: Option<StarValue<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let (rendering, at) = rendering(eval)?;
-        let unit = convert::from_starlark(sections)
+        let mut unit = convert::from_starlark(sections)
             .and_then(|sections| Unit::from_value(&sections))
             .map_err(|e| rendering.invalid(at, format!("unit `{name}`: {e}")))?;
+        if let Some(paths) = restart_on {
+            unit.restart_on = strings(paths)
+                .map_err(|e| rendering.invalid(at, format!("unit `{name}`: restart_on: {e}")))?
+                .into_iter()
+                .collect();
+        }
         let replaced = rendering
             .output
             .borrow_mut()
@@ -521,6 +548,29 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
             return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
         }
         Ok(NoneType)
+    }
+
+    /// Sets one top-level setting of the base system the backend provides, such as `audio`.
+    fn base<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] key: &str,
+        #[starlark(require = pos)] value: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        insert_setting(eval, "base setting", key, value, |output| &mut output.base)
+    }
+
+    /// Sets what only one backend understands, such as `nixos`. A system with it set can't move
+    /// to another backend until it's gone.
+    fn backend<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] name: &str,
+        #[starlark(require = pos)] value: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        insert_setting(eval, "backend setting", name, value, |output| {
+            &mut output.backends
+        })
     }
 
     /// Adds a package to the system.

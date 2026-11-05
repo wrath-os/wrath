@@ -71,6 +71,12 @@ pub struct Output {
     pub files: BTreeMap<String, File>,
     /// systemd units by name, such as `syncthing.service`.
     pub units: BTreeMap<String, Unit>,
+    /// Settings for the base system the backend provides, by top-level key, such as `audio`.
+    /// Each key belongs to one module.
+    pub base: BTreeMap<String, Value>,
+    /// Settings only one backend understands, by backend name, such as `nixos`. A config that
+    /// has them is tied to that backend until they are gone.
+    pub backends: BTreeMap<String, Value>,
 }
 
 /// A value a module sets for an option, or for a table of options.
@@ -92,6 +98,8 @@ pub struct File {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Unit {
     pub sections: Vec<Section>,
+    /// Files the unit reads. When one changes, the unit restarts even if its own file didn't.
+    pub restart_on: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -140,7 +148,10 @@ impl Unit {
                 })
             })
             .collect::<Result<_, String>>()?;
-        Ok(Self { sections })
+        Ok(Self {
+            sections,
+            restart_on: BTreeSet::new(),
+        })
     }
 }
 

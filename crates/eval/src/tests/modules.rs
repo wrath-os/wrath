@@ -2,7 +2,7 @@
 
 use super::eval_with;
 use crate::{
-    ConfigReader, Diagnostic, Level, Module, OptionPath, OptionSpec, Output, ReadError,
+    ConfigReader, Diagnostic, File, Level, Module, OptionPath, OptionSpec, Output, ReadError,
     RenderError, Section, Setting, Type, Unit, Value, explain,
 };
 
@@ -113,6 +113,7 @@ fn syncthing() -> Box<dyn Module> {
                                 ),
                             )],
                         }],
+                        ..Unit::default()
                     },
                 );
             }
@@ -419,5 +420,85 @@ fn an_empty_table_from_a_module_is_an_empty_list_where_a_list_is_expected() {
     assert_eq!(
         evaluation.get("users.john.packages"),
         Some(&Value::List(vec![]))
+    );
+}
+
+#[test]
+fn two_modules_rendering_the_same_output_name_both() {
+    let render = |_: &mut dyn ConfigReader| {
+        let mut output = Output::default();
+        output.files.insert(
+            "/etc/motd".into(),
+            File {
+                text: "hi\n".into(),
+                mode: 0o644,
+            },
+        );
+        output.units.insert("app.service".into(), Unit::default());
+        output.base.insert("audio".into(), Value::Bool(true));
+        Ok(output)
+    };
+    let first = module("first", vec![], &[], render);
+    let second = module("second", vec![], &[], render);
+
+    insta::assert_snapshot!(eval_with(&[SYSTEM], &[first, second]).unwrap_err(), @"
+    error: base setting `audio` is rendered by modules `first` and `second`
+     = each one belongs to a single module; the others can set its options instead
+
+    error: file `/etc/motd` is rendered by modules `first` and `second`
+     = each one belongs to a single module; the others can set its options instead
+
+    error: unit `app.service` is rendered by modules `first` and `second`
+     = each one belongs to a single module; the others can set its options instead
+    ");
+}
+
+#[test]
+fn modules_contribute_base_settings() {
+    let audio = module("audio", vec![], &[], |_| {
+        let mut output = Output::default();
+        output.base.insert("audio".into(), Value::Bool(true));
+        Ok(output)
+    });
+
+    let evaluation = eval_with(&[SYSTEM], &[audio]).unwrap();
+
+    assert_eq!(
+        evaluation.modules()[0].output.base["audio"],
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn a_unit_restarts_on_files_some_module_renders() {
+    let render = |restart_on: &'static str| {
+        move |_: &mut dyn ConfigReader| {
+            let mut output = Output::default();
+            output.files.insert(
+                "/etc/app.conf".into(),
+                File {
+                    text: "x\n".into(),
+                    mode: 0o644,
+                },
+            );
+            output.units.insert(
+                "app.service".into(),
+                Unit {
+                    restart_on: [restart_on.to_owned()].into(),
+                    ..Unit::default()
+                },
+            );
+            Ok(output)
+        }
+    };
+
+    eval_with(
+        &[SYSTEM],
+        &[module("app", vec![], &[], render("/etc/app.conf"))],
+    )
+    .unwrap();
+    insta::assert_snapshot!(
+        eval_with(&[SYSTEM], &[module("app", vec![], &[], render("/etc/ap.conf"))]).unwrap_err(),
+        @"error: unit `app.service` from module `app` restarts on `/etc/ap.conf`, which no module renders"
     );
 }

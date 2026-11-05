@@ -2,4 +2,4 @@
 source: crates/check/src/scenario.rs
 expression: err.to_string()
 ---
-m1/example.toml: [vm]: unknown field `ram`, expected one of `image`, `firmware`, `tpm`, `wait_for`, `expect`, `timeout_secs`
+m1/example.toml: [vm]: unknown field `ram`, expected one of `image`, `config`, `firmware`, `tpm`, `wait_for`, `expect`, `steps`, `store`, `timeout_secs`

@@ -8,12 +8,12 @@ mod plan;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{Evaluation, RuntimePart, Section, Value, formats};
+use distro_eval::{Evaluation, RuntimePart, Section, Unit, Value, formats};
 
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 1;
+pub const VERSION: i64 = 2;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -21,7 +21,11 @@ pub struct Model {
     pub options: BTreeMap<String, Value>,
     pub packages: BTreeSet<String>,
     pub files: BTreeMap<String, File>,
-    pub units: BTreeMap<String, Vec<Section>>,
+    pub units: BTreeMap<String, Unit>,
+    /// Settings for the base system the backend provides, such as `audio` or `session`.
+    pub base: BTreeMap<String, Value>,
+    /// Settings only one backend understands, by backend name.
+    pub backends: BTreeMap<String, Value>,
     /// Machine facts the configuration read, by dotted path.
     pub facts: BTreeMap<String, Value>,
 }
@@ -57,12 +61,9 @@ impl Model {
                 };
                 (path.clone(), file)
             }));
-            model.units.extend(
-                output
-                    .units
-                    .iter()
-                    .map(|(name, unit)| (name.clone(), unit.sections.clone())),
-            );
+            model.base.extend(output.base.clone());
+            model.backends.extend(output.backends.clone());
+            model.units.extend(output.units.clone());
         }
         model
     }
@@ -88,9 +89,14 @@ impl Model {
         let units = self
             .units
             .iter()
-            .map(|(name, sections)| {
-                let sections = sections.iter().map(section_value).collect();
-                (name.clone(), Value::List(sections))
+            .map(|(name, unit)| {
+                let sections = unit.sections.iter().map(section_value).collect();
+                let restart_on = unit.restart_on.iter().cloned().map(Value::Str).collect();
+                let unit = table([
+                    ("sections", Value::List(sections)),
+                    ("restart_on", Value::List(restart_on)),
+                ]);
+                (name.clone(), unit)
             })
             .collect();
         table([
@@ -99,6 +105,8 @@ impl Model {
             ("packages", Value::List(packages)),
             ("files", Value::Table(files)),
             ("units", Value::Table(units)),
+            ("base", spell_out_entries(&self.base)),
+            ("backends", spell_out_entries(&self.backends)),
             ("facts", spell_out_entries(&self.facts)),
         ])
     }

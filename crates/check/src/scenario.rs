@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::vm::VmSpec;
+use crate::vm::{STEP_FIELDS, VmSpec};
 
 /// Directory inside the acceptance directory that holds human sign-offs, not scenarios.
 pub const SIGNOFF_DIR: &str = "signoff";
@@ -68,7 +68,7 @@ pub enum Runner {
     Vm(VmSpec),
     /// Declared, but not runnable until a later milestone adds what it needs.
     Pending {
-        reason: &'static str,
+        reason: String,
     },
 }
 
@@ -144,7 +144,7 @@ pub fn parse_scenario(
         raw.manual.map(Runner::Manual),
         vm,
         raw.nspawn.map(|_| Runner::Pending {
-            reason: "no `nspawn` runner yet",
+            reason: "no `nspawn` runner yet".into(),
         }),
     ]
     .into_iter()
@@ -176,9 +176,17 @@ pub fn parse_scenario(
 }
 
 fn vm_runner(path: &Path, table: toml::Table) -> Result<Runner, LoadError> {
-    if table.contains_key("config") {
+    // Scenarios for later milestones use steps that don't exist yet; they wait for them.
+    let steps = table.get("steps").and_then(toml::Value::as_array);
+    let unknown = steps
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_table)
+        .flat_map(toml::Table::keys)
+        .find(|key| !STEP_FIELDS.contains(&key.as_str()));
+    if let Some(field) = unknown {
         return Ok(Runner::Pending {
-            reason: "vm scenarios with `config` need the NixOS backend (m3)",
+            reason: format!("step field `{field}` has no runner yet"),
         });
     }
     toml::Value::Table(table)
@@ -272,6 +280,7 @@ fn file_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vm::System;
 
     fn parse(text: &str) -> Result<Scenario, LoadError> {
         parse_scenario(Path::new("m1/example.toml"), "example", "m1", text)
@@ -326,25 +335,38 @@ mod tests {
         let Runner::Vm(spec) = scenario.runner else {
             panic!("expected a vm runner");
         };
-        assert_eq!(spec.image, "factory/nix#fixture");
+        assert_eq!(spec.system, System::Image("factory/nix#fixture".into()));
         assert_eq!(scenario.source, Path::new("m1/example.toml"));
     }
 
     #[test]
-    fn vm_with_config_and_nspawn_are_pending() {
+    fn vm_with_config_gets_the_vm_runner_and_nspawn_is_pending() {
         let vm = parse("title = \"t\"\n[vm]\nconfig = \"x\"\nsteps = []\n").unwrap();
-        assert_eq!(
-            vm.runner,
-            Runner::Pending {
-                reason: "vm scenarios with `config` need the NixOS backend (m3)"
-            }
-        );
+        let Runner::Vm(spec) = vm.runner else {
+            panic!("expected a vm runner");
+        };
+        assert_eq!(spec.system, System::Config("x".into()));
 
         let nspawn = parse("title = \"t\"\n[nspawn]\n").unwrap();
         assert_eq!(
             nspawn.runner,
             Runner::Pending {
-                reason: "no `nspawn` runner yet"
+                reason: "no `nspawn` runner yet".into()
+            }
+        );
+    }
+
+    #[test]
+    fn vm_steps_no_runner_supports_yet_are_pending() {
+        let vm = parse(
+            "title = \"t\"\n[vm]\nconfig = \"x\"\nsteps = [{ run = \"a\" }, { apply_user_config = \"y\", user = \"demo\" }]\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            vm.runner,
+            Runner::Pending {
+                reason: "step field `apply_user_config` has no runner yet".into()
             }
         );
     }

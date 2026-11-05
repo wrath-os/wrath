@@ -91,7 +91,7 @@ fn settings_point_at_the_exact_call() {
         explain(&evaluation, Some(&OptionPath::parse("networking.firewall.allowed_tcp_ports").unwrap())).unwrap(),
         @"
     networking.firewall.allowed_tcp_ports = [80, 22000]
-      set by module `nginx` at modules/nginx.star:50:9: [80]
+      set by module `nginx` at modules/nginx.star:60:9: [80]
       set by module `syncthing` at modules/syncthing.star:44:9: [22000]
       overrides [], default
     "
