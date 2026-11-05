@@ -1,0 +1,5 @@
+title = "why explains every resolved value with the file and line that set it"
+
+[command]
+run = ["distro", "why", "--config", "fixtures/configs/basic", "--all"]
+stdout_contains = ["system.hostname", "fixtures/configs/basic/system.toml:"]

@@ -1,0 +1,15 @@
+[[milestone]]
+id = "m1"
+title = "Harness"
+
+[[milestone]]
+id = "m2"
+title = "Compiler core and language choice"
+
+[[milestone]]
+id = "m3"
+title = "NixOS backend in a VM"
+
+[[milestone]]
+id = "m4"
+title = "Daily driver"

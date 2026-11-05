@@ -1,0 +1,5 @@
+---
+source: crates/check/src/scenario.rs
+expression: err.to_string()
+---
+m1/example.toml: more than one runner: keep exactly one of [command], [manual], [vm] or [nspawn]

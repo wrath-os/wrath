@@ -1,0 +1,6 @@
+title = "Every known-bad config produces its expected error message"
+notes = "Each config in fixtures/bad-configs has an expected-error file next to it."
+
+[command]
+run = ["distro", "check", "fixtures/bad-configs"]
+stdout_contains = ["PASS"]

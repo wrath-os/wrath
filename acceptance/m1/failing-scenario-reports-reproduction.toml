@@ -1,0 +1,8 @@
+title = "A scenario that should fail is reported as failing, with a working reproduction command"
+notes = "The reproduction command itself is verified by running it in m1/reproduction-command-works."
+
+[command]
+run = ["distro", "check", "scenarios/fixtures/always-fails.toml"]
+exit = 1
+stdout_contains = ["FAIL", "reproduce:", "logs:"]
+timeout_secs = 600

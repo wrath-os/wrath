@@ -1,0 +1,5 @@
+title = "systemd boots in an nspawn container and the guest agent answers"
+
+[nspawn]
+image = "factory/nix#harness-fixture"
+wait_for = ["agent", "unit:multi-user.target"]

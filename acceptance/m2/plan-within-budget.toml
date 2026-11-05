@@ -1,0 +1,7 @@
+title = "A warm plan after a one-line change finishes within budget with about 150 modules loaded"
+notes = "The budget is provisional until spike S1 reports measurements."
+
+[command]
+run = ["distro", "check", "scenarios/plan-budget.toml"]
+stdout_contains = ["PASS"]
+timeout_secs = 300

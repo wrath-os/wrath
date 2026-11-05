@@ -1,0 +1,9 @@
+title = "A config change shows up in plan and applies to a running VM without a reboot"
+
+[vm]
+config = "fixtures/configs/basic"
+steps = [
+  { apply_config = "fixtures/configs/basic-changed", expect_plan = ["8081", "tier: live"] },
+  { run = "curl -s -o /dev/null -w '%{http_code}' http://localhost:8081", stdout_contains = "200" },
+  { expect_no_reboot = true },
+]

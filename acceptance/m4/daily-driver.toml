@@ -1,0 +1,4 @@
+title = "The author runs the laptop on this config daily"
+
+[manual]
+confirm = "The author has used the laptop daily on this config for two weeks, and the repair log has been reviewed."

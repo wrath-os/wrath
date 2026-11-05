@@ -1,0 +1,14 @@
+---
+source: crates/check/src/scoreboard.rs
+expression: "render(&milestones, &results)"
+---
+M1  Harness  1/2
+  PASS  harness-boots    A NixOS image boots
+  FAIL  failure-reports  A failure is reported
+                         exit code 2, expected 1: error: unrecognized subcommand
+
+M2  Compiler core  0/1
+  TODO  plan             Plan shows the diff
+                         no `vm` runner yet
+
+1/3 scenarios passing

@@ -1,0 +1,8 @@
+title = "A plain NixOS image boots under QEMU with UEFI and a TPM, and the guest agent answers"
+
+[vm]
+image = "factory/nix#harness-fixture"
+firmware = "uefi"
+tpm = true
+wait_for = ["agent", "unit:multi-user.target"]
+expect = [{ run = "systemctl is-system-running --wait", stdout_contains = "running" }]

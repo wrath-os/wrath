@@ -1,0 +1,5 @@
+title = "plan compares two configs and shows the changed value and its activation tier"
+
+[command]
+run = ["distro", "plan", "--config", "fixtures/configs/basic-changed", "--against", "fixtures/configs/basic"]
+stdout_contains = ["services.nginx.main.port", "8080", "8081", "tier: live"]

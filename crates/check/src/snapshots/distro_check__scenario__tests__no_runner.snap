@@ -1,0 +1,5 @@
+---
+source: crates/check/src/scenario.rs
+expression: err.to_string()
+---
+m1/example.toml: no runner: add one of [command], [manual], [vm] or [nspawn]

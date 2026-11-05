@@ -1,0 +1,21 @@
+[package]
+name = "distro-cli"
+description = "The distro command-line interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "distro"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+distro-check.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
