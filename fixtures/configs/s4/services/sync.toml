@@ -4,3 +4,11 @@ open_firewall = true
 [services.syncthing.main.folders.notes]
 path = "/home/john/notes"
 devices = ["desktop", "phone"]
+
+[services.nginx.main]
+enable = true
+open_firewall = true
+
+[services.nginx.main.sites.sync]
+domains = ["sync.${system.hostname}.lan"]
+proxy = "http://127.0.0.1:${services.syncthing.main.port}"

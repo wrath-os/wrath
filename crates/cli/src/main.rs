@@ -4,6 +4,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
+use distro_eval::{Evaluation, OptionPath};
+use distro_model::Model;
+
+mod system;
 
 #[derive(Parser)]
 #[command(name = "distro", version, about = "Declarative system configuration")]
@@ -35,6 +39,32 @@ enum Command {
         #[arg(long)]
         run_reproduction: bool,
     },
+    /// Show what would change going from one configuration to another
+    Plan {
+        /// The configuration to plan
+        #[arg(long)]
+        config: PathBuf,
+        /// The configuration to compare against; without it, everything is new
+        #[arg(long)]
+        against: Option<PathBuf>,
+        /// Directory of modules [default: modules/luau under the root]
+        #[arg(long)]
+        modules: Option<PathBuf>,
+    },
+    /// Show where option values come from
+    Why {
+        /// The configuration to explain
+        #[arg(long)]
+        config: PathBuf,
+        /// Directory of modules [default: modules/luau under the root]
+        #[arg(long)]
+        modules: Option<PathBuf>,
+        /// Explain every option
+        #[arg(long, conflicts_with = "option", required_unless_present = "option")]
+        all: bool,
+        /// The option, or table of options, to explain
+        option: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -46,6 +76,21 @@ fn main() -> ExitCode {
             image,
             run_reproduction,
         } => check(&cli.root, &files, image, run_reproduction),
+        Command::Plan {
+            config,
+            against,
+            modules,
+        } => plan(
+            &config,
+            against.as_deref(),
+            &modules_dir(&cli.root, modules),
+        ),
+        Command::Why {
+            config,
+            modules,
+            all: _,
+            option,
+        } => why(&config, &modules_dir(&cli.root, modules), option.as_deref()),
     };
     match result {
         Ok(code) => code,
@@ -150,4 +195,47 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     distro_check::parse_scenario(&path, &id, "", &text).map_err(|e| e.to_string())
+}
+
+fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
+    modules.unwrap_or_else(|| {
+        let dir = root.join("modules/luau");
+        dir.strip_prefix(".").map(Path::to_path_buf).unwrap_or(dir)
+    })
+}
+
+/// Evaluates a configuration, or prints why it can't and returns `None`.
+fn evaluate(config: &Path, modules: &Path) -> Option<Evaluation> {
+    system::evaluate_dir(config, modules)
+        .inspect_err(|errors| eprint!("{errors}"))
+        .ok()
+}
+
+fn model(config: &Path, modules: &Path) -> Option<Model> {
+    evaluate(config, modules).map(|evaluation| Model::from_evaluation(&evaluation))
+}
+
+fn plan(config: &Path, against: Option<&Path>, modules: &Path) -> Result<ExitCode, String> {
+    let Some(after) = model(config, modules) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    let before = match against {
+        Some(against) => match model(against, modules) {
+            Some(before) => before,
+            None => return Ok(ExitCode::FAILURE),
+        },
+        None => Model::default(),
+    };
+    println!("model {}", &after.hash()[..16]);
+    print!("{}", distro_model::plan(&before, &after));
+    Ok(ExitCode::SUCCESS)
+}
+
+fn why(config: &Path, modules: &Path, option: Option<&str>) -> Result<ExitCode, String> {
+    let prefix = option.map(OptionPath::parse).transpose()?;
+    let Some(evaluation) = evaluate(config, modules) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    print!("{}", distro_eval::explain(&evaluation, prefix.as_ref())?);
+    Ok(ExitCode::SUCCESS)
 }

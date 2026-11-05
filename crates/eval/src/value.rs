@@ -1,5 +1,6 @@
 //! Resolved option values.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 
@@ -32,6 +33,36 @@ impl Value {
             Self::Table(entries) => entries.values().any(Self::is_runtime),
             Self::Bool(_) | Self::Int(_) | Self::Float(_) | Self::Str(_) => false,
         }
+    }
+
+    /// A total order for sorting sets: by kind, then numbers numerically and strings by bytes,
+    /// then anything else by its TOML form.
+    pub fn canonical_cmp(&self, other: &Self) -> Ordering {
+        let rank = |value: &Self| match value {
+            Self::Bool(_) => 0,
+            Self::Int(_) | Self::Float(_) => 1,
+            Self::Str(_) => 2,
+            Self::List(_) => 3,
+            Self::Table(_) => 4,
+            Self::Runtime(_) => 5,
+        };
+        let number = |value: &Self| match value {
+            // Precision beyond 2^53 doesn't matter for ordering a set.
+            #[allow(clippy::cast_precision_loss)]
+            Self::Int(int) => Some(*int as f64),
+            Self::Float(float) => Some(*float),
+            _ => None,
+        };
+        rank(self)
+            .cmp(&rank(other))
+            .then_with(|| match (self, other) {
+                (Self::Str(a), Self::Str(b)) => a.cmp(b),
+                _ => match (number(self), number(other)) {
+                    (Some(a), Some(b)) => a.total_cmp(&b),
+                    _ => Ordering::Equal,
+                },
+            })
+            .then_with(|| self.to_string().cmp(&other.to_string()))
     }
 
     /// A short description of the kind of value, for error messages.
@@ -140,6 +171,24 @@ mod tests {
         assert_eq!(
             list.to_string(),
             r#"["say \"hi\"\n", true, { "a b" = 1.0, port = 80 }]"#
+        );
+    }
+
+    #[test]
+    fn sets_sort_numbers_numerically_and_kinds_apart() {
+        let mut values = vec![
+            Value::Int(80),
+            Value::Str("b".into()),
+            Value::Int(22000),
+            Value::Float(443.5),
+            Value::Str("a".into()),
+            Value::Bool(true),
+        ];
+        values.sort_by(Value::canonical_cmp);
+
+        assert_eq!(
+            Value::List(values).to_string(),
+            r#"[true, 80, 443.5, 22000, "a", "b"]"#
         );
     }
 

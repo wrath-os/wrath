@@ -13,8 +13,13 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 distro-check.workspace = true
+distro-eval.workspace = true
+distro-luau.workspace = true
+distro-model.workspace = true
+distro-starlark.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -26,8 +26,8 @@ fn fixture() -> tempfile::TempDir {
         "title = \"distro reports its version\"\n[command]\nrun = [\"distro\", \"--version\"]\nstdout_contains = [\"distro\"]\n",
     );
     write(
-        &acceptance.join("m2/plan.toml"),
-        "title = \"plan exists\"\n[command]\nrun = [\"distro\", \"plan\"]\n",
+        &acceptance.join("m2/frobnicate.toml"),
+        "title = \"frobnicate exists\"\n[command]\nrun = [\"distro\", \"frobnicate\"]\n",
     );
     dir
 }
@@ -42,9 +42,9 @@ fn status_runs_scenarios_and_prints_scoreboard() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("M1  First  1/1"), "{stdout}");
     assert!(stdout.contains("PASS  version"), "{stdout}");
-    assert!(stdout.contains("FAIL  plan"), "{stdout}");
+    assert!(stdout.contains("FAIL  frobnicate"), "{stdout}");
     assert!(
-        stdout.contains("unrecognized subcommand 'plan'"),
+        stdout.contains("unrecognized subcommand 'frobnicate'"),
         "{stdout}"
     );
     assert!(stdout.ends_with("1/2 scenarios passing\n"), "{stdout}");

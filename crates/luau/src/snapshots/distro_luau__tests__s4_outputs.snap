@@ -2,7 +2,10 @@
 source: crates/luau/src/tests.rs
 expression: describe_outputs(&evaluation)
 ---
-packages: fprintd nftables syncthing
+packages: fprintd nftables nginx syncthing
+
+file /etc/hostname (mode 644, from system)
+box
 
 file /etc/nftables.conf (mode 644, from firewall)
 table inet filter {
@@ -10,7 +13,18 @@ table inet filter {
     type filter hook input priority 0; policy drop;
     ct state established,related accept
     iif lo accept
+    tcp dport 80 accept
     tcp dport 22000 accept
+  }
+}
+
+file /etc/nginx/main.conf (mode 644, from nginx)
+events {}
+http {
+  server {
+    listen 80;
+    server_name sync.box.lan;
+    location / { proxy_pass http://127.0.0.1:8384; }
   }
 }
 
@@ -40,6 +54,9 @@ u john - "John" /home/john /run/current-system/sw/bin/bash
 m john wheel
 u syncthing - "Syncthing service" /var/lib/syncthing /run/current-system/sw/bin/bash
 
+file /etc/timezone (mode 644, from system)
+UTC
+
 file /var/lib/syncthing/folders.json (mode 644, from syncthing)
 {
   "notes": {
@@ -68,6 +85,17 @@ ExecStart=nft -f /etc/nftables.conf
 ExecStop=nft flush ruleset
 RemainAfterExit=yes
 Type=oneshot
+[Install]
+WantedBy=multi-user.target
+
+unit nginx-main.service (from nginx)
+[Unit]
+After=network.target
+Description=nginx (main)
+[Service]
+ExecReload=nginx -c /etc/nginx/main.conf -s reload
+ExecStart=nginx -c /etc/nginx/main.conf -g 'daemon off;'
+Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 

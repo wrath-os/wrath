@@ -1,0 +1,7 @@
+[services.nginx.main]
+enable = true
+port = 8080
+
+[services.nginx.main.sites.blog]
+domains = ["blog.example.com", "${system.hostname}.lan"]
+root = "/srv/blog"

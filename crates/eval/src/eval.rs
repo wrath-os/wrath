@@ -856,7 +856,11 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        (!failed).then(|| Value::List(items.into_values().collect()))
+        (!failed).then(|| {
+            let mut items: Vec<Value> = items.into_values().collect();
+            items.sort_by(Value::canonical_cmp);
+            Value::List(items)
+        })
     }
 
     /// Orders named items by their anchors and drops removed ones.

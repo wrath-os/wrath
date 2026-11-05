@@ -11,6 +11,7 @@ publish = false
 [workspace.dependencies]
 allocative = "0.3"
 anyhow = "1"
+blake3 = "1"
 clap = { version = "4", features = ["derive"] }
 insta = "1"
 mlua = { version = "0.12", features = ["luau"] }
@@ -26,6 +27,7 @@ vsock = "0.5"
 distro-agent = { path = "crates/agent" }
 distro-check = { path = "crates/check" }
 distro-eval = { path = "crates/eval" }
+distro-model = { path = "crates/model" }
 distro-luau = { path = "crates/luau" }
 distro-starlark = { path = "crates/starlark" }
 

@@ -8,12 +8,14 @@ use distro_eval::{
 
 use super::load;
 
-const MODULES: [&str; 6] = [
+const MODULES: [&str; 8] = [
     "firewall",
     "fprintd",
+    "nginx",
     "pam",
     "pam-base",
     "syncthing",
+    "system",
     "users",
 ];
 
@@ -47,7 +49,7 @@ fn evaluate_fixture(dir: &str, extension: &str, loader: Loader) -> Evaluation {
         sources,
         // Relative, so locations in snapshots don't depend on where the repository is.
         config: &DirFs::new("../../fixtures/configs/s4"),
-        schema: base_schema(),
+        schema: Schema::default(),
         modules: &modules,
         facts: &Value::Table(BTreeMap::new()),
     })
@@ -90,8 +92,9 @@ fn settings_point_at_the_exact_call() {
     insta::assert_snapshot!(
         explain(&evaluation, Some(&OptionPath::parse("networking.firewall.allowed_tcp_ports").unwrap())).unwrap(),
         @"
-    networking.firewall.allowed_tcp_ports = [22000]
-      set by module `syncthing` at modules/starlark/syncthing.star:44:9
+    networking.firewall.allowed_tcp_ports = [80, 22000]
+      set by module `nginx` at modules/starlark/nginx.star:50:9: [80]
+      set by module `syncthing` at modules/starlark/syncthing.star:44:9: [22000]
       overrides [], default
     "
     );

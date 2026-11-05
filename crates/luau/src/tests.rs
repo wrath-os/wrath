@@ -8,12 +8,14 @@ use distro_eval::{
 
 use super::load;
 
-const MODULES: [&str; 6] = [
+const MODULES: [&str; 8] = [
     "firewall",
     "fprintd",
+    "nginx",
     "pam",
     "pam-base",
     "syncthing",
+    "system",
     "users",
 ];
 
@@ -71,7 +73,7 @@ fn the_s4_modules_render_the_fixture() {
         sources,
         // Relative, so locations in snapshots don't depend on where the repository is.
         config: &DirFs::new("../../fixtures/configs/s4"),
-        schema: base_schema(),
+        schema: Schema::default(),
         modules: &modules,
         facts: &Value::Table(BTreeMap::new()),
     })
