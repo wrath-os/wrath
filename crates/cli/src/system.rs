@@ -9,9 +9,10 @@ use distro_eval::{
 };
 
 /// The module languages, by file extension.
-const LOADERS: [(&str, Loader); 3] = [
+const LOADERS: [(&str, Loader); 4] = [
     ("luau", distro_luau::load),
     ("star", distro_starlark::load),
+    ("py", distro_starlark::load),
     ("ts", distro_typescript::load),
 ];
 
@@ -45,7 +46,7 @@ pub fn evaluate_dir(
 }
 
 /// Loads every module file in `dir`, by extension.
-fn load_modules(
+pub fn load_modules(
     dir: &Path,
     sources: &mut Sources,
     order: ModuleOrder,

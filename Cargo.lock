@@ -749,6 +749,7 @@ dependencies = [
  "insta",
  "starlark",
  "starlark_derive",
+ "starlark_syntax",
 ]
 
 [[package]]

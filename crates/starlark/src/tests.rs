@@ -164,3 +164,27 @@ module(name = "x", options = {"a": types.list(option(types.str))}, writes = [], 
 
     assert!(message.contains("expected a type"), "{message}");
 }
+
+#[test]
+fn modules_written_as_typed_python_render_the_same_system() {
+    let python = evaluate_fixture("python", "py", load);
+    let luau = evaluate_fixture("luau", "luau", distro_luau::load);
+
+    assert_eq!(describe_outputs(&python), describe_outputs(&luau));
+}
+
+#[test]
+fn names_only_used_in_annotations_need_not_exist() {
+    let evaluation = run(r#"
+def label(cfg: SomeGeneratedType, extra: list[Unknown] = []) -> Result:
+    return cfg["hostname"]
+
+def render(ctx: Ctx) -> None:
+    ctx.file("/label", label(ctx.read("system")))
+
+module(name = "typed", options = {}, writes = [], render = render)
+"#)
+    .unwrap();
+
+    assert_eq!(evaluation.modules()[0].output.files["/label"].text, "box");
+}

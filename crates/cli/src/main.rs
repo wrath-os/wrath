@@ -9,6 +9,7 @@ use distro_model::Model;
 
 mod bench;
 mod checks;
+mod stubs;
 mod system;
 
 /// How many times `check --determinism` evaluates each configuration per language.
@@ -84,6 +85,18 @@ enum Command {
         #[arg(long, default_value_t = 500)]
         budget_ms: u64,
     },
+    /// Generate Python type stubs (`__builtins__.pyi`) from the option declarations of modules
+    Stubs {
+        /// Directory of modules
+        #[arg(long)]
+        modules: PathBuf,
+        /// Where to write the stubs [default: `__builtins__.pyi` in the modules directory]
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Fail if the stubs there are out of date instead of writing them
+        #[arg(long)]
+        check: bool,
+    },
     /// Show where option values come from
     Why {
         /// The configuration to explain
@@ -149,6 +162,15 @@ fn main() -> ExitCode {
             budget: std::time::Duration::from_millis(budget_ms),
         })
         .map(exit_code),
+        Command::Stubs {
+            modules,
+            out,
+            check,
+        } => {
+            let modules = under_root(&cli.root, &modules);
+            let out = out.unwrap_or_else(|| modules.join("__builtins__.pyi"));
+            stubs::write(&modules, &out, check).map(exit_code)
+        }
         Command::Why {
             config,
             modules,

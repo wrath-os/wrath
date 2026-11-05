@@ -12,6 +12,7 @@ anyhow.workspace = true
 distro-eval.workspace = true
 starlark.workspace = true
 starlark_derive.workspace = true
+starlark_syntax.workspace = true
 
 [dev-dependencies]
 distro-luau.workspace = true
