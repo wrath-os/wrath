@@ -1,18 +1,20 @@
 //! Running scenarios and reporting their outcome.
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::scenario::{CommandSpec, Runner, Scenario};
+use crate::vm::{self, Reproduction, VmRun, VmSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Pass,
-    Fail(String),
-    /// Not runnable yet: no runner for its kind, or a manual scenario without a sign-off.
+    Fail(Failure),
+    /// Not runnable yet: nothing can run it before a later milestone, or a manual scenario
+    /// without a sign-off.
     Pending(String),
 }
 
@@ -22,15 +24,43 @@ impl Outcome {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub reason: String,
+    /// Directory with logs from the failed run.
+    pub logs: Option<PathBuf>,
+    pub reproduction: Option<Reproduction>,
+}
+
+impl From<String> for Failure {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            logs: None,
+            reproduction: None,
+        }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(reason: &str) -> Self {
+        reason.to_owned().into()
+    }
+}
+
 /// Where and how scenarios run.
 #[derive(Debug, Clone)]
 pub struct RunContext {
-    /// Working directory for commands, normally the repository root.
+    /// Working directory for commands and image builds, normally the repository root.
     pub workdir: PathBuf,
     /// The binary that `distro` in a command scenario resolves to.
     pub distro_exe: PathBuf,
     /// Directory holding `<milestone>-<id>.toml` sign-off files for manual scenarios.
     pub signoff_dir: PathBuf,
+    /// Parent directory for VM run directories.
+    pub run_root: PathBuf,
+    /// Use this already-built image output instead of building the scenario's image.
+    pub image_override: Option<PathBuf>,
 }
 
 pub fn run(scenario: &Scenario, ctx: &RunContext) -> Outcome {
@@ -46,7 +76,49 @@ pub fn run(scenario: &Scenario, ctx: &RunContext) -> Outcome {
                 Outcome::Pending("awaiting human sign-off".into())
             }
         }
-        Runner::Unsupported { kind } => Outcome::Pending(format!("no `{kind}` runner yet")),
+        Runner::Vm(spec) => run_vm(scenario, spec, ctx),
+        Runner::Pending { reason } => Outcome::Pending((*reason).to_owned()),
+    }
+}
+
+fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
+    let image = match &ctx.image_override {
+        Some(image) => image.clone(),
+        None => match vm::build_image(&spec.image, &ctx.workdir) {
+            Ok(image) => image,
+            Err(reason) => return fail(reason),
+        },
+    };
+    let name = if scenario.milestone.is_empty() {
+        scenario.id.clone()
+    } else {
+        format!("{}-{}", scenario.milestone, scenario.id)
+    };
+    let dir = ctx.run_root.join(name);
+    let run = VmRun {
+        spec,
+        image: &image,
+        dir: &dir,
+    };
+    match run.execute() {
+        Ok(()) => Outcome::Pass,
+        Err(reason) => {
+            let relative = |path: &Path| {
+                path.strip_prefix(&ctx.workdir)
+                    .unwrap_or(path)
+                    .to_path_buf()
+            };
+            let command = format!(
+                "distro check {} --image {}",
+                relative(&scenario.source).display(),
+                image.display()
+            );
+            Outcome::Fail(Failure {
+                reason,
+                logs: Some(relative(&dir)),
+                reproduction: Some(Reproduction { image, command }),
+            })
+        }
     }
 }
 
@@ -54,7 +126,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 fn run_command(spec: &CommandSpec, ctx: &RunContext) -> Outcome {
     let Some((program, args)) = spec.run.split_first() else {
-        return Outcome::Fail("`command.run` is empty".into());
+        return fail("`command.run` is empty");
     };
     let program = if program == "distro" {
         ctx.distro_exe.clone()
@@ -71,7 +143,7 @@ fn run_command(spec: &CommandSpec, ctx: &RunContext) -> Outcome {
         .spawn()
     {
         Ok(child) => child,
-        Err(e) => return Outcome::Fail(format!("could not start `{}`: {e}", program.display())),
+        Err(e) => return fail(format!("could not start `{}`: {e}", program.display())),
     };
 
     let stdout = collect(child.stdout.take());
@@ -85,10 +157,10 @@ fn run_command(spec: &CommandSpec, ctx: &RunContext) -> Outcome {
                 // Best effort: the child may have exited between the check and the kill.
                 let _ = child.kill();
                 let _ = child.wait();
-                return Outcome::Fail(format!("timed out after {}s", spec.timeout_secs));
+                return fail(format!("timed out after {}s", spec.timeout_secs));
             }
             Ok(None) => thread::sleep(POLL_INTERVAL),
-            Err(e) => return Outcome::Fail(format!("waiting for the command failed: {e}")),
+            Err(e) => return fail(format!("waiting for the command failed: {e}")),
         }
     };
 
@@ -115,7 +187,7 @@ fn check_output(spec: &CommandSpec, status: ExitStatus, stdout: &str, stderr: &s
             |c| format!("exit code {c}"),
         );
         let context = first_line(stderr).or_else(|| first_line(stdout));
-        return Outcome::Fail(match context {
+        return fail(match context {
             Some(line) => format!("{got}, expected {}: {line}", spec.exit),
             None => format!("{got}, expected {}", spec.exit),
         });
@@ -129,7 +201,11 @@ fn check_output(spec: &CommandSpec, status: ExitStatus, stdout: &str, stderr: &s
     };
     missing("stdout", stdout, &spec.stdout_contains)
         .or_else(|| missing("stderr", stderr, &spec.stderr_contains))
-        .map_or(Outcome::Pass, Outcome::Fail)
+        .map_or(Outcome::Pass, fail)
+}
+
+fn fail(reason: impl Into<Failure>) -> Outcome {
+    Outcome::Fail(reason.into())
 }
 
 fn first_line(text: &str) -> Option<&str> {
@@ -146,6 +222,8 @@ mod tests {
             workdir: std::env::temp_dir(),
             distro_exe: PathBuf::from("/bin/sh"),
             signoff_dir,
+            run_root: PathBuf::from("/nonexistent"),
+            image_override: None,
         }
     }
 
@@ -165,6 +243,7 @@ mod tests {
             milestone: "m1".into(),
             title: "Example".into(),
             runner,
+            source: PathBuf::from("m1/example.toml"),
         }
     }
 
@@ -229,12 +308,15 @@ mod tests {
     fn command_fails_when_program_is_missing() {
         let outcome = run_spec(command(&["/nonexistent/program"]));
 
-        let Outcome::Fail(reason) = outcome else {
+        let Outcome::Fail(failure) = outcome else {
             panic!("expected a failure, got {outcome:?}");
         };
         assert!(
-            reason.starts_with("could not start `/nonexistent/program`"),
-            "{reason}"
+            failure
+                .reason
+                .starts_with("could not start `/nonexistent/program`"),
+            "{}",
+            failure.reason
         );
     }
 
@@ -273,12 +355,36 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_runner_is_pending() {
-        let vm = scenario(Runner::Unsupported { kind: "vm" });
+    fn pending_runner_reports_its_reason() {
+        let pending = scenario(Runner::Pending {
+            reason: "no `nspawn` runner yet",
+        });
 
         assert_eq!(
-            run(&vm, &ctx(PathBuf::from("/nonexistent"))),
-            Outcome::Pending("no `vm` runner yet".into())
+            run(&pending, &ctx(PathBuf::from("/nonexistent"))),
+            Outcome::Pending("no `nspawn` runner yet".into())
         );
+    }
+
+    #[test]
+    fn vm_scenario_fails_with_the_build_error_when_the_image_cannot_be_built() {
+        let workdir = tempfile::tempdir().unwrap();
+        let vm = scenario(Runner::Vm(
+            toml::from_str("image = \"missing/flake#image\"").unwrap(),
+        ));
+        let mut ctx = ctx(PathBuf::from("/nonexistent"));
+        ctx.workdir = workdir.path().to_path_buf();
+
+        let Outcome::Fail(failure) = run(&vm, &ctx) else {
+            panic!("expected a failure");
+        };
+        assert!(
+            failure
+                .reason
+                .starts_with("building image `missing/flake#image` failed"),
+            "{}",
+            failure.reason
+        );
+        assert_eq!(failure.reproduction, None);
     }
 }

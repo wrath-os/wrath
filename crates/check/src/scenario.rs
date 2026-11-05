@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+use crate::vm::VmSpec;
+
 /// Directory inside the acceptance directory that holds human sign-offs, not scenarios.
 pub const SIGNOFF_DIR: &str = "signoff";
 
@@ -55,15 +57,18 @@ pub struct Scenario {
     pub milestone: String,
     pub title: String,
     pub runner: Runner,
+    /// The file the scenario was loaded from.
+    pub source: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Runner {
     Command(CommandSpec),
     Manual(ManualSpec),
-    /// A runner kind the harness does not support yet. The table is kept for when it does.
-    Unsupported {
-        kind: &'static str,
+    Vm(VmSpec),
+    /// Declared, but not runnable until a later milestone adds what it needs.
+    Pending {
+        reason: &'static str,
     },
 }
 
@@ -133,11 +138,14 @@ pub fn parse_scenario(
         return Err(LoadError::invalid(path, "`command.run` must not be empty"));
     }
 
+    let vm = raw.vm.map(|table| vm_runner(path, table)).transpose()?;
     let mut runners = [
         raw.command.map(Runner::Command),
         raw.manual.map(Runner::Manual),
-        raw.vm.map(|_| Runner::Unsupported { kind: "vm" }),
-        raw.nspawn.map(|_| Runner::Unsupported { kind: "nspawn" }),
+        vm,
+        raw.nspawn.map(|_| Runner::Pending {
+            reason: "no `nspawn` runner yet",
+        }),
     ]
     .into_iter()
     .flatten();
@@ -163,7 +171,20 @@ pub fn parse_scenario(
         milestone: milestone.to_owned(),
         title: raw.title,
         runner,
+        source: path.to_path_buf(),
     })
+}
+
+fn vm_runner(path: &Path, table: toml::Table) -> Result<Runner, LoadError> {
+    if table.contains_key("config") {
+        return Ok(Runner::Pending {
+            reason: "vm scenarios with `config` need the NixOS backend (m3)",
+        });
+    }
+    toml::Value::Table(table)
+        .try_into()
+        .map(Runner::Vm)
+        .map_err(|e: toml::de::Error| LoadError::invalid(path, format!("[vm]: {}", e.message())))
 }
 
 /// All milestones and scenarios in an acceptance directory, in milestone order.
@@ -299,12 +320,33 @@ mod tests {
     }
 
     #[test]
-    fn vm_and_nspawn_are_unsupported_for_now() {
-        let vm = parse("title = \"t\"\n[vm]\nconfig = \"x\"\n").unwrap();
-        assert_eq!(vm.runner, Runner::Unsupported { kind: "vm" });
+    fn vm_with_image_gets_the_vm_runner() {
+        let scenario = parse("title = \"t\"\n[vm]\nimage = \"factory/nix#fixture\"\n").unwrap();
+
+        let Runner::Vm(spec) = scenario.runner else {
+            panic!("expected a vm runner");
+        };
+        assert_eq!(spec.image, "factory/nix#fixture");
+        assert_eq!(scenario.source, Path::new("m1/example.toml"));
+    }
+
+    #[test]
+    fn vm_with_config_and_nspawn_are_pending() {
+        let vm = parse("title = \"t\"\n[vm]\nconfig = \"x\"\nsteps = []\n").unwrap();
+        assert_eq!(
+            vm.runner,
+            Runner::Pending {
+                reason: "vm scenarios with `config` need the NixOS backend (m3)"
+            }
+        );
 
         let nspawn = parse("title = \"t\"\n[nspawn]\n").unwrap();
-        assert_eq!(nspawn.runner, Runner::Unsupported { kind: "nspawn" });
+        assert_eq!(
+            nspawn.runner,
+            Runner::Pending {
+                reason: "no `nspawn` runner yet"
+            }
+        );
     }
 
     #[test]
@@ -330,6 +372,10 @@ mod tests {
                 "title = \"t\"\n[command]\nrun = [\"true\"]\nstdout = \"x\"\n",
             ),
             ("missing_title", "[manual]\nconfirm = \"x\"\n"),
+            (
+                "vm_unknown_key",
+                "title = \"t\"\n[vm]\nimage = \"x\"\nram = 4\n",
+            ),
         ];
         for (name, text) in cases {
             let err = parse(text).unwrap_err();

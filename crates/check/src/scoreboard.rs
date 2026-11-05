@@ -1,4 +1,4 @@
-//! Rendering scenario outcomes as a plain-text scoreboard.
+//! Rendering scenario outcomes as plain text.
 
 use std::fmt::Write;
 
@@ -8,7 +8,7 @@ use crate::scenario::{Milestone, Scenario};
 /// Renders results grouped by milestone, in the order given, with a total at the end.
 /// Milestones without results are left out.
 pub fn render(milestones: &[Milestone], results: &[(&Scenario, Outcome)]) -> String {
-    let id_width = results.iter().map(|(s, _)| s.id.len()).max().unwrap_or(0);
+    let width = id_width(results);
     let mut out = String::new();
 
     for milestone in milestones {
@@ -28,19 +28,7 @@ pub fn render(milestones: &[Milestone], results: &[(&Scenario, Outcome)]) -> Str
             group.len()
         );
         for (scenario, outcome) in group {
-            let (label, detail) = match outcome {
-                Outcome::Pass => ("PASS", None),
-                Outcome::Fail(reason) => ("FAIL", Some(reason)),
-                Outcome::Pending(reason) => ("TODO", Some(reason)),
-            };
-            let _ = writeln!(
-                out,
-                "  {label}  {:id_width$}  {}",
-                scenario.id, scenario.title
-            );
-            if let Some(detail) = detail {
-                let _ = writeln!(out, "        {:id_width$}  {detail}", "");
-            }
+            write_entry(&mut out, scenario, outcome, width);
         }
         out.push('\n');
     }
@@ -50,10 +38,54 @@ pub fn render(milestones: &[Milestone], results: &[(&Scenario, Outcome)]) -> Str
     out
 }
 
+/// Renders results as a flat list, one entry per scenario.
+pub fn render_list(results: &[(&Scenario, Outcome)]) -> String {
+    let width = id_width(results);
+    let mut out = String::new();
+    for (scenario, outcome) in results {
+        write_entry(&mut out, scenario, outcome, width);
+    }
+    out
+}
+
+fn id_width(results: &[(&Scenario, Outcome)]) -> usize {
+    results.iter().map(|(s, _)| s.id.len()).max().unwrap_or(0)
+}
+
+fn write_entry(out: &mut String, scenario: &Scenario, outcome: &Outcome, width: usize) {
+    let label = match outcome {
+        Outcome::Pass => "PASS",
+        Outcome::Fail(_) => "FAIL",
+        Outcome::Pending(_) => "TODO",
+    };
+    let _ = writeln!(out, "  {label}  {:width$}  {}", scenario.id, scenario.title);
+
+    let mut detail = |text: &str| {
+        let _ = writeln!(out, "        {:width$}  {text}", "");
+    };
+    match outcome {
+        Outcome::Pass => {}
+        Outcome::Pending(reason) => detail(reason),
+        Outcome::Fail(failure) => {
+            detail(&failure.reason);
+            if let Some(logs) = &failure.logs {
+                detail(&format!("logs: {}", logs.display()));
+            }
+            if let Some(reproduction) = &failure.reproduction {
+                detail(&format!("reproduce: {}", reproduction.command));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::runner::Failure;
     use crate::scenario::Runner;
+    use crate::vm::Reproduction;
 
     fn milestone(id: &str, title: &str) -> Milestone {
         Milestone {
@@ -67,7 +99,8 @@ mod tests {
             id: id.into(),
             milestone: milestone.into(),
             title: title.into(),
-            runner: Runner::Unsupported { kind: "vm" },
+            runner: Runner::Pending { reason: "later" },
+            source: PathBuf::from(format!("acceptance/{milestone}/{id}.toml")),
         }
     }
 
@@ -91,6 +124,22 @@ mod tests {
         ];
 
         insta::assert_snapshot!(render(&milestones, &results));
+    }
+
+    #[test]
+    fn renders_failure_with_logs_and_reproduction() {
+        let vm = scenario("m1", "vm-boots", "A VM boots");
+        let failure = Failure {
+            reason: "unit `sshd.service` is not active (state: failed)".into(),
+            logs: Some(PathBuf::from("target/distro-check/runs/m1-vm-boots")),
+            reproduction: Some(Reproduction {
+                image: PathBuf::from("/nix/store/abc-fixture"),
+                command: "distro check acceptance/m1/vm-boots.toml --image /nix/store/abc-fixture"
+                    .into(),
+            }),
+        };
+
+        insta::assert_snapshot!(render_list(&[(&vm, Outcome::Fail(failure))]));
     }
 
     #[test]

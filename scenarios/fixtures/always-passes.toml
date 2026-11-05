@@ -1,0 +1,7 @@
+title = "The harness fixture boots and a command runs in it"
+
+[vm]
+image = "factory/nix#harness-fixture"
+tpm = true
+wait_for = ["agent", "unit:multi-user.target"]
+expect = [{ run = "echo hello from the guest", stdout_contains = "hello from the guest" }]

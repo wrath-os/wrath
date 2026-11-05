@@ -1,0 +1,7 @@
+title = "The harness fixture boots, and an expectation that can never hold fails"
+notes = "Used to prove that failures are reported with logs and a working reproduction."
+
+[vm]
+image = "factory/nix#harness-fixture"
+wait_for = ["agent"]
+expect = [{ run = "echo hello", stdout_contains = "text the guest never prints" }]
