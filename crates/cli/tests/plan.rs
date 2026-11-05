@@ -33,7 +33,7 @@ fn plan(modules: &str) -> String {
 
 #[test]
 fn plan_shows_the_changed_option_and_what_it_renders() {
-    let plan = plan("modules/luau");
+    let plan = plan("modules");
 
     let body = plan.split_once('\n').unwrap().1;
     insta::assert_snapshot!(body, @"
@@ -46,8 +46,11 @@ fn plan_shows_the_changed_option_and_what_it_renders() {
 }
 
 #[test]
-fn both_module_languages_produce_the_same_model() {
-    assert_eq!(plan("modules/luau"), plan("modules/starlark"));
+fn modules_render_the_same_model_in_any_load_order() {
+    let output = stdout(&distro(&["check", "--determinism", "modules"]));
+
+    assert!(output.contains("PASS  s4"), "{output}");
+    assert!(!output.contains("FAIL"), "{output}");
 }
 
 #[test]
@@ -113,7 +116,7 @@ fn a_bad_config_whose_error_changed_fails_until_blessed() {
 }
 
 #[test]
-fn bench_measures_plan_time_in_every_language() {
+fn bench_measures_plan_time() {
     let output = stdout(&distro(&[
         "bench",
         "--synthetic",
@@ -124,7 +127,5 @@ fn bench_measures_plan_time_in_every_language() {
         "60000",
     ]));
 
-    assert!(output.contains("PASS luau       13 modules"), "{output}");
-    assert!(output.contains("PASS starlark   13 modules"), "{output}");
-    assert!(output.contains("PASS typescript 13 modules"), "{output}");
+    assert!(output.contains("PASS 13 modules"), "{output}");
 }

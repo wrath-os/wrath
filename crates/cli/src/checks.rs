@@ -53,47 +53,27 @@ fn print_indented(text: &str) {
     }
 }
 
-/// Evaluates every configuration in `configs` `runs` times with each module language in
-/// `modules`, loading modules fresh and in a different order each time, and checks that every
-/// run of every language produces the same model bytes.
+/// Evaluates every configuration in `configs` `runs` times with the modules in `modules`,
+/// loading them fresh and in a different order each time, and checks that every run produces
+/// the same model bytes.
 pub fn determinism(modules: &Path, configs: &Path, runs: u64) -> Result<bool, String> {
-    let languages = subdirectories(modules)?;
     let mut all_passed = true;
     for config in subdirectories(configs)? {
-        let config_name = file_name(&config);
-        let mut first_language: Option<(String, String)> = None;
-        for language in &languages {
-            let language_name = file_name(language);
-            let canonical = (0..runs)
-                .map(|seed| {
-                    system::evaluate_dir(&config, language, ModuleOrder::Shuffled(seed))
-                        .map(|evaluation| Model::from_evaluation(&evaluation).canonical())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let stable = canonical.windows(2).all(|pair| pair[0] == pair[1]);
-            all_passed &= stable;
-            println!(
-                "{}  {language_name:<10} {config_name:<16} {runs} runs",
-                verdict(stable)
-            );
-            match &first_language {
-                None => first_language = Some((language_name, canonical[0].clone())),
-                Some((first_name, first)) => {
-                    let agree = *first == canonical[0];
-                    all_passed &= agree;
-                    println!(
-                        "{}  {language_name:<10} {config_name:<16} same model as {first_name}",
-                        verdict(agree)
-                    );
-                }
-            }
-        }
+        let canonical = (0..runs)
+            .map(|seed| {
+                system::evaluate_dir(&config, modules, ModuleOrder::Shuffled(seed))
+                    .map(|evaluation| Model::from_evaluation(&evaluation).canonical())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let stable = canonical.windows(2).all(|pair| pair[0] == pair[1]);
+        all_passed &= stable;
+        println!(
+            "{}  {:<16} {runs} runs",
+            if stable { "PASS" } else { "FAIL" },
+            file_name(&config)
+        );
     }
     Ok(all_passed)
-}
-
-fn verdict(passed: bool) -> &'static str {
-    if passed { "PASS" } else { "FAIL" }
 }
 
 fn file_name(path: &Path) -> String {

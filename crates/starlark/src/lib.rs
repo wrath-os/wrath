@@ -16,7 +16,6 @@
 // starlark-rust's derive macros (`ProvidesStaticType`, `starlark_value`) emit `unsafe impl`s.
 #![allow(unsafe_code)]
 
-mod annotations;
 mod convert;
 
 use std::cell::RefCell;
@@ -38,7 +37,7 @@ use starlark::environment::{
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::syntax::{AstModule, Dialect, DialectTypes};
+use starlark::syntax::{AstModule, Dialect};
 use starlark::values::none::NoneType;
 use starlark::values::{
     NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue, ValueLike,
@@ -69,7 +68,6 @@ pub fn load(
     let declared = RefCell::new(None);
     StarModule::with_temp_heap(|module| {
         let loading = Loading(&declared);
-        bind_annotation_names(&module, &ast, &globals);
         let mut eval = Evaluator::new(&module);
         eval.extra = Some(&loading);
         set_time_limit(&mut eval);
@@ -88,25 +86,8 @@ pub fn load(
     }))
 }
 
-/// Standard Starlark plus f-strings, with type annotations parsed but not checked at run time, so
-/// a module can also be valid, type-checked Python.
 fn parse(path: &str, source: &str) -> starlark::Result<AstModule> {
-    let dialect = Dialect {
-        enable_types: DialectTypes::ParseOnly,
-        enable_f_strings: true,
-        ..Dialect::Standard
-    };
-    AstModule::parse(path, source.to_owned(), &dialect)
-}
-
-/// Binds names that only appear in type annotations, and aren't globals, to `None`, so the
-/// compiler accepts annotations it doesn't check.
-fn bind_annotation_names(module: &StarModule<'_>, ast: &AstModule, globals: &Globals) {
-    for name in annotations::names(ast) {
-        if !globals.names().any(|global| global.as_str() == name) {
-            module.set(&name, StarValue::new_none());
-        }
-    }
+    AstModule::parse(path, source.to_owned(), &Dialect::Standard)
 }
 
 fn set_time_limit(eval: &mut Evaluator<'_, '_, '_>) {
@@ -580,12 +561,10 @@ impl Module for StarlarkModule {
         };
         let ast = parse(&self.locate.path, &self.source);
         let result = StarModule::with_temp_heap(|module| {
-            let ast = ast?;
-            bind_annotation_names(&module, &ast, &self.globals);
             let mut eval = Evaluator::new(&module);
             eval.extra = Some(&rendering);
             set_time_limit(&mut eval);
-            eval.eval_module(ast, &self.globals)?;
+            eval.eval_module(ast?, &self.globals)?;
             let render = module.get(RENDER).ok_or_else(|| {
                 starlark::Error::new_other(anyhow::anyhow!(
                     "the module no longer calls `module(...)`"

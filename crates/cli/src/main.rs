@@ -9,10 +9,9 @@ use distro_model::Model;
 
 mod bench;
 mod checks;
-mod stubs;
 mod system;
 
-/// How many times `check --determinism` evaluates each configuration per language.
+/// How many times `check --determinism` evaluates each configuration.
 const DETERMINISM_RUNS: u64 = 5;
 
 #[derive(Parser)]
@@ -38,14 +37,14 @@ enum Command {
         /// Scenario files to run, or directories of bad configs to compare with their golden errors
         #[arg(required_unless_present = "determinism")]
         files: Vec<PathBuf>,
-        /// Check that every language directory of modules under this directory renders the
-        /// fixture configs byte for byte the same across fresh interpreters and module orders
+        /// Check that the modules in this directory render the fixture configs byte for byte the
+        /// same across fresh interpreters and module orders
         #[arg(long, conflicts_with = "files")]
         determinism: Option<PathBuf>,
         /// Configurations for --determinism
         #[arg(long, default_value = "fixtures/configs")]
         configs: PathBuf,
-        /// Directory of modules for bad configs [default: modules/luau under the root]
+        /// Directory of modules for bad configs [default: modules under the root]
         #[arg(long)]
         modules: Option<PathBuf>,
         /// Write the actual errors of bad configs as their expected errors
@@ -66,13 +65,13 @@ enum Command {
         /// The configuration to compare against; without it, everything is new
         #[arg(long)]
         against: Option<PathBuf>,
-        /// Directory of modules [default: modules/luau under the root]
+        /// Directory of modules [default: modules under the root]
         #[arg(long)]
         modules: Option<PathBuf>,
     },
-    /// Measure how long `plan` takes with many synthetic modules in each module language
+    /// Measure how long `plan` takes with many synthetic modules
     Bench {
-        /// Directory with a subdirectory of real modules per language
+        /// Directory of real modules to add the synthetic ones to
         #[arg(long, default_value = "modules")]
         modules: PathBuf,
         /// How many synthetic service modules to add
@@ -85,24 +84,12 @@ enum Command {
         #[arg(long, default_value_t = 500)]
         budget_ms: u64,
     },
-    /// Generate Python type stubs (`__builtins__.pyi`) from the option declarations of modules
-    Stubs {
-        /// Directory of modules
-        #[arg(long)]
-        modules: PathBuf,
-        /// Where to write the stubs [default: `__builtins__.pyi` in the modules directory]
-        #[arg(long)]
-        out: Option<PathBuf>,
-        /// Fail if the stubs there are out of date instead of writing them
-        #[arg(long)]
-        check: bool,
-    },
     /// Show where option values come from
     Why {
         /// The configuration to explain
         #[arg(long)]
         config: PathBuf,
-        /// Directory of modules [default: modules/luau under the root]
+        /// Directory of modules [default: modules under the root]
         #[arg(long)]
         modules: Option<PathBuf>,
         /// Explain every option
@@ -126,8 +113,8 @@ fn main() -> ExitCode {
             image,
             run_reproduction,
         } => match determinism {
-            Some(languages) => checks::determinism(
-                &under_root(&cli.root, &languages),
+            Some(modules) => checks::determinism(
+                &under_root(&cli.root, &modules),
                 &under_root(&cli.root, &configs),
                 DETERMINISM_RUNS,
             )
@@ -162,15 +149,6 @@ fn main() -> ExitCode {
             budget: std::time::Duration::from_millis(budget_ms),
         })
         .map(exit_code),
-        Command::Stubs {
-            modules,
-            out,
-            check,
-        } => {
-            let modules = under_root(&cli.root, &modules);
-            let out = out.unwrap_or_else(|| modules.join("__builtins__.pyi"));
-            stubs::write(&modules, &out, check).map(exit_code)
-        }
         Command::Why {
             config,
             modules,
@@ -305,7 +283,7 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
 }
 
 fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
-    modules.unwrap_or_else(|| under_root(root, Path::new("modules/luau")))
+    modules.unwrap_or_else(|| under_root(root, Path::new("modules")))
 }
 
 /// Evaluates a configuration, or prints why it can't and returns `None`.

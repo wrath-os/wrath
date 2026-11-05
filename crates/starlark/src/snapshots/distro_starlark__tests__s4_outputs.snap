@@ -1,5 +1,5 @@
 ---
-source: crates/luau/src/tests.rs
+source: crates/starlark/src/tests.rs
 expression: describe_outputs(&evaluation)
 ---
 packages: fprintd nftables nginx syncthing

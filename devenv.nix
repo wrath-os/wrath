@@ -8,8 +8,6 @@
     pkgs.qemu_kvm
     pkgs.swtpm
     pkgs.taplo
-    pkgs.pyright
-    pkgs.typescript
   ];
 
   # UEFI firmware for the VM harness.
@@ -21,9 +19,6 @@
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
-    tsc -p modules/typescript
-    cargo run --quiet --package distro-cli -- stubs --modules modules/python --check
-    pyright -p modules/python
     cargo run --quiet --package distro-cli -- status
   '';
 }

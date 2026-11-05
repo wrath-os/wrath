@@ -1,5 +1,0 @@
-{
-  "include": ["*.py"],
-  "typeCheckingMode": "standard",
-  "pythonVersion": "3.12"
-}

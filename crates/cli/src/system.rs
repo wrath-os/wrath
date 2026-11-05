@@ -4,19 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use distro_eval::{
-    Diagnostic, DirFs, Evaluation, Input, Module, Schema, Sources, Value, evaluate, render,
-};
-
-/// The module languages, by file extension.
-const LOADERS: [(&str, Loader); 4] = [
-    ("luau", distro_luau::load),
-    ("star", distro_starlark::load),
-    ("py", distro_starlark::load),
-    ("ts", distro_typescript::load),
-];
-
-type Loader = fn(&mut Sources, &str, String) -> Result<Box<dyn Module>, Diagnostic>;
+use distro_eval::{DirFs, Evaluation, Input, Module, Schema, Sources, Value, evaluate, render};
 
 /// The order modules are loaded and run in. The result must not depend on it.
 #[derive(Debug, Clone, Copy)]
@@ -45,7 +33,7 @@ pub fn evaluate_dir(
     .map_err(|e| e.to_string())
 }
 
-/// Loads every module file in `dir`, by extension.
+/// Loads every Starlark module (`*.star`) in `dir`.
 pub fn load_modules(
     dir: &Path,
     sources: &mut Sources,
@@ -65,18 +53,11 @@ pub fn load_modules(
     let mut modules = Vec::new();
     let mut errors = Vec::new();
     for path in paths {
-        // Type declarations such as `distro.d.ts` describe the host API; they aren't modules.
-        let declarations = path.to_str().is_some_and(|path| path.ends_with(".d.ts"));
-        let Some(loader) = path
-            .extension()
-            .filter(|_| !declarations)
-            .and_then(|extension| LOADERS.iter().find(|(known, _)| extension == *known))
-            .map(|(_, loader)| loader)
-        else {
+        if path.extension().is_none_or(|extension| extension != "star") {
             continue;
-        };
+        }
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        match loader(sources, &path.display().to_string(), text) {
+        match distro_starlark::load(sources, &path.display().to_string(), text) {
             Ok(module) => modules.push(module),
             Err(diagnostic) => errors.push(diagnostic),
         }

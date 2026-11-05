@@ -14,10 +14,8 @@ path = "src/main.rs"
 clap.workspace = true
 distro-check.workspace = true
 distro-eval.workspace = true
-distro-luau.workspace = true
 distro-model.workspace = true
 distro-starlark.workspace = true
-distro-typescript.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]

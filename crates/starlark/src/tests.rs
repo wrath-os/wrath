@@ -31,17 +31,15 @@ fn base_schema() -> Schema {
     schema
 }
 
-type Loader = fn(&mut Sources, &str, String) -> Result<Box<dyn Module>, distro_eval::Diagnostic>;
-
-/// Evaluates the S4 fixture with the modules of one language.
-fn evaluate_fixture(dir: &str, extension: &str, loader: Loader) -> Evaluation {
+/// Evaluates the S4 fixture with the built-in modules.
+fn evaluate_fixture() -> Evaluation {
     let mut sources = Sources::default();
     let modules: Vec<Box<dyn Module>> = MODULES
         .iter()
         .map(|name| {
-            let path = format!("modules/{dir}/{name}.{extension}");
+            let path = format!("modules/{name}.star");
             let text = std::fs::read_to_string(repo().join(&path)).unwrap();
-            loader(&mut sources, &path, text)
+            load(&mut sources, &path, text)
                 .unwrap_or_else(|e| panic!("{}", distro_eval::render(&[e], &sources)))
         })
         .collect();
@@ -71,30 +69,30 @@ fn run(source: &str) -> Result<Evaluation, String> {
 }
 
 #[test]
-fn starlark_and_luau_modules_render_the_same_system() {
-    let starlark = evaluate_fixture("starlark", "star", load);
-    let luau = evaluate_fixture("luau", "luau", distro_luau::load);
+fn the_built_in_modules_render_the_fixture() {
+    let evaluation = evaluate_fixture();
 
-    assert_eq!(describe_outputs(&starlark), describe_outputs(&luau));
-    assert_eq!(
-        starlark.options().keys().collect::<Vec<_>>(),
-        luau.options().keys().collect::<Vec<_>>()
-    );
-    for (path, resolved) in starlark.options() {
-        assert_eq!(resolved.value, luau.options()[path].value, "{path}");
-    }
+    insta::assert_snapshot!("s4_outputs", describe_outputs(&evaluation));
+    let why = |path: &str| explain(&evaluation, Some(&OptionPath::parse(path).unwrap())).unwrap();
+    insta::assert_snapshot!(why("security.pam.services.sudo.auth"), @r#"
+    security.pam.services.sudo.auth = [{ control = "required", module = "pam_env.so", name = "env" }, { control = "sufficient", module = "pam_fprintd.so", name = "fprintd" }, { args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }]
+      set by module `fprintd` at modules/fprintd.star:14:9: [{ after = "env", before = "unix", control = "sufficient", module = "pam_fprintd.so", name = "fprintd" }]
+      set by module `pam-base` at modules/pam-base.star:31:9: [{ control = "required", module = "pam_env.so", name = "env" }, { after = "env", args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }, { after = "unix", control = "required", module = "pam_deny.so", name = "deny" }]
+      overrides [], default
+      removes ["deny"], set at ../../fixtures/configs/s4/system.toml:9:8
+    "#);
 }
 
 #[test]
 fn settings_point_at_the_exact_call() {
-    let evaluation = evaluate_fixture("starlark", "star", load);
+    let evaluation = evaluate_fixture();
 
     insta::assert_snapshot!(
         explain(&evaluation, Some(&OptionPath::parse("networking.firewall.allowed_tcp_ports").unwrap())).unwrap(),
         @"
     networking.firewall.allowed_tcp_ports = [80, 22000]
-      set by module `nginx` at modules/starlark/nginx.star:50:9: [80]
-      set by module `syncthing` at modules/starlark/syncthing.star:44:9: [22000]
+      set by module `nginx` at modules/nginx.star:50:9: [80]
+      set by module `syncthing` at modules/syncthing.star:44:9: [22000]
       overrides [], default
     "
     );
@@ -163,28 +161,4 @@ module(name = "x", options = {"a": types.list(option(types.str))}, writes = [], 
     .unwrap_err();
 
     assert!(message.contains("expected a type"), "{message}");
-}
-
-#[test]
-fn modules_written_as_typed_python_render_the_same_system() {
-    let python = evaluate_fixture("python", "py", load);
-    let luau = evaluate_fixture("luau", "luau", distro_luau::load);
-
-    assert_eq!(describe_outputs(&python), describe_outputs(&luau));
-}
-
-#[test]
-fn names_only_used_in_annotations_need_not_exist() {
-    let evaluation = run(r#"
-def label(cfg: SomeGeneratedType, extra: list[Unknown] = []) -> Result:
-    return cfg["hostname"]
-
-def render(ctx: Ctx) -> None:
-    ctx.file("/label", label(ctx.read("system")))
-
-module(name = "typed", options = {}, writes = [], render = render)
-"#)
-    .unwrap();
-
-    assert_eq!(evaluation.modules()[0].output.files["/label"].text, "box");
 }
