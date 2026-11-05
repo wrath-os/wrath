@@ -61,6 +61,28 @@ pub(crate) fn schema() -> Schema {
             OptionSpec::new(Type::list(Type::Str, ListMerge::Set)).default(Value::List(vec![])),
         )])))),
     );
+    let rule = Type::record([
+        ("name", OptionSpec::new(Type::Str)),
+        ("control", OptionSpec::new(Type::Str)),
+        ("module", OptionSpec::new(Type::Str)),
+        (
+            "args",
+            OptionSpec::new(Type::list(Type::Str, ListMerge::Atomic)).optional(),
+        ),
+    ]);
+    declare(
+        &mut schema,
+        "pam",
+        OptionSpec::new(Type::map(OptionSpec::new(Type::record([(
+            "auth",
+            OptionSpec::new(Type::list(rule, ListMerge::Ordered)).default(Value::List(vec![])),
+        )])))),
+    );
+    declare(
+        &mut schema,
+        "system.kernel_params",
+        OptionSpec::new(Type::list(Type::Str, ListMerge::Atomic)).optional(),
+    );
     schema
 }
 
@@ -570,4 +592,5 @@ fn error_required_option_not_set() {
     ");
 }
 
+mod lists;
 mod modules;

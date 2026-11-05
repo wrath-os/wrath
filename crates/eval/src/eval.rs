@@ -13,13 +13,14 @@ use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
 use crate::load;
 use crate::module::{ConfigReader, Module, ModuleId, Output, ReadError, RenderError, Setting};
+use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
 use crate::schema::{Child, ListMerge, OptionSpec, Schema, Type};
 use crate::source::{Sources, Span};
 use crate::suggest::did_you_mean;
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
-use crate::walk::{self, Definition, Level, Raw, Site, mark_instances};
+use crate::walk::{self, Action, Definition, Level, REMOVE, Raw, Site, mark_instances};
 
 /// The root of `${facts.…}` references.
 const FACTS: &str = "facts";
@@ -62,6 +63,8 @@ pub struct Resolved {
     pub set_by: Vec<Contribution>,
     /// Definitions that lost to a stronger one.
     pub overridden: Vec<Contribution>,
+    /// Removals of items from a set or ordered list.
+    pub removed_by: Vec<Contribution>,
     /// Options and facts the value's references read.
     pub uses: Vec<Use>,
 }
@@ -421,15 +424,27 @@ impl<'a> Resolver<'a> {
                 | Type::Freeform,
                 value,
             ) => {
+                // A module removes items the same way config does, with `{ remove = [...] }`.
+                let removal = match value {
+                    Value::Table(entries) if entries.len() == 1 && spec.ty.supports_removal() => {
+                        entries.get(REMOVE)
+                    }
+                    _ => None,
+                };
+                let (value, action) = match removal {
+                    Some(items) => (items.clone(), Action::Remove),
+                    None => (value.clone(), Action::Set),
+                };
                 self.definitions
                     .entry(path.clone())
                     .or_default()
                     .push(Rc::new(Definition {
                         path,
-                        value: Raw::Literal(value.clone()),
+                        value: Raw::Literal(value),
                         level,
                         site,
                         reason: None,
+                        action,
                     }));
                 Ok(())
             }
@@ -623,6 +638,7 @@ impl<'a> Resolver<'a> {
                 level: Level::Default,
                 site: Site::Default,
                 reason: None,
+                action: Action::Set,
             }));
         }
         if definitions.is_empty() {
@@ -639,12 +655,18 @@ impl<'a> Resolver<'a> {
             return Err(Failed);
         }
 
-        // A declared default only applies when nothing else sets the option.
+        // A declared default only applies when nothing else sets the option. Removals apply
+        // whatever level added the items, so they don't compete.
         let rank =
             |definition: &Definition| (definition.level, !matches!(definition.site, Site::Default));
-        let top = definitions.iter().map(|definition| rank(definition)).max();
+        let top = definitions
+            .iter()
+            .filter(|definition| definition.action == Action::Set)
+            .map(|definition| rank(definition))
+            .max();
         let mut set_by = Vec::new();
         let mut overridden = Vec::new();
+        let mut removed_by = Vec::new();
         let mut uses = Vec::new();
         let mut failed = false;
         for definition in &definitions {
@@ -653,7 +675,11 @@ impl<'a> Resolver<'a> {
                 failed = true;
                 continue;
             };
-            if let Err(message) = check(path, spec, &value) {
+            let checked = match definition.action {
+                Action::Set => check(path, spec, &value),
+                Action::Remove => check_removal(spec, &value),
+            };
+            if let Err(message) = checked {
                 let diagnostic = Diagnostic::error(format!("invalid value for `{path}`"));
                 let diagnostic = self.locate(diagnostic, definition.site, message);
                 self.diagnostics.push(diagnostic);
@@ -666,23 +692,29 @@ impl<'a> Resolver<'a> {
                 reason: definition.reason.clone(),
                 value,
             };
-            if Some(rank(definition)) == top {
-                uses.extend(definition_uses);
-                set_by.push(contribution);
-            } else {
-                overridden.push(contribution);
+            match definition.action {
+                Action::Remove => {
+                    uses.extend(definition_uses);
+                    removed_by.push(contribution);
+                }
+                Action::Set if Some(rank(definition)) == top => {
+                    uses.extend(definition_uses);
+                    set_by.push(contribution);
+                }
+                Action::Set => overridden.push(contribution),
             }
         }
         if failed {
             return Err(Failed);
         }
-        let value = self.merge(path, spec, &set_by).ok_or(Failed)?;
+        let value = self.merge(path, spec, &set_by, &removed_by).ok_or(Failed)?;
         self.options.insert(
             path.clone(),
             Resolved {
                 value: value.clone(),
                 set_by,
                 overridden,
+                removed_by,
                 uses,
             },
         );
@@ -735,25 +767,14 @@ impl<'a> Resolver<'a> {
         path: &OptionPath,
         spec: &OptionSpec,
         set_by: &[Contribution],
+        removed_by: &[Contribution],
     ) -> Option<Value> {
-        if let Type::List {
-            merge: ListMerge::Set,
-            ..
-        } = spec.ty
-        {
-            let mut items: Vec<(String, Value)> = set_by
-                .iter()
-                .flat_map(|contribution| match &contribution.value {
-                    Value::List(items) => items.clone(),
-                    other => vec![other.clone()],
-                })
-                .map(|item| (item.to_string(), item))
-                .collect();
-            items.sort_by(|a, b| a.0.cmp(&b.0));
-            items.dedup_by(|a, b| a.0 == b.0);
-            return Some(Value::List(
-                items.into_iter().map(|(_, item)| item).collect(),
-            ));
+        if let Type::List { merge, .. } = spec.ty {
+            match merge {
+                ListMerge::Set => return self.merge_set(path, set_by, removed_by),
+                ListMerge::Ordered => return self.merge_ordered(path, set_by, removed_by),
+                ListMerge::Atomic => {}
+            }
         }
         let first = &set_by.first()?.value;
         if set_by
@@ -774,6 +795,119 @@ impl<'a> Resolver<'a> {
             "help: remove all but one, or force one with `{ value = ..., force = \"reason\" }`",
         ));
         None
+    }
+
+    /// The union of every contribution, sorted, without duplicates and without removed items.
+    fn merge_set(
+        &mut self,
+        path: &OptionPath,
+        set_by: &[Contribution],
+        removed_by: &[Contribution],
+    ) -> Option<Value> {
+        let mut items: BTreeMap<String, Value> = set_by
+            .iter()
+            .flat_map(|contribution| list_items(&contribution.value))
+            .map(|item| (item.to_string(), item.clone()))
+            .collect();
+        let mut failed = false;
+        for removal in removed_by {
+            for item in list_items(&removal.value) {
+                let key = item.to_string();
+                if items.remove(&key).is_none() {
+                    let present: Vec<String> = items.keys().cloned().collect();
+                    self.missing_removal(path, &key, &present, removal.site);
+                    failed = true;
+                }
+            }
+        }
+        (!failed).then(|| Value::List(items.into_values().collect()))
+    }
+
+    /// Orders named items by their anchors and drops removed ones.
+    fn merge_ordered(
+        &mut self,
+        path: &OptionPath,
+        set_by: &[Contribution],
+        removed_by: &[Contribution],
+    ) -> Option<Value> {
+        let mut items: BTreeMap<String, (ordered::Item, Site)> = BTreeMap::new();
+        let mut failed = false;
+        for contribution in set_by {
+            for value in list_items(&contribution.value) {
+                let item = ordered::split(value).expect("items were checked");
+                match items.get(&item.name) {
+                    Some((existing, _)) if *existing == item => {}
+                    Some((_, site)) => {
+                        let diagnostic = Diagnostic::error(format!(
+                            "two different items named `{}` in `{path}`",
+                            item.name
+                        ));
+                        let diagnostic = self.locate(diagnostic, *site, "one here");
+                        let diagnostic = self.locate(diagnostic, contribution.site, "another here");
+                        self.diagnostics.push(diagnostic);
+                        failed = true;
+                    }
+                    None => {
+                        items.insert(item.name.clone(), (item, contribution.site));
+                    }
+                }
+            }
+        }
+        let mut removed = BTreeSet::new();
+        for removal in removed_by {
+            for name in list_items(&removal.value) {
+                let Value::Str(name) = name else {
+                    unreachable!("removals were checked");
+                };
+                removed.insert(name.clone());
+                if !items.contains_key(name) {
+                    let present: Vec<String> =
+                        items.keys().map(|name| format!("\"{name}\"")).collect();
+                    self.missing_removal(path, &format!("\"{name}\""), &present, removal.site);
+                    failed = true;
+                }
+            }
+        }
+        if failed {
+            return None;
+        }
+        let (list, sites): (Vec<ordered::Item>, BTreeMap<String, Site>) = items
+            .into_iter()
+            .map(|(name, (item, site))| (item, (name, site)))
+            .unzip();
+        match ordered::order(&list, &removed) {
+            Ok(values) => Some(Value::List(values)),
+            Err(OrderError::UnknownAnchor { item, anchor }) => {
+                let diagnostic = Diagnostic::error(format!(
+                    "`{item}` is placed relative to `{anchor}`, which is not in `{path}`"
+                ));
+                let diagnostic = self.locate(diagnostic, sites[&item], "placed here");
+                self.diagnostics.push(diagnostic);
+                None
+            }
+            Err(OrderError::Cycle(names)) => {
+                let mut diagnostic = Diagnostic::error(format!(
+                    "the `before` and `after` anchors in `{path}` contradict each other"
+                ));
+                for name in &names {
+                    diagnostic =
+                        self.locate(diagnostic, sites[name], format!("`{name}` placed here"));
+                }
+                self.diagnostics.push(diagnostic);
+                None
+            }
+        }
+    }
+
+    fn missing_removal(&mut self, path: &OptionPath, item: &str, present: &[String], site: Site) {
+        let diagnostic = Diagnostic::error(format!(
+            "cannot remove {item} from `{path}`, it is not there"
+        ));
+        let mut diagnostic = self.locate(diagnostic, site, "removed here");
+        if let Some(note) = did_you_mean(item, present) {
+            diagnostic = diagnostic.note(note);
+        }
+        self.diagnostics.push(diagnostic);
     }
 
     fn eval(&mut self, raw: &Raw, uses: &mut Vec<Use>) -> Option<Value> {
@@ -970,4 +1104,37 @@ fn check(path: &OptionPath, spec: &OptionSpec, value: &Value) -> Result<(), Stri
         ));
     }
     Ok(())
+}
+
+fn list_items(value: &Value) -> &[Value] {
+    match value {
+        Value::List(items) => items,
+        _ => &[],
+    }
+}
+
+/// Checks the items of `{ remove = [...] }`: values for a set, names for an ordered list.
+fn check_removal(spec: &OptionSpec, value: &Value) -> Result<(), String> {
+    match (&spec.ty, value) {
+        (
+            Type::List {
+                merge: ListMerge::Ordered,
+                ..
+            },
+            Value::List(names),
+        ) => names.iter().try_for_each(|name| match name {
+            Value::Str(_) => Ok(()),
+            other => Err(format!(
+                "ordered list items are removed by name, found {other}"
+            )),
+        }),
+        (
+            Type::List {
+                item,
+                merge: ListMerge::Set,
+            },
+            Value::List(items),
+        ) => items.iter().try_for_each(|value| item.check(value)),
+        (_, other) => Err(format!("expected a list of items to remove, found {other}")),
+    }
 }

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::ordered;
 use crate::path::OptionPath;
 use crate::value::Value;
 
@@ -33,7 +34,7 @@ pub enum Type {
 pub enum ListMerge {
     /// The union of all values, sorted and without duplicates.
     Set,
-    /// Order matters. Values from several places conflict until ordering anchors exist.
+    /// Named items, placed with `before` and `after` anchors and otherwise ordered by name.
     Ordered,
     /// One value wins as a whole.
     Atomic,
@@ -138,6 +139,17 @@ impl Type {
         })
     }
 
+    /// Whether `{ remove = [...] }` can take items out of the option.
+    pub fn supports_removal(&self) -> bool {
+        matches!(
+            self,
+            Self::List {
+                merge: ListMerge::Set | ListMerge::Ordered,
+                ..
+            }
+        )
+    }
+
     /// Options of these types are set through their fields or entries, never as a whole.
     pub fn is_table(&self) -> bool {
         matches!(self, Self::Record(_) | Self::Map(_))
@@ -206,9 +218,28 @@ impl Type {
             }
             (Self::Path, Value::Str(s)) => s.starts_with('/') || s.starts_with("~/"),
             (Self::Enum(choices), Value::Str(s)) => choices.contains(s),
-            (Self::List { item, .. }, Value::List(items)) => {
-                return items.iter().try_for_each(|value| item.check(value));
+            (
+                Self::List {
+                    item,
+                    merge: ListMerge::Ordered,
+                },
+                Value::List(items),
+            ) => {
+                return items
+                    .iter()
+                    .try_for_each(|value| check_ordered_item(item, value));
             }
+            (
+                Self::List {
+                    item,
+                    merge: ListMerge::Set | ListMerge::Atomic,
+                },
+                Value::List(items),
+            ) => return items.iter().try_for_each(|value| item.check(value)),
+            (Self::Map(item), Value::Table(entries)) => {
+                return entries.values().try_for_each(|value| item.ty.check(value));
+            }
+            (Self::Record(record), Value::Table(entries)) => return record.check(entries),
             (
                 Self::Bool
                 | Self::Int { .. }
@@ -228,6 +259,32 @@ impl Type {
             Err(format!("expected {}, found {value}", self.describe()))
         }
     }
+}
+
+impl Record {
+    /// Checks a table against the record: known fields with valid values, and every required
+    /// field present.
+    fn check(&self, entries: &BTreeMap<String, Value>) -> Result<(), String> {
+        for (key, value) in entries {
+            let field = self
+                .fields
+                .get(key)
+                .ok_or_else(|| format!("unknown field `{key}`"))?;
+            field.ty.check(value).map_err(|e| format!("`{key}`: {e}"))?;
+        }
+        match self.fields.iter().find(|(key, field)| {
+            field.default.is_none() && !field.optional && !entries.contains_key(*key)
+        }) {
+            Some((key, _)) => Err(format!("missing field `{key}`")),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Checks an ordered list item without its anchors.
+fn check_ordered_item(item: &Type, value: &Value) -> Result<(), String> {
+    let split = ordered::split(value)?;
+    item.check(&split.value)
 }
 
 /// All options the loaded modules declare, as one tree.

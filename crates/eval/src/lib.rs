@@ -9,6 +9,7 @@ mod eval;
 mod fs;
 mod load;
 mod module;
+mod ordered;
 mod path;
 mod schema;
 mod source;
@@ -29,7 +30,7 @@ pub use schema::{ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};
 pub use template::Part;
 pub use value::{RuntimePart, Value};
-pub use walk::{Definition, Level, Raw, Site};
+pub use walk::{Action, Definition, Level, Raw, Site};
 pub use why::explain;
 
 #[cfg(test)]

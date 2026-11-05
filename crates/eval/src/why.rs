@@ -35,6 +35,14 @@ pub fn explain(evaluation: &Evaluation, prefix: Option<&OptionPath>) -> Result<S
                 origin(evaluation, contribution)
             );
         }
+        for contribution in &resolved.removed_by {
+            let _ = writeln!(
+                out,
+                "  removes {}, {}",
+                contribution.value,
+                origin(evaluation, contribution)
+            );
+        }
         for used in &resolved.uses {
             let _ = writeln!(
                 out,

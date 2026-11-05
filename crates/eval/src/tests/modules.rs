@@ -350,3 +350,33 @@ fn a_failed_read_stops_the_module_without_a_second_error() {
       |        ^ expected an integer from 1 to 65535, found 0
     ");
 }
+
+#[test]
+fn a_module_removes_items_like_config_does() {
+    let trim = module("trim", vec![], &["users.john.packages"], |_| {
+        let removal = Value::Table(
+            [("remove".to_owned(), strings(&["nano"]))]
+                .into_iter()
+                .collect(),
+        );
+        Ok(Output {
+            settings: vec![set("users.john.packages", removal, Level::Default)],
+            ..Output::default()
+        })
+    });
+    let evaluation = eval_with(
+        &[
+            SYSTEM,
+            ("users/john.toml", "packages = [\"helix\", \"nano\"]\n"),
+        ],
+        &[trim],
+    )
+    .unwrap();
+
+    insta::assert_snapshot!(explain(&evaluation, Some(&path("users.john.packages"))).unwrap(), @r#"
+    users.john.packages = ["helix"]
+      set at users/john.toml:1:12
+      overrides [], default
+      removes ["nano"], default from module `trim`
+    "#);
+}

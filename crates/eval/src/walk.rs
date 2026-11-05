@@ -16,6 +16,9 @@ use crate::suggest::did_you_mean;
 use crate::template::{self, Part};
 use crate::value::Value;
 
+/// The key of a removal, `{ remove = [...] }`.
+pub(crate) const REMOVE: &str = "remove";
+
 /// One place that sets an option.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Definition {
@@ -25,6 +28,16 @@ pub struct Definition {
     pub site: Site,
     /// Why a forced value is forced.
     pub reason: Option<String>,
+    pub action: Action,
+}
+
+/// What a definition does to its option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Set,
+    /// Removes items from a set or ordered list, whatever level added them. Written
+    /// `{ remove = [...] }`; ordered list items are removed by name.
+    Remove,
 }
 
 /// How strongly a definition holds. A higher level replaces lower ones, and two different values
@@ -188,6 +201,19 @@ impl Walker<'_> {
             {
                 self.table(spec, &path, table, file, false);
             }
+            DeValue::Table(table) if table.contains_key(REMOVE) => {
+                match self.removal(spec, span, table, file) {
+                    Ok(raw) => self.out.definitions.push(Definition {
+                        path,
+                        value: raw,
+                        level: Level::Normal,
+                        site: Site::Config(span),
+                        reason: None,
+                        action: Action::Remove,
+                    }),
+                    Err(diagnostic) => self.out.diagnostics.push(diagnostic),
+                }
+            }
             _ => match self.leaf(value, file) {
                 Ok((raw, reason)) => self.out.definitions.push(Definition {
                     path,
@@ -199,10 +225,37 @@ impl Walker<'_> {
                     },
                     site: Site::Config(span),
                     reason,
+                    action: Action::Set,
                 }),
                 Err(diagnostic) => self.out.diagnostics.push(diagnostic),
             },
         }
+    }
+
+    /// `{ remove = [...] }` on a set or ordered list.
+    fn removal(
+        &self,
+        spec: &OptionSpec,
+        span: Span,
+        table: &DeTable<'_>,
+        file: FileId,
+    ) -> Result<Raw, Diagnostic> {
+        if !spec.ty.supports_removal() {
+            return Err(
+                Diagnostic::error("only set and ordered lists support `remove`")
+                    .label(span, format!("this option is {}", spec.ty.describe())),
+            );
+        }
+        if let Some((key, _)) = table.iter().find(|(key, _)| key.get_ref() != REMOVE) {
+            return Err(
+                Diagnostic::error(format!("unexpected `{}` in a removal", key.get_ref()))
+                    .label(Span::new(file, key.span()), "only `remove` belongs here"),
+            );
+        }
+        let items = table
+            .get(REMOVE)
+            .expect("only tables with `remove` are removals");
+        self.raw(items, file)
     }
 
     /// A value, or a forced one written `{ value = ..., force = "reason" }`.
