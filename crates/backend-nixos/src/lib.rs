@@ -201,14 +201,100 @@ pub fn activate(system: &Path) -> Result<(), String> {
     switch(system)
 }
 
+/// The timer that switches back from a system being tried.
+const TRY_TIMER: &str = "distro-try";
+
+/// Where the system being tried is kept from garbage collection, since no generation has it yet.
+const TRY_ROOT: &str = "/nix/var/nix/gcroots/distro-try";
+
+/// Switches to `system` without making it a generation: the profile and the boot default stay as
+/// they are, so a timer switching back after `seconds`, `rollback`, or a reboot all return to the
+/// current generation. [`keep_trial`] makes it one. Needs root.
+pub fn try_system(system: &Path, seconds: u64) -> Result<(), String> {
+    if trying() {
+        return Err("a system is already being tried; keep it or roll back first".into());
+    }
+    command(
+        Command::new("nix-store")
+            .args(["--add-root", TRY_ROOT, "--realise"])
+            .arg(system),
+    )?;
+    let switched = command(Command::new(system.join("bin/switch-to-configuration")).arg("test"));
+    if let Err(message) = switched {
+        let _ = std::fs::remove_file(TRY_ROOT);
+        let _ = switch(Path::new(PROFILE));
+        return Err(message);
+    }
+    command(
+        Command::new("systemd-run")
+            .arg(format!("--unit={TRY_TIMER}"))
+            .arg(format!("--on-active={seconds}s"))
+            .args([
+                "--timer-property=AccuracySec=1s",
+                "--description=distro: end a try",
+            ])
+            .arg(Path::new(PROFILE).join("bin/switch-to-configuration"))
+            .arg("switch"),
+    )
+    .map(drop)
+}
+
+/// Whether a system is being tried, with a timer waiting to switch back from it.
+pub fn trying() -> bool {
+    Command::new("systemctl")
+        .args(["is-active", "--quiet"])
+        .arg(format!("{TRY_TIMER}.timer"))
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Makes the system being tried the current generation and the boot default.
+pub fn keep_trial() -> Result<(), String> {
+    if !trying() {
+        return Err("no system is being tried".into());
+    }
+    stop_trial();
+    let running = std::fs::read_link("/run/current-system")
+        .map_err(|e| format!("/run/current-system: {e}"))?;
+    command(
+        Command::new("nix-env")
+            .args(["--profile", PROFILE, "--set"])
+            .arg(&running),
+    )?;
+    let kept = command(Command::new(running.join("bin/switch-to-configuration")).arg("boot"));
+    let _ = std::fs::remove_file(TRY_ROOT);
+    kept.map(drop)
+}
+
+/// Stops the timer of a try, leaving the system it was trying running.
+fn stop_trial() {
+    let _ = command(
+        Command::new("systemctl")
+            .arg("stop")
+            .arg(format!("{TRY_TIMER}.timer")),
+    );
+}
+
+/// Switches back from the system being tried to the current generation, and returns it.
+pub fn end_trial() -> Result<Generation, String> {
+    stop_trial();
+    switch(Path::new(PROFILE))?;
+    let _ = std::fs::remove_file(TRY_ROOT);
+    current_generation()
+}
+
+fn current_generation() -> Result<Generation, String> {
+    history()?
+        .into_iter()
+        .find(|generation| generation.current)
+        .ok_or_else(|| "there's no current generation".to_owned())
+}
+
 /// Switches back to the previous generation and returns it.
 pub fn rollback() -> Result<Generation, String> {
     command(Command::new("nix-env").args(["--profile", PROFILE, "--rollback"]))?;
     switch(Path::new(PROFILE))?;
-    history()?
-        .into_iter()
-        .find(|generation| generation.current)
-        .ok_or_else(|| "no current generation after rolling back".to_owned())
+    current_generation()
 }
 
 /// Every generation of the system profile, oldest first.

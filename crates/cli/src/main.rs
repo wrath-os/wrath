@@ -7,6 +7,7 @@ use distro_backend_nixos as backend;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath};
 use distro_model::{LOCK_FILE, Lock, Model};
+use generations::Switch;
 
 mod bench;
 mod checks;
@@ -58,6 +59,16 @@ enum Command {
         /// A system that is already built, such as one `build` made for this machine elsewhere
         system: Option<PathBuf>,
     },
+    /// Switch to the configuration for a while, then back unless you `distro keep` it
+    Try {
+        /// A system that is already built
+        system: Option<PathBuf>,
+        /// How long to try it, such as 90s, 5m or 1h
+        #[arg(long = "for", value_name = "DURATION", default_value = "5m")]
+        duration: String,
+    },
+    /// Keep the system being tried as the current generation
+    Keep,
     /// Build the system without switching to it, and print where it is
     Build {
         #[arg(long, value_enum, default_value = "system")]
@@ -214,15 +225,10 @@ fn main() -> ExitCode {
             };
             config().and_then(|config| plan(&config, against, &modules))
         }
-        Command::Apply {
-            system: Some(system),
-        } => generations::activate(&system),
-        Command::Apply { system: None } => {
-            config().and_then(|config| match model(&config, &modules) {
-                Some(model) => generations::apply(root, &config, model),
-                None => Ok(ExitCode::FAILURE),
-            })
-        }
+        Command::Apply { system } => switch(root, system, Switch::Apply, &config, &modules),
+        Command::Try { system, duration } => generations::parse_duration(&duration)
+            .and_then(|seconds| switch(root, system, Switch::Try(seconds), &config, &modules)),
+        Command::Keep => generations::keep(),
         Command::Build { target } => config().and_then(|config| match model(&config, &modules) {
             Some(model) => generations::build(root, &model, target).map(|path| {
                 println!("{}", path.display());
@@ -594,5 +600,23 @@ fn find_root(given: Option<PathBuf>, from_env: Option<PathBuf>) -> PathBuf {
         PathBuf::from(".")
     } else {
         checkout
+    }
+}
+
+/// Switches to `system`, already built, or else builds the configuration and switches to it.
+fn switch(
+    root: &Path,
+    system: Option<PathBuf>,
+    how: Switch,
+    config: &impl Fn() -> Result<PathBuf, String>,
+    modules: &Path,
+) -> Result<ExitCode, String> {
+    if let Some(system) = system {
+        return generations::switch_to(&system, how);
+    }
+    let config = config()?;
+    match model(&config, modules) {
+        Some(model) => generations::apply(root, &config, model, how),
+        None => Ok(ExitCode::FAILURE),
     }
 }

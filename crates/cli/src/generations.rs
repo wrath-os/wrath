@@ -43,10 +43,19 @@ pub fn build(root: &Path, model: &Model, target: impl Into<Target>) -> Result<Pa
     Ok(built.path)
 }
 
+/// How to switch to a system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Switch {
+    /// Make it the current generation.
+    Apply,
+    /// Run it for this many seconds, then switch back unless it's kept.
+    Try(u64),
+}
+
 /// Builds the system for `model` and switches to it, unless the running system already has it.
 /// Packages the lock next to `config` doesn't have yet are locked first, so the lock always
 /// describes the running system.
-pub fn apply(root: &Path, config: &Path, model: Model) -> Result<ExitCode, String> {
+pub fn apply(root: &Path, config: &Path, model: Model, how: Switch) -> Result<ExitCode, String> {
     let model = if model.is_locked() {
         model
     } else {
@@ -62,7 +71,7 @@ pub fn apply(root: &Path, config: &Path, model: Model) -> Result<ExitCode, Strin
     // What the running system is, to say afterwards whether the switch did everything.
     let running = backend::current_model().and_then(|path| crate::read_model(Path::new(path)).ok());
     let system = build(root, &model, BuildTarget::System)?;
-    let code = activate(&system)?;
+    let code = switch_to(&system, how)?;
     if let Some(note) = running
         .and_then(|running| distro_model::plan(&running, &model).tier())
         .and_then(full_effect)
@@ -89,7 +98,12 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
     let current = backend::history()
         .ok()
         .and_then(|generations| generations.into_iter().find(|g| g.current));
-    if let Some(generation) = &current {
+    if backend::trying() {
+        println!(
+            "trying a system that isn't a generation yet; it switches back on its own, \
+             `distro keep` keeps it and `distro rollback` switches back now"
+        );
+    } else if let Some(generation) = &current {
         println!(
             "running generation {}, from {}",
             generation.number, generation.created
@@ -118,6 +132,67 @@ fn matching(running: Option<&str>, model: &Model) -> &'static str {
     }
 }
 
+/// Switches to `system`, already built, as `how` says.
+pub fn switch_to(system: &Path, how: Switch) -> Result<ExitCode, String> {
+    match how {
+        Switch::Apply => activate(system),
+        Switch::Try(seconds) => {
+            backend::try_system(system, seconds)?;
+            println!("trying {}", system.display());
+            println!(
+                "it switches back in {} unless you run `distro keep`; `distro rollback` switches \
+                 back now",
+                duration(seconds)
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+/// Makes the system being tried the current generation.
+pub fn keep() -> Result<ExitCode, String> {
+    backend::keep_trial()?;
+    let generation = backend::history()?.into_iter().find(|g| g.current);
+    match generation {
+        Some(generation) => println!("kept it as generation {}", generation.number),
+        None => println!("kept it"),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Seconds from `5m`, `90s`, `1h` or `90`.
+pub fn parse_duration(text: &str) -> Result<u64, String> {
+    let (number, unit) = match text.find(|c: char| !c.is_ascii_digit()) {
+        Some(at) => text.split_at(at),
+        None => (text, "s"),
+    };
+    let invalid = || format!("`{text}` isn't a duration such as 90s, 5m or 1h");
+    let scale = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        _ => return Err(invalid()),
+    };
+    match number.parse::<u64>() {
+        Ok(n) if n > 0 => Ok(n * scale),
+        _ => Err(invalid()),
+    }
+}
+
+/// Seconds as people say them: `5 minutes`, `90 seconds`.
+fn duration(seconds: u64) -> String {
+    let (n, unit) = match seconds {
+        s if s % 3600 == 0 => (s / 3600, "hour"),
+        s if s % 60 == 0 => (s / 60, "minute"),
+        s => (s, "second"),
+    };
+    if n == 1 {
+        format!("1 {unit}")
+    } else {
+        format!("{n} {unit}s")
+    }
+}
+
 pub fn activate(system: &Path) -> Result<ExitCode, String> {
     backend::activate(system)?;
     println!("switched to {}", system.display());
@@ -132,6 +207,11 @@ pub fn history() -> Result<ExitCode, String> {
 }
 
 pub fn rollback() -> Result<ExitCode, String> {
+    if backend::trying() {
+        let generation = backend::end_trial()?;
+        println!("stopped trying; back to generation {}", generation.number);
+        return Ok(ExitCode::SUCCESS);
+    }
     let generation = backend::rollback()?;
     println!("rolled back to generation {}", generation.number);
     Ok(ExitCode::SUCCESS)
@@ -352,6 +432,21 @@ mod tests {
         stable   github:NixOS/nixpkgs/nixos-25.11  b6018f8, 2026-10-30, 7 days old
         ");
     }
+
+    #[test]
+    fn tries_last_as_long_as_asked() {
+        assert_eq!(parse_duration("90"), Ok(90));
+        assert_eq!(parse_duration("90s"), Ok(90));
+        assert_eq!(parse_duration("5m"), Ok(300));
+        assert_eq!(parse_duration("1h"), Ok(3600));
+        for bad in ["", "0", "5d", "m", "-5m", "1.5h"] {
+            assert!(parse_duration(bad).is_err(), "{bad}");
+        }
+        assert_eq!(duration(300), "5 minutes");
+        assert_eq!(duration(3600), "1 hour");
+        assert_eq!(duration(90), "90 seconds");
+    }
+
     #[test]
     fn update_unpins_the_sources_it_names_or_all_of_them() {
         let pinned = |url: &str| Source {

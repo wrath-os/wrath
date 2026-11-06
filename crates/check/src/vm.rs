@@ -48,9 +48,11 @@ pub enum System {
 pub enum Step {
     /// Builds the configuration on the host, copies the system into the VM and switches to it.
     /// The plan from the configuration before must contain each of `expect_plan`.
+    /// With `try_for`, it tries the system for that long instead, as `distro try --for`.
     ApplyConfig {
         config: String,
         expect_plan: Vec<String>,
+        try_for: Option<String>,
     },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
@@ -106,9 +108,10 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 6] = [
+pub const STEP_FIELDS: [&str; 7] = [
     "apply_config",
     "expect_plan",
+    "try_for",
     "run",
     "exit",
     "stdout_contains",
@@ -121,6 +124,7 @@ struct RawStep {
     apply_config: Option<String>,
     #[serde(default)]
     expect_plan: Vec<String>,
+    try_for: Option<String>,
     run: Option<String>,
     #[serde(default)]
     exit: i32,
@@ -133,22 +137,22 @@ impl TryFrom<RawStep> for Step {
 
     fn try_from(raw: RawStep) -> Result<Self, Self::Error> {
         let run_fields = raw.exit != 0 || raw.stdout_contains.is_some();
+        let apply_fields = !raw.expect_plan.is_empty() || raw.try_for.is_some();
         match (raw.apply_config, raw.run, raw.expect_no_reboot) {
             (Some(config), None, None) if !run_fields => Ok(Self::ApplyConfig {
                 config,
                 expect_plan: raw.expect_plan,
+                try_for: raw.try_for,
             }),
-            (None, Some(run), None) if raw.expect_plan.is_empty() => Ok(Self::Run(Expect {
+            (None, Some(run), None) if !apply_fields => Ok(Self::Run(Expect {
                 run,
                 exit: raw.exit,
                 stdout_contains: raw.stdout_contains,
             })),
-            (None, None, Some(true)) if !run_fields && raw.expect_plan.is_empty() => {
-                Ok(Self::ExpectNoReboot)
-            }
+            (None, None, Some(true)) if !run_fields && !apply_fields => Ok(Self::ExpectNoReboot),
             _ => Err(
-                "a step is one of `apply_config` (with `expect_plan`), `run` (with `exit` \
-                 and `stdout_contains`) or `expect_no_reboot = true`"
+                "a step is one of `apply_config` (with `expect_plan` and `try_for`), `run` (with \
+                 `exit` and `stdout_contains`) or `expect_no_reboot = true`"
                     .into(),
             ),
         }
@@ -637,8 +641,10 @@ impl VmRun<'_> {
                 Step::ApplyConfig {
                     config,
                     expect_plan,
+                    try_for,
                 } => {
-                    self.apply_config(agent, current, config, expect_plan, deadline)?;
+                    let try_for = try_for.as_deref();
+                    self.apply_config(agent, current, config, expect_plan, try_for, deadline)?;
                     current = config;
                 }
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
@@ -660,6 +666,7 @@ impl VmRun<'_> {
         current: &str,
         config: &str,
         expect_plan: &[String],
+        try_for: Option<&str>,
         deadline: Instant,
     ) -> Result<(), String> {
         let plan = self
@@ -679,7 +686,11 @@ impl VmRun<'_> {
             .distro(&["build", "--config", config, "--target", target])?;
         let system = system.trim();
         self.copy_in(agent, system, deadline)?;
-        let (code, _, stderr) = run_shell(agent, argv(&["distro", "apply", system]), deadline)?;
+        let switch = match try_for {
+            Some(duration) => argv(&["distro", "try", "--for", duration, system]),
+            None => argv(&["distro", "apply", system]),
+        };
+        let (code, _, stderr) = run_shell(agent, switch, deadline)?;
         if code != Some(0) {
             return Err(format!("switching to `{config}` failed: {}", stderr.trim()));
         }
@@ -1101,6 +1112,7 @@ mod tests {
             wait_for = ["user-unit:demo:niri.service"]
             steps = [
               { apply_config = "fixtures/configs/basic-changed", expect_plan = ["8081"] },
+              { apply_config = "fixtures/configs/basic", try_for = "20s" },
               { run = "curl localhost", stdout_contains = "200" },
               { expect_no_reboot = true },
             ]
@@ -1122,6 +1134,12 @@ mod tests {
                 Step::ApplyConfig {
                     config: "fixtures/configs/basic-changed".into(),
                     expect_plan: vec!["8081".into()],
+                    try_for: None,
+                },
+                Step::ApplyConfig {
+                    config: "fixtures/configs/basic".into(),
+                    expect_plan: Vec::new(),
+                    try_for: Some("20s".into()),
                 },
                 Step::Run(Expect {
                     run: "curl localhost".into(),
