@@ -12,6 +12,7 @@ mod bench;
 mod checks;
 mod edit;
 mod generations;
+mod options;
 mod run;
 mod secret;
 mod system;
@@ -109,6 +110,11 @@ enum Command {
     Sources,
     /// Check the configuration for errors, without building it
     Check,
+    /// Show the options there are, with their types, defaults and docs
+    Options {
+        /// Only the options under this one, such as `services.nginx` or `users.john`
+        prefix: Option<String>,
+    },
     /// Show where option values come from
     Why {
         /// Explain every option
@@ -243,6 +249,7 @@ fn main() -> ExitCode {
             None => Ok(ExitCode::FAILURE),
         }),
         Command::Check => config().and_then(|config| check_config(&config, &modules)),
+        Command::Options { prefix } => options::options(&modules, prefix.as_deref()),
         Command::Why { all: _, option } => {
             config().and_then(|config| why(&config, &modules, option.as_deref()))
         }
