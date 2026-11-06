@@ -80,6 +80,19 @@ pub fn build(model: &Model, factory: &Path, target: Target, work: &Path) -> Resu
     })
 }
 
+/// Keeps `path`, something built, from being garbage collected while `link` points at it.
+/// Pointing `link` somewhere else lets the old one go.
+pub fn keep(path: &Path, link: &Path) -> Result<(), String> {
+    command(
+        Command::new("nix-store")
+            .arg("--add-root")
+            .arg(link)
+            .arg("--realise")
+            .arg(path),
+    )
+    .map(drop)
+}
+
 /// Resolves `model`'s packages to a lock: from each source as its lock pins it, or the latest
 /// of a source the lock doesn't pin. Without a `nixpkgs` source, the factory's own. A system that
 /// extends a NixOS configuration takes packages from that configuration, so it is the source.

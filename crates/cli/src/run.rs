@@ -80,6 +80,9 @@ impl Environment {
             .collect::<Result<Vec<_>, _>>()?;
         model.packages = names.iter().cloned().collect();
         let path = generations::build(root, &model, Target::Environment)?;
+        if let Some(link) = gc_root(&names) {
+            keep(&path, &link);
+        }
         let file = path.join("share/distro/packages.json");
         let described: Value = std::fs::read_to_string(&file)
             .map_err(|e| e.to_string())
@@ -140,6 +143,57 @@ fn describe(model: &Model, described: &Value, name: &str, picked: &Picked) -> St
         picked.version,
         details.join(", ")
     )
+}
+
+/// Where the environment for `names` is kept from garbage collection, under the user's cache.
+/// Each set of packages has one, so running a newer build lets the older one be collected.
+fn gc_root(names: &[String]) -> Option<PathBuf> {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))?;
+    let mut sorted: Vec<&str> = names.iter().map(String::as_str).collect();
+    sorted.sort_unstable();
+    Some(
+        cache
+            .join("distro/environments")
+            .join(root_name(&sorted.join(" "))),
+    )
+}
+
+/// A file name for a set of package names: readable when they're plain, and with a short hash so
+/// different sets never share one.
+fn root_name(names: &str) -> String {
+    let readable: String = names
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(60)
+        .collect();
+    // FNV-1a, stable across Rust versions, unlike the standard hasher.
+    let hash = names.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{readable}-{:08x}", hash as u32)
+}
+
+/// Keeps the environment while it's in use. Failing to doesn't stop it running.
+fn keep(path: &Path, link: &Path) {
+    let kept = link
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .map_err(|e| e.to_string())
+        .and_then(|()| distro_backend_nixos::keep(path, link));
+    if let Err(message) = kept {
+        eprintln!(
+            "warning: {} may be garbage collected while it runs: {message}",
+            path.display()
+        );
+    }
 }
 
 /// The name the model uses for a package the command line names. A source given as a URL or a
@@ -250,6 +304,14 @@ mod tests {
             "git+ssh://git@example.com/x#jq",
             "an @ in the source is part of its URL"
         );
+    }
+
+    #[test]
+    fn each_set_of_packages_has_its_own_root() {
+        assert_eq!(root_name("jq ripgrep"), root_name("jq ripgrep"));
+        assert_ne!(root_name("jq ripgrep"), root_name("jq_ripgrep"));
+        assert!(root_name("jq ripgrep").starts_with("jq_ripgrep-"));
+        assert!(root_name("github:jqlang/jq#jq").starts_with("github_jqlang_jq_jq-"));
     }
 
     #[test]
