@@ -17,7 +17,7 @@ def render(ctx):
     if "autologin" in desktop:
         user = desktop["autologin"]
         if user not in ctx.read("users"):
-            fail("desktop.autologin: there is no user `%s`" % user)
+            ctx.error("desktop.autologin", "there is no user `%s`" % user)
         session["autologin"] = user
     ctx.base("session", session)
 

@@ -1,12 +1,12 @@
 # Environment variables for each user's sessions: systemd's user manager and graphical sessions
 # read `~/.config/environment.d`, and login shells source `~/.config/distro/session.sh`.
 
-def check(user, name, v):
-    where = "users.%s.session_variables.%s" % (user, name)
+def check(ctx, user, name, v):
+    where = ["users", user, "session_variables", name]
     if "\n" in v:
-        fail("%s: a value can't span lines" % where)
+        ctx.error(where, "a value can't span lines")
     if "$(" in v or "`" in v:
-        fail("%s: a value can refer to variables as `$NAME`, but can't run commands" % where)
+        ctx.error(where, "a value can refer to variables as `$NAME`, but can't run commands")
 
 def sh_quote(v):
     """Double quotes, so `$NAME` still expands as it does in environment.d."""
@@ -20,7 +20,7 @@ def render(ctx):
         conf = []
         sh = []
         for name, v in sorted(variables.items()):
-            check(user, name, v)
+            check(ctx, user, name, v)
             conf.append("%s=%s" % (name, v))
             sh.append("export %s=%s" % (name, sh_quote(v)))
         ctx.file(

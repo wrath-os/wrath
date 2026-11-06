@@ -1364,6 +1364,18 @@ impl ConfigReader for Reader<'_, '_> {
     fn read(&mut self, path: &OptionPath, at: Option<Span>) -> Result<Option<Value>, ReadError> {
         self.resolver.module_read(self.module, path, at, self.reads)
     }
+
+    fn locate(&self, path: &OptionPath) -> Option<Span> {
+        self.resolver
+            .definitions
+            .range(path.clone()..)
+            .take_while(|(defined, _)| defined.starts_with(path))
+            .flat_map(|(_, definitions)| definitions)
+            .find_map(|definition| match definition.site {
+                Site::Config(span) => Some(span),
+                Site::Default | Site::Module { .. } => None,
+            })
+    }
 }
 
 /// The spec of the option at `path`. Inside freeform options every path is a freeform option.

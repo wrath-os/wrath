@@ -103,7 +103,7 @@ fn settings_point_at_the_exact_call() {
         @"
     networking.firewall.allowed_tcp_ports = [80, 22000]
       set by module `nginx` at modules/nginx.star:60:9: [80]
-      set by module `syncthing` at modules/syncthing.star:210:9: [22000]
+      set by module `syncthing` at modules/syncthing.star:209:9: [22000]
       overrides [], default
     "
     );
@@ -703,11 +703,12 @@ fn home_files_start_with_a_tilde() {
     ]);
 
     insta::assert_snapshot!(evaluate_with(&config, &HOME_MODULES).unwrap_err(), @r#"
-    error: fail: users.john.files: `.bashrc` doesn't start with `~/`
-      --> modules/files.star:27:17
-       |
-    27 |                 fail("users.%s.files: `%s` doesn't start with `~/`" % (user, path))
-       |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
+    error: `.bashrc` doesn't start with `~/`
+     --> users/john.toml:2:8
+      |
+    2 | text = ""
+      |        ^^ `users.john.files.".bashrc"` is set here
+      = reported by modules/files.star
     "#);
 }
 
@@ -780,4 +781,23 @@ fn libraries_hold_helpers_only_and_stay_in_the_modules_directory() {
     let cycle = [("lib/merge.star", "load(\"lib/merge.star\", \"merge\")\n")];
     let error = load_from(&cycle, LOADS_MERGE).unwrap_err();
     assert!(error.contains("loads itself"), "{error}");
+}
+
+#[test]
+fn an_error_about_an_option_the_configuration_doesnt_set_points_at_the_module() {
+    let error = run(r#"
+def render(ctx):
+    ctx.error("system.timezone", "pick a timezone")
+
+module(name = "picky", options = {}, writes = [], render = render)
+"#)
+    .unwrap_err();
+
+    insta::assert_snapshot!(error, @r#"
+    error: pick a timezone
+     --> test.star:3:5
+      |
+    3 |     ctx.error("system.timezone", "pick a timezone")
+      |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
+    "#);
 }

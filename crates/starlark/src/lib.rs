@@ -793,6 +793,34 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         Ok(NoneType)
     }
 
+    /// Stops the render with `message`, pointing at where the configuration sets the option at
+    /// `path`, or the first option under it, so the error shows what to fix. `path` is dotted,
+    /// or a list of keys for keys with dots in them. Without such a place, the error points at
+    /// the module.
+    fn error<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] path: StarValue<'v>,
+        #[starlark(require = pos)] message: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, at) = rendering(eval)?;
+        let option = match path.unpack_str() {
+            Some(dotted) => OptionPath::parse(dotted).map_err(|e| rendering.invalid(at, e))?,
+            None => strings(path)?
+                .iter()
+                .fold(OptionPath::root(), |path, key| path.child(key.as_str())),
+        };
+        let located = rendering.config.borrow().locate(&option);
+        Err(match located {
+            Some(span) => rendering.stop(Stop::Error(
+                Diagnostic::error(message)
+                    .label(span, format!("`{option}` is set here"))
+                    .note(format!("reported by {}", rendering.locate.path)),
+            )),
+            None => rendering.invalid(at, message),
+        })
+    }
+
     /// Declares a secret, kept encrypted in `file` and decrypted on the machine to
     /// `/run/secrets/<name>`, owned by `owner` and `group` with `mode`, and linked from `path`.
     #[allow(clippy::too_many_arguments)]

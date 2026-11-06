@@ -44,6 +44,9 @@ pub trait ConfigReader {
     /// The value of an option, or a table of everything set under a table of options. `None`
     /// when an option without a default isn't set. `at` is where the module reads it.
     fn read(&mut self, path: &OptionPath, at: Option<Span>) -> Result<Option<Value>, ReadError>;
+
+    /// Where the configuration sets the option at `path`, or the first option under it.
+    fn locate(&self, path: &OptionPath) -> Option<Span>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

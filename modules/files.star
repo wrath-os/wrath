@@ -13,7 +13,7 @@ file = types.record(
 def render(ctx):
     for path, f in ctx.read("files").items():
         if not path.startswith("/"):
-            fail("files: `%s` is not an absolute path" % path)
+            ctx.error(["files", path], "`%s` is not an absolute path" % path)
         ctx.file(
             path,
             f["text"],
@@ -24,7 +24,7 @@ def render(ctx):
     for user, u in ctx.read("users").items():
         for path, f in u["files"].items():
             if not path.startswith("~/"):
-                fail("users.%s.files: `%s` doesn't start with `~/`" % (user, path))
+                ctx.error(["users", user, "files", path], "`%s` doesn't start with `~/`" % path)
             ctx.file(path, f["text"], f.get("mode"), user = user)
 
 module(

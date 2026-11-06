@@ -97,7 +97,7 @@ instance = types.record(
     folders = types.map(folder),
 )
 
-def desired(name, cfg):
+def desired(ctx, name, cfg):
     devices = [
         {"deviceID": d["id"], "name": device_name, "addresses": d["addresses"]}
         for device_name, d in cfg["devices"].items()
@@ -106,11 +106,10 @@ def desired(name, cfg):
     for folder_id, f in cfg["folders"].items():
         for device_name in f["devices"]:
             if device_name not in cfg["devices"]:
-                fail("services.syncthing.%s.folders.%s: there is no device `%s`" % (
-                    name,
-                    folder_id,
-                    device_name,
-                ))
+                ctx.error(
+                    ["services", "syncthing", name, "folders", folder_id, "devices"],
+                    "there is no device `%s`" % device_name,
+                )
         versioning = f["versioning"]
         folders.append({
             "id": folder_id,
@@ -181,7 +180,7 @@ def render(ctx):
         apply = "/etc/syncthing/%s/apply.sh" % name
         wanted = "/etc/syncthing/%s/desired.json" % name
         ctx.file(apply, APPLY, 0o755)
-        ctx.file(wanted, formats.json(desired(name, cfg)))
+        ctx.file(wanted, formats.json(desired(ctx, name, cfg)))
         ctx.unit("syncthing-%s-init.service" % name, {
             "Unit": {
                 "Description": "Syncthing (%s) devices and folders" % name,

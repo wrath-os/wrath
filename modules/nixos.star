@@ -10,7 +10,10 @@ def render(ctx):
     if extend != None:
         flake, _, host = extend.partition("#")
         if not flake or not host:
-            fail("nixos.extend: expected `<flake>#<host>`, such as `/etc/nixos#laptop`, got `%s`" % extend)
+            ctx.error(
+                "nixos.extend",
+                "expected `<flake>#<host>`, such as `/etc/nixos#laptop`, got `%s`" % extend,
+            )
         setting = {"flake": flake, "host": host}
     if modules:
         setting["modules"] = modules
