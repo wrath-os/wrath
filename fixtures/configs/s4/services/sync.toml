@@ -1,9 +1,17 @@
 [services.syncthing.main]
 open_firewall = true
 
+[services.syncthing.main.devices.desktop]
+id = "KLFKQSL-KGV2NZV-E6BYRGY-FZU3Z77-PMV3VTJ-NCSVXBC-3GAVSV3-XPYD4AL"
+
+[services.syncthing.main.devices.phone]
+id = "VOKGVNW-6YXSCLP-V35WELX-BW67AYN-V42T2QZ-KDEBPGZ-FJRIE6Q-FGUHPAZ"
+addresses = ["tcp://phone.lan:22000"]
+
 [services.syncthing.main.folders.notes]
 path = "/home/john/notes"
 devices = ["desktop", "phone"]
+versioning = { type = "staggered", params = { maxAge = "0" } }
 
 [services.nginx.main]
 enable = true

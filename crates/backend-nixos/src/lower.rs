@@ -93,7 +93,7 @@ pub fn lower(model: &Model) -> String {
     formats::json(&input).expect("the shim's input has no runtime values")
 }
 
-/// The unit file, with a search path for programs named without a directory. A unit that
+/// The unit file, with a search path and PATH for programs named without a directory. A unit that
 /// restarts on files gets a hash of their contents, so NixOS sees the unit change with them.
 fn unit_text(unit: &Unit, model: &Model) -> String {
     let mut sections = unit.sections.clone();
@@ -113,25 +113,32 @@ fn unit_text(unit: &Unit, model: &Model) -> String {
             ),
         }
     }
-    let mut text = String::new();
-    for section in &sections {
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str(&format!("[{}]\n", section.name));
-        for (key, value) in &section.entries {
-            text.push_str(&format!("{key}={value}\n"));
-        }
-        if section.name == "Service"
-            && !section
+    for section in sections
+        .iter_mut()
+        .filter(|section| section.name == "Service")
+    {
+        let has_search_path = section.entries.iter().any(|(k, _)| k == "ExecSearchPath");
+        let sets_path = section
+            .entries
+            .iter()
+            .any(|(k, v)| k == "Environment" && v.trim_start_matches('"').starts_with("PATH="));
+        if !has_search_path {
+            section
                 .entries
-                .iter()
-                .any(|(key, _)| key == "ExecSearchPath")
-        {
-            text.push_str(&format!("ExecSearchPath={PROGRAMS}\n"));
+                .push(("ExecSearchPath".into(), PROGRAMS.into()));
+        }
+        // Scripts a unit runs find programs on PATH, which ExecSearchPath doesn't set.
+        if !sets_path {
+            section
+                .entries
+                .push(("Environment".into(), format!("PATH={PROGRAMS}")));
         }
     }
-    text
+    Unit {
+        sections,
+        ..Unit::default()
+    }
+    .text()
 }
 
 /// A hash of the paths and contents of files, which changes when any of them does.
@@ -257,7 +264,7 @@ mod tests {
           "units": {
             "nginx.service": {
               "required_by": [],
-              "text": "[Unit]\nX-Restart-Triggers=515446256c8120cef626f645d64a6b92a29146ecb9f893c916bd06caad318528\n\n[Service]\nExecStart=nginx -g 'daemon off;'\nExecSearchPath=/run/current-system/sw/bin\n\n[Install]\nWantedBy=multi-user.target default.target\n",
+              "text": "[Unit]\nX-Restart-Triggers=515446256c8120cef626f645d64a6b92a29146ecb9f893c916bd06caad318528\n\n[Service]\nExecStart=nginx -g 'daemon off;'\nExecSearchPath=/run/current-system/sw/bin\nEnvironment=PATH=/run/current-system/sw/bin\n\n[Install]\nWantedBy=multi-user.target default.target\n",
               "wanted_by": [
                 "multi-user.target",
                 "default.target"

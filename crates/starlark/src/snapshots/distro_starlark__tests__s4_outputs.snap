@@ -2,7 +2,7 @@
 source: crates/starlark/src/tests.rs
 expression: describe_outputs(&evaluation)
 ---
-packages: fprintd nftables nginx syncthing
+packages: curl fprintd jq nftables nginx syncthing
 
 file /etc/nftables.conf (mode 644, from firewall)
 table inet filter {
@@ -12,6 +12,8 @@ table inet filter {
     iif lo accept
     tcp dport 80 accept
     tcp dport 22000 accept
+    udp dport 21027 accept
+    udp dport 22000 accept
   }
 }
 
@@ -49,15 +51,76 @@ session required pam_env.so
 session required pam_unix.so
 session optional pam_systemd.so
 
-file /var/lib/syncthing/folders.json (mode 644, from syncthing)
+file /etc/syncthing/main/apply.sh (mode 755, from syncthing)
+#!/bin/sh
+set -eu
+config=$1/config.xml
+base=http://$2/rest
+desired=$3
+
+until key=$(sed -n 's:.*<apikey>\(.*\)</apikey>.*:\1:p' "$config" 2>/dev/null) &&
+    [ -n "$key" ]
+do
+    sleep 1
+done
+api() {
+    curl -sSf -H "X-API-Key: $key" --retry 60 --retry-delay 1 --retry-connrefused "$@"
+}
+
+me=$(api "$base/system/status" | jq -r .myID)
+for kind in devices folders; do
+    if [ "$kind" = devices ]; then id=deviceID; else id=id; fi
+    jq -c ".$kind[]" "$desired" | while read -r item; do
+        printf '%s' "$item" | api -X POST -H 'Content-Type: application/json' \
+            --data-binary @- "$base/config/$kind" >/dev/null
+    done
+    api "$base/config/$kind" \
+        | jq -r --slurpfile want "$desired" --arg me "$me" --arg kind "$kind" --arg id "$id" \
+            '[.[][$id]] - [$want[0][$kind][][$id]] - [$me] | .[] | @uri' \
+        | while read -r stale; do
+            api -X DELETE "$base/config/$kind/$stale" >/dev/null
+        done
+done
+
+file /etc/syncthing/main/desired.json (mode 644, from syncthing)
 {
-  "notes": {
-    "devices": [
-      "desktop",
-      "phone"
-    ],
-    "path": "/home/john/notes"
-  }
+  "devices": [
+    {
+      "addresses": [
+        "dynamic"
+      ],
+      "deviceID": "KLFKQSL-KGV2NZV-E6BYRGY-FZU3Z77-PMV3VTJ-NCSVXBC-3GAVSV3-XPYD4AL",
+      "name": "desktop"
+    },
+    {
+      "addresses": [
+        "tcp://phone.lan:22000"
+      ],
+      "deviceID": "VOKGVNW-6YXSCLP-V35WELX-BW67AYN-V42T2QZ-KDEBPGZ-FJRIE6Q-FGUHPAZ",
+      "name": "phone"
+    }
+  ],
+  "folders": [
+    {
+      "devices": [
+        {
+          "deviceID": "KLFKQSL-KGV2NZV-E6BYRGY-FZU3Z77-PMV3VTJ-NCSVXBC-3GAVSV3-XPYD4AL"
+        },
+        {
+          "deviceID": "VOKGVNW-6YXSCLP-V35WELX-BW67AYN-V42T2QZ-KDEBPGZ-FJRIE6Q-FGUHPAZ"
+        }
+      ],
+      "id": "notes",
+      "label": "notes",
+      "path": "/home/john/notes",
+      "versioning": {
+        "params": {
+          "maxAge": "0"
+        },
+        "type": "staggered"
+      }
+    }
+  ]
 }
 
 unit fprintd.service (from fprintd)
@@ -99,14 +162,50 @@ RuntimeDirectory=nginx-main
 [Install]
 WantedBy=multi-user.target
 
+unit syncthing-main-init.service (from syncthing)
+[Unit]
+After=syncthing-main.service
+Description=Syncthing (main) devices and folders
+PartOf=syncthing-main.service
+Requires=syncthing-main.service
+
+[Service]
+ExecStart=/bin/sh /etc/syncthing/main/apply.sh /var/lib/syncthing/.config/syncthing 127.0.0.1:8384 /etc/syncthing/main/desired.json
+RemainAfterExit=yes
+Type=oneshot
+User=syncthing
+
+[Install]
+WantedBy=syncthing-main.service
+
 unit syncthing-main.service (from syncthing)
 [Unit]
 After=network.target
 Description=Syncthing (main)
 
 [Service]
-ExecStart=syncthing serve --no-browser --gui-address=127.0.0.1:8384 --home=/var/lib/syncthing
+CapabilityBoundingSet=~CAP_SYS_PTRACE CAP_SYS_ADMIN CAP_SETGID CAP_SETUID CAP_SETPCAP CAP_SYS_TIME CAP_KILL
+Environment=STNORESTART=yes
+Environment=STNOUPGRADE=yes
+ExecStart=syncthing serve --no-browser --gui-address=127.0.0.1:8384 --config=/var/lib/syncthing/.config/syncthing --data=/var/lib/syncthing/.config/syncthing
+ExecStartPre=+install -dm700 -o syncthing -g syncthing /var/lib/syncthing/.config/syncthing
+Group=syncthing
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateMounts=yes
+PrivateTmp=yes
+PrivateUsers=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
 Restart=on-failure
+RestartForceExitStatus=3 4
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SuccessExitStatus=3 4
 User=syncthing
 
 [Install]
@@ -114,4 +213,4 @@ WantedBy=multi-user.target
 
 base system (from system): { hostname = "box", timezone = "UTC" }
 
-base users (from users): { john = { description = "John", extra_groups = ["wheel"], group = "users", home = "/home/john", packages = ["helix", "ripgrep"], shell = "/run/current-system/sw/bin/bash", system = false }, syncthing = { description = "Syncthing service", extra_groups = [], group = "users", home = "/var/lib/syncthing", packages = [], shell = "/run/current-system/sw/bin/bash", system = true } }
+base users (from users): { john = { description = "John", extra_groups = ["wheel"], group = "users", home = "/home/john", packages = ["helix", "ripgrep"], shell = "/run/current-system/sw/bin/bash", system = false }, syncthing = { description = "Syncthing service", extra_groups = [], group = "syncthing", home = "/var/lib/syncthing", packages = [], shell = "/run/current-system/sw/bin/bash", system = true } }

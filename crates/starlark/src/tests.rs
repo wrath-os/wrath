@@ -92,7 +92,7 @@ fn settings_point_at_the_exact_call() {
         @"
     networking.firewall.allowed_tcp_ports = [80, 22000]
       set by module `nginx` at modules/nginx.star:60:9: [80]
-      set by module `syncthing` at modules/syncthing.star:44:9: [22000]
+      set by module `syncthing` at modules/syncthing.star:204:9: [22000]
       overrides [], default
     "
     );
