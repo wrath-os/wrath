@@ -6,6 +6,9 @@ use crate::ordered;
 use crate::path::OptionPath;
 use crate::value::{RuntimePart, Value};
 
+/// The path segment that stands for every entry of a map when declaring options.
+pub const EVERY: &str = "*";
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Bool,
@@ -354,6 +357,8 @@ impl Schema {
         self.declare_at(&OptionPath::parse(path)?, spec)
     }
 
+    /// Declares an option, creating the records above it. A `*` segment declares it in every
+    /// entry of a map, such as `users."*".programs.git` for every user; the map must exist.
     pub fn declare_at(&mut self, path: &OptionPath, spec: OptionSpec) -> Result<(), String> {
         let (name, parents) = path
             .segments()
@@ -361,13 +366,14 @@ impl Schema {
             .ok_or("cannot declare the root")?;
         let mut node = &mut self.root;
         for segment in parents {
-            let Type::Record(record) = &mut node.ty else {
-                return Err(format!("`{path}` is inside an option that isn't a record"));
+            node = match &mut node.ty {
+                Type::Map(item) if segment == EVERY => item.as_mut(),
+                Type::Record(record) => record
+                    .fields
+                    .entry(segment.clone())
+                    .or_insert_with(|| OptionSpec::new(Type::Record(Record::default()))),
+                _ => return Err(format!("`{path}` is inside an option that isn't a record")),
             };
-            node = record
-                .fields
-                .entry(segment.clone())
-                .or_insert_with(|| OptionSpec::new(Type::Record(Record::default())));
         }
         let Type::Record(record) = &mut node.ty else {
             return Err(format!("`{path}` is inside an option that isn't a record"));

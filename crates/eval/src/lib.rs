@@ -24,11 +24,11 @@ pub use diag::{Diagnostic, Label, render};
 pub use eval::{Contribution, EvalError, Evaluation, Input, Rendered, Resolved, Use, evaluate};
 pub use fs::{ConfigFs, DirFs, MemFs};
 pub use module::{
-    ConfigReader, File, Module, ModuleId, Output, ReadError, RenderError, SECRETS_DIR, Secret,
-    Section, Setting, Unit, UnitAction,
+    ConfigReader, File, Home, Module, ModuleId, Output, ReadError, RenderError, SECRETS_DIR,
+    Secret, Section, Setting, Unit, UnitAction, home_path,
 };
 pub use path::OptionPath;
-pub use schema::{ListMerge, OptionSpec, Record, Schema, Type};
+pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};
 pub use template::Part;
 pub use value::{RuntimePart, Value};

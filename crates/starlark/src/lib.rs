@@ -24,9 +24,9 @@ use std::time::{Duration, Instant};
 
 use allocative::Allocative;
 use distro_eval::{
-    ConfigReader, Diagnostic, File, FileId, Level, ListMerge, Module, OptionPath, OptionSpec,
-    Output, ReadError, RenderError, Secret, Setting, Sources, Span, Type, Unit, UnitAction, Value,
-    formats,
+    ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, Module, OptionPath,
+    OptionSpec, Output, ReadError, RenderError, Secret, Setting, Sources, Span, Type, Unit,
+    UnitAction, Value, formats, home_path,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -236,20 +236,34 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         Ok(StarOption(spec))
     }
 
-    /// Declares the module. Every module file calls this once.
+    /// Declares the module. Every module file calls this once. `user_options` are options every
+    /// user has, under `users.<name>`.
     fn module<'v>(
         #[starlark(require = named)] name: &str,
         #[starlark(require = named)] options: SmallMap<String, StarValue<'v>>,
+        #[starlark(require = named)] user_options: Option<SmallMap<String, StarValue<'v>>>,
         #[starlark(require = named)] writes: StarValue<'v>,
         #[starlark(require = named)] render: StarValue<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
-        let mut declared_options = options
+        let every_user = OptionPath::root().child("users").child(EVERY);
+        let parse = |path: &str| OptionPath::parse(path).map_err(anyhow::Error::msg);
+        let user_options = user_options
+            .unwrap_or_default()
             .into_iter()
             .map(|(path, spec)| {
-                let path = OptionPath::parse(&path).map_err(anyhow::Error::msg)?;
+                let path = parse(&path)?
+                    .segments()
+                    .iter()
+                    .fold(every_user.clone(), |path, segment| {
+                        path.child(segment.as_str())
+                    });
                 Ok((path, spec_of(spec)?))
-            })
+            });
+        let mut declared_options = options
+            .into_iter()
+            .map(|(path, spec)| Ok((parse(&path)?, spec_of(spec)?)))
+            .chain(user_options)
             .collect::<anyhow::Result<Vec<_>>>()?;
         declared_options.sort_by(|a, b| a.0.cmp(&b.0));
         let writes = strings(writes)?
@@ -574,12 +588,14 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         insert_trigger(eval, unit, UnitAction::Restart, on)
     }
 
-    /// Renders a file.
+    /// Renders a file. With `user`, the path starts with `~/` and the file goes in that user's
+    /// home.
     fn file<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] path: &str,
         #[starlark(require = pos)] text: &str,
         #[starlark(require = pos)] mode: Option<u32>,
+        #[starlark(require = named)] user: Option<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let (rendering, at) = rendering(eval)?;
@@ -587,13 +603,22 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
             text: text.to_owned(),
             mode: mode.unwrap_or(0o644),
         };
-        let replaced = rendering
-            .output
-            .borrow_mut()
-            .files
-            .insert(path.to_owned(), file);
-        if replaced.is_some() {
-            return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
+        let mut output = rendering.output.borrow_mut();
+        let (files, shown) = match user {
+            Some(user) => {
+                if !path.starts_with("~/") {
+                    return Err(rendering.invalid(
+                        at,
+                        format!("file `{path}` is in a home, so it starts with `~/`"),
+                    ));
+                }
+                let files = &mut output.homes.entry(user.to_owned()).or_default().files;
+                (files, home_path(user, path))
+            }
+            None => (&mut output.files, path.to_owned()),
+        };
+        if files.insert(path.to_owned(), file).is_some() {
+            return Err(rendering.invalid(at, format!("file `{shown}` is rendered twice")));
         }
         Ok(NoneType)
     }
@@ -653,18 +678,20 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         })
     }
 
-    /// Adds a package to the system.
+    /// Adds a package to the system, or with `user`, to that user's packages.
     fn package<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] name: &str,
+        #[starlark(require = named)] user: Option<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let (rendering, _) = rendering(eval)?;
-        rendering
-            .output
-            .borrow_mut()
-            .packages
-            .insert(name.to_owned());
+        let mut output = rendering.output.borrow_mut();
+        let packages = match user {
+            Some(user) => &mut output.homes.entry(user.to_owned()).or_default().packages,
+            None => &mut output.packages,
+        };
+        packages.insert(name.to_owned());
         Ok(NoneType)
     }
 }

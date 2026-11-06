@@ -1,0 +1,7 @@
+# Users' own configuration: git with a signing key from a secret, and a file in the home.
+
+[system]
+hostname = "box"
+
+[secrets.git-signing]
+owner = "john"

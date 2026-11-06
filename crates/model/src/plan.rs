@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use distro_eval::{Unit, Value};
+use distro_eval::{Unit, Value, home_path};
 
-use crate::{Model, Secret};
+use crate::{File, Model, Secret};
 
 /// How much applying a change disrupts the running system, least first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -127,7 +127,7 @@ impl fmt::Display for Plan {
 
 /// What changes going from `before` to `after`.
 pub fn plan(before: &Model, after: &Model) -> Plan {
-    let files = diff(&before.files, &after.files, |before, after| {
+    let file_details = |before: Option<&File>, after: Option<&File>| {
         let detail = match (before, after) {
             (Some(before), Some(after)) if before.mode != after.mode => {
                 vec![format!("mode {:o} -> {:o}", before.mode, after.mode)]
@@ -135,7 +135,9 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
             _ => Vec::new(),
         };
         (detail, Some(Tier::Live))
-    });
+    };
+    let mut files = diff(&before.files, &after.files, file_details);
+    files.extend(diff(&home_files(before), &home_files(after), file_details));
     let mut units = diff(&before.units, &after.units, |before, after| {
         (unit_details(before, after), Some(Tier::Live))
     });
@@ -149,11 +151,9 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         options: diff(&before.options, &after.options, |before, after| {
             (vec![value_change(before, after)], None)
         }),
-        packages: diff(
-            &as_map(&before.packages),
-            &as_map(&after.packages),
-            |_, _| (Vec::new(), Some(Tier::Live)),
-        ),
+        packages: diff(&packages(before), &packages(after), |_, _| {
+            (Vec::new(), Some(Tier::Live))
+        }),
         files,
         secrets,
         units,
@@ -267,8 +267,33 @@ fn value_change(before: Option<&Value>, after: Option<&Value>) -> String {
     }
 }
 
-fn as_map(set: &BTreeSet<String>) -> BTreeMap<String, ()> {
-    set.iter().map(|item| (item.clone(), ())).collect()
+/// The system's packages, and each user's as `name (for user)`.
+fn packages(model: &Model) -> BTreeMap<String, ()> {
+    let users = model.homes.iter().flat_map(|(user, home)| {
+        home.packages
+            .iter()
+            .map(move |package| format!("{package} (for {user})"))
+    });
+    model
+        .packages
+        .iter()
+        .cloned()
+        .chain(users)
+        .map(|name| (name, ()))
+        .collect()
+}
+
+/// Files in users' homes, by path as `~user/.config/git/config`.
+fn home_files(model: &Model) -> BTreeMap<String, File> {
+    model
+        .homes
+        .iter()
+        .flat_map(|(user, home)| {
+            home.files
+                .iter()
+                .map(move |(path, file)| (home_path(user, path), file.clone()))
+        })
+        .collect()
 }
 
 /// Compares two maps by key; `describe` turns one difference into details and a tier.

@@ -685,3 +685,46 @@ fn a_secret_belongs_to_one_module_and_its_file_must_be_readable() {
     "
     );
 }
+
+#[test]
+fn modules_declare_options_every_user_has() {
+    let git = module(
+        "git",
+        vec![(
+            "users.\"*\".programs.git.enable",
+            OptionSpec::new(Type::Bool).default(Value::Bool(false)),
+        )],
+        &[],
+        |config| {
+            let mut output = Output::default();
+            let Some(Value::Table(users)) = read(config, "users")? else {
+                unreachable!("users is a table");
+            };
+            for (name, user) in users {
+                let enabled = user.to_string().contains("enable = true");
+                output.packages.insert(format!("{name}:{enabled}"));
+            }
+            Ok(output)
+        },
+    );
+    let files = [
+        SYSTEM,
+        ("users/john.toml", "[programs.git]\nenable = true\n"),
+        ("users/jane.toml", "packages = [\"vim\"]\n"),
+    ];
+
+    let evaluation = eval_with(&files, &[git]).unwrap();
+
+    assert_eq!(
+        evaluation.modules()[0].output.packages,
+        ["jane:false".to_owned(), "john:true".to_owned()].into()
+    );
+    insta::assert_snapshot!(
+        explain(&evaluation, Some(&path("users.john.programs.git.enable"))).unwrap(),
+        @"
+    users.john.programs.git.enable = true
+      set at users/john.toml:2:10
+      overrides false, default
+    "
+    );
+}

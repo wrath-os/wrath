@@ -155,12 +155,48 @@ in
       '';
   };
 
+  # Users' files are links into the store, made on every boot and switch.
+  system.activationScripts.distroHomes = {
+    deps = [
+      "users"
+      "groups"
+    ];
+    text =
+      let
+        link =
+          name: user:
+          let
+            files = input.homes.${name}.files or { };
+            target =
+              file:
+              pkgs.writeTextFile {
+                name = "home-file";
+                inherit (file) text executable;
+              };
+            links = pkgs.writeText "distro-home-${name}" (
+              lib.concatStrings (lib.mapAttrsToList (path: file: "${path}\t${target file}\n") files)
+            );
+          in
+          lib.escapeShellArgs [
+            "${pkgs.bash}/bin/bash"
+            "${./link-home.sh}"
+            name
+            user.group
+            user.home
+            links
+          ];
+      in
+      lib.concatStringsSep "\n" (
+        lib.mapAttrsToList link (lib.filterAttrs (_: user: !user.system) base.users)
+      );
+  };
+
   networking.hostName = mkDefault base.system.hostname;
   time.timeZone = mkDefault base.system.timezone;
 
   users.mutableUsers = mkDefault false;
   users.users = lib.mapAttrs (
-    _: user:
+    name: user:
     {
       inherit (user)
         description
@@ -169,7 +205,7 @@ in
         shell
         ;
       extraGroups = user.extra_groups;
-      packages = map package user.packages;
+      packages = map package (user.packages ++ (input.homes.${name}.packages or [ ]));
       isSystemUser = user.system;
       isNormalUser = !user.system;
       createHome = !user.system;

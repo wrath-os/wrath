@@ -55,6 +55,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "base": {},
       "facts": {},
       "files": {},
+      "homes": {},
       "options": {
         "grafana.password": {
           "runtime": [
@@ -293,4 +294,32 @@ fn units_that_mention_a_secret_restart_when_it_changes() {
     moved.secrets.get_mut("api-token").unwrap().source = "/elsewhere/api-token.age".into();
     assert_eq!(moved.hash(), before.hash());
     assert!(plan(&before, &moved).is_empty());
+}
+
+#[test]
+fn plan_shows_files_and_packages_in_users_homes() {
+    let with_home = |text: &str| {
+        let mut model = Model::default();
+        let home = model.homes.entry("john".into()).or_default();
+        let file = File {
+            mode: 0o644,
+            text: text.into(),
+        };
+        home.files.insert("~/.config/git/config".into(), file);
+        home.packages.insert("git".into());
+        model
+    };
+
+    insta::assert_snapshot!(plan(&Model::default(), &with_home("a")).to_string(), @"
+    packages
+      + git (for john) (tier: live)
+    files
+      + ~john/.config/git/config (tier: live)
+    2 changes, tier: live
+    ");
+    insta::assert_snapshot!(plan(&with_home("a"), &with_home("b")).to_string(), @"
+    files
+      ~ ~john/.config/git/config (tier: live)
+    1 change, tier: live
+    ");
 }

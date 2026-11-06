@@ -82,6 +82,21 @@ pub struct Output {
     pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,
     /// Secrets decrypted on the machine, by name.
     pub secrets: BTreeMap<String, Secret>,
+    /// What goes in users' homes, by user.
+    pub homes: BTreeMap<String, Home>,
+}
+
+/// A user's files and packages.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Home {
+    /// Files by path relative to the home directory, as `~/.config/git/config`.
+    pub files: BTreeMap<String, File>,
+    pub packages: BTreeSet<String>,
+}
+
+/// A home file's path as `~user/.config/git/config`, from `~/.config/git/config`.
+pub fn home_path(user: &str, path: &str) -> String {
+    format!("~{user}{}", &path[1..])
 }
 
 /// Where decrypted secrets are on the machine, one file per secret.

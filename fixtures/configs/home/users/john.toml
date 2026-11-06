@@ -1,0 +1,16 @@
+description = "John"
+
+[programs.git]
+enable = true
+name = "John"
+email = "john@example.com"
+signing_key = { secret = "git-signing" }
+settings.init.defaultBranch = "main"
+settings.url."https://github.com/".insteadOf = "gh:"
+
+[[programs.git.includes]]
+condition = "gitdir:~/work/"
+settings.user.email = "john@work.example"
+
+[files."~/.config/helix/config.toml"]
+text = "theme = \"onedark\"\n"

@@ -13,11 +13,11 @@ use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
 use crate::load;
 use crate::module::{
-    ConfigReader, Module, ModuleId, Output, ReadError, RenderError, Secret, Setting,
+    ConfigReader, Module, ModuleId, Output, ReadError, RenderError, Secret, Setting, home_path,
 };
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
-use crate::schema::{Child, ListMerge, OptionSpec, Schema, Type};
+use crate::schema::{Child, EVERY, ListMerge, OptionSpec, Schema, Type};
 use crate::source::{Sources, Span};
 use crate::suggest::did_you_mean;
 use crate::template::Part;
@@ -153,14 +153,23 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         facts,
     } = input;
     let mut diagnostics = Vec::new();
-    for module in modules {
-        for (path, spec) in module.options() {
-            if let Err(e) = schema.declare_at(&path, spec) {
-                diagnostics.push(Diagnostic::error(format!(
-                    "module `{}`: {e}",
-                    module.name()
-                )));
-            }
+    // Options in every entry of a map come last, so the map is declared whatever the order.
+    let mut options: Vec<(&dyn Module, OptionPath, OptionSpec)> = modules
+        .iter()
+        .flat_map(|module| {
+            module
+                .options()
+                .into_iter()
+                .map(move |(path, spec)| (module.as_ref(), path, spec))
+        })
+        .collect();
+    options.sort_by_key(|(_, path, _)| path.segments().iter().any(|segment| segment == EVERY));
+    for (module, path, spec) in options {
+        if let Err(e) = schema.declare_at(&path, spec) {
+            diagnostics.push(Diagnostic::error(format!(
+                "module `{}`: {e}",
+                module.name()
+            )));
         }
     }
     let (files, load_diagnostics) = load::load(config, &mut sources);
@@ -341,22 +350,25 @@ fn read_secrets(
 /// Files, units and base settings that more than one module renders. Each has one owner, so
 /// the modules have to settle it between them.
 fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
-    let mut owners: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+    let mut owners: BTreeMap<(&str, String), Vec<&str>> = BTreeMap::new();
     for rendered in rendered.iter().flatten() {
         let output = &rendered.output;
-        let names = [
-            ("file", output.files.keys().collect::<Vec<_>>()),
-            ("unit", output.units.keys().collect()),
-            ("base setting", output.base.keys().collect()),
-            ("backend setting", output.backends.keys().collect()),
-            ("secret", output.secrets.keys().collect()),
+        let home_files = output
+            .homes
+            .iter()
+            .flat_map(|(user, home)| home.files.keys().map(move |path| home_path(user, path)))
+            .collect();
+        let outputs: [(&str, Vec<String>); 6] = [
+            ("file", output.files.keys().cloned().collect()),
+            ("file", home_files),
+            ("unit", output.units.keys().cloned().collect()),
+            ("base setting", output.base.keys().cloned().collect()),
+            ("backend setting", output.backends.keys().cloned().collect()),
+            ("secret", output.secrets.keys().cloned().collect()),
         ];
-        for (kind, keys) in names {
+        for (kind, keys) in outputs {
             for key in keys {
-                owners
-                    .entry((kind, key.as_str()))
-                    .or_default()
-                    .push(&rendered.name);
+                owners.entry((kind, key)).or_default().push(&rendered.name);
             }
         }
     }

@@ -388,3 +388,70 @@ fn a_secret_must_be_declared_and_its_file_readable() {
      = help: encrypt it with age to the machine's key, or set its `file`
     ");
 }
+
+/// The files and packages one module puts in users' homes, as text.
+fn homes_of(evaluation: &Evaluation, module: &str) -> String {
+    let mut out = String::new();
+    for (user, home) in &output_of(evaluation, module).homes {
+        for (path, file) in &home.files {
+            out.push_str(&format!("{user} {path}\n{}\n", file.text));
+        }
+        for package in &home.packages {
+            out.push_str(&format!("{user} package {package}\n"));
+        }
+    }
+    out
+}
+
+const HOME_MODULES: [&str; 5] = ["files", "git", "secrets", "system", "users"];
+
+#[test]
+fn users_configure_git_and_files_in_their_homes() {
+    let evaluation = evaluate_fixture("home", &HOME_MODULES);
+
+    insta::assert_snapshot!(homes_of(&evaluation, "git"), @r#"
+    john ~/.config/git/config
+    [commit]
+    	gpgSign = true
+    [gpg]
+    	format = ssh
+    [init]
+    	defaultBranch = main
+    [tag]
+    	gpgSign = true
+    [url "https://github.com/"]
+    	insteadOf = gh:
+    [user]
+    	email = john@example.com
+    	name = John
+    	signingKey = /run/secrets/git-signing
+    [includeIf "gitdir:~/work/"]
+    	path = ~/.config/git/include-1
+
+    john ~/.config/git/include-1
+    [user]
+    	email = john@work.example
+
+    john package git
+    "#);
+    insta::assert_snapshot!(homes_of(&evaluation, "files"), @r#"
+    john ~/.config/helix/config.toml
+    theme = "onedark"
+    "#);
+}
+
+#[test]
+fn home_files_start_with_a_tilde() {
+    let config = MemFs::new([
+        ("system.toml", "[system]\nhostname = \"box\"\n"),
+        ("users/john.toml", "[files.\".bashrc\"]\ntext = \"\"\n"),
+    ]);
+
+    insta::assert_snapshot!(evaluate_with(&config, &HOME_MODULES).unwrap_err(), @r#"
+    error: fail: users.john.files: `.bashrc` doesn't start with `~/`
+      --> modules/files.star:17:17
+       |
+    17 |                 fail("users.%s.files: `%s` doesn't start with `~/`" % (user, path))
+       |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
+    "#);
+}

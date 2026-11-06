@@ -81,6 +81,7 @@ pub fn lower(model: &Model) -> String {
         ("units", Value::Table(units)),
         ("triggers", Value::Table(triggers)),
         ("secrets", secrets(model)),
+        ("homes", homes(model)),
         ("base", Value::Table(model.base.clone())),
         (
             "nixos",
@@ -92,6 +93,33 @@ pub fn lower(model: &Model) -> String {
         ),
     ]);
     formats::json(&input).expect("the shim's input has no runtime values")
+}
+
+/// Each user's files, linked from the store, and packages.
+fn homes(model: &Model) -> Value {
+    let homes = model
+        .homes
+        .iter()
+        .map(|(user, home)| {
+            let files = home
+                .files
+                .iter()
+                .map(|(path, file)| {
+                    let entry = table([
+                        ("text", Value::Str(file.text.clone())),
+                        ("executable", Value::Bool(file.mode & 0o111 != 0)),
+                    ]);
+                    (path.clone(), entry)
+                })
+                .collect();
+            let home = table([
+                ("files", Value::Table(files)),
+                ("packages", strings(home.packages.iter().cloned())),
+            ]);
+            (user.clone(), home)
+        })
+        .collect();
+    Value::Table(homes)
 }
 
 /// Each secret with its encrypted file as an absolute path, and the owner as `chown` takes it.
@@ -291,6 +319,7 @@ mod tests {
               "text": "x\n"
             }
           },
+          "homes": {},
           "nixos": {},
           "packages": [
             "nginx"
@@ -352,5 +381,39 @@ mod tests {
         "#);
         assert!(text(&model("abc")).contains("X-Restart-Triggers="));
         assert_ne!(text(&model("abc")), text(&model("def")));
+    }
+
+    #[test]
+    fn home_files_say_whether_they_run() {
+        let mut model = Model::default();
+        let home = model.homes.entry("john".into()).or_default();
+        for (path, mode) in [("~/.config/git/config", 0o644), ("~/bin/hello", 0o755)] {
+            let file = File {
+                mode,
+                text: "x\n".into(),
+            };
+            home.files.insert(path.into(), file);
+        }
+        home.packages.insert("git".into());
+
+        insta::assert_snapshot!(formats::json(&homes(&model)).unwrap(), @r#"
+        {
+          "john": {
+            "files": {
+              "~/.config/git/config": {
+                "executable": false,
+                "text": "x\n"
+              },
+              "~/bin/hello": {
+                "executable": true,
+                "text": "x\n"
+              }
+            },
+            "packages": [
+              "git"
+            ]
+          }
+        }
+        "#);
     }
 }

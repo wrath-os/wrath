@@ -34,6 +34,15 @@ pub struct Model {
     pub facts: BTreeMap<String, Value>,
     /// Secrets decrypted on the machine, by name.
     pub secrets: BTreeMap<String, Secret>,
+    /// What goes in users' homes, by user.
+    pub homes: BTreeMap<String, Home>,
+}
+
+/// A user's files, by path as `~/.config/git/config`, and packages.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Home {
+    pub files: BTreeMap<String, File>,
+    pub packages: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,13 +101,12 @@ impl Model {
         for rendered in evaluation.modules() {
             let output = &rendered.output;
             model.packages.extend(output.packages.iter().cloned());
-            model.files.extend(output.files.iter().map(|(path, file)| {
-                let file = File {
-                    mode: file.mode,
-                    text: file.text.clone(),
-                };
-                (path.clone(), file)
-            }));
+            model.files.extend(files_of(&output.files));
+            for (user, home) in &output.homes {
+                let ours = model.homes.entry(user.clone()).or_default();
+                ours.files.extend(files_of(&home.files));
+                ours.packages.extend(home.packages.iter().cloned());
+            }
             model.base.extend(output.base.clone());
             model.backends.extend(output.backends.clone());
             model.units.extend(output.units.clone());
@@ -134,15 +142,16 @@ impl Model {
             .iter()
             .map(|name| Value::Str(name.clone()))
             .collect();
-        let files = self
-            .files
+        let homes = self
+            .homes
             .iter()
-            .map(|(path, file)| {
-                let file = table([
-                    ("mode", Value::Int(i64::from(file.mode))),
-                    ("text", Value::Str(file.text.clone())),
+            .map(|(user, home)| {
+                let packages = home.packages.iter().cloned().map(Value::Str).collect();
+                let home = table([
+                    ("files", files_value(&home.files)),
+                    ("packages", Value::List(packages)),
                 ]);
-                (path.clone(), file)
+                (user.clone(), home)
             })
             .collect();
         let units = self
@@ -193,7 +202,8 @@ impl Model {
             ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),
             ("packages", Value::List(packages)),
-            ("files", Value::Table(files)),
+            ("files", files_value(&self.files)),
+            ("homes", Value::Table(homes)),
             ("units", Value::Table(units)),
             ("base", spell_out_entries(&self.base)),
             ("backends", spell_out_entries(&self.backends)),
@@ -228,6 +238,33 @@ impl Model {
             .to_hex()
             .to_string()
     }
+}
+
+fn files_of(
+    files: &BTreeMap<String, distro_eval::File>,
+) -> impl Iterator<Item = (String, File)> + '_ {
+    files.iter().map(|(path, file)| {
+        let file = File {
+            mode: file.mode,
+            text: file.text.clone(),
+        };
+        (path.clone(), file)
+    })
+}
+
+fn files_value(files: &BTreeMap<String, File>) -> Value {
+    Value::Table(
+        files
+            .iter()
+            .map(|(path, file)| {
+                let file = table([
+                    ("mode", Value::Int(i64::from(file.mode))),
+                    ("text", Value::Str(file.text.clone())),
+                ]);
+                (path.clone(), file)
+            })
+            .collect(),
+    )
 }
 
 fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
