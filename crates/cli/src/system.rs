@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use distro_eval::{DirFs, Evaluation, Input, Module, Schema, Sources, Value, evaluate, render};
+use distro_eval::{ConfigFs, DirFs, Evaluation, Input, Module, Schema, Sources, Value, render};
 
 /// The order modules are loaded and run in. The result must not depend on it.
 #[derive(Debug, Clone, Copy)]
@@ -21,11 +21,24 @@ pub fn evaluate_dir(
     modules: &Path,
     order: ModuleOrder,
 ) -> Result<Evaluation, String> {
+    evaluate_with(&DirFs::new(config), modules, order)
+}
+
+/// Like [`evaluate_dir`], for a configuration from anywhere, with modules in sorted order.
+pub fn evaluate(config: &dyn ConfigFs, modules: &Path) -> Result<Evaluation, String> {
+    evaluate_with(config, modules, ModuleOrder::Sorted)
+}
+
+fn evaluate_with(
+    config: &dyn ConfigFs,
+    modules: &Path,
+    order: ModuleOrder,
+) -> Result<Evaluation, String> {
     let mut sources = Sources::default();
     let modules = load_modules(modules, &mut sources, order)?;
-    evaluate(Input {
+    distro_eval::evaluate(Input {
         sources,
-        config: &DirFs::new(config),
+        config,
         schema: Schema::default(),
         modules: &modules,
         facts: &host_facts(),

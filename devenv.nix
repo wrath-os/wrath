@@ -4,6 +4,7 @@
   languages.rust.enable = true;
 
   packages = [
+    pkgs.age
     pkgs.cargo-insta
     pkgs.qemu_kvm
     pkgs.swtpm

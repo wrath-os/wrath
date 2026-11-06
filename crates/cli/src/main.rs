@@ -10,6 +10,7 @@ use distro_model::Model;
 mod bench;
 mod checks;
 mod generations;
+mod secret;
 mod system;
 
 /// How many times `check --determinism` evaluates each configuration.
@@ -114,6 +115,11 @@ enum Command {
     History,
     /// Switch back to the previous generation
     Rollback,
+    /// Edit secrets and encrypt them to the machine and the people who manage it
+    Secret {
+        #[command(subcommand)]
+        command: secret::SecretCommand,
+    },
     /// Show where option values come from
     Why {
         /// The configuration to explain
@@ -179,6 +185,9 @@ fn main() -> ExitCode {
             budget: std::time::Duration::from_millis(budget_ms),
         })
         .map(exit_code),
+        Command::Secret { command } => {
+            secret::run(command, |modules| modules_dir(&cli.root, modules))
+        }
         Command::Why {
             config,
             modules,

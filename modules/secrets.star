@@ -43,6 +43,12 @@ module(
             default = ["/etc/ssh/ssh_host_ed25519_key"],
             doc = "Private keys on the machine that decrypt its secrets.",
         ),
+        "system.secret_recipients": option(
+            types.list(types.str),
+            default = [],
+            doc = "Public keys `distro secret` encrypts to: the machine's host key, and the " +
+                  "keys of whoever edits its secrets.",
+        ),
     },
     writes = [],
     render = render,
