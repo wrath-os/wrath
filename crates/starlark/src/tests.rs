@@ -403,20 +403,35 @@ fn homes_of(evaluation: &Evaluation, module: &str) -> String {
     out
 }
 
-const HOME_MODULES: [&str; 5] = ["files", "git", "secrets", "system", "users"];
+const HOME_MODULES: [&str; 6] = ["files", "git", "jujutsu", "secrets", "system", "users"];
 
 #[test]
 fn users_configure_git_and_files_in_their_homes() {
     let evaluation = evaluate_fixture("home", &HOME_MODULES);
 
     insta::assert_snapshot!(homes_of(&evaluation, "git"), @r#"
+    john ~/.config/git/attributes
+    * merge=mergiraf
+
     john ~/.config/git/config
     [commit]
     	gpgSign = true
+    [core]
+    	pager = delta
+    [filter "lfs"]
+    	clean = git-lfs clean -- %f
+    	process = git-lfs filter-process
+    	required = true
+    	smudge = git-lfs smudge -- %f
     [gpg]
     	format = ssh
     [init]
     	defaultBranch = main
+    [interactive]
+    	diffFilter = delta --color-only
+    [merge "mergiraf"]
+    	driver = mergiraf merge --git %O %A %B -s %S
+    	name = mergiraf
     [tag]
     	gpgSign = true
     [url "https://github.com/"]
@@ -428,11 +443,34 @@ fn users_configure_git_and_files_in_their_homes() {
     [includeIf "gitdir:~/work/"]
     	path = ~/.config/git/include-1
 
+    john ~/.config/git/ignore
+    *~
+    .direnv*
+
     john ~/.config/git/include-1
     [user]
     	email = john@work.example
 
+    john package delta
     john package git
+    john package git-lfs
+    "#);
+    insta::assert_snapshot!(homes_of(&evaluation, "jujutsu"), @r#"
+    john ~/.config/jj/config.toml
+    [signing]
+    backend = "ssh"
+    behavior = "own"
+    key = "/run/secrets/git-signing"
+
+    [ui]
+    diff-formatter = ["difft", "--color=always", "$left", "$right"]
+    editor = "hx"
+
+    [user]
+    email = "john@example.com"
+    name = "John"
+
+    john package jujutsu
     "#);
     insta::assert_snapshot!(homes_of(&evaluation, "files"), @r#"
     john ~/.config/helix/config.toml

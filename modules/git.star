@@ -1,5 +1,5 @@
 # Git for each user who enables it: `~/.config/git/config`, with commits signed by an SSH key
-# such as a secret, and settings that apply only in some directories.
+# such as a secret, settings that apply only in some directories, LFS and delta.
 
 def value(v):
     if type(v) == "bool":
@@ -60,7 +60,24 @@ def render(ctx):
                 "commit": {"gpgSign": True},
                 "tag": {"gpgSign": True},
             })
+        if git["lfs"]:
+            settings = merge(settings, {"filter": {"lfs": {
+                "clean": "git-lfs clean -- %f",
+                "process": "git-lfs filter-process",
+                "required": True,
+                "smudge": "git-lfs smudge -- %f",
+            }}})
+            ctx.package("git-lfs", user = user)
+        if git["delta"]:
+            settings = merge(settings, {
+                "core": {"pager": "delta"},
+                "interactive": {"diffFilter": "delta --color-only"},
+            })
+            ctx.package("delta", user = user)
         settings = merge(settings, git["settings"])
+        for name, lines in [("ignore", git["ignores"]), ("attributes", git["attributes"])]:
+            if lines:
+                ctx.file("~/.config/git/" + name, "\n".join(lines) + "\n", user = user)
         for i, inc in enumerate(git["includes"]):
             path = "~/.config/git/include-%d" % (i + 1)
             ctx.file(path, gitconfig(inc["settings"]), user = user)
@@ -90,6 +107,22 @@ module(
                 doc = "Anything else, as `section.key` or `section.subsection.key`.",
             ),
             includes = option(types.list(include), default = []),
+            lfs = option(types.bool, default = False, doc = "Large files with Git LFS."),
+            delta = option(
+                types.bool,
+                default = False,
+                doc = "Show diffs with delta. Its own options go in `settings.delta`.",
+            ),
+            ignores = option(
+                types.list(types.str),
+                default = [],
+                doc = "Patterns every repository ignores.",
+            ),
+            attributes = option(
+                types.list(types.str),
+                default = [],
+                doc = "Attributes for every repository, such as `* merge=mergiraf`.",
+            ),
         ),
     },
     writes = [],

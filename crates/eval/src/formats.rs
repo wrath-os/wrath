@@ -3,6 +3,8 @@
 
 use std::fmt::Write;
 
+use ::toml::Value as TomlValue;
+
 use crate::module::Unit;
 use crate::value::Value;
 
@@ -19,6 +21,36 @@ pub fn json(value: &Value) -> Result<String, String> {
 pub fn systemd(value: &Value) -> Result<String, String> {
     Ok(Unit::from_value(value)?.text())
 }
+
+/// A TOML document from a table, with keys sorted.
+pub fn toml(value: &Value) -> Result<String, String> {
+    let TomlValue::Table(table) = to_toml(value)? else {
+        return Err(format!("a TOML document is a table, found {value}"));
+    };
+    ::toml::to_string(&table).map_err(|e| e.to_string())
+}
+
+fn to_toml(value: &Value) -> Result<TomlValue, String> {
+    Ok(match value {
+        Value::Bool(b) => TomlValue::Boolean(*b),
+        Value::Int(i) => TomlValue::Integer(*i),
+        Value::Float(x) => TomlValue::Float(*x),
+        Value::Str(s) => TomlValue::String(s.clone()),
+        Value::List(items) => {
+            TomlValue::Array(items.iter().map(to_toml).collect::<Result<_, _>>()?)
+        }
+        Value::Table(entries) => TomlValue::Table(
+            entries
+                .iter()
+                .map(|(key, item)| Ok((key.clone(), to_toml(item)?)))
+                .collect::<Result<_, String>>()?,
+        ),
+        Value::Runtime(_) => return Err(RUNTIME.into()),
+    })
+}
+
+const RUNTIME: &str =
+    "a value only known at service start cannot be rendered when the system is built";
 
 fn write_json(out: &mut String, value: &Value, depth: usize) -> Result<(), String> {
     let indent = |out: &mut String, depth: usize| {
@@ -59,12 +91,7 @@ fn write_json(out: &mut String, value: &Value, depth: usize) -> Result<(), Strin
             indent(out, depth);
             out.push('}');
         }
-        Value::Runtime(_) => {
-            return Err(
-                "a value only known at service start cannot be rendered when the system is built"
-                    .into(),
-            );
-        }
+        Value::Runtime(_) => return Err(RUNTIME.into()),
     }
     Ok(())
 }
@@ -150,8 +177,34 @@ mod tests {
     }
 
     #[test]
+    fn renders_toml_with_tables_after_keys() {
+        let value = Value::Table(BTreeMap::from([
+            (
+                "ui".to_owned(),
+                Value::Table(BTreeMap::from([
+                    ("editor".to_owned(), Value::Str("hx".into())),
+                    (
+                        "diff-formatter".to_owned(),
+                        Value::List(vec![Value::Str("difft".into()), Value::Str("$left".into())]),
+                    ),
+                ])),
+            ),
+            ("a".to_owned(), Value::Bool(true)),
+            ("n".to_owned(), Value::Int(3)),
+        ]));
+
+        assert_eq!(
+            toml(&value).unwrap(),
+            "a = true\nn = 3\n\n[ui]\ndiff-formatter = [\"difft\", \"$left\"]\neditor = \"hx\"\n"
+        );
+        assert!(toml(&Value::Str("x".into())).is_err());
+    }
+
+    #[test]
     fn refuses_values_it_cannot_represent() {
+        let runtime = Value::Runtime(vec![RuntimePart::Secret("pw".into())]);
         assert!(json(&Value::Float(f64::NAN)).is_err());
-        assert!(json(&Value::Runtime(vec![RuntimePart::Secret("pw".into())])).is_err());
+        assert!(json(&runtime).is_err());
+        assert!(toml(&Value::Table(BTreeMap::from([("k".to_owned(), runtime)]))).is_err());
     }
 }

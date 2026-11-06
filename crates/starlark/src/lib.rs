@@ -348,6 +348,12 @@ fn formats_functions(builder: &mut GlobalsBuilder) {
         let value = convert::from_starlark(sections).map_err(anyhow::Error::msg)?;
         formats::systemd(&value).map_err(anyhow::Error::msg)
     }
+
+    /// A TOML document from a dictionary, with keys sorted.
+    fn toml<'v>(value: StarValue<'v>) -> anyhow::Result<String> {
+        let value = convert::from_starlark(value).map_err(anyhow::Error::msg)?;
+        formats::toml(&value).map_err(anyhow::Error::msg)
+    }
 }
 
 /// A loaded module. Each render evaluates the file again on a fresh heap and calls the render

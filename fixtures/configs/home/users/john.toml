@@ -1,16 +1,30 @@
 description = "John"
+packages = ["mergiraf"]
 
 [programs.git]
 enable = true
 name = "John"
 email = "john@example.com"
 signing_key = { secret = "git-signing" }
+lfs = true
+delta = true
+ignores = ["*~", ".direnv*"]
+attributes = ["* merge=mergiraf"]
 settings.init.defaultBranch = "main"
 settings.url."https://github.com/".insteadOf = "gh:"
+settings.merge.mergiraf = { name = "mergiraf", driver = "mergiraf merge --git %O %A %B -s %S" }
 
 [[programs.git.includes]]
 condition = "gitdir:~/work/"
 settings.user.email = "john@work.example"
+
+[programs.jujutsu]
+enable = true
+name = "John"
+email = "john@example.com"
+signing_key = { secret = "git-signing" }
+settings.ui.editor = "hx"
+settings.ui.diff-formatter = ["difft", "--color=always", "$left", "$right"]
 
 [files."~/.config/helix/config.toml"]
 text = "theme = \"onedark\"\n"
