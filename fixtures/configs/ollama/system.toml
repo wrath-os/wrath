@@ -1,0 +1,12 @@
+# A local model server on an AMD GPU, reachable from the network.
+
+[system]
+hostname = "box"
+
+[services.ollama]
+enable = true
+acceleration = "rocm"
+rocm_gfx = "11.0.0"
+host = "0.0.0.0"
+open_firewall = true
+environment.OLLAMA_IGPU_ENABLE = "1"

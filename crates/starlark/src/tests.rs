@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use distro_eval::{
-    DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Schema, Sources, Type, Value,
-    describe_outputs, evaluate, explain,
+    DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output, Schema, Sources, Type,
+    Value, describe_outputs, evaluate, explain,
 };
 
 use super::load;
@@ -163,14 +163,18 @@ module(name = "x", options = {"a": types.list(option(types.str))}, writes = [], 
     assert!(message.contains("expected a type"), "{message}");
 }
 
-/// The files, units and triggers one module renders, as text.
-fn rendered_by(evaluation: &Evaluation, module: &str) -> String {
-    let output = &evaluation
+fn output_of<'a>(evaluation: &'a Evaluation, module: &str) -> &'a Output {
+    &evaluation
         .modules()
         .iter()
         .find(|rendered| rendered.name == module)
         .unwrap_or_else(|| panic!("no module `{module}`"))
-        .output;
+        .output
+}
+
+/// The files, units and triggers one module renders, as text.
+fn rendered_by(evaluation: &Evaluation, module: &str) -> String {
+    let output = output_of(evaluation, module);
     let mut out = String::new();
     for (path, file) in &output.files {
         out.push_str(&format!("{path}\n{}\n", file.text));
@@ -259,4 +263,71 @@ fn tailscale_runs_its_agent_and_networkd_leaves_its_interface_alone() {
         firewall.contains("iifname \"tailscale0\" accept"),
         "{firewall}"
     );
+}
+
+#[test]
+fn ollama_runs_sandboxed_with_the_package_for_its_gpus() {
+    let evaluation = evaluate_fixture("ollama", &["base", "firewall", "ollama", "system"]);
+
+    insta::assert_snapshot!(rendered_by(&evaluation, "ollama"), @r#"
+    ollama.service
+    [Unit]
+    After=network.target
+    Description=Server for local large language models
+
+    [Service]
+    CapabilityBoundingSet=
+    DeviceAllow=char-nvidiactl
+    DeviceAllow=char-nvidia-caps
+    DeviceAllow=char-nvidia-frontend
+    DeviceAllow=char-nvidia-uvm
+    DeviceAllow=char-drm
+    DeviceAllow=char-fb
+    DeviceAllow=char-kfd
+    DevicePolicy=closed
+    DynamicUser=yes
+    Environment="HOME=/var/lib/ollama"
+    Environment="OLLAMA_MODELS=/var/lib/ollama/models"
+    Environment="OLLAMA_HOST=0.0.0.0:11434"
+    Environment="HSA_OVERRIDE_GFX_VERSION=11.0.0"
+    Environment="OLLAMA_IGPU_ENABLE=1"
+    ExecStart=ollama serve
+    LockPersonality=yes
+    MemoryDenyWriteExecute=yes
+    NoNewPrivileges=yes
+    PrivateDevices=no
+    PrivateTmp=yes
+    PrivateUsers=yes
+    ProcSubset=all
+    ProtectClock=yes
+    ProtectControlGroups=yes
+    ProtectHome=yes
+    ProtectHostname=yes
+    ProtectKernelLogs=yes
+    ProtectKernelModules=yes
+    ProtectKernelTunables=yes
+    ProtectProc=invisible
+    ProtectSystem=strict
+    RemoveIPC=yes
+    RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+    RestrictNamespaces=yes
+    RestrictRealtime=yes
+    RestrictSUIDSGID=yes
+    StateDirectory=ollama
+    SupplementaryGroups=render
+    SystemCallArchitectures=native
+    SystemCallFilter=@system-service @resources
+    SystemCallFilter=~@privileged
+    Type=exec
+    UMask=0077
+    WorkingDirectory=/var/lib/ollama
+
+    [Install]
+    WantedBy=multi-user.target
+    "#);
+    assert_eq!(
+        output_of(&evaluation, "ollama").packages,
+        ["ollama-rocm".to_owned()].into()
+    );
+    assert!(rendered_by(&evaluation, "firewall").contains("tcp dport 11434 accept"));
 }
