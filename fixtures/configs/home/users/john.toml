@@ -41,3 +41,6 @@ settings.Service.Nice = 10
 [services.manual]
 exec = "sleep infinity"
 wanted_by = []
+
+[files."~/.netrc"]
+text = "machine example.com password ${secret.git-signing}\n"

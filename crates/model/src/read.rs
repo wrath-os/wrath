@@ -277,6 +277,7 @@ fn read_home(value: &Value) -> Result<Home, String> {
         files: read_files(get(home, "files", "a home")?)?,
         packages: strings(get(home, "packages", "a home")?)?,
         units: read_units(get(home, "units", "a home")?)?,
+        templates: read_templates(get(home, "templates", "a home")?)?,
     })
 }
 

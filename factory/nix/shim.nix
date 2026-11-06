@@ -26,6 +26,10 @@ let
   filled = file: "/run/distro/templates/${file.name}";
   etcTemplates = lib.filterAttrs (path: _: lib.hasPrefix "/etc/" path) input.templates;
   otherTemplates = lib.filterAttrs (path: _: !(lib.hasPrefix "/etc/" path)) input.templates;
+  # Every file with secrets in it, the system's and users'.
+  templates =
+    lib.attrValues input.templates
+    ++ lib.concatMap (home: lib.attrValues (home.templates or { })) (lib.attrValues input.homes);
 
   # Base settings NixOS overrides, as the TOML option, its value, the NixOS option and the value
   # NixOS uses.
@@ -170,17 +174,17 @@ in
   # Files with secrets in them are filled in after the secrets on every boot and switch, into a
   # new directory on ramfs that then replaces /run/distro/templates in one step. A file that
   # can't be filled in is left out with an error. Their paths link into that directory.
-  system.activationScripts.distroTemplates = lib.mkIf (input.templates != { }) {
+  system.activationScripts.distroTemplates = lib.mkIf (templates != [ ]) {
     deps = [ "distroSecrets" ];
     text =
       let
         spec = pkgs.writeText "distro-templates.json" (
           builtins.toJSON (
-            lib.mapAttrs' (_: file: lib.nameValuePair file.name file.parts) input.templates
+            lib.listToAttrs (map (file: lib.nameValuePair file.name file.parts) templates)
           )
         );
         own =
-          _: file:
+          file:
           lib.escapeShellArgs [
             "own"
             file.name
@@ -202,7 +206,7 @@ in
           chown "$2" "$generation/$1"
           chmod "$3" "$generation/$1"
         }
-        ${lib.concatStringsSep "\n" (lib.mapAttrsToList own input.templates)}
+        ${lib.concatStringsSep "\n" (map own templates)}
         ln -sfn "$generation" /run/distro/templates.next
         mv -T /run/distro/templates.next /run/distro/templates
         for old in /run/distro/templates.d/*; do
@@ -240,6 +244,11 @@ in
             links = pkgs.writeText "distro-home-${name}" (
               lib.concatStrings (
                 lib.mapAttrsToList (path: file: "${path}\t${target path file}\n") files
+              )
+              + lib.concatStrings (
+                lib.mapAttrsToList (path: file: "${path}\t${filled file}\n") (
+                  input.homes.${name}.templates or { }
+                )
               )
             );
           in

@@ -149,9 +149,14 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         file_details,
     ));
     files.extend(diff(
-        &before.templates,
-        &after.templates,
-        |before, after| (template_details(before, after), Some(Tier::Live)),
+        &templates(before),
+        &templates(after),
+        |before, after| {
+            (
+                template_details(before.copied(), after.copied()),
+                Some(Tier::Live),
+            )
+        },
     ));
     let mut units = diff(&units(before), &units(after), |before, after| {
         (
@@ -412,6 +417,21 @@ fn home_files(model: &Model) -> BTreeMap<String, File> {
                 .iter()
                 .map(move |(path, file)| (home_path(user, path), file.clone()))
         })
+        .collect()
+}
+
+/// Files with secrets in them, the system's and each user's as `~user/.netrc`.
+fn templates(model: &Model) -> BTreeMap<String, &Template> {
+    let users = model.homes.iter().flat_map(|(user, home)| {
+        home.templates
+            .iter()
+            .map(move |(path, template)| (home_path(user, path), template))
+    });
+    model
+        .templates
+        .iter()
+        .map(|(path, template)| (path.clone(), template))
+        .chain(users)
         .collect()
 }
 

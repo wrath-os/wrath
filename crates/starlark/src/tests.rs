@@ -537,6 +537,16 @@ fn homes_of(evaluation: &Evaluation, module: &str) -> String {
         for (name, unit) in &home.units {
             out.push_str(&format!("{user} unit {name}\n{}\n", unit.text()));
         }
+        for (path, template) in &home.templates {
+            let owner = format!(
+                "{}:{:?} {:o}",
+                template.owner, template.group, template.mode
+            );
+            out.push_str(&format!(
+                "{user} {path} with secrets for {owner}\n{:?}\n",
+                template.parts
+            ));
+        }
         for package in &home.packages {
             out.push_str(&format!("{user} package {package}\n"));
         }
@@ -692,6 +702,9 @@ fn users_configure_git_and_files_in_their_homes() {
     insta::assert_snapshot!(homes_of(&evaluation, "files"), @r#"
     john ~/.config/helix/config.toml
     theme = "onedark"
+
+    john ~/.netrc with secrets for john:None 400
+    [Text("machine example.com password "), Secret("git-signing"), Text("\n")]
     "#);
 }
 

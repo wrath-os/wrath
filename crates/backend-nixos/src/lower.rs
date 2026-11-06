@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{Section, Template, Unit, Value, formats};
+use distro_eval::{Section, Template, Unit, Value, formats, home_path};
 use distro_model::{Model, Source, spell_out_parts};
 
 /// Where packages' programs are on NixOS. Units run programs by name, so they search here.
@@ -97,8 +97,9 @@ pub fn lower(model: &Model) -> String {
     formats::json(&input).expect("the shim's input has no runtime values")
 }
 
-/// Each user's files, linked from the store, and packages. User units are files in
-/// `~/.config/systemd/user`, linked again from each target that wants them.
+/// Each user's files, linked from the store, packages, and files with secrets in them, which the
+/// machine fills in. User units are files in `~/.config/systemd/user`, linked again from each
+/// target that wants them.
 fn homes(model: &Model) -> Value {
     let homes = model
         .homes
@@ -127,9 +128,20 @@ fn homes(model: &Model) -> Value {
                 }
                 files.insert(format!("~/.config/systemd/user/{name}"), entry);
             }
+            let templates = home
+                .templates
+                .iter()
+                .map(|(path, template)| {
+                    (
+                        path.clone(),
+                        template_entry(&home_path(user, path), template),
+                    )
+                })
+                .collect();
             let home = table([
                 ("files", Value::Table(files)),
                 ("packages", strings(home.packages.iter().cloned())),
+                ("templates", Value::Table(templates)),
             ]);
             (user.clone(), home)
         })
@@ -463,6 +475,13 @@ mod tests {
             home.files.insert(path.into(), file);
         }
         home.packages.insert("git".into());
+        let netrc = Template {
+            parts: vec![RuntimePart::Secret("pw".into())],
+            owner: "john".into(),
+            group: None,
+            mode: 0o400,
+        };
+        home.templates.insert("~/.netrc".into(), netrc);
 
         insta::assert_snapshot!(formats::json(&homes(&model)).unwrap(), @r#"
         {
@@ -479,7 +498,19 @@ mod tests {
             },
             "packages": [
               "git"
-            ]
+            ],
+            "templates": {
+              "~/.netrc": {
+                "mode": "0400",
+                "name": "d074adb2250a-.netrc",
+                "owner": "john:",
+                "parts": [
+                  {
+                    "secret": "pw"
+                  }
+                ]
+              }
+            }
           }
         }
         "#);
@@ -607,7 +638,8 @@ mod tests {
                 "text": "[Service]\nExecStart=sleep infinity\nExecSearchPath=/etc/profiles/per-user/john/bin:/run/current-system/sw/bin\nEnvironment=PATH=/etc/profiles/per-user/john/bin:/run/current-system/sw/bin\n\n[Install]\nWantedBy=default.target\n"
               }
             },
-            "packages": []
+            "packages": [],
+            "templates": {}
           }
         }
         "#);

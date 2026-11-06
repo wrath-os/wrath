@@ -19,7 +19,7 @@ pub use lock::{LOCK_FILE, Lock, Locked, Source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 8;
+pub const VERSION: i64 = 9;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -56,6 +56,8 @@ pub struct Home {
     pub files: BTreeMap<String, File>,
     pub packages: BTreeSet<String>,
     pub units: BTreeMap<String, Unit>,
+    /// Files with secrets in them, by path as `~/.netrc`.
+    pub templates: BTreeMap<String, Template>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +122,7 @@ impl Model {
                 ours.files.extend(files_of(&home.files));
                 ours.packages.extend(home.packages.iter().cloned());
                 ours.units.extend(home.units.clone());
+                ours.templates.extend(home.templates.clone());
             }
             model.base.extend(output.base.clone());
             model.backends.extend(output.backends.clone());
@@ -189,6 +192,7 @@ impl Model {
                     ("files", files_value(&home.files)),
                     ("packages", Value::List(packages)),
                     ("units", units_value(&home.units)),
+                    ("templates", templates_value(&home.templates)),
                 ]);
                 (user.clone(), home)
             })

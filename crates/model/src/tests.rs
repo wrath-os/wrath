@@ -76,7 +76,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "templates": {},
       "triggers": {},
       "units": {},
-      "version": 8
+      "version": 9
     }
     "#);
 }
@@ -512,9 +512,11 @@ fn full_model() -> Model {
         },
     );
     model.next_login.insert("~john/.config/app".into());
+    let template = model.templates["/etc/app.env"].clone();
     let home = model.homes.get_mut("john").unwrap();
     home.files.insert("~/.config/app".into(), file);
     home.units.insert("sync.service".into(), unit);
+    home.templates.insert("~/.netrc".into(), template);
     model
 }
 
@@ -642,5 +644,24 @@ fn files_read_at_login_change_at_the_next_login() {
     files
       ~ ~john/.config/environment.d/60-distro.conf (tier: next-login)
     1 change, tier: next-login
+    ");
+}
+
+#[test]
+fn plan_shows_files_with_secrets_in_homes() {
+    let mut after = Model::default();
+    let template = with_template("john", "password ", "h1").templates["/etc/app.env"].clone();
+    after
+        .homes
+        .entry("john".into())
+        .or_default()
+        .templates
+        .insert("~/.netrc".into(), template);
+
+    insta::assert_snapshot!(plan(&Model::default(), &after).to_string(), @"
+    files
+      + ~john/.netrc (tier: live)
+          with secrets, filled in on the machine for john, mode 400
+    1 change, tier: live
     ");
 }

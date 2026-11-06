@@ -4,7 +4,8 @@
 # stopped and the ones that changed are restarted.
 #
 # Usage: link-home.sh USER GROUP HOME LINKS
-# LINKS has a line `~/relative/path<TAB>/nix/store/target` per file.
+# LINKS has a line `~/relative/path<TAB>target` per file, the target in the store, or where the
+# machine fills in a file with secrets in it.
 set -u
 user=$1 group=$2 home=$3 links=$4
 manifest=$home/.local/state/distro/home-files
@@ -59,7 +60,9 @@ if [ -f "$manifest" ]; then
     while IFS= read -r path; do
         grep -qxF -- "$path" <<<"$wanted" && continue
         dest=$home/${path#\~/}
-        if [ -L "$dest" ] && [[ $(readlink "$dest") == /nix/store/* ]]; then
+        linked=$(readlink "$dest")
+        if [ -L "$dest" ] && [[ $linked == /nix/store/* || $linked == /run/distro/templates/* ]]
+        then
             unit=$(unit_of "$dest") && stopped+=("$unit")
             rm "$dest"
         fi

@@ -722,27 +722,33 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
     ) -> anyhow::Result<NoneType> {
         let (rendering, at) = rendering(eval)?;
         let (mode, owner, group) = (mode.into_option(), owner.into_option(), group.into_option());
-        let mut output = rendering.output.borrow_mut();
+        let mut guard = rendering.output.borrow_mut();
+        let output = &mut *guard;
+        if user.is_some() && !path.starts_with("~/") {
+            return Err(rendering.invalid(
+                at,
+                format!("file `{path}` is in a home, so it starts with `~/`"),
+            ));
+        }
         if let Some(runtime) = text.downcast_ref::<convert::Runtime>() {
-            if user.is_some() {
-                return Err(rendering.invalid(
-                    at,
-                    format!("file `{path}`: files in homes can't have secrets in them yet"),
-                ));
-            }
             let template = Template {
                 parts: runtime.0.clone(),
-                owner: owner.unwrap_or("root").to_owned(),
+                owner: owner.or(user).unwrap_or("root").to_owned(),
                 group: group.map(str::to_owned),
                 mode: mode.unwrap_or(0o400),
             };
-            if output.files.contains_key(path)
-                || output.templates.insert(path.to_owned(), template).is_some()
-            {
-                return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
+            let (files, templates, shown) = match user {
+                Some(user) => {
+                    let home = output.homes.entry(user.to_owned()).or_default();
+                    (&home.files, &mut home.templates, home_path(user, path))
+                }
+                None => (&output.files, &mut output.templates, path.to_owned()),
+            };
+            if files.contains_key(path) || templates.insert(path.to_owned(), template).is_some() {
+                return Err(rendering.invalid(at, format!("file `{shown}` is rendered twice")));
             }
             if next_login {
-                output.next_login.insert(path.to_owned());
+                output.next_login.insert(shown);
             }
             return Ok(NoneType);
         }
@@ -768,23 +774,14 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
             text: text.to_owned(),
             mode: mode.unwrap_or(0o644),
         };
-        let (files, shown) = match user {
+        let (files, templates, shown) = match user {
             Some(user) => {
-                if !path.starts_with("~/") {
-                    return Err(rendering.invalid(
-                        at,
-                        format!("file `{path}` is in a home, so it starts with `~/`"),
-                    ));
-                }
-                let files = &mut output.homes.entry(user.to_owned()).or_default().files;
-                (files, home_path(user, path))
+                let home = output.homes.entry(user.to_owned()).or_default();
+                (&mut home.files, &home.templates, home_path(user, path))
             }
-            None if output.templates.contains_key(path) => {
-                return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
-            }
-            None => (&mut output.files, path.to_owned()),
+            None => (&mut output.files, &output.templates, path.to_owned()),
         };
-        if files.insert(path.to_owned(), file).is_some() {
+        if templates.contains_key(path) || files.insert(path.to_owned(), file).is_some() {
             return Err(rendering.invalid(at, format!("file `{shown}` is rendered twice")));
         }
         if next_login {

@@ -113,6 +113,8 @@ pub struct Home {
     pub packages: BTreeSet<String>,
     /// User units by name, such as `notes-sync.service`.
     pub units: BTreeMap<String, Unit>,
+    /// Files with secrets in them, by path as `~/.netrc`, filled in on the machine.
+    pub templates: BTreeMap<String, Template>,
 }
 
 /// A home file's path as `~user/.config/git/config`, from `~/.config/git/config`.
