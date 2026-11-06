@@ -5,10 +5,12 @@
 mod generations;
 mod lower;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use distro_model::Model;
+use distro_model::{Lock, Locked, Model, Source};
+use serde::Deserialize;
 
 pub use generations::Generation;
 use generations::parse_generations;
@@ -56,29 +58,60 @@ pub struct Built {
 }
 
 /// Builds `target` from `model` with the flake in `factory` (normally `factory/nix`), writing
-/// the shim's input to `work`.
+/// the shim's input to `work`. Packages come from the model's lock when it has one.
 pub fn build(model: &Model, factory: &Path, target: Target, work: &Path) -> Result<Built, String> {
+    let (stdout, stderr) = nix(
+        &["build", "--no-link", "--print-out-paths"],
+        model,
+        factory,
+        target.function(),
+        work,
+    )?;
+    Ok(Built {
+        path: PathBuf::from(stdout.trim()),
+        warnings: warnings(&stderr),
+    })
+}
+
+/// Resolves `model`'s packages to a lock: from the source of its lock, the latest of that
+/// source when the lock has no hash, or the factory's own nixpkgs without a lock. A system that
+/// extends a NixOS configuration takes packages from that configuration, so it is the source.
+pub fn resolve(model: &Model, factory: &Path, work: &Path) -> Result<Lock, String> {
+    let (stdout, _) = nix(&["eval", "--json"], model, factory, "resolve", work)?;
+    parse_resolved(&stdout)
+}
+
+#[derive(Deserialize)]
+struct Resolved {
+    source: Source,
+    packages: BTreeMap<String, Locked>,
+}
+
+fn parse_resolved(json: &str) -> Result<Lock, String> {
+    let resolved: Resolved = serde_json::from_str(json)
+        .map_err(|e| format!("cannot read the packages Nix resolved: {e}"))?;
+    Ok(Lock::new(resolved.source, resolved.packages))
+}
+
+/// Runs `nix` with `args` on the factory's `function` applied to `model`'s lowered input.
+fn nix(
+    args: &[&str],
+    model: &Model,
+    factory: &Path,
+    function: &str,
+    work: &Path,
+) -> Result<(String, String), String> {
     let input = work.join("nixos.json");
     std::fs::write(&input, lower(model)).map_err(|e| format!("{}: {e}", input.display()))?;
     let canonical = |path: &Path| {
         path.canonicalize()
             .map_err(|e| format!("{}: {e}", path.display()))
     };
-    let factory = canonical(factory)?;
-    let input = canonical(&input)?;
-    let (stdout, stderr) = run(Command::new("nix")
-        .args([
-            "build",
-            "--impure",
-            "--no-link",
-            "--print-out-paths",
-            "--expr",
-        ])
-        .arg(build_expression(&factory, target, &input)))?;
-    Ok(Built {
-        path: PathBuf::from(stdout.trim()),
-        warnings: warnings(&stderr),
-    })
+    let (factory, input) = (canonical(factory)?, canonical(&input)?);
+    run(Command::new("nix")
+        .args(args)
+        .args(["--impure", "--expr"])
+        .arg(expression(&factory, function, &input)))
 }
 
 /// The warnings in what Nix printed, such as those NixOS modules raise. Nix indents the further
@@ -109,14 +142,13 @@ fn warnings(stderr: &str) -> Vec<String> {
     warnings
 }
 
-/// The Nix expression that builds `target`. The flake is read through git, so files jj tracks
-/// are seen and build outputs in the repository are not.
-fn build_expression(factory: &Path, target: Target, input: &Path) -> String {
+/// The Nix expression applying the factory's `function` to `input`. The flake is read through git,
+/// so files jj tracks are seen and build outputs in the repository are not.
+fn expression(factory: &Path, function: &str, input: &Path) -> String {
     let (repo, dir) = git_root(factory);
     format!(
         "(builtins.getFlake {flake:?}).lib.${{builtins.currentSystem}}.{function} (/. + {input:?})",
         flake = format!("git+file://{}?dir={}", repo.display(), dir.display()),
-        function = target.function(),
         input = input.display().to_string(),
     )
 }
@@ -223,9 +255,9 @@ mod tests {
 
     #[test]
     fn the_expression_reads_the_flake_through_git() {
-        let expression = build_expression(
+        let expression = expression(
             Path::new("/nonexistent/factory/nix"),
-            Target::TestImage,
+            Target::TestImage.function(),
             Path::new("/tmp/run/nixos.json"),
         );
 
@@ -233,6 +265,22 @@ mod tests {
             expression,
             r#"(builtins.getFlake "git+file:///nonexistent/factory/nix?dir=").lib.${builtins.currentSystem}.testImage (/. + "/tmp/run/nixos.json")"#
         );
+    }
+
+    #[test]
+    fn resolved_packages_become_a_lock() {
+        let json = r#"{
+          "source": { "url": "github:NixOS/nixpkgs/nixos-unstable", "rev": "1d06008", "hash": "sha256-abc" },
+          "packages": { "git": { "version": "2.56.0", "id": "/nix/store/xgw-git-2.56.0" } }
+        }"#;
+
+        let lock = parse_resolved(json).unwrap();
+
+        assert_eq!(lock.source.rev.as_deref(), Some("1d06008"));
+        assert_eq!(lock.packages["git"].version, "2.56.0");
+        let unpinned = r#"{ "source": { "url": "git+file:///etc/nixos", "rev": null, "hash": "sha256-x" }, "packages": {} }"#;
+        assert_eq!(parse_resolved(unpinned).unwrap().source.rev, None);
+        assert!(parse_resolved("{}").is_err());
     }
 
     #[test]

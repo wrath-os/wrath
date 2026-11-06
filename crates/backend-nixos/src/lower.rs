@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{Section, Unit, Value, formats};
-use distro_model::Model;
+use distro_model::{Model, Source};
 
 /// Where packages' programs are on NixOS. Units run programs by name, so they search here.
 const PROGRAMS: &str = "/run/current-system/sw/bin";
@@ -82,6 +82,7 @@ pub fn lower(model: &Model) -> String {
         ("triggers", Value::Table(triggers)),
         ("secrets", secrets(model)),
         ("homes", homes(model)),
+        ("source", source_value(model)),
         ("base", Value::Table(model.base.clone())),
         (
             "nixos",
@@ -133,6 +134,22 @@ fn homes(model: &Model) -> Value {
         })
         .collect();
     Value::Table(homes)
+}
+
+/// Where packages come from, pinned by its revision and hash. Without a hash the source isn't
+/// pinned, and the shim takes its latest version; without a source, the factory's nixpkgs.
+fn source_value(model: &Model) -> Value {
+    let mut source = BTreeMap::new();
+    if let Some(Source { url, rev, hash }) = &model.source {
+        source.insert("url".to_owned(), Value::Str(url.clone()));
+        if !hash.is_empty() {
+            source.insert("hash".to_owned(), Value::Str(hash.clone()));
+            if let Some(rev) = rev {
+                source.insert("rev".to_owned(), Value::Str(rev.clone()));
+            }
+        }
+    }
+    Value::Table(source)
 }
 
 /// Each secret with its encrypted file as an absolute path, and the owner as `chown` takes it.
@@ -338,6 +355,7 @@ mod tests {
             "nginx"
           ],
           "secrets": {},
+          "source": {},
           "triggers": {
             "systemd-networkd": {
               "reload": "515446256c8120cef626f645d64a6b92a29146ecb9f893c916bd06caad318528"
@@ -428,6 +446,38 @@ mod tests {
           }
         }
         "#);
+    }
+
+    #[test]
+    fn the_package_source_is_pinned_unless_it_has_no_hash() {
+        let source = |hash: &str| {
+            let model = Model {
+                source: Some(Source {
+                    url: "github:NixOS/nixpkgs/nixos-unstable".into(),
+                    rev: Some("1d06008".into()),
+                    hash: hash.into(),
+                }),
+                ..Model::default()
+            };
+            formats::json(&source_value(&model)).unwrap()
+        };
+
+        insta::assert_snapshot!(source("sha256-abc"), @r#"
+        {
+          "hash": "sha256-abc",
+          "rev": "1d06008",
+          "url": "github:NixOS/nixpkgs/nixos-unstable"
+        }
+        "#);
+        insta::assert_snapshot!(source(""), @r#"
+        {
+          "url": "github:NixOS/nixpkgs/nixos-unstable"
+        }
+        "#);
+        assert_eq!(
+            formats::json(&source_value(&Model::default())).unwrap(),
+            "{}\n"
+        );
     }
 
     #[test]

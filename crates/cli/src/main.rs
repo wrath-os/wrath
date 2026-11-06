@@ -97,9 +97,27 @@ enum Command {
         #[arg(long, value_enum, default_value = "system")]
         target: generations::BuildTarget,
     },
-    /// Build the system for a configuration and switch to it
+    /// Build the system for a configuration and switch to it, locking its packages first
     Apply {
         /// The configuration to apply
+        #[arg(long)]
+        config: PathBuf,
+        /// Directory of modules [default: modules under the root]
+        #[arg(long)]
+        modules: Option<PathBuf>,
+    },
+    /// Write the configuration's lock: resolve the packages it uses from the lock's package set
+    Lock {
+        /// The configuration to lock
+        #[arg(long)]
+        config: PathBuf,
+        /// Directory of modules [default: modules under the root]
+        #[arg(long)]
+        modules: Option<PathBuf>,
+    },
+    /// Move the configuration's lock to the newest version of its package set
+    Update {
+        /// The configuration to update
         #[arg(long)]
         config: PathBuf,
         /// Directory of modules [default: modules under the root]
@@ -207,10 +225,12 @@ fn main() -> ExitCode {
         },
         Command::Apply { config, modules } => {
             match model(&config, &modules_dir(&cli.root, modules)) {
-                Some(model) => generations::apply(&cli.root, &model),
+                Some(model) => generations::apply(&cli.root, &config, model),
                 None => Ok(ExitCode::FAILURE),
             }
         }
+        Command::Lock { config, modules } => lock(&cli.root, &config, modules, false),
+        Command::Update { config, modules } => lock(&cli.root, &config, modules, true),
         Command::Activate { system } => generations::activate(&system),
         Command::History => generations::history(),
         Command::Rollback => generations::rollback(),
@@ -375,6 +395,18 @@ fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
             .map_err(|e| format!("{}: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+fn lock(
+    root: &Path,
+    config: &Path,
+    modules: Option<PathBuf>,
+    update: bool,
+) -> Result<ExitCode, String> {
+    match model(config, &modules_dir(root, modules)) {
+        Some(model) => generations::lock(root, config, &model, update),
+        None => Ok(ExitCode::FAILURE),
     }
 }
 

@@ -94,7 +94,8 @@ fn origin(evaluation: &Evaluation, contribution: &Contribution) -> String {
     }
 }
 
-/// Everything the modules rendered, as text: packages, then files, then units, each sorted.
+/// Everything the modules rendered, as text: packages (users' with who they're for), then files,
+/// then units, each sorted.
 pub fn describe_outputs(evaluation: &Evaluation) -> String {
     let mut packages = BTreeSet::new();
     let mut files = BTreeMap::new();
@@ -124,7 +125,12 @@ pub fn describe_outputs(evaluation: &Evaluation) -> String {
                 .iter()
                 .map(|(key, value)| (key, (&rendered.name, value))),
         );
-        packages.extend(rendered.output.packages.iter());
+        packages.extend(rendered.output.packages.iter().cloned());
+        packages.extend(rendered.output.homes.iter().flat_map(|(user, home)| {
+            home.packages
+                .iter()
+                .map(move |package| format!("{package} (for {user})"))
+        }));
         files.extend(
             rendered
                 .output
@@ -141,7 +147,7 @@ pub fn describe_outputs(evaluation: &Evaluation) -> String {
         );
     }
     let mut out = String::new();
-    let packages: Vec<&str> = packages.into_iter().map(String::as_str).collect();
+    let packages: Vec<String> = packages.into_iter().collect();
     // Writing to a String cannot fail.
     let _ = writeln!(out, "packages: {}", packages.join(" "));
     for (path, (module, file)) in files {

@@ -32,13 +32,14 @@ def render(ctx):
             "extra_groups": u["extra_groups"],
             "home": home_of(name, u),
             "system": u["system"],
-            "packages": u["packages"],
             "linger": u["linger"],
         }
         for key in ["uid", "shell"]:
             if key in u:
                 record[key] = u[key]
         users[name] = record
+        for package in u["packages"]:
+            ctx.package(package, user = name)
     ctx.base("users", users)
 
 module(

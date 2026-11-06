@@ -221,7 +221,7 @@ in
         home
         ;
       extraGroups = user.extra_groups;
-      packages = map package (user.packages ++ (input.homes.${name}.packages or [ ]));
+      packages = map package (input.homes.${name}.packages or [ ]);
       inherit (user) linger;
       isSystemUser = user.system;
       isNormalUser = !user.system;
