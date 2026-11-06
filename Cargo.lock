@@ -582,6 +582,8 @@ dependencies = [
  "blake3",
  "distro-eval",
  "insta",
+ "serde",
+ "toml",
 ]
 
 [[package]]

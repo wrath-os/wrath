@@ -152,3 +152,63 @@ fn bench_measures_plan_time() {
         "{output}"
     );
 }
+
+/// `fixtures/configs/basic` copied to a temporary directory, with `lock` as its lock file.
+fn basic_with_lock(lock: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/configs/basic");
+    for file in ["system.toml", "services/web.toml"] {
+        let target = dir.path().join(file);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::copy(source.join(file), target).unwrap();
+    }
+    std::fs::write(dir.path().join("distro.lock"), lock).unwrap();
+    dir
+}
+
+const LOCK: &str = r#"version = 1
+
+[source]
+url = "github:NixOS/nixpkgs/nixos-unstable"
+rev = "1d06008aaaaaaaaaaaa"
+hash = "sha256-abc"
+
+[packages]
+nginx = { version = "1.29.1", id = "/nix/store/aaa-nginx-1.29.1" }
+unused = { version = "1", id = "/nix/store/bbb-unused-1" }
+"#;
+
+#[test]
+fn plan_shows_what_the_lock_pins() {
+    let config = basic_with_lock(LOCK);
+    let plan = stdout(&distro(&[
+        "plan",
+        "--config",
+        config.path().to_str().unwrap(),
+        "--against",
+        "fixtures/configs/basic",
+    ]));
+
+    let body = plan.split_once('\n').unwrap().1;
+    insta::assert_snapshot!(body, @"
+    packages
+      + package source (tier: live)
+          github:NixOS/nixpkgs/nixos-unstable at 1d06008aaaaa
+      ~ nginx (tier: live)
+          locked at 1.29.1
+    2 changes, tier: live
+    ");
+}
+
+#[test]
+fn a_broken_lock_is_an_error_naming_the_file() {
+    let config = basic_with_lock("version = 1\n");
+    let output = distro(&["plan", "--config", config.path().to_str().unwrap()]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("distro.lock: missing field `source`"),
+        "{stderr}"
+    );
+}

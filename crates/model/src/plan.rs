@@ -5,7 +5,7 @@ use std::fmt;
 
 use distro_eval::{Unit, Value, home_path};
 
-use crate::{File, Model, Secret};
+use crate::{File, Locked, Model, Secret, Source};
 
 /// How much applying a change disrupts the running system, least first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -154,9 +154,15 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         options: diff(&before.options, &after.options, |before, after| {
             (vec![value_change(before, after)], None)
         }),
-        packages: diff(&packages(before), &packages(after), |_, _| {
-            (Vec::new(), Some(Tier::Live))
-        }),
+        packages: source_change(before.source.as_ref(), after.source.as_ref())
+            .into_iter()
+            .chain(diff(&packages(before), &packages(after), |old, new| {
+                (
+                    package_details(old.copied(), new.copied(), after.source.is_some()),
+                    Some(Tier::Live),
+                )
+            }))
+            .collect(),
         files,
         secrets,
         units,
@@ -270,20 +276,71 @@ fn value_change(before: Option<&Value>, after: Option<&Value>) -> String {
     }
 }
 
-/// The system's packages, and each user's as `name (for user)`.
-fn packages(model: &Model) -> BTreeMap<String, ()> {
+/// The system's packages, and each user's as `name (for user)`, with what the lock says.
+fn packages(model: &Model) -> BTreeMap<String, Option<&Locked>> {
     let users = model.homes.iter().flat_map(|(user, home)| {
         home.packages
             .iter()
-            .map(move |package| format!("{package} (for {user})"))
+            .map(move |package| (package, format!("{package} (for {user})")))
     });
     model
         .packages
         .iter()
-        .cloned()
+        .map(|package| (package, package.clone()))
         .chain(users)
-        .map(|name| (name, ()))
+        .map(|(package, shown)| (shown, model.locked.get(package)))
         .collect()
+}
+
+/// A package's version, how it changed, or that the configuration's lock doesn't have it yet.
+fn package_details(
+    before: Option<Option<&Locked>>,
+    after: Option<Option<&Locked>>,
+    has_lock: bool,
+) -> Vec<String> {
+    let line = match (before, after) {
+        (_, None) => return Vec::new(),
+        (_, Some(None)) if has_lock => "not locked yet".to_owned(),
+        (_, Some(None)) => return Vec::new(),
+        (Some(Some(old)), Some(Some(new))) if old.version != new.version => {
+            format!("{} -> {}", old.version, new.version)
+        }
+        (Some(Some(_)), Some(Some(new))) => format!("rebuilt, still {}", new.version),
+        (Some(None), Some(Some(new))) => format!("locked at {}", new.version),
+        (None, Some(Some(new))) => new.version.clone(),
+    };
+    vec![line]
+}
+
+/// A change of package source, by revision when both have one.
+fn source_change(before: Option<&Source>, after: Option<&Source>) -> Option<Change> {
+    if before == after {
+        return None;
+    }
+    let version = |source: &Source| match &source.rev {
+        Some(rev) => rev[..rev.len().min(12)].to_owned(),
+        None => source.hash.clone(),
+    };
+    let describe = |source: &Source| format!("{} at {}", source.url, version(source));
+    let (kind, detail) = match (before, after) {
+        (None, Some(new)) => (ChangeKind::Added, describe(new)),
+        (Some(old), None) => (ChangeKind::Removed, describe(old)),
+        (Some(old), Some(new)) if old.url == new.url => (
+            ChangeKind::Changed,
+            format!("{}: {} -> {}", new.url, version(old), version(new)),
+        ),
+        (Some(old), Some(new)) => (
+            ChangeKind::Changed,
+            format!("{} -> {}", describe(old), describe(new)),
+        ),
+        (None, None) => return None,
+    };
+    Some(Change {
+        kind,
+        name: "package source".into(),
+        details: vec![detail],
+        tier: Some(Tier::Live),
+    })
 }
 
 /// The system's units, and each user's as `name (for user)`.

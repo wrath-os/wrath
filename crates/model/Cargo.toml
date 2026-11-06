@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 blake3.workspace = true
 distro-eval.workspace = true
+serde.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

@@ -1,6 +1,6 @@
 use distro_eval::{RuntimePart, Section, Unit, UnitAction, Value};
 
-use crate::{File, Model, Secret, plan};
+use crate::{File, Lock, Locked, Model, Secret, Source, plan};
 
 fn model(port: i64) -> Model {
     let mut model = Model::default();
@@ -56,6 +56,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "facts": {},
       "files": {},
       "homes": {},
+      "locked": {},
       "options": {
         "grafana.password": {
           "runtime": [
@@ -70,9 +71,10 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       },
       "packages": [],
       "secrets": {},
+      "source": {},
       "triggers": {},
       "units": {},
-      "version": 5
+      "version": 6
     }
     "#);
 }
@@ -335,5 +337,104 @@ fn plan_shows_files_packages_and_units_in_users_homes() {
           - Service.ExecStart=sync a
           + Service.ExecStart=sync b
     2 changes, tier: live
+    ");
+}
+
+fn locked(version: &str, id: &str) -> Locked {
+    Locked {
+        version: version.into(),
+        id: id.into(),
+    }
+}
+
+/// A model with `ripgrep` for the system and `git` for john, under `lock`.
+fn with_packages(lock: &Lock) -> Model {
+    let mut model = Model::default();
+    model.packages.insert("ripgrep".into());
+    let home = model.homes.entry("john".into()).or_default();
+    home.packages.insert("git".into());
+    model.with_lock(lock)
+}
+
+fn lock(rev: &str, packages: &[(&str, Locked)]) -> Lock {
+    let source = Source {
+        url: "github:NixOS/nixpkgs/nixos-unstable".into(),
+        rev: Some(rev.into()),
+        hash: format!("sha256-{rev}"),
+    };
+    let packages = packages
+        .iter()
+        .map(|(name, locked)| ((*name).to_owned(), locked.clone()))
+        .collect();
+    Lock::new(source, packages)
+}
+
+#[test]
+fn the_model_keeps_what_the_lock_says_about_its_packages() {
+    let lock = lock(
+        "aaaaaaa1",
+        &[
+            ("ripgrep", locked("14.1.0", "/nix/store/r1")),
+            ("git", locked("2.51.0", "/nix/store/g1")),
+            ("htop", locked("3.4", "/nix/store/h1")),
+        ],
+    );
+    let model = with_packages(&lock);
+
+    assert_eq!(model.source.as_ref(), Some(&lock.source));
+    assert_eq!(
+        model.locked.keys().collect::<Vec<_>>(),
+        ["git", "ripgrep"],
+        "packages the model doesn't use are left out"
+    );
+    assert_ne!(model.hash(), with_packages(&Lock::default()).hash());
+}
+
+#[test]
+fn plan_shows_package_versions_and_the_package_source() {
+    let before = with_packages(&lock(
+        "aaaaaaa1",
+        &[("ripgrep", locked("14.1.0", "/nix/store/r1"))],
+    ));
+    let after = with_packages(&lock(
+        "bbbbbbb2",
+        &[
+            ("ripgrep", locked("14.2.0", "/nix/store/r2")),
+            ("git", locked("2.51.0", "/nix/store/g1")),
+        ],
+    ));
+    let rebuilt = with_packages(&lock(
+        "bbbbbbb2",
+        &[
+            ("ripgrep", locked("14.2.0", "/nix/store/r3")),
+            ("git", locked("2.51.0", "/nix/store/g1")),
+        ],
+    ));
+
+    insta::assert_snapshot!(plan(&before, &after).to_string(), @"
+    packages
+      ~ package source (tier: live)
+          github:NixOS/nixpkgs/nixos-unstable: aaaaaaa1 -> bbbbbbb2
+      ~ git (for john) (tier: live)
+          locked at 2.51.0
+      ~ ripgrep (tier: live)
+          14.1.0 -> 14.2.0
+    3 changes, tier: live
+    ");
+    insta::assert_snapshot!(plan(&after, &rebuilt).to_string(), @"
+    packages
+      ~ ripgrep (tier: live)
+          rebuilt, still 14.2.0
+    1 change, tier: live
+    ");
+    insta::assert_snapshot!(plan(&Model::default(), &before).to_string(), @"
+    packages
+      + package source (tier: live)
+          github:NixOS/nixpkgs/nixos-unstable at aaaaaaa1
+      + git (for john) (tier: live)
+          not locked yet
+      + ripgrep (tier: live)
+          14.1.0
+    3 changes, tier: live
     ");
 }

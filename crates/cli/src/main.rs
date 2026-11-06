@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath};
-use distro_model::Model;
+use distro_model::{LOCK_FILE, Lock, Model};
 
 mod bench;
 mod checks;
@@ -352,8 +352,30 @@ fn evaluate(config: &Path, modules: &Path) -> Option<Evaluation> {
         .ok()
 }
 
+/// The configuration's model, with its lock when it has one, or prints why it can't and
+/// returns `None`.
 fn model(config: &Path, modules: &Path) -> Option<Model> {
-    evaluate(config, modules).map(|evaluation| Model::from_evaluation(&evaluation))
+    let model = Model::from_evaluation(&evaluate(config, modules)?);
+    match read_lock(config) {
+        Ok(Some(lock)) => Some(model.with_lock(&lock)),
+        Ok(None) => Some(model),
+        Err(message) => {
+            eprintln!("error: {message}");
+            None
+        }
+    }
+}
+
+/// The lock next to `config`, if there is one.
+fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
+    let path = config.join(LOCK_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Lock::parse(&text)
+            .map(Some)
+            .map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
 }
 
 fn plan(config: &Path, against: Option<&Path>, modules: &Path) -> Result<ExitCode, String> {

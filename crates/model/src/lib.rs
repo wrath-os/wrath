@@ -4,6 +4,7 @@
 //! The model leaves out provenance (which file or module set what), so moving a value from one
 //! file to another doesn't change the system. This is a first draft; the format is versioned.
 
+mod lock;
 mod plan;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,10 +13,11 @@ use distro_eval::{
     Evaluation, RuntimePart, Secret as Declared, Section, Unit, UnitAction, Value, formats,
 };
 
+pub use lock::{LOCK_FILE, Lock, Locked, Source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 5;
+pub const VERSION: i64 = 6;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -36,6 +38,10 @@ pub struct Model {
     pub secrets: BTreeMap<String, Secret>,
     /// What goes in users' homes, by user.
     pub homes: BTreeMap<String, Home>,
+    /// Where packages come from, when the configuration has a lock.
+    pub source: Option<Source>,
+    /// The packages, the system's and users', that the lock has resolved.
+    pub locked: BTreeMap<String, Locked>,
 }
 
 /// A user's files, by path as `~/.config/git/config`, packages and user units.
@@ -137,6 +143,28 @@ impl Model {
         model
     }
 
+    /// The model with what `lock` says about its packages. Packages the lock doesn't have yet
+    /// stay unlocked, and the ones it has that the model doesn't use are left out.
+    pub fn with_lock(mut self, lock: &Lock) -> Self {
+        self.locked = self
+            .all_packages()
+            .filter_map(|name| Some((name.to_owned(), lock.packages.get(name)?.clone())))
+            .collect();
+        self.source = Some(lock.source.clone());
+        self
+    }
+
+    /// The system's and every user's packages, each once.
+    pub fn all_packages(&self) -> impl Iterator<Item = &str> {
+        let users = self.homes.values().flat_map(|home| &home.packages);
+        self.packages
+            .iter()
+            .chain(users)
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+    }
+
     /// The model as one value, with runtime values spelled out as tables.
     pub fn to_value(&self) -> Value {
         let packages = self
@@ -186,8 +214,29 @@ impl Model {
                 (name.clone(), Value::Table(entries))
             })
             .collect();
+        let mut source = BTreeMap::new();
+        if let Some(Source { url, rev, hash }) = &self.source {
+            source.insert("url".to_owned(), Value::Str(url.clone()));
+            source.insert("hash".to_owned(), Value::Str(hash.clone()));
+            if let Some(rev) = rev {
+                source.insert("rev".to_owned(), Value::Str(rev.clone()));
+            }
+        }
+        let locked = self
+            .locked
+            .iter()
+            .map(|(name, locked)| {
+                let entry = table([
+                    ("version", Value::Str(locked.version.clone())),
+                    ("id", Value::Str(locked.id.clone())),
+                ]);
+                (name.clone(), entry)
+            })
+            .collect();
         table([
             ("version", Value::Int(VERSION)),
+            ("source", Value::Table(source)),
+            ("locked", Value::Table(locked)),
             ("secrets", Value::Table(secrets)),
             ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),
