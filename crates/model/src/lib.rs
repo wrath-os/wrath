@@ -11,14 +11,15 @@ mod read;
 use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{
-    Evaluation, RuntimePart, Secret as Declared, Section, Unit, UnitAction, Value, formats,
+    Evaluation, RuntimePart, Secret as Declared, Section, Template, Unit, UnitAction, Value,
+    formats,
 };
 
 pub use lock::{LOCK_FILE, Lock, Locked, Source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 6;
+pub const VERSION: i64 = 7;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -43,6 +44,8 @@ pub struct Model {
     pub source: Option<Source>,
     /// The packages, the system's and users', that the lock has resolved.
     pub locked: BTreeMap<String, Locked>,
+    /// Files with secrets in them, by path, filled in on the machine.
+    pub templates: BTreeMap<String, Template>,
 }
 
 /// A user's files, by path as `~/.config/git/config`, packages and user units.
@@ -119,6 +122,7 @@ impl Model {
             model.base.extend(output.base.clone());
             model.backends.extend(output.backends.clone());
             model.units.extend(output.units.clone());
+            model.templates.extend(output.templates.clone());
             model
                 .secrets
                 .extend(output.secrets.iter().map(|(name, declared)| {
@@ -238,6 +242,7 @@ impl Model {
             ("version", Value::Int(VERSION)),
             ("source", Value::Table(source)),
             ("locked", Value::Table(locked)),
+            ("templates", templates_value(&self.templates)),
             ("secrets", Value::Table(secrets)),
             ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),
@@ -251,20 +256,27 @@ impl Model {
         ])
     }
 
-    /// The secrets whose decrypted path a unit mentions. The unit restarts when one changes.
+    /// The secrets a unit uses: those whose decrypted path it mentions, and those in files with
+    /// secrets that it restarts on. The unit restarts when one changes.
     pub fn secrets_of(&self, unit: &Unit) -> BTreeSet<&str> {
         let text = unit.text();
-        self.secrets
-            .keys()
-            .filter(|name| {
-                let path = Declared::path(name);
-                text.match_indices(&path).any(|(at, _)| {
-                    !text[at + path.len()..]
-                        .starts_with(|c: char| c.is_alphanumeric() || "-_.".contains(c))
-                })
+        let mentioned = self.secrets.keys().filter(|name| {
+            let path = Declared::path(name);
+            text.match_indices(&path).any(|(at, _)| {
+                !text[at + path.len()..]
+                    .starts_with(|c: char| c.is_alphanumeric() || "-_.".contains(c))
             })
-            .map(String::as_str)
-            .collect()
+        });
+        let in_templates = unit
+            .restart_on
+            .iter()
+            .filter_map(|path| self.templates.get(path))
+            .flat_map(|template| &template.parts)
+            .filter_map(|part| match part {
+                RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => Some(name),
+                RuntimePart::Text(_) => None,
+            });
+        mentioned.chain(in_templates).map(String::as_str).collect()
     }
 
     /// The canonical serialization: JSON with sorted keys.
@@ -324,6 +336,25 @@ fn units_value(units: &BTreeMap<String, Unit>) -> Value {
     )
 }
 
+fn templates_value(templates: &BTreeMap<String, Template>) -> Value {
+    Value::Table(
+        templates
+            .iter()
+            .map(|(path, template)| {
+                let mut entries = BTreeMap::from([
+                    ("parts".to_owned(), spell_out_parts(&template.parts)),
+                    ("owner".to_owned(), Value::Str(template.owner.clone())),
+                    ("mode".to_owned(), Value::Int(i64::from(template.mode))),
+                ]);
+                if let Some(group) = &template.group {
+                    entries.insert("group".to_owned(), Value::Str(group.clone()));
+                }
+                (path.clone(), Value::Table(entries))
+            })
+            .collect(),
+    )
+}
+
 fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
     Value::Table(
         entries
@@ -346,23 +377,27 @@ fn section_value(section: &Section) -> Value {
     ])
 }
 
+/// Runtime parts as a list of tables like `{ text = ".." }` and `{ secret = ".." }`.
+pub fn spell_out_parts(parts: &[RuntimePart]) -> Value {
+    Value::List(
+        parts
+            .iter()
+            .map(|part| {
+                let (kind, text) = match part {
+                    RuntimePart::Text(text) => ("text", text),
+                    RuntimePart::Secret(name) => ("secret", name),
+                    RuntimePart::QuotedSecret(name) => ("quoted_secret", name),
+                };
+                table([(kind, Value::Str(text.clone()))])
+            })
+            .collect(),
+    )
+}
+
 /// Replaces runtime values with tables naming their parts, so the model renders as plain data.
 fn spell_out(value: &Value) -> Value {
     match value {
-        Value::Runtime(parts) => {
-            let parts = parts
-                .iter()
-                .map(|part| {
-                    let (kind, text) = match part {
-                        RuntimePart::Text(text) => ("text", text),
-                        RuntimePart::Secret(name) => ("secret", name),
-                        RuntimePart::QuotedSecret(name) => ("quoted_secret", name),
-                    };
-                    table([(kind, Value::Str(text.clone()))])
-                })
-                .collect();
-            table([("runtime", Value::List(parts))])
-        }
+        Value::Runtime(parts) => table([("runtime", spell_out_parts(parts))]),
         Value::List(items) => Value::List(items.iter().map(spell_out).collect()),
         Value::Table(entries) => spell_out_entries(entries),
         Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) => value.clone(),

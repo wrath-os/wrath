@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{RuntimePart, Section, Unit, UnitAction, Value};
+use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value};
 
 use crate::{File, Home, Locked, Model, Secret, Source, VERSION};
 
@@ -44,6 +44,7 @@ impl Model {
             homes,
             source: read_source(field("source")?)?,
             locked: read_locked(field("locked")?)?,
+            templates: read_templates(field("templates")?)?,
         })
     }
 }
@@ -295,6 +296,18 @@ fn read_locked(value: &Value) -> Result<BTreeMap<String, Locked>, String> {
         Ok(Locked {
             version: string_at(fields, "version", name)?,
             id: string_at(fields, "id", name)?,
+        })
+    })
+}
+
+fn read_templates(value: &Value) -> Result<BTreeMap<String, Template>, String> {
+    read_tables(value, "templates", |fields, path| {
+        let spelled = BTreeMap::from([("runtime".to_owned(), get(fields, "parts", path)?.clone())]);
+        Ok(Template {
+            parts: runtime_parts(&spelled).ok_or(format!("{path}: unreadable parts"))?,
+            owner: string_at(fields, "owner", path)?,
+            group: optional_string(fields, "group", path)?,
+            mode: mode(get(fields, "mode", path)?, path)?,
         })
     })
 }

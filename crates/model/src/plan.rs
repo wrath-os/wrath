@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use distro_eval::{Unit, Value, home_path};
+use distro_eval::{Template, Unit, Value, home_path};
 
 use crate::{File, Locked, Model, Secret, Source};
 
@@ -138,6 +138,11 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     };
     let mut files = diff(&before.files, &after.files, file_details);
     files.extend(diff(&home_files(before), &home_files(after), file_details));
+    files.extend(diff(
+        &before.templates,
+        &after.templates,
+        |before, after| (template_details(before, after), Some(Tier::Live)),
+    ));
     let mut units = diff(&units(before), &units(after), |before, after| {
         (
             unit_details(before.copied(), after.copied()),
@@ -310,6 +315,35 @@ fn package_details(
         (None, Some(Some(new))) => new.version.clone(),
     };
     vec![line]
+}
+
+/// How a file with secrets in it changed, or who owns a new one.
+fn template_details(before: Option<&Template>, after: Option<&Template>) -> Vec<String> {
+    let owner = |template: &Template| match &template.group {
+        Some(group) => format!("{}:{group}", template.owner),
+        None => template.owner.clone(),
+    };
+    match (before, after) {
+        (None, Some(new)) => vec![format!(
+            "with secrets, filled in on the machine for {}, mode {:o}",
+            owner(new),
+            new.mode
+        )],
+        (Some(old), Some(new)) => {
+            let mut details = Vec::new();
+            if old.parts != new.parts {
+                details.push("text changed".to_owned());
+            }
+            if owner(old) != owner(new) {
+                details.push(format!("owner {} -> {}", owner(old), owner(new)));
+            }
+            if old.mode != new.mode {
+                details.push(format!("mode {:o} -> {:o}", old.mode, new.mode));
+            }
+            details
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// A change of package source, by revision when both have one.

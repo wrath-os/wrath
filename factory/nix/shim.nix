@@ -22,6 +22,11 @@ let
   package = name: lib.getAttrFromPath (lib.splitString "." name) pkgs;
   inherit (lib) mkDefault;
 
+  # Where the machine fills in a file with secrets in it.
+  filled = file: "/run/distro/templates/${file.name}";
+  etcTemplates = lib.filterAttrs (path: _: lib.hasPrefix "/etc/" path) input.templates;
+  otherTemplates = lib.filterAttrs (path: _: !(lib.hasPrefix "/etc/" path)) input.templates;
+
   # Base settings NixOS overrides, as the TOML option, its value, the NixOS option and the value
   # NixOS uses.
   overridden = lib.filter (check: check.ours != check.theirs) [
@@ -68,15 +73,22 @@ in
 
   environment.systemPackages = [ distro ] ++ map package input.packages;
 
-  environment.etc = lib.mapAttrs (_: file: { inherit (file) text mode; }) input.etc // {
-    "distro/model.json".text = input.model;
-    "distro/model-hash".text = input.model_hash;
-  };
+  environment.etc =
+    lib.mapAttrs (_: file: { inherit (file) text mode; }) input.etc
+    // lib.mapAttrs' (
+      path: file: lib.nameValuePair (lib.removePrefix "/etc/" path) { source = filled file; }
+    ) etcTemplates
+    // {
+      "distro/model.json".text = input.model;
+      "distro/model-hash".text = input.model_hash;
+    };
 
-  # Files outside /etc are links into the store.
-  systemd.tmpfiles.rules = lib.mapAttrsToList (
-    path: file: "L+ ${path} - - - - ${pkgs.writeText (baseNameOf path) file.text}"
-  ) input.files;
+  # Files outside /etc are links into the store, or to where files with secrets are filled in.
+  systemd.tmpfiles.rules =
+    lib.mapAttrsToList (
+      path: file: "L+ ${path} - - - - ${pkgs.writeText (baseNameOf path) file.text}"
+    ) input.files
+    ++ lib.mapAttrsToList (path: file: "L+ ${path} - - - - ${filled file}") otherTemplates;
 
   # A unit NixOS also defines is a conflict, unless the TOML says it replaces that one.
   systemd.units = lib.mapAttrs (name: unit: {
@@ -149,6 +161,51 @@ in
         ln -sfn "$generation" /run/secrets.next
         mv -T /run/secrets.next /run/secrets
         for old in /run/secrets.d/*; do
+          [ "$old" = "$generation" ] || rm -rf "$old"
+        done
+        )
+      '';
+  };
+
+  # Files with secrets in them are filled in after the secrets on every boot and switch, into a
+  # new directory on ramfs that then replaces /run/distro/templates in one step. A file that
+  # can't be filled in is left out with an error. Their paths link into that directory.
+  system.activationScripts.distroTemplates = lib.mkIf (input.templates != { }) {
+    deps = [ "distroSecrets" ];
+    text =
+      let
+        spec = pkgs.writeText "distro-templates.json" (
+          builtins.toJSON (
+            lib.mapAttrs' (_: file: lib.nameValuePair file.name file.parts) input.templates
+          )
+        );
+        own =
+          _: file:
+          lib.escapeShellArgs [
+            "own"
+            file.name
+            file.owner
+            file.mode
+          ];
+      in
+      ''
+        (
+        umask 0077
+        mkdir -p /run/distro/templates.d
+        grep -q " /run/distro/templates.d ramfs " /proc/mounts ||
+          mount -t ramfs none /run/distro/templates.d -o nodev,nosuid,mode=0751
+        generation=/run/distro/templates.d/$(date +%s%N)
+        mkdir -m 0751 "$generation"
+        ${distro}/bin/distro fill-templates ${spec} /run/secrets "$generation" || true
+        own() {
+          [ -e "$generation/$1" ] || return 0
+          chown "$2" "$generation/$1"
+          chmod "$3" "$generation/$1"
+        }
+        ${lib.concatStringsSep "\n" (lib.mapAttrsToList own input.templates)}
+        ln -sfn "$generation" /run/distro/templates.next
+        mv -T /run/distro/templates.next /run/distro/templates
+        for old in /run/distro/templates.d/*; do
           [ "$old" = "$generation" ] || rm -rf "$old"
         done
         )

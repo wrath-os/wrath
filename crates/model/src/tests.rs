@@ -1,4 +1,4 @@
-use distro_eval::{RuntimePart, Section, Unit, UnitAction, Value};
+use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value};
 
 use crate::{File, Lock, Locked, Model, Secret, Source, plan};
 
@@ -72,9 +72,10 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "packages": [],
       "secrets": {},
       "source": {},
+      "templates": {},
       "triggers": {},
       "units": {},
-      "version": 6
+      "version": 7
     }
     "#);
 }
@@ -497,6 +498,18 @@ fn full_model() -> Model {
             link: Some("/home/app/token".into()),
         },
     );
+    model.templates.insert(
+        "/etc/app.env".into(),
+        Template {
+            parts: vec![
+                RuntimePart::Text("TOKEN=".into()),
+                RuntimePart::QuotedSecret("token".into()),
+            ],
+            owner: "app".into(),
+            group: Some("app".into()),
+            mode: 0o440,
+        },
+    );
     let home = model.homes.get_mut("john").unwrap();
     home.files.insert("~/.config/app".into(), file);
     home.units.insert("sync.service".into(), unit);
@@ -529,4 +542,77 @@ fn models_of_another_format_version_are_refused() {
         )
     );
     assert!(Model::from_json("[]").is_err());
+}
+
+/// A model with a file `/etc/app.env` that has the secret `token` in it, and a unit that
+/// restarts when the file does.
+fn with_template(owner: &str, text: &str, secret_hash: &str) -> Model {
+    let mut model = Model::default();
+    model.secrets.insert(
+        "token".into(),
+        Secret {
+            source: String::new(),
+            hash: secret_hash.into(),
+            owner: "root".into(),
+            group: None,
+            mode: 0o400,
+            link: None,
+        },
+    );
+    model.templates.insert(
+        "/etc/app.env".into(),
+        Template {
+            parts: vec![
+                RuntimePart::Text(text.into()),
+                RuntimePart::Secret("token".into()),
+            ],
+            owner: owner.into(),
+            group: None,
+            mode: 0o400,
+        },
+    );
+    let unit = Unit {
+        sections: vec![Section {
+            name: "Service".into(),
+            entries: vec![("ExecStart".into(), "app".into())],
+        }],
+        restart_on: ["/etc/app.env".into()].into(),
+    };
+    model.units.insert("app.service".into(), unit);
+    model
+}
+
+#[test]
+fn plan_shows_files_with_secrets_and_restarts_what_reads_them() {
+    let before = with_template("app", "TOKEN=", "h1");
+
+    insta::assert_snapshot!(plan(&Model::default(), &before).to_string(), @"
+    files
+      + /etc/app.env (tier: live)
+          with secrets, filled in on the machine for app, mode 400
+    secrets
+      + token (tier: live)
+    units
+      + app.service (tier: live)
+    3 changes, tier: live
+    ");
+    insta::assert_snapshot!(plan(&before, &with_template("root", "KEY=", "h1")).to_string(), @"
+    files
+      ~ /etc/app.env (tier: live)
+          text changed
+          owner app -> root
+    units
+      ~ app.service (tier: live)
+          restarts: /etc/app.env changed
+    2 changes, tier: live
+    ");
+    insta::assert_snapshot!(plan(&before, &with_template("app", "TOKEN=", "h2")).to_string(), @"
+    secrets
+      ~ token (tier: live)
+          contents changed
+    units
+      ~ app.service (tier: live)
+          restarts: secret token changed
+    2 changes, tier: live
+    ");
 }

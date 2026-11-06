@@ -564,6 +564,7 @@ dependencies = [
  "distro-model",
  "distro-starlark",
  "insta",
+ "serde_json",
  "tempfile",
 ]
 

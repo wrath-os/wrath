@@ -13,6 +13,7 @@ mod checks;
 mod generations;
 mod secret;
 mod system;
+mod templates;
 
 /// How many times `check --determinism` evaluates each configuration.
 const DETERMINISM_RUNS: u64 = 5;
@@ -129,6 +130,16 @@ enum Command {
         #[arg(long)]
         modules: Option<PathBuf>,
     },
+    /// Fill in files with secrets during activation
+    #[command(hide = true)]
+    FillTemplates {
+        /// The files to fill in, as JSON: each name to its parts
+        spec: PathBuf,
+        /// Where the decrypted secrets are
+        secrets: PathBuf,
+        /// The directory to write the files to
+        out: PathBuf,
+    },
     /// Switch to a system that is already built, such as one `build` made on another machine
     Activate {
         /// The system's store path
@@ -241,6 +252,7 @@ fn main() -> ExitCode {
         Command::Lock { config, modules } => lock(&cli.root, &config, modules, false),
         Command::Update { config, modules } => lock(&cli.root, &config, modules, true),
         Command::Activate { system } => generations::activate(&system),
+        Command::FillTemplates { spec, secrets, out } => templates::fill(&spec, &secrets, &out),
         Command::History => generations::history(),
         Command::Rollback => generations::rollback(),
     };

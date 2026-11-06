@@ -6,8 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{Section, Unit, Value, formats};
-use distro_model::{Model, Source};
+use distro_eval::{Section, Template, Unit, Value, formats};
+use distro_model::{Model, Source, spell_out_parts};
 
 /// Where packages' programs are on NixOS. Units run programs by name, so they search here.
 const PROGRAMS: &str = "/run/current-system/sw/bin";
@@ -83,6 +83,7 @@ pub fn lower(model: &Model) -> String {
         ("secrets", secrets(model)),
         ("homes", homes(model)),
         ("source", source_value(model)),
+        ("templates", templates(model)),
         ("base", Value::Table(model.base.clone())),
         (
             "nixos",
@@ -150,6 +151,34 @@ fn source_value(model: &Model) -> Value {
         }
     }
     Value::Table(source)
+}
+
+/// Files with secrets in them, by path: the name the machine fills each in under, in
+/// `/run/distro/templates`, its owner as `chown` takes it, its mode and its parts.
+fn templates(model: &Model) -> Value {
+    Value::Table(
+        model
+            .templates
+            .iter()
+            .map(|(path, template)| (path.clone(), template_entry(path, template)))
+            .collect(),
+    )
+}
+
+fn template_entry(path: &str, template: &Template) -> Value {
+    let hash = blake3::hash(path.as_bytes()).to_hex();
+    let base = path.rsplit('/').next().unwrap_or(path);
+    let owner = format!(
+        "{}:{}",
+        template.owner,
+        template.group.as_deref().unwrap_or("")
+    );
+    table([
+        ("name", Value::Str(format!("{}-{base}", &hash[..12]))),
+        ("owner", Value::Str(owner)),
+        ("mode", Value::Str(format!("{:04o}", template.mode))),
+        ("parts", spell_out_parts(&template.parts)),
+    ])
 }
 
 /// Each secret with its encrypted file as an absolute path, and the owner as `chown` takes it.
@@ -232,7 +261,9 @@ fn files_hash(paths: &BTreeSet<String>, model: &Model) -> String {
 fn restart_hash(paths: &BTreeSet<String>, secrets: &BTreeSet<&str>, model: &Model) -> String {
     let mut hasher = blake3::Hasher::new();
     for name in secrets {
-        let secret = &model.secrets[*name];
+        let Some(secret) = model.secrets.get(*name) else {
+            continue;
+        };
         let group = secret.group.as_deref().unwrap_or("");
         let fields = [name, secret.hash.as_str(), &secret.owner, group];
         for field in fields {
@@ -242,7 +273,12 @@ fn restart_hash(paths: &BTreeSet<String>, secrets: &BTreeSet<&str>, model: &Mode
         hasher.update(&secret.mode.to_le_bytes());
     }
     for path in paths {
-        let text = model.files.get(path).map_or("", |file| file.text.as_str());
+        let text = match (model.files.get(path), model.templates.get(path)) {
+            (Some(file), _) => file.text.clone(),
+            (None, Some(template)) => formats::json(&template_entry(path, template))
+                .expect("a template's entry has no runtime values"),
+            (None, None) => String::new(),
+        };
         hasher.update(path.as_bytes());
         hasher.update(&[0]);
         hasher.update(text.as_bytes());
@@ -277,7 +313,7 @@ fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use distro_eval::UnitAction;
+    use distro_eval::{RuntimePart, UnitAction};
     use distro_model::{File, Secret};
 
     use super::*;
@@ -356,6 +392,7 @@ mod tests {
           ],
           "secrets": {},
           "source": {},
+          "templates": {},
           "triggers": {
             "systemd-networkd": {
               "reload": "515446256c8120cef626f645d64a6b92a29146ecb9f893c916bd06caad318528"
@@ -480,6 +517,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn files_with_secrets_get_a_name_to_be_filled_in_under() {
+        let mut model = Model::default();
+        let template = Template {
+            parts: vec![
+                RuntimePart::Text("token = \"".into()),
+                RuntimePart::QuotedSecret("token".into()),
+                RuntimePart::Text("\"\n".into()),
+            ],
+            owner: "app".into(),
+            group: None,
+            mode: 0o400,
+        };
+        model
+            .templates
+            .insert("/etc/app/config.toml".into(), template);
+        let unit = Unit {
+            sections: vec![Section {
+                name: "Service".into(),
+                entries: vec![("ExecStart".into(), "app".into())],
+            }],
+            restart_on: ["/etc/app/config.toml".into()].into(),
+        };
+        model.units.insert("app.service".into(), unit);
+
+        insta::assert_snapshot!(formats::json(&templates(&model)).unwrap(), @r#"
+        {
+          "/etc/app/config.toml": {
+            "mode": "0400",
+            "name": "300adfab0016-config.toml",
+            "owner": "app:",
+            "parts": [
+              {
+                "text": "token = \""
+              },
+              {
+                "quoted_secret": "token"
+              },
+              {
+                "text": "\"\n"
+              }
+            ]
+          }
+        }
+        "#);
+        let text = |model: &Model| unit_text(&model.units["app.service"], model, PROGRAMS);
+        let mut changed = model.clone();
+        changed
+            .templates
+            .get_mut("/etc/app/config.toml")
+            .unwrap()
+            .mode = 0o440;
+        assert_ne!(text(&model), text(&changed));
+    }
     #[test]
     fn user_units_are_files_in_the_home_with_links_for_their_targets() {
         let mut model = Model::default();
