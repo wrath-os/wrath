@@ -40,6 +40,12 @@ in
     requiredBy = unit.required_by;
   }) input.units;
 
+  # Services NixOS provides that reload or restart when the model's files they read change.
+  systemd.services = lib.mapAttrs (_: trigger: {
+    reloadTriggers = lib.optional (trigger ? reload) trigger.reload;
+    restartTriggers = lib.optional (trigger ? restart) trigger.restart;
+  }) input.triggers;
+
   networking.hostName = mkDefault base.system.hostname;
   time.timeZone = mkDefault base.system.timezone;
 
@@ -74,6 +80,8 @@ in
 
   networking.useNetworkd = mkDefault true;
   networking.useDHCP = mkDefault base.networking.dhcp;
+  # Only ever turned on: networkd enables resolved by default too.
+  services.resolved.enable = lib.mkIf base.networking.resolved true;
   # Nothing else asks for the network to be up, but the system is expected to reach it.
   systemd.targets.network-online.wantedBy = [ "multi-user.target" ];
 

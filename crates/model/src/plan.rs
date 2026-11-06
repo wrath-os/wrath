@@ -138,6 +138,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         (unit_details(before, after), Some(Tier::Live))
     });
     units.extend(restarts(before, after, &files));
+    units.extend(triggered(after, &files));
     units.sort_by(|a, b| a.name.cmp(&b.name));
     Plan {
         options: diff(&before.options, &after.options, |before, after| {
@@ -184,6 +185,34 @@ fn restarts(before: &Model, after: &Model, files: &[Change]) -> Vec<Change> {
                 details: vec![format!("restarts: {} changed", changed.join(", "))],
                 tier: Some(Tier::Live),
             })
+        })
+        .collect()
+}
+
+/// Services the system provides that reload or restart because a file they read changed.
+fn triggered(after: &Model, files: &[Change]) -> Vec<Change> {
+    let mut services: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for ((unit, action), paths) in &after.triggers {
+        let changed: Vec<&str> = files
+            .iter()
+            .map(|change| change.name.as_str())
+            .filter(|path| paths.contains(*path))
+            .collect();
+        if !changed.is_empty() {
+            services.entry(unit).or_default().push(format!(
+                "{}: {} changed",
+                action.verb(),
+                changed.join(", ")
+            ));
+        }
+    }
+    services
+        .into_iter()
+        .map(|(unit, details)| Change {
+            kind: ChangeKind::Changed,
+            name: unit.to_owned(),
+            details,
+            tier: Some(Tier::Live),
         })
         .collect()
 }

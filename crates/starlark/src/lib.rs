@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use allocative::Allocative;
 use distro_eval::{
     ConfigReader, Diagnostic, File, FileId, Level, ListMerge, Module, OptionPath, OptionSpec,
-    Output, ReadError, RenderError, Setting, Sources, Span, Type, Unit, Value, formats,
+    Output, ReadError, RenderError, Setting, Sources, Span, Type, Unit, UnitAction, Value, formats,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -326,6 +326,13 @@ fn formats_functions(builder: &mut GlobalsBuilder) {
         let value = convert::from_starlark(value).map_err(anyhow::Error::msg)?;
         formats::json(&value).map_err(anyhow::Error::msg)
     }
+
+    /// A systemd-style file, such as a `.network` file, from a dictionary of sections. A list
+    /// value repeats its key.
+    fn systemd<'v>(sections: StarValue<'v>) -> anyhow::Result<String> {
+        let value = convert::from_starlark(sections).map_err(anyhow::Error::msg)?;
+        formats::systemd(&value).map_err(anyhow::Error::msg)
+    }
 }
 
 /// A loaded module. Each render evaluates the file again on a fresh heap and calls the render
@@ -446,6 +453,25 @@ fn insert_setting(
     Ok(NoneType)
 }
 
+fn insert_trigger(
+    eval: &mut Evaluator<'_, '_, '_>,
+    unit: &str,
+    action: UnitAction,
+    on: StarValue<'_>,
+) -> anyhow::Result<NoneType> {
+    let (rendering, at) = rendering(eval)?;
+    let paths = strings(on)
+        .map_err(|e| rendering.invalid(at, format!("{} `{unit}`: on: {e}", action.as_str())))?;
+    rendering
+        .output
+        .borrow_mut()
+        .triggers
+        .entry((unit.to_owned(), action))
+        .or_default()
+        .extend(paths);
+    Ok(NoneType)
+}
+
 #[starlark_module]
 fn ctx_methods(builder: &mut MethodsBuilder) {
     /// The value of an option, or a dictionary of everything under a table of options.
@@ -524,6 +550,27 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
             return Err(rendering.invalid(at, format!("unit `{name}` is rendered twice")));
         }
         Ok(NoneType)
+    }
+
+    /// Reloads a service the system provides, such as `systemd-networkd.service`, when one of
+    /// the files in `on` changes.
+    fn reload<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] unit: &str,
+        #[starlark(require = named)] on: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        insert_trigger(eval, unit, UnitAction::Reload, on)
+    }
+
+    /// Restarts a service the system provides when one of the files in `on` changes.
+    fn restart<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] unit: &str,
+        #[starlark(require = named)] on: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        insert_trigger(eval, unit, UnitAction::Restart, on)
     }
 
     /// Renders a file.

@@ -31,10 +31,10 @@ fn base_schema() -> Schema {
     schema
 }
 
-/// Evaluates the S4 fixture with the built-in modules.
-fn evaluate_fixture() -> Evaluation {
+/// Evaluates a fixture config with the named built-in modules.
+fn evaluate_fixture(config: &str, names: &[&str]) -> Evaluation {
     let mut sources = Sources::default();
-    let modules: Vec<Box<dyn Module>> = MODULES
+    let modules: Vec<Box<dyn Module>> = names
         .iter()
         .map(|name| {
             let path = format!("modules/{name}.star");
@@ -46,7 +46,7 @@ fn evaluate_fixture() -> Evaluation {
     evaluate(Input {
         sources,
         // Relative, so locations in snapshots don't depend on where the repository is.
-        config: &DirFs::new("../../fixtures/configs/s4"),
+        config: &DirFs::new(format!("../../fixtures/configs/{config}")),
         schema: Schema::default(),
         modules: &modules,
         facts: &Value::Table(BTreeMap::new()),
@@ -70,7 +70,7 @@ fn run(source: &str) -> Result<Evaluation, String> {
 
 #[test]
 fn the_built_in_modules_render_the_fixture() {
-    let evaluation = evaluate_fixture();
+    let evaluation = evaluate_fixture("s4", &MODULES);
 
     insta::assert_snapshot!("s4_outputs", describe_outputs(&evaluation));
     let why = |path: &str| explain(&evaluation, Some(&OptionPath::parse(path).unwrap())).unwrap();
@@ -85,7 +85,7 @@ fn the_built_in_modules_render_the_fixture() {
 
 #[test]
 fn settings_point_at_the_exact_call() {
-    let evaluation = evaluate_fixture();
+    let evaluation = evaluate_fixture("s4", &MODULES);
 
     insta::assert_snapshot!(
         explain(&evaluation, Some(&OptionPath::parse("networking.firewall.allowed_tcp_ports").unwrap())).unwrap(),
@@ -161,4 +161,45 @@ module(name = "x", options = {"a": types.list(option(types.str))}, writes = [], 
     .unwrap_err();
 
     assert!(message.contains("expected a type"), "{message}");
+}
+
+#[test]
+fn networks_and_dns_render_for_networkd_and_resolved() {
+    let evaluation = evaluate_fixture("network", &["base", "network", "system"]);
+    let network = evaluation
+        .modules()
+        .iter()
+        .find(|rendered| rendered.name == "network")
+        .unwrap();
+
+    let mut out = String::new();
+    for (path, file) in &network.output.files {
+        out.push_str(&format!("{path}\n{}\n", file.text));
+    }
+    for ((unit, action), paths) in &network.output.triggers {
+        out.push_str(&format!("{} {unit} on {paths:?}\n", action.as_str()));
+    }
+    insta::assert_snapshot!(out, @r#"
+    /etc/systemd/network/10-lan.network
+    [Match]
+    Name=enp*
+    Name=wlan*
+    Name=wlp*
+
+    [Network]
+    DHCP=yes
+    IPv6AcceptRA=yes
+    IPv6PrivacyExtensions=yes
+    IgnoreCarrierLoss=3s
+    LLDP=yes
+
+    /etc/systemd/resolved.conf.d/distro.conf
+    [Resolve]
+    Cache=no-negative
+    DNSSEC=no
+    FallbackDNS=9.9.9.9 149.112.112.112
+
+    reload systemd-networkd.service on {"/etc/systemd/network/10-lan.network"}
+    restart systemd-resolved.service on {"/etc/systemd/resolved.conf.d/distro.conf"}
+    "#);
 }

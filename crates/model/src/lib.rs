@@ -8,12 +8,12 @@ mod plan;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{Evaluation, RuntimePart, Section, Unit, Value, formats};
+use distro_eval::{Evaluation, RuntimePart, Section, Unit, UnitAction, Value, formats};
 
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 2;
+pub const VERSION: i64 = 3;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -26,6 +26,8 @@ pub struct Model {
     pub base: BTreeMap<String, Value>,
     /// Settings only one backend understands, by backend name.
     pub backends: BTreeMap<String, Value>,
+    /// Files that make services the system provides reload or restart, by service and action.
+    pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,
     /// Machine facts the configuration read, by dotted path.
     pub facts: BTreeMap<String, Value>,
 }
@@ -64,6 +66,13 @@ impl Model {
             model.base.extend(output.base.clone());
             model.backends.extend(output.backends.clone());
             model.units.extend(output.units.clone());
+            for (trigger, paths) in &output.triggers {
+                model
+                    .triggers
+                    .entry(trigger.clone())
+                    .or_default()
+                    .extend(paths.iter().cloned());
+            }
         }
         model
     }
@@ -99,8 +108,20 @@ impl Model {
                 (name.clone(), unit)
             })
             .collect();
+        let mut triggers: BTreeMap<String, Value> = BTreeMap::new();
+        for ((unit, action), paths) in &self.triggers {
+            let Value::Table(actions) = triggers
+                .entry(unit.clone())
+                .or_insert_with(|| Value::Table(BTreeMap::new()))
+            else {
+                unreachable!("each unit's entry is a table");
+            };
+            let paths = paths.iter().cloned().map(Value::Str).collect();
+            actions.insert(action.as_str().to_owned(), Value::List(paths));
+        }
         table([
             ("version", Value::Int(VERSION)),
+            ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),
             ("packages", Value::List(packages)),
             ("files", Value::Table(files)),

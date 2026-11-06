@@ -77,6 +77,33 @@ pub struct Output {
     /// Settings only one backend understands, by backend name, such as `nixos`. A config that
     /// has them is tied to that backend until they are gone.
     pub backends: BTreeMap<String, Value>,
+    /// Services the system provides that act when files change, such as networkd reloading
+    /// when a `.network` file does. Several modules can trigger the same service.
+    pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,
+}
+
+/// What a service does when a file it reads changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum UnitAction {
+    Reload,
+    Restart,
+}
+
+impl UnitAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reload => "reload",
+            Self::Restart => "restart",
+        }
+    }
+
+    /// The action as a verb in a sentence, such as "reloads".
+    pub fn verb(self) -> &'static str {
+        match self {
+            Self::Reload => "reloads",
+            Self::Restart => "restarts",
+        }
+    }
 }
 
 /// A value a module sets for an option, or for a table of options.
@@ -110,14 +137,14 @@ pub struct Section {
 
 impl Unit {
     /// A unit from a table of sections, each a table of keys. A list value repeats its key.
-    /// `[Unit]` comes first and `[Install]` last; other sections and all keys are sorted, so the
-    /// result doesn't depend on how a module built the table.
+    /// `[Unit]` (or `[Match]`, in network files) comes first and `[Install]` last; other sections
+    /// and all keys are sorted, so the result doesn't depend on how a module built the table.
     pub fn from_value(value: &Value) -> Result<Self, String> {
         let Value::Table(sections) = value else {
             return Err(format!("a unit is a table of sections, found {value}"));
         };
         let rank = |name: &str| match name {
-            "Unit" => 0,
+            "Unit" | "Match" => 0,
             "Install" => 2,
             _ => 1,
         };

@@ -3,7 +3,7 @@
 use super::eval_with;
 use crate::{
     ConfigReader, Diagnostic, File, Level, Module, OptionPath, OptionSpec, Output, ReadError,
-    RenderError, Section, Setting, Type, Unit, Value, explain,
+    RenderError, Section, Setting, Type, Unit, UnitAction, Value, explain,
 };
 
 type RenderFn = dyn Fn(&mut dyn ConfigReader) -> Result<Output, RenderError>;
@@ -500,5 +500,86 @@ fn a_unit_restarts_on_files_some_module_renders() {
     insta::assert_snapshot!(
         eval_with(&[SYSTEM], &[module("app", vec![], &[], render("/etc/ap.conf"))]).unwrap_err(),
         @"error: unit `app.service` from module `app` restarts on `/etc/ap.conf`, which no module renders"
+    );
+}
+
+#[test]
+fn triggers_on_units_the_system_provides_merge_across_modules() {
+    let network = |name: &'static str, action: UnitAction| {
+        module(name, vec![], &[], move |_: &mut dyn ConfigReader| {
+            let mut output = Output::default();
+            let path = format!("/etc/systemd/network/{name}.network");
+            output.files.insert(
+                path.clone(),
+                File {
+                    text: "x\n".into(),
+                    mode: 0o644,
+                },
+            );
+            output
+                .triggers
+                .insert(("systemd-networkd.service".into(), action), [path].into());
+            Ok(output)
+        })
+    };
+
+    let evaluation = eval_with(
+        &[SYSTEM],
+        &[
+            network("lan", UnitAction::Reload),
+            network("wifi", UnitAction::Reload),
+        ],
+    )
+    .unwrap();
+
+    let on: Vec<_> = evaluation
+        .modules()
+        .iter()
+        .flat_map(|rendered| rendered.output.triggers.values().flatten())
+        .collect();
+    assert_eq!(
+        on,
+        [
+            "/etc/systemd/network/lan.network",
+            "/etc/systemd/network/wifi.network"
+        ]
+    );
+}
+
+#[test]
+fn a_trigger_needs_rendered_files_and_a_unit_no_module_renders() {
+    let render = |unit: &'static str, file: &'static str| {
+        move |_: &mut dyn ConfigReader| {
+            let mut output = Output::default();
+            output.files.insert(
+                "/etc/app.conf".into(),
+                File {
+                    text: "x\n".into(),
+                    mode: 0o644,
+                },
+            );
+            output.units.insert("app.service".into(), Unit::default());
+            output
+                .triggers
+                .insert((unit.into(), UnitAction::Restart), [file.to_owned()].into());
+            Ok(output)
+        }
+    };
+    let app = |unit, file| module("app", vec![], &[], render(unit, file));
+
+    insta::assert_snapshot!(
+        eval_with(&[SYSTEM], &[app("other.service", "/etc/ap.conf")]).unwrap_err(),
+        @"error: unit `other.service` from module `app` restarts on `/etc/ap.conf`, which no module renders"
+    );
+    insta::assert_snapshot!(
+        eval_with(&[SYSTEM], &[app("app.service", "/etc/app.conf")]).unwrap_err(),
+        @"
+    error: module `app` triggers unit `app.service`, which a module renders
+     = a rendered unit restarts on files with `restart_on`
+    "
+    );
+    insta::assert_snapshot!(
+        eval_with(&[SYSTEM], &[app("other.socket", "/etc/app.conf")]).unwrap_err(),
+        @"error: module `app` triggers `other.socket`; only services reload or restart"
     );
 }

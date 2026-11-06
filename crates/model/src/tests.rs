@@ -1,4 +1,4 @@
-use distro_eval::{RuntimePart, Section, Unit, Value};
+use distro_eval::{RuntimePart, Section, Unit, UnitAction, Value};
 
 use crate::{File, Model, plan};
 
@@ -68,8 +68,9 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
         }
       },
       "packages": [],
+      "triggers": {},
       "units": {},
-      "version": 2
+      "version": 3
     }
     "#);
 }
@@ -179,4 +180,51 @@ fn a_change_to_a_backend_setting_may_need_a_reboot() {
           "/srv/world#neptune"
     1 change, tier: reboot
     "#);
+}
+
+#[test]
+fn services_the_system_provides_reload_or_restart_when_their_files_change() {
+    let network = |text: &str, dns: &str| {
+        let mut model = Model::default();
+        for (path, text) in [
+            ("/etc/systemd/network/10-lan.network", text),
+            ("/etc/systemd/resolved.conf.d/dns.conf", dns),
+        ] {
+            let file = File {
+                mode: 0o644,
+                text: text.into(),
+            };
+            model.files.insert(path.into(), file);
+        }
+        model.triggers.insert(
+            ("systemd-networkd.service".into(), UnitAction::Reload),
+            ["/etc/systemd/network/10-lan.network".into()].into(),
+        );
+        model.triggers.insert(
+            ("systemd-resolved.service".into(), UnitAction::Restart),
+            ["/etc/systemd/resolved.conf.d/dns.conf".into()].into(),
+        );
+        model
+    };
+    let before = network("DHCP=yes\n", "DNSSEC=no\n");
+
+    insta::assert_snapshot!(plan(&before, &network("DHCP=no\n", "DNSSEC=yes\n")).to_string(), @"
+    files
+      ~ /etc/systemd/network/10-lan.network (tier: live)
+      ~ /etc/systemd/resolved.conf.d/dns.conf (tier: live)
+    units
+      ~ systemd-networkd.service (tier: live)
+          reloads: /etc/systemd/network/10-lan.network changed
+      ~ systemd-resolved.service (tier: live)
+          restarts: /etc/systemd/resolved.conf.d/dns.conf changed
+    4 changes, tier: live
+    ");
+    insta::assert_snapshot!(plan(&before, &network("DHCP=no\n", "DNSSEC=no\n")).to_string(), @"
+    files
+      ~ /etc/systemd/network/10-lan.network (tier: live)
+    units
+      ~ systemd-networkd.service (tier: live)
+          reloads: /etc/systemd/network/10-lan.network changed
+    2 changes, tier: live
+    ");
 }

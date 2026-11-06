@@ -3,6 +3,7 @@
 
 use std::fmt::Write;
 
+use crate::module::Unit;
 use crate::value::Value;
 
 /// Pretty-printed JSON with sorted keys and a trailing newline.
@@ -10,6 +11,23 @@ pub fn json(value: &Value) -> Result<String, String> {
     let mut out = String::new();
     write_json(&mut out, value, 0)?;
     out.push('\n');
+    Ok(out)
+}
+
+/// A systemd-style INI file, such as a unit or a `.network` file, from a table of sections,
+/// ordered and with repeated keys like a unit.
+pub fn systemd(value: &Value) -> Result<String, String> {
+    let unit = Unit::from_value(value)?;
+    let mut out = String::new();
+    for section in &unit.sections {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let _ = writeln!(out, "[{}]", section.name);
+        for (key, value) in &section.entries {
+            let _ = writeln!(out, "{key}={value}");
+        }
+    }
     Ok(out)
 }
 
@@ -106,6 +124,39 @@ mod tests {
         assert_eq!(
             json(&value).unwrap(),
             "{\n  \"a\": \"quote \\\" and\\nnewline\\u0001\",\n  \"b\": [\n    1,\n    0.5\n  ],\n  \"c\": {},\n  \"d\": []\n}\n"
+        );
+    }
+
+    #[test]
+    fn renders_systemd_files_with_repeated_keys_and_match_first() {
+        let section = |entries: &[(&str, Value)]| {
+            Value::Table(
+                entries
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), value.clone()))
+                    .collect(),
+            )
+        };
+        let value = section(&[
+            (
+                "Network",
+                section(&[
+                    ("DHCP", Value::Str("yes".into())),
+                    ("IPv6AcceptRA", Value::Bool(true)),
+                ]),
+            ),
+            (
+                "Match",
+                section(&[(
+                    "Name",
+                    Value::List(vec![Value::Str("enp*".into()), Value::Str("wlan*".into())]),
+                )]),
+            ),
+        ]);
+
+        assert_eq!(
+            systemd(&value).unwrap(),
+            "[Match]\nName=enp*\nName=wlan*\n\n[Network]\nDHCP=yes\nIPv6AcceptRA=yes\n"
         );
     }
 

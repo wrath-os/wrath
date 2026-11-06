@@ -4,7 +4,7 @@
 //! needs logic happens here: unit files are rendered to text, their `[Install]` targets become
 //! dependencies NixOS creates, and files are split by whether NixOS manages them under `/etc`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{Section, Unit, Value, formats};
 use distro_model::Model;
@@ -57,6 +57,21 @@ pub fn lower(model: &Model) -> String {
             (name.clone(), lowered)
         })
         .collect();
+    // NixOS names services without the suffix and acts when a trigger's value changes.
+    let mut triggers: BTreeMap<String, Value> = BTreeMap::new();
+    for ((unit, action), paths) in &model.triggers {
+        let service = unit.strip_suffix(".service").unwrap_or(unit);
+        let Value::Table(actions) = triggers
+            .entry(service.to_owned())
+            .or_insert_with(|| Value::Table(BTreeMap::new()))
+        else {
+            unreachable!("each service's entry is a table");
+        };
+        actions.insert(
+            action.as_str().to_owned(),
+            Value::Str(files_hash(paths, model)),
+        );
+    }
     let input = table([
         ("model", Value::Str(model.canonical())),
         ("model_hash", Value::Str(model.hash())),
@@ -64,6 +79,7 @@ pub fn lower(model: &Model) -> String {
         ("etc", Value::Table(etc)),
         ("files", Value::Table(files)),
         ("units", Value::Table(units)),
+        ("triggers", Value::Table(triggers)),
         ("base", Value::Table(model.base.clone())),
         (
             "nixos",
@@ -82,17 +98,9 @@ pub fn lower(model: &Model) -> String {
 fn unit_text(unit: &Unit, model: &Model) -> String {
     let mut sections = unit.sections.clone();
     if !unit.restart_on.is_empty() {
-        let mut hasher = blake3::Hasher::new();
-        for path in &unit.restart_on {
-            let text = model.files.get(path).map_or("", |file| file.text.as_str());
-            hasher.update(path.as_bytes());
-            hasher.update(&[0]);
-            hasher.update(text.as_bytes());
-            hasher.update(&[0]);
-        }
         let trigger = (
             "X-Restart-Triggers".to_owned(),
-            hasher.finalize().to_hex().to_string(),
+            files_hash(&unit.restart_on, model),
         );
         match sections.iter_mut().find(|section| section.name == "Unit") {
             Some(section) => section.entries.push(trigger),
@@ -126,6 +134,19 @@ fn unit_text(unit: &Unit, model: &Model) -> String {
     text
 }
 
+/// A hash of the paths and contents of files, which changes when any of them does.
+fn files_hash(paths: &BTreeSet<String>, model: &Model) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for path in paths {
+        let text = model.files.get(path).map_or("", |file| file.text.as_str());
+        hasher.update(path.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(text.as_bytes());
+        hasher.update(&[0]);
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
 /// The units named by `key` in the `[Install]` section.
 fn install(sections: &[Section], key: &str) -> Vec<String> {
     sections
@@ -152,6 +173,7 @@ fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use distro_eval::UnitAction;
     use distro_model::File;
 
     use super::*;
@@ -192,6 +214,10 @@ mod tests {
             },
         );
         model.base.insert("audio".into(), Value::Bool(true));
+        model.triggers.insert(
+            ("systemd-networkd.service".into(), UnitAction::Reload),
+            ["/etc/nginx/main.conf".into()].into(),
+        );
 
         // The model and its hash have tests of their own.
         let lowered: String = lower(&model)
@@ -223,6 +249,11 @@ mod tests {
           "packages": [
             "nginx"
           ],
+          "triggers": {
+            "systemd-networkd": {
+              "reload": "515446256c8120cef626f645d64a6b92a29146ecb9f893c916bd06caad318528"
+            }
+          },
           "units": {
             "nginx.service": {
               "required_by": [],

@@ -4,7 +4,10 @@
 def render(ctx):
     boot = ctx.read("boot")
     ctx.base("boot", {"loader": boot["loader"], "kernel_params": boot["kernel_params"]})
-    ctx.base("networking", {"dhcp": ctx.read("networking.dhcp")})
+    ctx.base("networking", {
+        "dhcp": ctx.read("networking.dhcp"),
+        "resolved": ctx.read("networking.resolved"),
+    })
     ctx.base("audio", {"enable": ctx.read("audio.enable")})
 
     desktop = ctx.read("desktop")
@@ -29,6 +32,11 @@ module(
             types.bool,
             default = True,
             doc = "Configure every wired interface with DHCP.",
+        ),
+        "networking.resolved": option(
+            types.bool,
+            default = False,
+            doc = "Run systemd-resolved for DNS.",
         ),
         "audio.enable": option(types.bool, default = False, doc = "Run PipeWire for users."),
         "desktop": types.record(

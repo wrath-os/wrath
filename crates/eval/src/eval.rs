@@ -186,7 +186,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     diagnostics.extend(resolver.diagnostics);
     if diagnostics.is_empty() {
         diagnostics.extend(shared_outputs(&resolver.rendered));
-        diagnostics.extend(unknown_restart_files(&resolver.rendered));
+        diagnostics.extend(bad_triggers(&resolver.rendered));
     }
 
     if !diagnostics.is_empty() {
@@ -242,30 +242,57 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
         .collect()
 }
 
-/// Units that restart on files no module renders, which is most likely a typo.
-fn unknown_restart_files(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
+/// Units that restart or reload on files no module renders, which is most likely a typo, and
+/// triggers on units that aren't the system's services.
+fn bad_triggers(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
+    let rendered: Vec<&Rendered> = rendered.iter().flatten().collect();
     let files: BTreeSet<&String> = rendered
         .iter()
-        .flatten()
         .flat_map(|rendered| rendered.output.files.keys())
         .collect();
-    rendered
+    let units: BTreeSet<&String> = rendered
         .iter()
-        .flatten()
-        .flat_map(|rendered| {
-            rendered.output.units.iter().flat_map(move |(name, unit)| {
-                unit.restart_on
+        .flat_map(|rendered| rendered.output.units.keys())
+        .collect();
+
+    let mut diagnostics = Vec::new();
+    for module in &rendered {
+        let output = &module.output;
+        let on_files = output
+            .units
+            .iter()
+            .flat_map(|(unit, spec)| {
+                spec.restart_on
                     .iter()
-                    .map(move |path| (&rendered.name, name, path))
+                    .map(move |path| (unit, "restarts", path))
             })
-        })
-        .filter(|(_, _, path)| !files.contains(path))
-        .map(|(module, unit, path)| {
-            Diagnostic::error(format!(
-                "unit `{unit}` from module `{module}` restarts on `{path}`, which no module renders"
-            ))
-        })
-        .collect()
+            .chain(output.triggers.iter().flat_map(|((unit, action), paths)| {
+                paths.iter().map(move |path| (unit, action.verb(), path))
+            }));
+        for (unit, verb, path) in on_files.filter(|(_, _, path)| !files.contains(path)) {
+            diagnostics.push(Diagnostic::error(format!(
+                "unit `{unit}` from module `{}` {verb} on `{path}`, which no module renders",
+                module.name
+            )));
+        }
+        for (unit, _) in output.triggers.keys() {
+            if units.contains(unit) {
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "module `{}` triggers unit `{unit}`, which a module renders",
+                        module.name
+                    ))
+                    .note("a rendered unit restarts on files with `restart_on`"),
+                );
+            } else if !unit.ends_with(".service") {
+                diagnostics.push(Diagnostic::error(format!(
+                    "module `{}` triggers `{unit}`; only services reload or restart",
+                    module.name
+                )));
+            }
+        }
+    }
+    diagnostics
 }
 
 fn overlaps(a: &OptionPath, b: &OptionPath) -> bool {
