@@ -25,7 +25,7 @@ pub use eval::{Contribution, EvalError, Evaluation, Input, Rendered, Resolved, U
 pub use fs::{ConfigFs, DirFs, MemFs};
 pub use module::{
     ConfigReader, File, Home, Module, ModuleId, Output, ReadError, RenderError, SECRETS_DIR,
-    Secret, Section, Setting, Unit, UnitAction, home_path,
+    Secret, Section, Setting, Template, Unit, UnitAction, home_path,
 };
 pub use path::OptionPath;
 pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};

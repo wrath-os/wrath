@@ -338,7 +338,7 @@ fn ollama_runs_sandboxed_with_the_package_for_its_gpus() {
     assert!(rendered_by(&evaluation, "firewall").contains("tcp dport 11434 accept"));
 }
 
-const SECRET_MODULES: [&str; 4] = ["secrets", "syncthing", "system", "users"];
+const SECRET_MODULES: [&str; 5] = ["files", "secrets", "syncthing", "system", "users"];
 
 #[test]
 fn secrets_are_declared_with_their_encrypted_files_and_paths_take_them() {
@@ -362,6 +362,127 @@ fn secrets_are_declared_with_their_encrypted_files_and_paths_take_them() {
     assert!(
         syncthing.contains("/run/secrets/sync-key /var/lib/syncthing/.config/syncthing/key.pem"),
         "{syncthing}"
+    );
+}
+
+#[test]
+fn files_with_secrets_are_filled_in_on_the_machine() {
+    let evaluation = evaluate_fixture("secrets", &SECRET_MODULES);
+    let templates = &output_of(&evaluation, "files").templates;
+
+    insta::assert_debug_snapshot!(templates, @r#"
+    {
+        "/etc/app/env": Template {
+            parts: [
+                Text(
+                    "TOKEN=",
+                ),
+                Secret(
+                    "api-token",
+                ),
+                Text(
+                    "\nMODE=prod\n",
+                ),
+            ],
+            owner: "syncthing",
+            group: None,
+            mode: 256,
+        },
+    }
+    "#);
+}
+
+#[test]
+fn formats_and_plus_keep_secrets_for_the_machine_to_fill_in() {
+    let module = r#"
+def render(ctx):
+    token = ctx.read("services.app.token")
+    ctx.file("/etc/app.toml", formats.toml({"token": token, "port": 80}), owner = "app")
+    ctx.file("/etc/app.env", "TOKEN=" + token + "\n", 0o440, group = "app")
+
+module(
+    name = "app",
+    options = {"services.app.token": option(types.str, runtime = True)},
+    writes = [],
+    render = render,
+)
+"#;
+    let mut sources = Sources::default();
+    let secrets = std::fs::read_to_string(repo().join("modules/secrets.star")).unwrap();
+    let modules = vec![
+        load(&mut sources, "app.star", module.to_owned()).unwrap(),
+        load(&mut sources, "modules/secrets.star", secrets).unwrap(),
+    ];
+    let config = MemFs::new([
+        (
+            "system.toml",
+            "[system]\nhostname = \"box\"\n\n[secrets.tok]\n\n\
+             [services.app]\ntoken = \"${secret.tok}\"\n",
+        ),
+        ("secrets/tok.age", ""),
+    ]);
+    let evaluation = evaluate(Input {
+        sources,
+        config: &config,
+        schema: base_schema(),
+        modules: &modules,
+        facts: &Value::Table(BTreeMap::new()),
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    insta::assert_debug_snapshot!(output_of(&evaluation, "app").templates, @r#"
+    {
+        "/etc/app.env": Template {
+            parts: [
+                Text(
+                    "TOKEN=",
+                ),
+                Secret(
+                    "tok",
+                ),
+                Text(
+                    "\n",
+                ),
+            ],
+            owner: "root",
+            group: Some(
+                "app",
+            ),
+            mode: 288,
+        },
+        "/etc/app.toml": Template {
+            parts: [
+                Text(
+                    "port = 80\ntoken = \"",
+                ),
+                QuotedSecret(
+                    "tok",
+                ),
+                Text(
+                    "\"\n",
+                ),
+            ],
+            owner: "app",
+            group: None,
+            mode: 256,
+        },
+    }
+    "#);
+}
+
+#[test]
+fn only_files_with_secrets_have_an_owner() {
+    let error = run(r#"
+def render(ctx):
+    ctx.file("/etc/plain", "x\n", owner = "app")
+
+module(name = "plain", options = {}, writes = [], render = render)
+"#)
+    .unwrap_err();
+
+    assert!(
+        error.contains("only a file with secrets in it has an owner"),
+        "{error}"
     );
 }
 
@@ -558,9 +679,9 @@ fn home_files_start_with_a_tilde() {
 
     insta::assert_snapshot!(evaluate_with(&config, &HOME_MODULES).unwrap_err(), @r#"
     error: fail: users.john.files: `.bashrc` doesn't start with `~/`
-      --> modules/files.star:17:17
+      --> modules/files.star:27:17
        |
-    17 |                 fail("users.%s.files: `%s` doesn't start with `~/`" % (user, path))
+    27 |                 fail("users.%s.files: `%s` doesn't start with `~/`" % (user, path))
        |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
     "#);
 }

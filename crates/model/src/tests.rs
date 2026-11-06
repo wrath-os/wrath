@@ -450,6 +450,7 @@ fn full_model() -> Model {
         Value::Runtime(vec![
             RuntimePart::Text("Bearer ".into()),
             RuntimePart::Secret("token".into()),
+            RuntimePart::QuotedSecret("token".into()),
         ]),
     );
     model

@@ -26,6 +26,8 @@ use crate::walk::{self, Action, Definition, Level, REMOVE, Raw, Site, mark_insta
 
 /// The root of `${facts.…}` references.
 const FACTS: &str = "facts";
+/// References to a secret's contents start with this, as `${secret.api-token}`.
+const SECRET: &str = "secret";
 
 pub struct Input<'a> {
     /// Sources so far, normally the modules' own files, so module spans resolve.
@@ -310,7 +312,7 @@ fn secret_names(value: &Value) -> Vec<&String> {
         Value::Runtime(parts) => parts
             .iter()
             .filter_map(|part| match part {
-                RuntimePart::Secret(name) => Some(name),
+                RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => Some(name),
                 RuntimePart::Text(_) => None,
             })
             .collect(),
@@ -367,8 +369,9 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
                     .map(move |name| format!("{name} (for {user})"))
             })
             .collect();
-        let outputs: [(&str, Vec<String>); 7] = [
+        let outputs: [(&str, Vec<String>); 8] = [
             ("file", output.files.keys().cloned().collect()),
+            ("file", output.templates.keys().cloned().collect()),
             ("file", home_files),
             ("unit", output.units.keys().cloned().collect()),
             ("unit", user_units),
@@ -1238,7 +1241,10 @@ impl<'a> Resolver<'a> {
                         for part in parts {
                             match part {
                                 RuntimePart::Text(text) => push_text(&mut out, &text),
-                                secret @ RuntimePart::Secret(_) => out.push(secret),
+                                secret
+                                @ (RuntimePart::Secret(_) | RuntimePart::QuotedSecret(_)) => {
+                                    out.push(secret)
+                                }
                             }
                         }
                     }
@@ -1265,12 +1271,24 @@ impl<'a> Resolver<'a> {
     }
 
     fn reference(&mut self, path: &OptionPath, span: Span, uses: &mut Vec<Use>) -> Option<Value> {
-        if let Some((FACTS, fact)) = path
+        match path
             .segments()
             .split_first()
             .map(|(first, rest)| (first.as_str(), rest))
         {
-            return self.fact(path, fact, span, uses);
+            Some((FACTS, fact)) => return self.fact(path, fact, span, uses),
+            Some((SECRET, [name])) => {
+                return Some(Value::Runtime(vec![RuntimePart::Secret(name.clone())]));
+            }
+            Some((SECRET, _)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(format!("`{path}` doesn't name a secret"))
+                        .label(span, "referenced here")
+                        .note("help: refer to a secret as `${secret.NAME}`"),
+                );
+                return None;
+            }
+            _ => {}
         }
         self.run_writers(path).ok()?;
         let diagnostic = match self.known(path) {

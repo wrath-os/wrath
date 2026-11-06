@@ -356,6 +356,7 @@ fn spell_out(value: &Value) -> Value {
                     let (kind, text) = match part {
                         RuntimePart::Text(text) => ("text", text),
                         RuntimePart::Secret(name) => ("secret", name),
+                        RuntimePart::QuotedSecret(name) => ("quoted_secret", name),
                     };
                     table([(kind, Value::Str(text.clone()))])
                 })

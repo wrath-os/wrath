@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 use allocative::Allocative;
 use distro_eval::{
     ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, Module, OptionPath,
-    OptionSpec, Output, ReadError, RenderError, Secret, Setting, Sources, Span, Type, Unit,
-    UnitAction, Value, formats, home_path,
+    OptionSpec, Output, ReadError, RenderError, RuntimePart, Secret, Setting, Sources, Span,
+    Template, Type, Unit, UnitAction, Value, formats, home_path,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -41,7 +41,7 @@ use starlark::starlark_simple_value;
 use starlark::syntax::{AstModule, Dialect};
 use starlark::values::none::{NoneOr, NoneType};
 use starlark::values::{
-    NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue, ValueLike,
+    Heap, NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue, ValueLike,
 };
 use starlark_derive::starlark_value;
 
@@ -334,26 +334,40 @@ fn types_functions(builder: &mut GlobalsBuilder) {
     }
 }
 
+/// Formats render values with secrets in them too. The result is then a runtime value, text
+/// with the secrets left to fill in on the machine, which only `ctx.file` takes.
 #[starlark_module]
 fn formats_functions(builder: &mut GlobalsBuilder) {
     /// Pretty-printed JSON with sorted keys.
-    fn json<'v>(value: StarValue<'v>) -> anyhow::Result<String> {
-        let value = convert::from_starlark(value).map_err(anyhow::Error::msg)?;
-        formats::json(&value).map_err(anyhow::Error::msg)
+    fn json<'v>(value: StarValue<'v>, heap: Heap<'v>) -> anyhow::Result<StarValue<'v>> {
+        render(value, heap, formats::json_parts)
     }
 
     /// A systemd-style file, such as a `.network` file, from a dictionary of sections. A list
     /// value repeats its key.
-    fn systemd<'v>(sections: StarValue<'v>) -> anyhow::Result<String> {
-        let value = convert::from_starlark(sections).map_err(anyhow::Error::msg)?;
-        formats::systemd(&value).map_err(anyhow::Error::msg)
+    fn systemd<'v>(sections: StarValue<'v>, heap: Heap<'v>) -> anyhow::Result<StarValue<'v>> {
+        render(sections, heap, formats::systemd_parts)
     }
 
     /// A TOML document from a dictionary, with keys sorted.
-    fn toml<'v>(value: StarValue<'v>) -> anyhow::Result<String> {
-        let value = convert::from_starlark(value).map_err(anyhow::Error::msg)?;
-        formats::toml(&value).map_err(anyhow::Error::msg)
+    fn toml<'v>(value: StarValue<'v>, heap: Heap<'v>) -> anyhow::Result<StarValue<'v>> {
+        render(value, heap, formats::toml_parts)
     }
+}
+
+/// `value` rendered by `format`: a string, or a runtime value when it has secrets.
+fn render<'v>(
+    value: StarValue<'v>,
+    heap: Heap<'v>,
+    format: fn(&Value) -> Result<Vec<RuntimePart>, String>,
+) -> anyhow::Result<StarValue<'v>> {
+    let value = convert::from_starlark(value).map_err(anyhow::Error::msg)?;
+    let parts = format(&value).map_err(anyhow::Error::msg)?;
+    Ok(match parts.as_slice() {
+        [] => heap.alloc(""),
+        [RuntimePart::Text(text)] => heap.alloc(text.as_str()),
+        _ => heap.alloc(convert::Runtime(parts)),
+    })
 }
 
 /// A loaded module. Each render evaluates the file again on a fresh heap and calls the render
@@ -606,21 +620,65 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Renders a file. With `user`, the path starts with `~/` and the file goes in that user's
-    /// home.
+    /// home. Text with secrets in it, a runtime value, makes a file the machine fills in,
+    /// owned by `owner` and `group` with `mode` (0400 by default); other files are links into
+    /// the store that anyone can read.
+    #[allow(clippy::too_many_arguments)]
     fn file<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] path: &str,
-        #[starlark(require = pos)] text: &str,
-        #[starlark(require = pos)] mode: Option<u32>,
+        #[starlark(require = pos)] text: StarValue<'v>,
+        #[starlark(require = pos, default = NoneOr::None)] mode: NoneOr<u32>,
         #[starlark(require = named)] user: Option<&str>,
+        #[starlark(require = named, default = NoneOr::None)] owner: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] group: NoneOr<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let (rendering, at) = rendering(eval)?;
+        let (mode, owner, group) = (mode.into_option(), owner.into_option(), group.into_option());
+        let mut output = rendering.output.borrow_mut();
+        if let Some(runtime) = text.downcast_ref::<convert::Runtime>() {
+            if user.is_some() {
+                return Err(rendering.invalid(
+                    at,
+                    format!("file `{path}`: files in homes can't have secrets in them yet"),
+                ));
+            }
+            let template = Template {
+                parts: runtime.0.clone(),
+                owner: owner.unwrap_or("root").to_owned(),
+                group: group.map(str::to_owned),
+                mode: mode.unwrap_or(0o400),
+            };
+            if output.files.contains_key(path)
+                || output.templates.insert(path.to_owned(), template).is_some()
+            {
+                return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
+            }
+            return Ok(NoneType);
+        }
+        let Some(text) = text.unpack_str() else {
+            return Err(rendering.invalid(
+                at,
+                format!(
+                    "file `{path}`: the text is {}, not a string",
+                    text.get_type()
+                ),
+            ));
+        };
+        if owner.is_some() || group.is_some() {
+            return Err(rendering.invalid(
+                at,
+                format!(
+                    "file `{path}`: only a file with secrets in it has an owner; others are \
+                     links into the store that anyone can read"
+                ),
+            ));
+        }
         let file = File {
             text: text.to_owned(),
             mode: mode.unwrap_or(0o644),
         };
-        let mut output = rendering.output.borrow_mut();
         let (files, shown) = match user {
             Some(user) => {
                 if !path.starts_with("~/") {
@@ -631,6 +689,9 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
                 }
                 let files = &mut output.homes.entry(user.to_owned()).or_default().files;
                 (files, home_path(user, path))
+            }
+            None if output.templates.contains_key(path) => {
+                return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
             }
             None => (&mut output.files, path.to_owned()),
         };

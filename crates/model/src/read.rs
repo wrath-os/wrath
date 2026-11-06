@@ -116,6 +116,9 @@ fn runtime_parts(entries: &BTreeMap<String, Value>) -> Option<Vec<RuntimePart>> 
                 (kind, Value::Str(name)) if kind == "secret" => {
                     Some(RuntimePart::Secret(name.clone()))
                 }
+                (kind, Value::Str(name)) if kind == "quoted_secret" => {
+                    Some(RuntimePart::QuotedSecret(name.clone()))
+                }
                 _ => None,
             }
         })

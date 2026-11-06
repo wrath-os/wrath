@@ -28,8 +28,41 @@ impl fmt::Display for Runtime {
     }
 }
 
+/// Joining text and runtime values with `+` makes a runtime value.
 #[starlark_value(type = "runtime_value")]
-impl<'v> StarlarkValue<'v> for Runtime {}
+impl<'v> StarlarkValue<'v> for Runtime {
+    fn add(&self, rhs: StarValue<'v>, heap: Heap<'v>) -> Option<starlark::Result<StarValue<'v>>> {
+        let joined = join(&self.0, &runtime_parts(rhs)?);
+        Some(Ok(heap.alloc(Runtime(joined))))
+    }
+
+    fn radd(&self, lhs: StarValue<'v>, heap: Heap<'v>) -> Option<starlark::Result<StarValue<'v>>> {
+        let joined = join(&runtime_parts(lhs)?, &self.0);
+        Some(Ok(heap.alloc(Runtime(joined))))
+    }
+}
+
+/// A string or runtime value as runtime parts.
+pub(crate) fn runtime_parts(value: StarValue<'_>) -> Option<Vec<RuntimePart>> {
+    match value.unpack_str() {
+        Some(text) => Some(vec![RuntimePart::Text(text.to_owned())]),
+        None => value
+            .downcast_ref::<Runtime>()
+            .map(|runtime| runtime.0.clone()),
+    }
+}
+
+/// The parts of `a` then `b`, with neighbouring text merged.
+pub(crate) fn join(a: &[RuntimePart], b: &[RuntimePart]) -> Vec<RuntimePart> {
+    let mut out: Vec<RuntimePart> = Vec::with_capacity(a.len() + b.len());
+    for part in a.iter().chain(b) {
+        match (out.last_mut(), part) {
+            (Some(RuntimePart::Text(last)), RuntimePart::Text(text)) => last.push_str(text),
+            _ => out.push(part.clone()),
+        }
+    }
+    out
+}
 
 pub(crate) fn to_starlark<'v>(heap: Heap<'v>, value: &Value) -> StarValue<'v> {
     match value {

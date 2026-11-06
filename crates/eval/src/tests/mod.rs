@@ -356,6 +356,50 @@ proxy = "http://admin:${services.grafana.main.settings.password}@localhost"
 }
 
 #[test]
+fn strings_refer_to_secrets_by_name() {
+    let files = |reference: &str| {
+        let settings = format!(
+            "[services.grafana.main.settings.database]\n\
+             url = \"postgres://app:${{{reference}}}@db\"\n"
+        );
+        eval_with(
+            &[
+                ("system.toml", SYSTEM),
+                ("services/grafana.toml", settings.as_str()),
+                ("grafana-admin.age", ""),
+            ],
+            &[modules::secrets(
+                "secrets",
+                "grafana-admin",
+                "grafana-admin.age",
+            )],
+        )
+    };
+
+    let evaluation = files("secret.grafana-admin").unwrap();
+    insta::assert_snapshot!(why(&evaluation, "services.grafana.main.settings"), @r#"
+    services.grafana.main.settings.database.url = { runtime = "postgres://app:${secret.grafana-admin}@db" }
+      set at services/grafana.toml:2:7
+    "#);
+    insta::assert_snapshot!(files("secret.grafana-admn").unwrap_err(), @r#"
+    error: there is no secret `grafana-admn`
+     --> services/grafana.toml:2:7
+      |
+    2 | url = "postgres://app:${secret.grafana-admn}@db"
+      |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `services.grafana.main.settings.database.url` refers to it
+      = help: did you mean `grafana-admin`?
+    "#);
+    insta::assert_snapshot!(files("secret.a.b").unwrap_err(), @r#"
+    error: `secret.a.b` doesn't name a secret
+     --> services/grafana.toml:2:23
+      |
+    2 | url = "postgres://app:${secret.a.b}@db"
+      |                       ^^^^^^^^^^^^^ referenced here
+      = help: refer to a secret as `${secret.NAME}`
+    "#);
+}
+
+#[test]
 fn include_and_user_files() {
     let evaluation = ok(&[
         (

@@ -12,7 +12,7 @@ use crate::diag::Diagnostic;
 use crate::path::OptionPath;
 use crate::schema::OptionSpec;
 use crate::source::Span;
-use crate::value::Value;
+use crate::value::{RuntimePart, Value};
 use crate::walk::Level;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -84,6 +84,19 @@ pub struct Output {
     pub secrets: BTreeMap<String, Secret>,
     /// What goes in users' homes, by user.
     pub homes: BTreeMap<String, Home>,
+    /// Files with secrets in them, by absolute path, filled in on the machine.
+    pub templates: BTreeMap<String, Template>,
+}
+
+/// A file with secrets in it. The text around the secrets is known when the system is built;
+/// the machine fills in the secrets and keeps the result off disk, readable by its owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Template {
+    pub parts: Vec<RuntimePart>,
+    pub owner: String,
+    /// The owner's group when unset.
+    pub group: Option<String>,
+    pub mode: u32,
 }
 
 /// A user's files, packages and the units their systemd user manager runs.

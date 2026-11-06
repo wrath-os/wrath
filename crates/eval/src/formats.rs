@@ -6,7 +6,7 @@ use std::fmt::Write;
 use ::toml::Value as TomlValue;
 
 use crate::module::Unit;
-use crate::value::Value;
+use crate::value::{RuntimePart, Value};
 
 /// Pretty-printed JSON with sorted keys and a trailing newline.
 pub fn json(value: &Value) -> Result<String, String> {
@@ -46,6 +46,97 @@ fn to_toml(value: &Value) -> Result<TomlValue, String> {
                 .collect::<Result<_, String>>()?,
         ),
         Value::Runtime(_) => return Err(RUNTIME.into()),
+    })
+}
+
+/// [`json`] for a value that may contain secrets: the text around them, and each secret as a
+/// [`RuntimePart::QuotedSecret`] to fill in on the machine.
+pub fn json_parts(value: &Value) -> Result<Vec<RuntimePart>, String> {
+    with_secrets(value, json)
+}
+
+/// [`toml`] for a value that may contain secrets, like [`json_parts`].
+pub fn toml_parts(value: &Value) -> Result<Vec<RuntimePart>, String> {
+    with_secrets(value, toml)
+}
+
+/// [`systemd`] for a value that may contain secrets, like [`json_parts`].
+pub fn systemd_parts(value: &Value) -> Result<Vec<RuntimePart>, String> {
+    with_secrets(value, systemd)
+}
+
+/// Marks a secret in rendered text: the secret's index between two private-use characters,
+/// which formats write as they are.
+const MARKER_START: char = '\u{E000}';
+const MARKER_END: char = '\u{E001}';
+
+/// Renders `value` with each secret replaced by a marker, then splits the text at the markers.
+fn with_secrets(
+    value: &Value,
+    render: impl Fn(&Value) -> Result<String, String>,
+) -> Result<Vec<RuntimePart>, String> {
+    let mut secrets = Vec::new();
+    let marked = mark(value, &mut secrets)?;
+    let text = render(&marked)?;
+    let mut parts = Vec::new();
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find(MARKER_START) {
+        let end = rest[start..]
+            .find(MARKER_END)
+            .map(|end| start + end)
+            .ok_or("a secret's marker was cut apart")?;
+        let index: usize = rest[start + MARKER_START.len_utf8()..end]
+            .parse()
+            .map_err(|_| "a secret's marker was changed")?;
+        if start > 0 {
+            parts.push(RuntimePart::Text(rest[..start].to_owned()));
+        }
+        parts.push(RuntimePart::QuotedSecret(secrets[index].clone()));
+        rest = &rest[end + MARKER_END.len_utf8()..];
+    }
+    if !rest.is_empty() {
+        parts.push(RuntimePart::Text(rest.to_owned()));
+    }
+    Ok(parts)
+}
+
+/// `value` with runtime values turned into strings that mark each secret, recorded in
+/// `secrets` by index.
+fn mark(value: &Value, secrets: &mut Vec<String>) -> Result<Value, String> {
+    Ok(match value {
+        Value::Str(text) if text.contains(MARKER_START) => {
+            return Err(format!(
+                "text containing U+E000 cannot be rendered with secrets: {text:?}"
+            ));
+        }
+        Value::Runtime(parts) => {
+            let mut text = String::new();
+            for part in parts {
+                match part {
+                    RuntimePart::Text(part) => text.push_str(part),
+                    RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => {
+                        text.push(MARKER_START);
+                        text.push_str(&secrets.len().to_string());
+                        text.push(MARKER_END);
+                        secrets.push(name.clone());
+                    }
+                }
+            }
+            Value::Str(text)
+        }
+        Value::List(items) => Value::List(
+            items
+                .iter()
+                .map(|item| mark(item, secrets))
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::Table(entries) => Value::Table(
+            entries
+                .iter()
+                .map(|(key, item)| Ok((key.clone(), mark(item, secrets)?)))
+                .collect::<Result<_, String>>()?,
+        ),
+        Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) => value.clone(),
     })
 }
 
@@ -120,7 +211,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::value::RuntimePart;
 
     #[test]
     fn renders_pretty_json_with_sorted_keys() {
@@ -198,6 +288,61 @@ mod tests {
             "a = true\nn = 3\n\n[ui]\ndiff-formatter = [\"difft\", \"$left\"]\neditor = \"hx\"\n"
         );
         assert!(toml(&Value::Str("x".into())).is_err());
+    }
+
+    #[test]
+    fn values_with_secrets_render_to_text_around_the_secrets() {
+        let url = Value::Runtime(vec![
+            RuntimePart::Text("postgres://app:".into()),
+            RuntimePart::Secret("db".into()),
+            RuntimePart::Text("@db".into()),
+        ]);
+        let value = Value::Table(BTreeMap::from([
+            ("url".to_owned(), url),
+            ("port".to_owned(), Value::Int(5432)),
+        ]));
+        let shown = |parts: Vec<RuntimePart>| -> String {
+            parts
+                .iter()
+                .map(|part| match part {
+                    RuntimePart::Text(text) => text.clone(),
+                    RuntimePart::Secret(name) => format!("<{name}>"),
+                    RuntimePart::QuotedSecret(name) => format!("<quoted {name}>"),
+                })
+                .collect()
+        };
+
+        insta::assert_snapshot!(shown(json_parts(&value).unwrap()), @r#"
+        {
+          "port": 5432,
+          "url": "postgres://app:<quoted db>@db"
+        }
+        "#);
+        insta::assert_snapshot!(shown(toml_parts(&value).unwrap()), @r#"
+        port = 5432
+        url = "postgres://app:<quoted db>@db"
+        "#);
+        let unit = Value::Table(BTreeMap::from([(
+            "Service".to_owned(),
+            Value::Table(BTreeMap::from([(
+                "Environment".to_owned(),
+                Value::Runtime(vec![
+                    RuntimePart::Text("\"TOKEN=".into()),
+                    RuntimePart::Secret("token".into()),
+                    RuntimePart::Text("\"".into()),
+                ]),
+            )])),
+        )]));
+        insta::assert_snapshot!(shown(systemd_parts(&unit).unwrap()), @r#"
+        [Service]
+        Environment="TOKEN=<quoted token>"
+        "#);
+        assert_eq!(
+            json_parts(&Value::Int(1)).unwrap(),
+            [RuntimePart::Text("1\n".into())]
+        );
+        let marker = Value::Str(format!("{MARKER_START}0{MARKER_END}"));
+        assert!(json_parts(&marker).is_err());
     }
 
     #[test]

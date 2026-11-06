@@ -21,7 +21,11 @@ pub enum Value {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimePart {
     Text(String),
+    /// A secret's contents as they are.
     Secret(String),
+    /// A secret's contents inside a quoted string of a file format. Contents with quotes,
+    /// backslashes or control characters would need escaping there, so they are refused.
+    QuotedSecret(String),
 }
 
 impl Value {
@@ -124,7 +128,9 @@ impl fmt::Display for Value {
                             RuntimePart::Text(text) => {
                                 template.push_str(&text.replace("${", "$${"))
                             }
-                            RuntimePart::Secret(name) => write!(template, "${{secret:{name}}}")?,
+                            RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => {
+                                write!(template, "${{secret.{name}}}")?
+                            }
                         }
                     }
                     f.write_str("{ runtime = ")?;
@@ -201,7 +207,7 @@ mod tests {
         ]);
 
         assert_eq!(secret.to_string(), r#"{ secret = "grafana-admin" }"#);
-        assert_eq!(template.to_string(), r#"{ runtime = "user:${secret:pw}" }"#);
+        assert_eq!(template.to_string(), r#"{ runtime = "user:${secret.pw}" }"#);
         assert!(Value::List(vec![secret]).is_runtime());
         assert!(!Value::Str("x".into()).is_runtime());
     }
