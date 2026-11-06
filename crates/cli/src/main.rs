@@ -32,9 +32,9 @@ struct Cli {
     /// Directory of modules [default: modules under the root]
     #[arg(long, global = true, hide = true)]
     modules: Option<PathBuf>,
-    /// Repository root containing `acceptance/` and `factory/`
-    #[arg(long, global = true, default_value = ".", hide = true)]
-    root: PathBuf,
+    /// Repository root containing `acceptance/` and `factory/` [default: found, see `find_root`]
+    #[arg(long, global = true, hide = true)]
+    root: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -189,8 +189,9 @@ struct TestOptions {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let modules = modules_dir(&cli.root, cli.modules);
-    let root = cli.root.as_path();
+    let root = find_root(cli.root, std::env::var_os("DISTRO_ROOT").map(PathBuf::from));
+    let modules = modules_dir(&root, cli.modules);
+    let root = root.as_path();
     let config = || config_dir(cli.config.as_deref());
     let result = match cli.command {
         Command::Status => config().and_then(|config| match model(&config, &modules) {
@@ -557,4 +558,28 @@ fn why(config: &Path, modules: &Path, option: Option<&str>) -> Result<ExitCode, 
     };
     print!("{}", distro_eval::explain(&evaluation, prefix.as_ref())?);
     Ok(ExitCode::SUCCESS)
+}
+
+/// Where distro's own files are: `factory/nix` and `modules`, and in a checkout `acceptance` too.
+/// It's `--root`, else `$DISTRO_ROOT`, else the checkout the running binary was built in, else
+/// the current directory. Inside that checkout it's `.`, so paths in messages stay short.
+fn find_root(given: Option<PathBuf>, from_env: Option<PathBuf>) -> PathBuf {
+    if let Some(root) = given.or(from_env) {
+        return root;
+    }
+    let Some(checkout) = std::env::current_exe().ok().and_then(|exe| {
+        exe.ancestors()
+            .find(|dir| dir.join("factory/nix/flake.nix").is_file())
+            .map(Path::to_path_buf)
+    }) else {
+        return PathBuf::from(".");
+    };
+    let here = std::env::current_dir()
+        .and_then(|dir| dir.canonicalize())
+        .ok();
+    if here.is_some_and(|here| checkout.canonicalize().is_ok_and(|c| c == here)) {
+        PathBuf::from(".")
+    } else {
+        checkout
+    }
 }

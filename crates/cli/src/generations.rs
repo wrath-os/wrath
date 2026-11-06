@@ -36,7 +36,7 @@ impl From<BuildTarget> for Target {
 /// backend's warnings go to stderr.
 pub fn build(root: &Path, model: &Model, target: impl Into<Target>) -> Result<PathBuf, String> {
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
-    let built = backend::build(model, &root.join("factory/nix"), target.into(), work.path())?;
+    let built = backend::build(model, &factory(root)?, target.into(), work.path())?;
     for warning in &built.warnings {
         eprintln!("warning: {warning}");
     }
@@ -190,12 +190,26 @@ const DEFAULT_URL: &str = "github:NixOS/nixpkgs/nixos-unstable";
 
 fn resolve(root: &Path, model: &Model) -> Result<Lock, String> {
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
-    backend::resolve(model, &root.join("factory/nix"), work.path())
+    backend::resolve(model, &factory(root)?, work.path())
 }
 
 fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
     let path = config.join(LOCK_FILE);
     std::fs::write(&path, lock.to_toml()).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The factory under `root`, the flake that builds systems.
+fn factory(root: &Path) -> Result<PathBuf, String> {
+    let factory = root.join("factory/nix");
+    if factory.join("flake.nix").is_file() {
+        Ok(factory)
+    } else {
+        Err(format!(
+            "can't find distro's factory in {}; run distro from its repository, or set \
+             DISTRO_ROOT to where `factory/nix` is",
+            root.display()
+        ))
+    }
 }
 
 #[cfg(test)]

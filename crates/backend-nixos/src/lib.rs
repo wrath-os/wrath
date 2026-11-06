@@ -152,25 +152,29 @@ fn warnings(stderr: &str) -> Vec<String> {
     warnings
 }
 
-/// The Nix expression applying the factory's `function` to `input`. The flake is read through git,
-/// so files jj tracks are seen and build outputs in the repository are not.
+/// The Nix expression applying the factory's `function` to `input`.
 fn expression(factory: &Path, function: &str, input: &Path) -> String {
-    let (repo, dir) = git_root(factory);
     format!(
         "(builtins.getFlake {flake:?}).lib.${{builtins.currentSystem}}.{function} (/. + {input:?})",
-        flake = format!("git+file://{}?dir={}", repo.display(), dir.display()),
+        flake = flake_ref(factory),
         input = input.display().to_string(),
     )
 }
 
-/// The enclosing repository of `dir`, and `dir` relative to it.
-fn git_root(dir: &Path) -> (PathBuf, PathBuf) {
-    let repo = dir
+/// How Nix reads the factory. In a repository it's read through git, so files jj tracks are seen
+/// and build outputs in the repository are not; anywhere else, such as an installed copy in the
+/// store, as plain files.
+fn flake_ref(factory: &Path) -> String {
+    match factory
         .ancestors()
         .find(|ancestor| ancestor.join(".git").exists())
-        .unwrap_or(dir);
-    let relative = dir.strip_prefix(repo).unwrap_or(Path::new(""));
-    (repo.to_path_buf(), relative.to_path_buf())
+    {
+        Some(repo) => {
+            let dir = factory.strip_prefix(repo).unwrap_or(Path::new(""));
+            format!("git+file://{}?dir={}", repo.display(), dir.display())
+        }
+        None => format!("path:{}", factory.display()),
+    }
 }
 
 /// Makes `system`, an already built and present system, the current generation and switches to
@@ -291,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn the_expression_reads_the_flake_through_git() {
+    fn the_expression_applies_a_factory_function_to_the_input() {
         let expression = expression(
             Path::new("/nonexistent/factory/nix"),
             Target::TestImage.function(),
@@ -300,7 +304,7 @@ mod tests {
 
         assert_eq!(
             expression,
-            r#"(builtins.getFlake "git+file:///nonexistent/factory/nix?dir=").lib.${builtins.currentSystem}.testImage (/. + "/tmp/run/nixos.json")"#
+            r#"(builtins.getFlake "path:/nonexistent/factory/nix").lib.${builtins.currentSystem}.testImage (/. + "/tmp/run/nixos.json")"#
         );
     }
 
@@ -323,15 +327,20 @@ mod tests {
     }
 
     #[test]
-    fn the_repository_is_the_nearest_directory_with_git() {
+    fn the_factory_is_read_through_its_repository_or_as_plain_files() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
             .unwrap();
+        assert_eq!(
+            flake_ref(&repo.join("factory/nix")),
+            format!("git+file://{}?dir=factory/nix", repo.display())
+        );
 
-        let (root, dir) = git_root(&repo.join("factory/nix"));
-
-        assert_eq!(root, repo);
-        assert_eq!(dir, Path::new("factory/nix"));
+        let installed = Path::new("/nix/store/abc-distro/share/distro/factory/nix");
+        assert_eq!(
+            flake_ref(installed),
+            "path:/nix/store/abc-distro/share/distro/factory/nix"
+        );
     }
 }
