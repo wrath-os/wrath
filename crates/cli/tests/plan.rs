@@ -359,3 +359,22 @@ fn why_explains_files_and_packages_by_the_module_and_options_behind_them() {
     let stderr = String::from_utf8_lossy(&unknown.stderr);
     assert!(stderr.contains("no module writes `/etc/nope`"), "{stderr}");
 }
+
+#[test]
+fn json_is_the_plan_as_data_and_refused_where_it_isnt_supported() {
+    let plan = stdout(&distro(&[
+        "plan",
+        "--json",
+        "-C",
+        "fixtures/configs/basic-changed",
+        "--against",
+        "fixtures/configs/basic",
+    ]));
+    let plan: serde_json::Value = serde_json::from_str(&plan).unwrap();
+    assert_eq!(plan["tier"], "live");
+    assert_eq!(plan["changes"][0]["name"], "services.nginx.main.port");
+    assert_eq!(plan["changes"][0]["details"][0], "8080 -> 8081");
+
+    let unsupported = distro(&["why", "--json", "-C", "fixtures/configs/basic", "--all"]);
+    assert!(!unsupported.status.success());
+}

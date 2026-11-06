@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use distro_backend_nixos as backend;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
-use distro_eval::{Evaluation, OptionPath};
+use distro_eval::{Evaluation, OptionPath, Value};
 use distro_model::{LOCK_FILE, Lock, Model};
 use generations::Switch;
 
@@ -31,6 +31,9 @@ struct Cli {
     /// The configuration to act on [default: the system's, in /etc/distro]
     #[arg(short = 'C', long = "config", global = true, value_name = "DIR")]
     config: Option<PathBuf>,
+    /// Print data as JSON instead of text, where a command supports it
+    #[arg(long, global = true)]
+    json: bool,
     /// Directory of modules [default: modules under the root]
     #[arg(long, global = true, hide = true)]
     modules: Option<PathBuf>,
@@ -230,12 +233,23 @@ struct TestOptions {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let json = cli.json;
+    if json
+        && !matches!(
+            cli.command,
+            Command::Plan { .. } | Command::Status | Command::History | Command::Sources
+        )
+    {
+        eprintln!("error: --json works with plan, status, history and sources so far");
+        return ExitCode::FAILURE;
+    }
     let root = find_root(cli.root, std::env::var_os("DISTRO_ROOT").map(PathBuf::from));
     let modules = modules_dir(&root, cli.modules);
     let root = root.as_path();
     let config = || config_dir(cli.config.as_deref());
     let result = match cli.command {
         Command::Status => config().and_then(|config| match model(&config, &modules) {
+            Some(model) if json => print_serde(&generations::status_json(&model)),
             Some(model) => generations::status(&model),
             None => Ok(ExitCode::FAILURE),
         }),
@@ -245,7 +259,7 @@ fn main() -> ExitCode {
                 (Some(path), false) => Against::Path(path),
                 (None, false) => Against::Running,
             };
-            config().and_then(|config| plan(&config, against, &modules))
+            config().and_then(|config| plan(&config, against, &modules, json))
         }
         Command::Apply { system, yes } => {
             switch(root, system, Switch::Apply, yes, &config, &modules)
@@ -264,6 +278,7 @@ fn main() -> ExitCode {
             }),
             None => Ok(ExitCode::FAILURE),
         }),
+        Command::History if json => generations::history_json().and_then(|v| print_serde(&v)),
         Command::History => generations::history(),
         Command::Clean { keep, yes } => generations::clean(keep, yes),
         Command::Diff { from, to } => generations::diff(from, to),
@@ -281,6 +296,7 @@ fn main() -> ExitCode {
             config().and_then(|config| lock(root, &config, &modules, Some(&sources)))
         }
         Command::Sources => config().and_then(|config| match model(&config, &modules) {
+            Some(model) if json => print_serde(&generations::sources_json(&model)),
             Some(model) => generations::sources(&model),
             None => Ok(ExitCode::FAILURE),
         }),
@@ -563,7 +579,7 @@ enum Against {
     Running,
 }
 
-fn plan(config: &Path, against: Against, modules: &Path) -> Result<ExitCode, String> {
+fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<ExitCode, String> {
     let Some(after) = model(config, modules) else {
         return Ok(ExitCode::FAILURE);
     };
@@ -585,11 +601,20 @@ fn plan(config: &Path, against: Against, modules: &Path) -> Result<ExitCode, Str
             None => (Model::default(), None),
         },
     };
+    let plan = distro_model::plan(&before, &after);
+    if json {
+        let Value::Table(mut fields) = plan.to_value() else {
+            unreachable!("a plan is a table")
+        };
+        fields.insert("model".into(), Value::Str(after.hash()));
+        fields.insert("against".into(), Value::Str(before.hash()));
+        return print_json(&Value::Table(fields));
+    }
     println!("model {}", &after.hash()[..16]);
     if let Some(compared) = compared {
         println!("against {compared} (model {})", &before.hash()[..16]);
     }
-    print!("{}", distro_model::plan(&before, &after));
+    print!("{plan}");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -666,4 +691,17 @@ fn switch(
         Some(model) => generations::apply(root, &config, model, how, yes),
         None => Ok(ExitCode::FAILURE),
     }
+}
+
+/// Prints `value` as JSON, for `--json`.
+fn print_json(value: &Value) -> Result<ExitCode, String> {
+    print!("{}", distro_eval::formats::json(value)?);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Prints data built with serde as JSON, for `--json`.
+fn print_serde(value: &serde_json::Value) -> Result<ExitCode, String> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    println!("{text}");
+    Ok(ExitCode::SUCCESS)
 }

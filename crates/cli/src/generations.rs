@@ -145,6 +145,50 @@ fn full_effect(tier: Tier) -> Option<&'static str> {
     }
 }
 
+/// `status` as data: the running generation, whether a system is being tried, the running and
+/// configured models' hashes, and how many packages aren't locked yet.
+pub fn status_json(model: &Model) -> serde_json::Value {
+    let current = backend::history()
+        .ok()
+        .and_then(|generations| generations.into_iter().find(|g| g.current));
+    let running = backend::current_model_hash();
+    let hash = model.hash();
+    let unlocked = model
+        .all_packages()
+        .filter(|name| !model.locked.contains_key(*name))
+        .count();
+    serde_json::json!({
+        "generation": current.map(|g| g.number),
+        "trying": backend::trying(),
+        "matches": running.as_deref() == Some(hash.as_str()),
+        "running": running,
+        "model": hash,
+        "unlocked": unlocked,
+    })
+}
+
+/// `history` as data: each generation, with a summary of what changed from the one before.
+pub fn history_json() -> Result<serde_json::Value, String> {
+    let mut before: Option<Model> = None;
+    let mut generations = Vec::new();
+    for generation in backend::history()? {
+        let model = generation_model(generation.number).ok();
+        let changes = before
+            .as_ref()
+            .zip(model.as_ref())
+            .map(|(before, after)| distro_model::plan(before, after).summary(usize::MAX));
+        generations.push(serde_json::json!({
+            "number": generation.number,
+            "created": generation.created,
+            "current": generation.current,
+            "model": generation.model_hash,
+            "changes": changes,
+        }));
+        before = model;
+    }
+    Ok(serde_json::Value::Array(generations))
+}
+
 /// Says which generation is running and whether it's the configuration's `model`.
 pub fn status(model: &Model) -> Result<ExitCode, String> {
     let current = backend::history()
@@ -404,6 +448,24 @@ pub fn sources(model: &Model) -> Result<ExitCode, String> {
         .map_or(0, |since| since.as_secs() / 86_400) as i64;
     print!("{}", sources_table(model, today));
     Ok(ExitCode::SUCCESS)
+}
+
+/// `sources` as data: each source by name, with what it follows and where it's pinned.
+pub fn sources_json(model: &Model) -> serde_json::Value {
+    model
+        .sources
+        .iter()
+        .map(|(name, source)| {
+            let entry = serde_json::json!({
+                "url": source.url,
+                "locked": source.is_locked(),
+                "rev": source.rev,
+                "date": source.date,
+            });
+            (name.clone(), entry)
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
 }
 
 /// The table `sources` prints, with ages counted to `today`, in days since 1970.

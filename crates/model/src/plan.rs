@@ -106,6 +106,39 @@ impl Plan {
         }
     }
 
+    /// The plan as data, for `--json`: every change with its section, and the overall tier.
+    pub fn to_value(&self) -> Value {
+        let changes = self
+            .sections()
+            .flat_map(|(section, changes)| changes.iter().map(move |change| (section, change)))
+            .map(|(section, change)| {
+                let kind = match change.kind {
+                    ChangeKind::Added => "added",
+                    ChangeKind::Removed => "removed",
+                    ChangeKind::Changed => "changed",
+                };
+                let mut entry = BTreeMap::from([
+                    ("section".to_owned(), Value::Str(section.to_owned())),
+                    ("kind".to_owned(), Value::Str(kind.to_owned())),
+                    ("name".to_owned(), Value::Str(change.name.clone())),
+                    (
+                        "details".to_owned(),
+                        Value::List(change.details.iter().cloned().map(Value::Str).collect()),
+                    ),
+                ]);
+                if let Some(tier) = change.tier {
+                    entry.insert("tier".to_owned(), Value::Str(tier.to_string()));
+                }
+                Value::Table(entry)
+            })
+            .collect();
+        let mut plan = BTreeMap::from([("changes".to_owned(), Value::List(changes))]);
+        if let Some(tier) = self.tier() {
+            plan.insert("tier".to_owned(), Value::Str(tier.to_string()));
+        }
+        Value::Table(plan)
+    }
+
     fn sections(&self) -> impl Iterator<Item = (&'static str, &[Change])> {
         [
             ("options", self.options.as_slice()),
