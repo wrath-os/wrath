@@ -6,7 +6,7 @@ user = types.record(
     group = option(types.str, default = "users"),
     extra_groups = option(types.set(types.str), default = []),
     home = option(types.path, optional = True),
-    shell = option(types.str, default = "/run/current-system/sw/bin/bash"),
+    shell = option(types.str, optional = True, doc = "The backend's default shell when unset."),
     system = option(types.bool, default = False),
     packages = option(types.set(types.str), default = []),
 )
@@ -26,12 +26,12 @@ def render(ctx):
             "group": u["group"],
             "extra_groups": u["extra_groups"],
             "home": home_of(name, u),
-            "shell": u["shell"],
             "system": u["system"],
             "packages": u["packages"],
         }
-        if "uid" in u:
-            record["uid"] = u["uid"]
+        for key in ["uid", "shell"]:
+            if key in u:
+                record[key] = u[key]
         users[name] = record
     ctx.base("users", users)
 

@@ -213,4 +213,4 @@ WantedBy=multi-user.target
 
 base system (from system): { hostname = "box", timezone = "UTC" }
 
-base users (from users): { john = { description = "John", extra_groups = ["wheel"], group = "users", home = "/home/john", packages = ["helix", "ripgrep"], shell = "/run/current-system/sw/bin/bash", system = false }, syncthing = { description = "Syncthing service", extra_groups = [], group = "syncthing", home = "/var/lib/syncthing", packages = [], shell = "/run/current-system/sw/bin/bash", system = true } }
+base users (from users): { john = { description = "John", extra_groups = ["wheel"], group = "users", home = "/home/john", packages = ["helix", "ripgrep"], system = false }, syncthing = { description = "Syncthing service", extra_groups = [], group = "syncthing", home = "/var/lib/syncthing", packages = [], system = true } }

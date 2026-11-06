@@ -202,7 +202,6 @@ in
         description
         group
         home
-        shell
         ;
       extraGroups = user.extra_groups;
       packages = map package (user.packages ++ (input.homes.${name}.packages or [ ]));
@@ -211,6 +210,7 @@ in
       createHome = !user.system;
     }
     // lib.optionalAttrs (user ? uid) { inherit (user) uid; }
+    // lib.optionalAttrs (user ? shell) { inherit (user) shell; }
   ) base.users;
   # A system user's group has the user's name unless it says otherwise.
   users.groups = lib.mapAttrs (_: _: { }) (
