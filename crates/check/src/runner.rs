@@ -116,7 +116,7 @@ fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
                     .to_path_buf()
             };
             let command = format!(
-                "distro check {} --image {}",
+                "distro dev test {} --image {}",
                 relative(&scenario.source).display(),
                 image.display()
             );

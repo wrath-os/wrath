@@ -50,7 +50,7 @@ fn plan_shows_the_changed_option_and_what_it_renders() {
 
 #[test]
 fn modules_render_the_same_model_in_any_load_order() {
-    let output = stdout(&distro(&["check", "--determinism", "modules"]));
+    let output = stdout(&distro(&["dev", "test", "--determinism", "modules"]));
 
     assert!(output.contains("PASS  s4"), "{output}");
     assert!(!output.contains("FAIL"), "{output}");
@@ -103,7 +103,7 @@ fn errors_go_to_stderr_with_a_failing_exit() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("fixtures/configs/missing/system.toml` does not exist"),
+        stderr.contains("fixtures/configs/missing: no such configuration directory"),
         "{stderr}"
     );
 }
@@ -124,13 +124,13 @@ fn a_bad_config_whose_error_changed_fails_until_blessed() {
     std::fs::write(case.join("expected-error.txt"), "an older message\n").unwrap();
     let dir = dir.path().to_str().unwrap();
 
-    let failed = distro(&["check", dir]);
+    let failed = distro(&["dev", "test", dir]);
     let stdout = String::from_utf8(failed.stdout).unwrap();
     assert!(!failed.status.success());
     assert!(stdout.contains("FAIL  typo: the error differs"), "{stdout}");
 
-    assert!(distro(&["check", dir, "--bless"]).status.success());
-    let passed = distro(&["check", dir]);
+    assert!(distro(&["dev", "test", dir, "--bless"]).status.success());
+    let passed = distro(&["dev", "test", dir]);
     assert!(passed.status.success());
     let expected = std::fs::read_to_string(case.join("expected-error.txt")).unwrap();
     assert!(
@@ -142,6 +142,7 @@ fn a_bad_config_whose_error_changed_fails_until_blessed() {
 #[test]
 fn bench_measures_plan_time() {
     let output = stdout(&distro(&[
+        "dev",
         "bench",
         "--synthetic",
         "4",
@@ -275,6 +276,32 @@ fn a_model_file_of_another_format_is_an_error() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("the model is in format version 1"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn check_evaluates_the_configuration_and_says_which_it_is() {
+    let output = distro(&["check", "-C", "fixtures/configs/basic"]);
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "config fixtures/configs/basic\n");
+    let stdout = stdout(&output);
+    assert!(stdout.starts_with("no errors: "), "{stdout}");
+
+    let broken = distro(&["check", "-C", "fixtures/bad-configs/wrong-type"]);
+    assert!(!broken.status.success());
+}
+
+#[test]
+fn run_refuses_sources_the_configuration_doesnt_have_before_building() {
+    let output = distro(&["run", "-C", "fixtures/configs/basic", "stabel#jq"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("there's no source `stabel`; the configuration has nixpkgs"),
         "{stderr}"
     );
 }

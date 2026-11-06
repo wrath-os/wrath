@@ -34,7 +34,7 @@ impl From<BuildTarget> for Target {
 
 /// Builds `target` from `model` with the factory under `root` and returns its store path. The
 /// backend's warnings go to stderr.
-pub fn build(root: &Path, model: &Model, target: BuildTarget) -> Result<PathBuf, String> {
+pub fn build(root: &Path, model: &Model, target: impl Into<Target>) -> Result<PathBuf, String> {
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
     let built = backend::build(model, &root.join("factory/nix"), target.into(), work.path())?;
     for warning in &built.warnings {
@@ -81,6 +81,40 @@ fn full_effect(tier: Tier) -> Option<&'static str> {
             Some("some changes take full effect after a soft reboot: `systemctl soft-reboot`")
         }
         Tier::Reboot => Some("some changes take effect after a reboot"),
+    }
+}
+
+/// Says which generation is running and whether it's the configuration's `model`.
+pub fn status(model: &Model) -> Result<ExitCode, String> {
+    let current = backend::history()
+        .ok()
+        .and_then(|generations| generations.into_iter().find(|g| g.current));
+    if let Some(generation) = &current {
+        println!(
+            "running generation {}, from {}",
+            generation.number, generation.created
+        );
+    }
+    println!(
+        "{}",
+        matching(backend::current_model_hash().as_deref(), model)
+    );
+    let unlocked = model
+        .all_packages()
+        .filter(|name| !model.locked.contains_key(*name))
+        .count();
+    if unlocked > 0 {
+        println!("{unlocked} packages aren't locked yet; `distro apply` locks them first");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Whether the running system, whose model hash is `running`, is `model`.
+fn matching(running: Option<&str>, model: &Model) -> &'static str {
+    match running {
+        Some(hash) if hash == model.hash() => "it matches the configuration",
+        Some(_) => "the configuration differs from it; `distro plan` shows how",
+        None => "distro didn't build it; `distro plan` shows the whole configuration as new",
     }
 }
 
@@ -188,6 +222,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn status_says_whether_the_running_system_is_the_configuration() {
+        let model = Model::default();
+        assert_eq!(
+            matching(Some(&model.hash()), &model),
+            "it matches the configuration"
+        );
+        assert!(matching(Some("0123"), &model).contains("differs"));
+        assert!(matching(None, &model).contains("didn't build it"));
+    }
     #[test]
     fn update_unpins_the_sources_it_names_or_all_of_them() {
         let pinned = |url: &str| Source {

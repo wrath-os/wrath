@@ -84,9 +84,13 @@ fn ok(output: &Output) -> String {
     String::from_utf8(output.stdout.clone()).unwrap()
 }
 
+/// What a failed command printed after the line naming its configuration.
 fn err(output: &Output) -> String {
     assert!(!output.status.success());
-    String::from_utf8(output.stderr.clone()).unwrap()
+    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+    let (context, rest) = stderr.split_once('\n').unwrap();
+    assert!(context.starts_with("config "), "{stderr}");
+    rest.to_owned()
 }
 
 #[test]

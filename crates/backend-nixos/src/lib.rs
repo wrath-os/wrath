@@ -39,6 +39,9 @@ pub enum Target {
     /// A VM that boots the test system from the host's store, as a directory containing
     /// `kernel`, `initrd` and `kernel-params`.
     TestVm,
+    /// The model's packages in one environment, for running them without installing them: their
+    /// programs under `bin`, and `share/distro/packages.json` with their versions and sources.
+    Environment,
 }
 
 impl Target {
@@ -49,6 +52,7 @@ impl Target {
             Self::TestImage => "testImage",
             Self::TestVmSystem => "testVmToplevel",
             Self::TestVm => "testVm",
+            Self::Environment => "environment",
         }
     }
 }
@@ -233,15 +237,37 @@ fn run(command: &mut Command) -> Result<(String, String), String> {
     if output.status.success() {
         return Ok((String::from_utf8_lossy(&output.stdout).into_owned(), stderr));
     }
+    if let Some(message) = factory_message(&stderr) {
+        return Err(message);
+    }
     let lines: Vec<&str> = stderr.lines().collect();
     let tail = lines[lines.len().saturating_sub(10)..].join("\n");
     Err(format!("{program} failed ({}):\n{tail}", output.status))
+}
+
+/// A message the factory meant for the user, thrown as `distro: ...`, in what Nix printed.
+fn factory_message(stderr: &str) -> Option<String> {
+    const MARK: &str = "distro: ";
+    let line = stderr.lines().rev().find(|line| line.contains(MARK))?;
+    let message = &line[line.find(MARK)? + MARK.len()..];
+    Some(message.trim_end_matches('\'').to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn messages_the_factory_throws_are_shown_as_they_are() {
+        let stderr = "error:\n       … while evaluating\n\n       error: distro: there's no package `jqq` in nixpkgs\n";
+        assert_eq!(
+            factory_message(stderr).as_deref(),
+            Some("there's no package `jqq` in nixpkgs")
+        );
+        let aborted = "error: evaluation aborted with the following error message: 'distro: x'";
+        assert_eq!(factory_message(aborted).as_deref(), Some("x"));
+        assert_eq!(factory_message("error: attribute 'x' missing"), None);
+    }
     #[test]
     fn warnings_are_picked_from_what_nix_prints() {
         let stderr = [

@@ -136,8 +136,9 @@ mod tests {
             logs: Some(PathBuf::from("target/distro-check/runs/m1-vm-boots")),
             reproduction: Some(Reproduction {
                 image: PathBuf::from("/nix/store/abc-fixture"),
-                command: "distro check acceptance/m1/vm-boots.toml --image /nix/store/abc-fixture"
-                    .into(),
+                command:
+                    "distro dev test acceptance/m1/vm-boots.toml --image /nix/store/abc-fixture"
+                        .into(),
             }),
         };
 

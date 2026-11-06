@@ -679,7 +679,7 @@ impl VmRun<'_> {
             .distro(&["build", "--config", config, "--target", target])?;
         let system = system.trim();
         self.copy_in(agent, system, deadline)?;
-        let (code, _, stderr) = run_shell(agent, argv(&["distro", "activate", system]), deadline)?;
+        let (code, _, stderr) = run_shell(agent, argv(&["distro", "apply", system]), deadline)?;
         if code != Some(0) {
             return Err(format!("switching to `{config}` failed: {}", stderr.trim()));
         }

@@ -180,7 +180,7 @@
         in
         if locked ? hash && locked.hash != current.hash then
           throw (
-            "${current.url} changed since distro.lock was written; "
+            "distro: ${current.url} changed since distro.lock was written; "
             + "run `distro lock` to use it as it is now"
           )
         else
@@ -211,6 +211,38 @@
           inherit (evaluated) sources;
           packages = lib.genAttrs names locked;
         };
+
+      # The packages the input names, in one environment for `distro run` and `distro shell`:
+      # their programs under `bin`, and `share/distro/packages.json` with each package's version
+      # and the program `run` starts.
+      environment =
+        input:
+        let
+          evaluated = evalInput input [ ];
+          json = lib.importJSON input;
+          inherit (evaluated.system) pkgs;
+          package = import ./package.nix lib pkgs evaluated.named;
+          describe =
+            name:
+            let
+              found = package name;
+              parsed = builtins.parseDrvName found.name;
+            in
+            {
+              version = found.version or parsed.version;
+              program = found.meta.mainProgram or found.pname or parsed.name;
+            };
+          described = pkgs.writeTextDir "share/distro/packages.json" (
+            builtins.toJSON {
+              packages = lib.genAttrs json.packages describe;
+              inherit (evaluated) sources;
+            }
+          );
+        in
+        pkgs.buildEnv {
+          name = "distro-environment";
+          paths = map package json.packages ++ [ described ];
+        };
     in
     {
       packages.${system} = {
@@ -220,7 +252,7 @@
 
       # Entry points for `distro`, which passes the path of the shim's input.
       lib.${system} = {
-        inherit resolve;
+        inherit environment resolve;
         toplevel = input: (fromInput input [ ]).config.system.build.toplevel;
         testToplevel = input: (fromInput input diskHarness).config.system.build.toplevel;
         testImage = input: image "distro-test" (fromInput input diskHarness);

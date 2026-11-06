@@ -29,28 +29,19 @@ pub enum SecretCommand {
 
 #[derive(Debug, clap::Args)]
 pub struct Options {
-    /// The configuration that declares the secrets
-    #[arg(long)]
-    config: PathBuf,
-    /// Directory of modules [default: modules under the root]
-    #[arg(long)]
-    modules: Option<PathBuf>,
     /// A private key that decrypts the secrets [default: ~/.ssh/id_ed25519]
     #[arg(long)]
     identity: Vec<PathBuf>,
 }
 
-pub fn run(
-    command: SecretCommand,
-    modules: impl Fn(Option<PathBuf>) -> PathBuf,
-) -> Result<ExitCode, String> {
+pub fn run(command: SecretCommand, config: &Path, modules: &Path) -> Result<ExitCode, String> {
     match command {
         SecretCommand::Edit { name, options } => {
-            let secrets = Secrets::load(&options, &modules(options.modules.clone()))?;
+            let secrets = Secrets::load(config, modules)?;
             secrets.edit(&name, &identities(options.identity)?)
         }
         SecretCommand::Rekey { options } => {
-            let secrets = Secrets::load(&options, &modules(options.modules.clone()))?;
+            let secrets = Secrets::load(config, modules)?;
             secrets.rekey(&identities(options.identity)?)
         }
     }
@@ -73,8 +64,8 @@ struct Secrets {
 }
 
 impl Secrets {
-    fn load(options: &Options, modules: &Path) -> Result<Self, String> {
-        let config = Editing(DirFs::new(&options.config));
+    fn load(dir: &Path, modules: &Path) -> Result<Self, String> {
+        let config = Editing(DirFs::new(dir));
         let evaluation = system::evaluate(&config, modules)?;
         let recipients = match evaluation.get("system.secret_recipients") {
             Some(Value::List(items)) => items
@@ -90,7 +81,7 @@ impl Secrets {
             .modules()
             .iter()
             .flat_map(|rendered| &rendered.output.secrets)
-            .map(|(name, secret)| (name.clone(), options.config.join(&secret.file)))
+            .map(|(name, secret)| (name.clone(), dir.join(&secret.file)))
             .collect();
         Ok(Self { recipients, files })
     }

@@ -11,18 +11,28 @@ use distro_model::{LOCK_FILE, Lock, Model};
 mod bench;
 mod checks;
 mod generations;
+mod run;
 mod secret;
 mod system;
 mod templates;
 
-/// How many times `check --determinism` evaluates each configuration.
+/// How many times `dev test --determinism` evaluates each configuration.
 const DETERMINISM_RUNS: u64 = 5;
+
+/// The system's configuration, which commands act on unless told otherwise.
+const SYSTEM_CONFIG: &str = "/etc/distro";
 
 #[derive(Parser)]
 #[command(name = "distro", version, about = "Declarative system configuration")]
 struct Cli {
+    /// The configuration to act on [default: the system's, in /etc/distro]
+    #[arg(short = 'C', long = "config", global = true, value_name = "DIR")]
+    config: Option<PathBuf>,
+    /// Directory of modules [default: modules under the root]
+    #[arg(long, global = true, hide = true)]
+    modules: Option<PathBuf>,
     /// Repository root containing `acceptance/` and `factory/`
-    #[arg(long, global = true, default_value = ".")]
+    #[arg(long, global = true, default_value = ".", hide = true)]
     root: PathBuf,
     #[command(subcommand)]
     command: Command,
@@ -30,107 +40,77 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the acceptance scenarios and show which pass
-    Status {
-        /// Only run the scenarios of this milestone, for example `m2`
-        #[arg(long)]
-        milestone: Option<String>,
-    },
-    /// Run scenario files and report each result
-    Check {
-        /// Scenario files to run, or directories of bad configs to compare with their golden errors
-        #[arg(required_unless_present = "determinism")]
-        files: Vec<PathBuf>,
-        /// Check that the modules in this directory render the fixture configs byte for byte the
-        /// same across fresh interpreters and module orders
-        #[arg(long, conflicts_with = "files")]
-        determinism: Option<PathBuf>,
-        /// Configurations for --determinism
-        #[arg(long, default_value = "fixtures/configs")]
-        configs: PathBuf,
-        /// Directory of modules for bad configs [default: modules under the root]
-        #[arg(long)]
-        modules: Option<PathBuf>,
-        /// Write the actual errors of bad configs as their expected errors
-        #[arg(long)]
-        bless: bool,
-        /// Run VM scenarios against this built image instead of building one
-        #[arg(long)]
-        image: Option<PathBuf>,
-        /// After a failure, run the printed reproduction and report whether it fails the same way
-        #[arg(long)]
-        run_reproduction: bool,
-    },
-    /// Show what would change going to a configuration from the running system or another one
+    /// Show what's running and whether it matches the configuration
+    Status,
+    /// Show what would change going to the configuration from the running system
     Plan {
-        /// The configuration to plan
-        #[arg(long)]
-        config: PathBuf,
-        /// The configuration, or a `model.json`, to compare against [default: the running
-        /// system's model, or nothing on a system distro didn't build]
+        /// A configuration, or a `model.json`, to compare against instead of the running system
         #[arg(long, conflicts_with = "fresh")]
         against: Option<PathBuf>,
         /// Compare against nothing, so everything is new
         #[arg(long)]
         fresh: bool,
-        /// Directory of modules [default: modules under the root]
-        #[arg(long)]
-        modules: Option<PathBuf>,
     },
-    /// Measure how long `plan` takes with many synthetic modules
-    Bench {
-        /// Directory of real modules to add the synthetic ones to
-        #[arg(long, default_value = "modules")]
-        modules: PathBuf,
-        /// How many synthetic service modules to add
-        #[arg(long, default_value_t = 150)]
-        synthetic: usize,
-        /// How many times to measure
-        #[arg(long, default_value_t = 5)]
-        runs: usize,
-        /// The most the median plan may take, in milliseconds
-        #[arg(long, default_value_t = 500)]
-        budget_ms: u64,
+    /// Switch to the configuration, locking its packages first, and say when it takes effect
+    Apply {
+        /// A system that is already built, such as one `build` made for this machine elsewhere
+        system: Option<PathBuf>,
     },
-    /// Build the system for a configuration and print its store path, without switching to it
+    /// Build the system without switching to it, and print where it is
     Build {
-        /// The configuration to build
-        #[arg(long)]
-        config: PathBuf,
-        /// Directory of modules [default: modules under the root]
-        #[arg(long)]
-        modules: Option<PathBuf>,
         #[arg(long, value_enum, default_value = "system")]
         target: generations::BuildTarget,
     },
-    /// Build the system for a configuration and switch to it, locking its packages first
-    Apply {
-        /// The configuration to apply
-        #[arg(long)]
-        config: PathBuf,
-        /// Directory of modules [default: modules under the root]
-        #[arg(long)]
-        modules: Option<PathBuf>,
+    /// Show the system's generations
+    History,
+    /// Switch back to the previous generation
+    Rollback,
+    /// Run a package's program without installing it
+    Run {
+        /// The package, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+        package: String,
+        /// Arguments for the program, after `--`
+        #[arg(last = true)]
+        args: Vec<String>,
     },
-    /// Write the configuration's lock: resolve the packages it uses from the lock's package set
-    Lock {
-        /// The configuration to lock
-        #[arg(long)]
-        config: PathBuf,
-        /// Directory of modules [default: modules under the root]
-        #[arg(long)]
-        modules: Option<PathBuf>,
+    /// Start a shell with packages, without installing them
+    Shell {
+        /// The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+        #[arg(required = true)]
+        packages: Vec<String>,
     },
-    /// Move the configuration's lock to the newest version of its sources
+    /// Lock what isn't locked yet, moving nothing that is
+    Lock,
+    /// Move sources to their newest versions and lock them
     Update {
-        /// The configuration to update
-        #[arg(long)]
-        config: PathBuf,
-        /// Directory of modules [default: modules under the root]
-        #[arg(long)]
-        modules: Option<PathBuf>,
         /// Sources to update, such as `nixpkgs` [default: all of them]
         sources: Vec<String>,
+    },
+    /// Check the configuration for errors, without building it
+    Check {
+        /// Scenario files or bad-config directories; these belong to `dev test` now
+        #[arg(hide = true)]
+        files: Vec<PathBuf>,
+        #[command(flatten)]
+        test: TestOptions,
+    },
+    /// Show where option values come from
+    Why {
+        /// Explain every option
+        #[arg(long, conflicts_with = "option", required_unless_present = "option")]
+        all: bool,
+        /// The option, or table of options, to explain
+        option: Option<String>,
+    },
+    /// Edit secrets and encrypt them to the machine and the people who manage it
+    Secret {
+        #[command(subcommand)]
+        command: secret::SecretCommand,
+    },
+    /// Commands for working on distro itself
+    Dev {
+        #[command(subcommand)]
+        command: DevCommand,
     },
     /// Fill in files with secrets during activation
     #[command(hide = true)]
@@ -142,125 +122,128 @@ enum Command {
         /// The directory to write the files to
         out: PathBuf,
     },
-    /// Switch to a system that is already built, such as one `build` made on another machine
-    Activate {
-        /// The system's store path
-        system: PathBuf,
+}
+
+#[derive(Subcommand)]
+enum DevCommand {
+    /// Run scenario files, or compare bad configs with their golden errors
+    Test {
+        /// Scenario files to run, or directories of bad configs to compare with their golden errors
+        #[arg(required_unless_present = "determinism")]
+        files: Vec<PathBuf>,
+        #[command(flatten)]
+        test: TestOptions,
     },
-    /// Show the system's generations
-    History,
-    /// Switch back to the previous generation
-    Rollback,
-    /// Edit secrets and encrypt them to the machine and the people who manage it
-    Secret {
-        #[command(subcommand)]
-        command: secret::SecretCommand,
-    },
-    /// Show where option values come from
-    Why {
-        /// The configuration to explain
+    /// Run the acceptance scenarios and show which pass
+    Status {
+        /// Only run the scenarios of this milestone, for example `m2`
         #[arg(long)]
-        config: PathBuf,
-        /// Directory of modules [default: modules under the root]
-        #[arg(long)]
-        modules: Option<PathBuf>,
-        /// Explain every option
-        #[arg(long, conflicts_with = "option", required_unless_present = "option")]
-        all: bool,
-        /// The option, or table of options, to explain
-        option: Option<String>,
+        milestone: Option<String>,
     },
+    /// Measure how long `plan` takes with many synthetic modules
+    Bench {
+        /// How many synthetic service modules to add
+        #[arg(long, default_value_t = 150)]
+        synthetic: usize,
+        /// How many times to measure
+        #[arg(long, default_value_t = 5)]
+        runs: usize,
+        /// The most the median plan may take, in milliseconds
+        #[arg(long, default_value_t = 500)]
+        budget_ms: u64,
+    },
+}
+
+#[derive(clap::Args)]
+struct TestOptions {
+    /// Check that the modules in this directory render the fixture configs byte for byte the
+    /// same across fresh interpreters and module orders
+    #[arg(long, conflicts_with = "files")]
+    determinism: Option<PathBuf>,
+    /// Configurations for --determinism
+    #[arg(long, default_value = "fixtures/configs")]
+    configs: PathBuf,
+    /// Write the actual errors of bad configs as their expected errors
+    #[arg(long)]
+    bless: bool,
+    /// Run VM scenarios against this built image instead of building one
+    #[arg(long)]
+    image: Option<PathBuf>,
+    /// After a failure, run the printed reproduction and report whether it fails the same way
+    #[arg(long)]
+    run_reproduction: bool,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let modules = modules_dir(&cli.root, cli.modules);
+    let root = cli.root.as_path();
+    let config = || config_dir(cli.config.as_deref());
     let result = match cli.command {
-        Command::Status { milestone } => status(&cli.root, milestone.as_deref()),
-        Command::Check {
-            files,
-            determinism,
-            configs,
-            modules,
-            bless,
-            image,
-            run_reproduction,
-        } => match determinism {
-            Some(modules) => checks::determinism(
-                &under_root(&cli.root, &modules),
-                &under_root(&cli.root, &configs),
-                DETERMINISM_RUNS,
-            )
-            .map(exit_code),
-            None => check(
-                &cli.root,
-                &files,
-                &modules_dir(&cli.root, modules),
-                bless,
-                image,
-                run_reproduction,
-            ),
-        },
-        Command::Plan {
-            config,
-            against,
-            fresh,
-            modules,
-        } => {
+        Command::Status => config().and_then(|config| match model(&config, &modules) {
+            Some(model) => generations::status(&model),
+            None => Ok(ExitCode::FAILURE),
+        }),
+        Command::Plan { against, fresh } => {
             let against = match (against, fresh) {
                 (_, true) => Against::Nothing,
                 (Some(path), false) => Against::Path(path),
                 (None, false) => Against::Running,
             };
-            plan(&config, against, &modules_dir(&cli.root, modules))
+            config().and_then(|config| plan(&config, against, &modules))
         }
-        Command::Bench {
-            modules,
-            synthetic,
-            runs,
-            budget_ms,
-        } => bench::plan_time(&bench::Options {
-            modules: &under_root(&cli.root, &modules),
-            synthetic,
-            runs: runs.max(1),
-            budget: std::time::Duration::from_millis(budget_ms),
-        })
-        .map(exit_code),
-        Command::Secret { command } => {
-            secret::run(command, |modules| modules_dir(&cli.root, modules))
+        Command::Apply {
+            system: Some(system),
+        } => generations::activate(&system),
+        Command::Apply { system: None } => {
+            config().and_then(|config| match model(&config, &modules) {
+                Some(model) => generations::apply(root, &config, model),
+                None => Ok(ExitCode::FAILURE),
+            })
         }
-        Command::Why {
-            config,
-            modules,
-            all: _,
-            option,
-        } => why(&config, &modules_dir(&cli.root, modules), option.as_deref()),
-        Command::Build {
-            config,
-            modules,
-            target,
-        } => match model(&config, &modules_dir(&cli.root, modules)) {
-            Some(model) => generations::build(&cli.root, &model, target).map(|path| {
+        Command::Build { target } => config().and_then(|config| match model(&config, &modules) {
+            Some(model) => generations::build(root, &model, target).map(|path| {
                 println!("{}", path.display());
                 ExitCode::SUCCESS
             }),
             None => Ok(ExitCode::FAILURE),
-        },
-        Command::Apply { config, modules } => {
-            match model(&config, &modules_dir(&cli.root, modules)) {
-                Some(model) => generations::apply(&cli.root, &config, model),
-                None => Ok(ExitCode::FAILURE),
-            }
-        }
-        Command::Lock { config, modules } => lock(&cli.root, &config, modules, None),
-        Command::Update {
-            config,
-            modules,
-            sources,
-        } => lock(&cli.root, &config, modules, Some(&sources)),
-        Command::Activate { system } => generations::activate(&system),
-        Command::FillTemplates { spec, secrets, out } => templates::fill(&spec, &secrets, &out),
+        }),
         Command::History => generations::history(),
         Command::Rollback => generations::rollback(),
+        Command::Run { package, args } => package_model(cli.config.as_deref(), &modules)
+            .and_then(|model| run::run(root, model, &package, &args)),
+        Command::Shell { packages } => package_model(cli.config.as_deref(), &modules)
+            .and_then(|model| run::shell(root, model, &packages)),
+        Command::Lock => config().and_then(|config| lock(root, &config, &modules, None)),
+        Command::Update { sources } => {
+            config().and_then(|config| lock(root, &config, &modules, Some(&sources)))
+        }
+        Command::Check { files, test } if !files.is_empty() || test.determinism.is_some() => {
+            dev_test(root, &files, test, &modules)
+        }
+        Command::Check { .. } => config().and_then(|config| check_config(&config, &modules)),
+        Command::Why { all: _, option } => {
+            config().and_then(|config| why(&config, &modules, option.as_deref()))
+        }
+        Command::Secret { command } => {
+            config().and_then(|config| secret::run(command, &config, &modules))
+        }
+        Command::Dev { command } => match command {
+            DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
+            DevCommand::Status { milestone } => status(root, milestone.as_deref()),
+            DevCommand::Bench {
+                synthetic,
+                runs,
+                budget_ms,
+            } => bench::plan_time(&bench::Options {
+                modules: &modules,
+                synthetic,
+                runs: runs.max(1),
+                budget: std::time::Duration::from_millis(budget_ms),
+            })
+            .map(exit_code),
+        },
+        Command::FillTemplates { spec, secrets, out } => templates::fill(&spec, &secrets, &out),
     };
     match result {
         Ok(code) => code,
@@ -268,6 +251,76 @@ fn main() -> ExitCode {
             eprintln!("error: {message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// The configuration a command acts on: the one given, or the system's. The context goes to
+/// stderr first, so output always says which configuration it's about.
+fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
+    let config = given.unwrap_or(Path::new(SYSTEM_CONFIG));
+    if !config.is_dir() {
+        return Err(match given {
+            Some(_) => format!("{}: no such configuration directory", config.display()),
+            None => {
+                format!("there's no system configuration in {SYSTEM_CONFIG}; give one with -C DIR")
+            }
+        });
+    }
+    let kind = if given.is_some() { "config" } else { "system" };
+    eprintln!("{kind} {}", config.display());
+    Ok(config.to_path_buf())
+}
+
+/// The model packages come from for `run` and `shell`: the configuration's, or with none, an
+/// empty one, whose packages come from the factory's nixpkgs.
+fn package_model(given: Option<&Path>, modules: &Path) -> Result<Model, String> {
+    if given.is_none() && !Path::new(SYSTEM_CONFIG).is_dir() {
+        return Ok(Model::default());
+    }
+    let config = config_dir(given)?;
+    model(&config, modules).ok_or_else(|| "the configuration has errors".to_owned())
+}
+
+/// Evaluates the configuration and says whether it has errors, without building anything.
+fn check_config(config: &Path, modules: &Path) -> Result<ExitCode, String> {
+    let Some(model) = model(config, modules) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    let packages = model.all_packages().count();
+    let locked = if model.is_locked() {
+        "locked"
+    } else {
+        "not fully locked"
+    };
+    println!(
+        "no errors: {} options, {packages} packages ({locked}), model {}",
+        model.options.len(),
+        &model.hash()[..16]
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn dev_test(
+    root: &Path,
+    files: &[PathBuf],
+    test: TestOptions,
+    modules: &Path,
+) -> Result<ExitCode, String> {
+    match test.determinism {
+        Some(dir) => checks::determinism(
+            &under_root(root, &dir),
+            &under_root(root, &test.configs),
+            DETERMINISM_RUNS,
+        )
+        .map(exit_code),
+        None => check(
+            root,
+            files,
+            modules,
+            test.bless,
+            test.image,
+            test.run_reproduction,
+        ),
     }
 }
 
@@ -428,10 +481,10 @@ fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
 fn lock(
     root: &Path,
     config: &Path,
-    modules: Option<PathBuf>,
+    modules: &Path,
     update: Option<&[String]>,
 ) -> Result<ExitCode, String> {
-    match model(config, &modules_dir(root, modules)) {
+    match model(config, modules) {
         Some(model) => generations::lock(root, config, &model, update),
         None => Ok(ExitCode::FAILURE),
     }

@@ -1,7 +1,7 @@
 //! Acceptance scenarios and the progress scoreboard.
 //!
-//! Milestones are defined by executable scenarios that start out failing. `distro status` loads
-//! them, runs what can be run and prints how many pass. `distro check` runs individual scenario
+//! Milestones are defined by executable scenarios that start out failing. `distro dev status` loads
+//! them, runs what can be run and prints how many pass. `distro dev test` runs individual scenario
 //! files.
 
 mod runner;
