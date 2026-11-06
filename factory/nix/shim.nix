@@ -167,17 +167,27 @@ in
           name: user:
           let
             files = input.homes.${name}.files or { };
+            # A file of the same name in the store, which systemd wants of a link to a unit.
             target =
-              file:
-              pkgs.writeTextFile {
-                name = "home-file";
-                inherit (file) text executable;
-              };
+              path: file:
+              let
+                base = baseNameOf path;
+              in
+              "${
+                pkgs.writeTextFile {
+                  name = lib.strings.sanitizeDerivationName base;
+                  destination = "/${base}";
+                  inherit (file) text executable;
+                }
+              }/${base}";
             links = pkgs.writeText "distro-home-${name}" (
-              lib.concatStrings (lib.mapAttrsToList (path: file: "${path}\t${target file}\n") files)
+              lib.concatStrings (
+                lib.mapAttrsToList (path: file: "${path}\t${target path file}\n") files
+              )
             );
           in
-          lib.escapeShellArgs [
+          "PATH=${config.systemd.package}/bin:$PATH "
+          + lib.escapeShellArgs [
             "${pkgs.bash}/bin/bash"
             "${./link-home.sh}"
             name
@@ -212,6 +222,7 @@ in
         ;
       extraGroups = user.extra_groups;
       packages = map package (user.packages ++ (input.homes.${name}.packages or [ ]));
+      inherit (user) linger;
       isSystemUser = user.system;
       isNormalUser = !user.system;
       createHome = !user.system;

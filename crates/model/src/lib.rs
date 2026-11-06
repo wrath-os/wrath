@@ -15,7 +15,7 @@ use distro_eval::{
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 4;
+pub const VERSION: i64 = 5;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -38,11 +38,12 @@ pub struct Model {
     pub homes: BTreeMap<String, Home>,
 }
 
-/// A user's files, by path as `~/.config/git/config`, and packages.
+/// A user's files, by path as `~/.config/git/config`, packages and user units.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Home {
     pub files: BTreeMap<String, File>,
     pub packages: BTreeSet<String>,
+    pub units: BTreeMap<String, Unit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +107,7 @@ impl Model {
                 let ours = model.homes.entry(user.clone()).or_default();
                 ours.files.extend(files_of(&home.files));
                 ours.packages.extend(home.packages.iter().cloned());
+                ours.units.extend(home.units.clone());
             }
             model.base.extend(output.base.clone());
             model.backends.extend(output.backends.clone());
@@ -150,21 +152,9 @@ impl Model {
                 let home = table([
                     ("files", files_value(&home.files)),
                     ("packages", Value::List(packages)),
+                    ("units", units_value(&home.units)),
                 ]);
                 (user.clone(), home)
-            })
-            .collect();
-        let units = self
-            .units
-            .iter()
-            .map(|(name, unit)| {
-                let sections = unit.sections.iter().map(section_value).collect();
-                let restart_on = unit.restart_on.iter().cloned().map(Value::Str).collect();
-                let unit = table([
-                    ("sections", Value::List(sections)),
-                    ("restart_on", Value::List(restart_on)),
-                ]);
-                (name.clone(), unit)
             })
             .collect();
         let mut triggers: BTreeMap<String, Value> = BTreeMap::new();
@@ -204,7 +194,7 @@ impl Model {
             ("packages", Value::List(packages)),
             ("files", files_value(&self.files)),
             ("homes", Value::Table(homes)),
-            ("units", Value::Table(units)),
+            ("units", units_value(&self.units)),
             ("base", spell_out_entries(&self.base)),
             ("backends", spell_out_entries(&self.backends)),
             ("facts", spell_out_entries(&self.facts)),
@@ -262,6 +252,23 @@ fn files_value(files: &BTreeMap<String, File>) -> Value {
                     ("text", Value::Str(file.text.clone())),
                 ]);
                 (path.clone(), file)
+            })
+            .collect(),
+    )
+}
+
+fn units_value(units: &BTreeMap<String, Unit>) -> Value {
+    Value::Table(
+        units
+            .iter()
+            .map(|(name, unit)| {
+                let sections = unit.sections.iter().map(section_value).collect();
+                let restart_on = unit.restart_on.iter().cloned().map(Value::Str).collect();
+                let unit = table([
+                    ("sections", Value::List(sections)),
+                    ("restart_on", Value::List(restart_on)),
+                ]);
+                (name.clone(), unit)
             })
             .collect(),
     )

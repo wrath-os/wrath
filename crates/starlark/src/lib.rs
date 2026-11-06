@@ -544,12 +544,14 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Renders a systemd unit from a dictionary of sections. `restart_on` lists files the unit
-    /// reads, so it restarts when one of them changes.
+    /// reads, so it restarts when one of them changes. With `user`, the unit runs in that
+    /// user's systemd user manager.
     fn unit<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] name: &str,
         #[starlark(require = pos)] sections: StarValue<'v>,
         #[starlark(require = named)] restart_on: Option<StarValue<'v>>,
+        #[starlark(require = named)] user: Option<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let (rendering, at) = rendering(eval)?;
@@ -557,18 +559,27 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
             .and_then(|sections| Unit::from_value(&sections))
             .map_err(|e| rendering.invalid(at, format!("unit `{name}`: {e}")))?;
         if let Some(paths) = restart_on {
+            if user.is_some() {
+                return Err(rendering.invalid(
+                    at,
+                    format!("unit `{name}`: user units can't restart_on files yet"),
+                ));
+            }
             unit.restart_on = strings(paths)
                 .map_err(|e| rendering.invalid(at, format!("unit `{name}`: restart_on: {e}")))?
                 .into_iter()
                 .collect();
         }
-        let replaced = rendering
-            .output
-            .borrow_mut()
-            .units
-            .insert(name.to_owned(), unit);
-        if replaced.is_some() {
-            return Err(rendering.invalid(at, format!("unit `{name}` is rendered twice")));
+        let mut output = rendering.output.borrow_mut();
+        let (units, shown) = match user {
+            Some(user) => (
+                &mut output.homes.entry(user.to_owned()).or_default().units,
+                format!("{name} (for {user})"),
+            ),
+            None => (&mut output.units, name.to_owned()),
+        };
+        if units.insert(name.to_owned(), unit).is_some() {
+            return Err(rendering.invalid(at, format!("unit `{shown}` is rendered twice")));
         }
         Ok(NoneType)
     }

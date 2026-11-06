@@ -47,7 +47,7 @@ pub fn lower(model: &Model) -> String {
         .iter()
         .map(|(name, unit)| {
             let lowered = table([
-                ("text", Value::Str(unit_text(unit, model))),
+                ("text", Value::Str(unit_text(unit, model, PROGRAMS))),
                 ("wanted_by", strings(install(&unit.sections, "WantedBy"))),
                 (
                     "required_by",
@@ -95,13 +95,14 @@ pub fn lower(model: &Model) -> String {
     formats::json(&input).expect("the shim's input has no runtime values")
 }
 
-/// Each user's files, linked from the store, and packages.
+/// Each user's files, linked from the store, and packages. User units are files in
+/// `~/.config/systemd/user`, linked again from each target that wants them.
 fn homes(model: &Model) -> Value {
     let homes = model
         .homes
         .iter()
         .map(|(user, home)| {
-            let files = home
+            let mut files: BTreeMap<String, Value> = home
                 .files
                 .iter()
                 .map(|(path, file)| {
@@ -112,6 +113,18 @@ fn homes(model: &Model) -> Value {
                     (path.clone(), entry)
                 })
                 .collect();
+            let programs = format!("/etc/profiles/per-user/{user}/bin:{PROGRAMS}");
+            for (name, unit) in &home.units {
+                let entry = table([
+                    ("text", Value::Str(unit_text(unit, model, &programs))),
+                    ("executable", Value::Bool(false)),
+                ]);
+                for target in install(&unit.sections, "WantedBy") {
+                    let link = format!("~/.config/systemd/user/{target}.wants/{name}");
+                    files.insert(link, entry.clone());
+                }
+                files.insert(format!("~/.config/systemd/user/{name}"), entry);
+            }
             let home = table([
                 ("files", Value::Table(files)),
                 ("packages", strings(home.packages.iter().cloned())),
@@ -143,10 +156,10 @@ fn secrets(model: &Model) -> Value {
     Value::Table(secrets)
 }
 
-/// The unit file, with a search path and PATH for programs named without a directory. A unit that
-/// restarts on files or mentions secrets gets a hash of them, so NixOS sees the unit change with
-/// them.
-fn unit_text(unit: &Unit, model: &Model) -> String {
+/// The unit file, with `programs` as the search path and PATH for programs named without a
+/// directory. A unit that restarts on files or mentions secrets gets a hash of them, so the unit
+/// changes with them.
+fn unit_text(unit: &Unit, model: &Model, programs: &str) -> String {
     let mut sections = unit.sections.clone();
     let secrets = model.secrets_of(unit);
     if !unit.restart_on.is_empty() || !secrets.is_empty() {
@@ -177,13 +190,13 @@ fn unit_text(unit: &Unit, model: &Model) -> String {
         if !has_search_path {
             section
                 .entries
-                .push(("ExecSearchPath".into(), PROGRAMS.into()));
+                .push(("ExecSearchPath".into(), programs.into()));
         }
         // Scripts a unit runs find programs on PATH, which ExecSearchPath doesn't set.
         if !sets_path {
             section
                 .entries
-                .push(("Environment".into(), format!("PATH={PROGRAMS}")));
+                .push(("Environment".into(), format!("PATH={programs}")));
         }
     }
     Unit {
@@ -367,7 +380,7 @@ mod tests {
             model.units.insert("app.service".into(), unit);
             model
         };
-        let text = |model: &Model| unit_text(&model.units["app.service"], model);
+        let text = |model: &Model| unit_text(&model.units["app.service"], model, PROGRAMS);
 
         insta::assert_snapshot!(formats::json(&secrets(&model("abc"))).unwrap(), @r#"
         {
@@ -412,6 +425,48 @@ mod tests {
             "packages": [
               "git"
             ]
+          }
+        }
+        "#);
+    }
+
+    #[test]
+    fn user_units_are_files_in_the_home_with_links_for_their_targets() {
+        let mut model = Model::default();
+        let unit = Unit::from_value(&Value::Table(BTreeMap::from([
+            (
+                "Service".to_owned(),
+                Value::Table(BTreeMap::from([(
+                    "ExecStart".to_owned(),
+                    Value::Str("sleep infinity".into()),
+                )])),
+            ),
+            (
+                "Install".to_owned(),
+                Value::Table(BTreeMap::from([(
+                    "WantedBy".to_owned(),
+                    Value::Str("default.target".into()),
+                )])),
+            ),
+        ])))
+        .unwrap();
+        let home = model.homes.entry("john".into()).or_default();
+        home.units.insert("nap.service".into(), unit);
+
+        insta::assert_snapshot!(formats::json(&homes(&model)).unwrap(), @r#"
+        {
+          "john": {
+            "files": {
+              "~/.config/systemd/user/default.target.wants/nap.service": {
+                "executable": false,
+                "text": "[Service]\nExecStart=sleep infinity\nExecSearchPath=/etc/profiles/per-user/john/bin:/run/current-system/sw/bin\nEnvironment=PATH=/etc/profiles/per-user/john/bin:/run/current-system/sw/bin\n\n[Install]\nWantedBy=default.target\n"
+              },
+              "~/.config/systemd/user/nap.service": {
+                "executable": false,
+                "text": "[Service]\nExecStart=sleep infinity\nExecSearchPath=/etc/profiles/per-user/john/bin:/run/current-system/sw/bin\nEnvironment=PATH=/etc/profiles/per-user/john/bin:/run/current-system/sw/bin\n\n[Install]\nWantedBy=default.target\n"
+              }
+            },
+            "packages": []
           }
         }
         "#);

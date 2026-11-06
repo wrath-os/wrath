@@ -86,12 +86,14 @@ pub struct Output {
     pub homes: BTreeMap<String, Home>,
 }
 
-/// A user's files and packages.
+/// A user's files, packages and the units their systemd user manager runs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Home {
     /// Files by path relative to the home directory, as `~/.config/git/config`.
     pub files: BTreeMap<String, File>,
     pub packages: BTreeSet<String>,
+    /// User units by name, such as `notes-sync.service`.
+    pub units: BTreeMap<String, Unit>,
 }
 
 /// A home file's path as `~user/.config/git/config`, from `~/.config/git/config`.

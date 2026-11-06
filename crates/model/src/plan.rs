@@ -138,8 +138,11 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     };
     let mut files = diff(&before.files, &after.files, file_details);
     files.extend(diff(&home_files(before), &home_files(after), file_details));
-    let mut units = diff(&before.units, &after.units, |before, after| {
-        (unit_details(before, after), Some(Tier::Live))
+    let mut units = diff(&units(before), &units(after), |before, after| {
+        (
+            unit_details(before.copied(), after.copied()),
+            Some(Tier::Live),
+        )
     });
     let secrets = diff(&before.secrets, &after.secrets, |before, after| {
         (secret_details(before, after), Some(Tier::Live))
@@ -280,6 +283,21 @@ fn packages(model: &Model) -> BTreeMap<String, ()> {
         .cloned()
         .chain(users)
         .map(|name| (name, ()))
+        .collect()
+}
+
+/// The system's units, and each user's as `name (for user)`.
+fn units(model: &Model) -> BTreeMap<String, &Unit> {
+    let users = model.homes.iter().flat_map(|(user, home)| {
+        home.units
+            .iter()
+            .map(move |(name, unit)| (format!("{name} (for {user})"), unit))
+    });
+    model
+        .units
+        .iter()
+        .map(|(name, unit)| (name.clone(), unit))
+        .chain(users)
         .collect()
 }
 

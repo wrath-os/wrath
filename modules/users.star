@@ -9,6 +9,11 @@ user = types.record(
     shell = option(types.str, optional = True, doc = "The backend's default shell when unset."),
     system = option(types.bool, default = False),
     packages = option(types.set(types.str), default = []),
+    linger = option(
+        types.bool,
+        default = False,
+        doc = "Start the user's services at boot instead of at their first login.",
+    ),
 )
 
 def home_of(name, u):
@@ -28,6 +33,7 @@ def render(ctx):
             "home": home_of(name, u),
             "system": u["system"],
             "packages": u["packages"],
+            "linger": u["linger"],
         }
         for key in ["uid", "shell"]:
             if key in u:

@@ -396,6 +396,9 @@ fn homes_of(evaluation: &Evaluation, module: &str) -> String {
         for (path, file) in &home.files {
             out.push_str(&format!("{user} {path}\n{}\n", file.text));
         }
+        for (name, unit) in &home.units {
+            out.push_str(&format!("{user} unit {name}\n{}\n", unit.text()));
+        }
         for package in &home.packages {
             out.push_str(&format!("{user} package {package}\n"));
         }
@@ -403,9 +406,47 @@ fn homes_of(evaluation: &Evaluation, module: &str) -> String {
     out
 }
 
-const HOME_MODULES: [&str; 7] = [
-    "files", "git", "jujutsu", "secrets", "session", "system", "users",
+const HOME_MODULES: [&str; 8] = [
+    "files",
+    "git",
+    "jujutsu",
+    "secrets",
+    "session",
+    "system",
+    "user-services",
+    "users",
 ];
+
+#[test]
+fn users_run_their_own_services() {
+    let evaluation = evaluate_fixture("home", &HOME_MODULES);
+
+    insta::assert_snapshot!(homes_of(&evaluation, "user-services"), @r#"
+    john unit manual.service
+    [Unit]
+    Description=manual
+
+    [Service]
+    ExecStart=sleep infinity
+    Restart=on-failure
+
+    john unit notes-sync.service
+    [Unit]
+    After=network-online.target
+    Description=Sync notes
+
+    [Service]
+    Environment="NOTES_DIR=/srv/my notes"
+    ExecStart=notes sync --watch
+    Nice=10
+    Restart=on-failure
+
+    [Install]
+    WantedBy=default.target
+    "#);
+    let users = &output_of(&evaluation, "users").base["users"];
+    assert!(users.to_string().contains("linger = true"), "{users}");
+}
 
 #[test]
 fn session_variables_reach_systemd_and_login_shells() {

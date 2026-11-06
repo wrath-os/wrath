@@ -1,5 +1,6 @@
 description = "John"
 packages = ["mergiraf"]
+linger = true
 session_variables = { EDITOR = "hx", PATH = "$HOME/bin:$${PATH}", GREETING = "it's \"quoted\"" }
 
 [programs.git]
@@ -29,3 +30,14 @@ settings.ui.diff-formatter = ["difft", "--color=always", "$left", "$right"]
 
 [files."~/.config/helix/config.toml"]
 text = "theme = \"onedark\"\n"
+
+[services.notes-sync]
+description = "Sync notes"
+exec = "notes sync --watch"
+environment = { NOTES_DIR = "/srv/my notes" }
+after = ["network-online.target"]
+settings.Service.Nice = 10
+
+[services.manual]
+exec = "sleep infinity"
+wanted_by = []

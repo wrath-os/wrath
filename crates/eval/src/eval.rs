@@ -358,10 +358,20 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
             .iter()
             .flat_map(|(user, home)| home.files.keys().map(move |path| home_path(user, path)))
             .collect();
-        let outputs: [(&str, Vec<String>); 6] = [
+        let user_units = output
+            .homes
+            .iter()
+            .flat_map(|(user, home)| {
+                home.units
+                    .keys()
+                    .map(move |name| format!("{name} (for {user})"))
+            })
+            .collect();
+        let outputs: [(&str, Vec<String>); 7] = [
             ("file", output.files.keys().cloned().collect()),
             ("file", home_files),
             ("unit", output.units.keys().cloned().collect()),
+            ("unit", user_units),
             ("base setting", output.base.keys().cloned().collect()),
             ("backend setting", output.backends.keys().cloned().collect()),
             ("secret", output.secrets.keys().cloned().collect()),
