@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use distro_eval::{
-    DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output, Schema, Sources, Type,
-    Value, describe_outputs, evaluate, explain,
+    ConfigFs, DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output, Schema,
+    Sources, Type, Value, describe_outputs, evaluate, explain,
 };
 
 use super::load;
@@ -33,6 +33,13 @@ fn base_schema() -> Schema {
 
 /// Evaluates a fixture config with the named built-in modules.
 fn evaluate_fixture(config: &str, names: &[&str]) -> Evaluation {
+    // Relative, so locations in snapshots don't depend on where the repository is.
+    let config = DirFs::new(format!("../../fixtures/configs/{config}"));
+    evaluate_with(&config, names).unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// Evaluates a config with the named built-in modules, with errors rendered.
+fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, String> {
     let mut sources = Sources::default();
     let modules: Vec<Box<dyn Module>> = names
         .iter()
@@ -45,13 +52,12 @@ fn evaluate_fixture(config: &str, names: &[&str]) -> Evaluation {
         .collect();
     evaluate(Input {
         sources,
-        // Relative, so locations in snapshots don't depend on where the repository is.
-        config: &DirFs::new(format!("../../fixtures/configs/{config}")),
+        config,
         schema: Schema::default(),
         modules: &modules,
         facts: &Value::Table(BTreeMap::new()),
     })
-    .unwrap_or_else(|e| panic!("{e}"))
+    .map_err(|e| e.to_string())
 }
 
 fn run(source: &str) -> Result<Evaluation, String> {
@@ -92,7 +98,7 @@ fn settings_point_at_the_exact_call() {
         @"
     networking.firewall.allowed_tcp_ports = [80, 22000]
       set by module `nginx` at modules/nginx.star:60:9: [80]
-      set by module `syncthing` at modules/syncthing.star:204:9: [22000]
+      set by module `syncthing` at modules/syncthing.star:210:9: [22000]
       overrides [], default
     "
     );
@@ -330,4 +336,55 @@ fn ollama_runs_sandboxed_with_the_package_for_its_gpus() {
         ["ollama-rocm".to_owned()].into()
     );
     assert!(rendered_by(&evaluation, "firewall").contains("tcp dport 11434 accept"));
+}
+
+const SECRET_MODULES: [&str; 4] = ["secrets", "syncthing", "system", "users"];
+
+#[test]
+fn secrets_are_declared_with_their_encrypted_files_and_paths_take_them() {
+    let evaluation = evaluate_fixture("secrets", &SECRET_MODULES);
+
+    insta::assert_debug_snapshot!(output_of(&evaluation, "secrets").secrets);
+    let ciphertext =
+        std::fs::read(repo().join("fixtures/configs/secrets/secrets/api-token.age")).unwrap();
+    let hash = blake3::hash(&ciphertext).to_hex().to_string();
+    let files = evaluation.secret_files();
+    assert_eq!(files.keys().collect::<Vec<_>>(), ["api-token", "sync-key"]);
+    for file in files.values() {
+        assert!(
+            file.source.ends_with("secrets/api-token.age"),
+            "{}",
+            file.source
+        );
+        assert_eq!(file.hash, hash);
+    }
+    let syncthing = rendered_by(&evaluation, "syncthing");
+    assert!(
+        syncthing.contains("/run/secrets/sync-key /var/lib/syncthing/.config/syncthing/key.pem"),
+        "{syncthing}"
+    );
+}
+
+#[test]
+fn a_secret_must_be_declared_and_its_file_readable() {
+    let config = |reference: &str| {
+        let system = format!(
+            "[system]\nhostname = \"box\"\n\n[secrets.api-token]\n\n[services.syncthing.main]\n\
+             key = {{ secret = \"{reference}\" }}\n"
+        );
+        MemFs::new([("system.toml", system.as_str())])
+    };
+
+    insta::assert_snapshot!(evaluate_with(&config("api-tokn"), &SECRET_MODULES).unwrap_err(), @r#"
+    error: there is no secret `api-tokn`
+     --> system.toml:7:7
+      |
+    7 | key = { secret = "api-tokn" }
+      |       ^^^^^^^^^^^^^^^^^^^^^^^ `services.syncthing.main.key` refers to it
+      = help: did you mean `api-token`?
+    "#);
+    insta::assert_snapshot!(evaluate_with(&config("api-token"), &SECRET_MODULES).unwrap_err(), @"
+    error: cannot read secret `api-token` from secrets/api-token.age: entity not found
+     = help: encrypt it with age to the machine's key, or set its `file`
+    ");
 }

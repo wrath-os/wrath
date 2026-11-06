@@ -91,6 +91,70 @@ in
     restartTriggers = lib.optional (trigger ? restart) trigger.restart;
   }) input.triggers;
 
+  # Secrets are decrypted on every boot and switch into a new directory on ramfs, which then
+  # replaces /run/secrets in one step. One that fails to decrypt is left out with an error.
+  system.activationScripts.distroSecrets = lib.mkIf (input.secrets != { }) {
+    deps = [
+      "specialfs"
+      "users"
+      "groups"
+      "etc"
+    ];
+    text =
+      let
+        identities = lib.escapeShellArgs base.secrets.identities;
+        decrypt =
+          name: secret:
+          let
+            source = builtins.path {
+              path = /. + secret.source;
+              name = "${name}.age";
+            };
+          in
+          lib.escapeShellArgs [
+            "decrypt"
+            name
+            source
+            secret.owner
+            secret.mode
+            secret.link
+          ];
+      in
+      ''
+        (
+        umask 0077
+        mkdir -p /run/secrets.d
+        grep -q " /run/secrets.d ramfs " /proc/mounts ||
+          mount -t ramfs none /run/secrets.d -o nodev,nosuid,mode=0751
+        generation=/run/secrets.d/$(date +%s%N)
+        mkdir -m 0751 "$generation"
+        identities=()
+        for identity in ${identities}; do
+          [ -e "$identity" ] && identities+=(-i "$identity")
+        done
+        decrypt() {
+          local name=$1 source=$2 owner=$3 mode=$4 link=$5 file="$generation/$1"
+          if ${pkgs.age}/bin/age -d "''${identities[@]}" -o "$file" "$source"; then
+            chown "$owner" "$file"
+            chmod "$mode" "$file"
+          else
+            echo "cannot decrypt secret $name" >&2
+          fi
+          if [ -n "$link" ]; then
+            (umask 0022 && mkdir -p "$(dirname "$link")")
+            ln -sfn "/run/secrets/$name" "$link"
+          fi
+        }
+        ${lib.concatStringsSep "\n" (lib.mapAttrsToList decrypt input.secrets)}
+        ln -sfn "$generation" /run/secrets.next
+        mv -T /run/secrets.next /run/secrets
+        for old in /run/secrets.d/*; do
+          [ "$old" = "$generation" ] || rm -rf "$old"
+        done
+        )
+      '';
+  };
+
   networking.hostName = mkDefault base.system.hostname;
   time.timeZone = mkDefault base.system.timezone;
 

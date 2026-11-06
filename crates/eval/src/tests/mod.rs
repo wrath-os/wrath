@@ -292,17 +292,26 @@ fn forced_value_wins_and_records_the_override() {
 
 #[test]
 fn secrets_are_allowed_in_runtime_options_only() {
-    let evaluation = ok(&[
-        ("system.toml", SYSTEM),
-        (
-            "services/grafana.toml",
-            r#"
+    let evaluation = eval_with(
+        &[
+            ("system.toml", SYSTEM),
+            (
+                "services/grafana.toml",
+                r#"
 [services.grafana.main.settings.security]
 admin_user = "admin"
 admin_password = { secret = "grafana-admin" }
 "#,
-        ),
-    ]);
+            ),
+            ("grafana-admin.age", ""),
+        ],
+        &[modules::secrets(
+            "secrets",
+            "grafana-admin",
+            "grafana-admin.age",
+        )],
+    )
+    .unwrap();
 
     insta::assert_snapshot!(why(&evaluation, "services.grafana.main.settings"), @r#"
     services.grafana.main.settings.security.admin_password = { secret = "grafana-admin" }

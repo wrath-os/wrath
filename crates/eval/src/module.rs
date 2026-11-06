@@ -80,6 +80,31 @@ pub struct Output {
     /// Services the system provides that act when files change, such as networkd reloading
     /// when a `.network` file does. Several modules can trigger the same service.
     pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,
+    /// Secrets decrypted on the machine, by name.
+    pub secrets: BTreeMap<String, Secret>,
+}
+
+/// Where decrypted secrets are on the machine, one file per secret.
+pub const SECRETS_DIR: &str = "/run/secrets";
+
+/// A secret kept encrypted in the configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Secret {
+    /// The encrypted file, relative to the configuration or absolute.
+    pub file: String,
+    pub owner: String,
+    /// The owner's group when unset.
+    pub group: Option<String>,
+    pub mode: u32,
+    /// Another path linked to the decrypted file.
+    pub link: Option<String>,
+}
+
+impl Secret {
+    /// Where the secret named `name` is decrypted to.
+    pub fn path(name: &str) -> String {
+        format!("{SECRETS_DIR}/{name}")
+    }
 }
 
 /// What a service does when a file it reads changes.

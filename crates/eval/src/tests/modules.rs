@@ -2,8 +2,8 @@
 
 use super::eval_with;
 use crate::{
-    ConfigReader, Diagnostic, File, Level, Module, OptionPath, OptionSpec, Output, ReadError,
-    RenderError, Section, Setting, Type, Unit, UnitAction, Value, explain,
+    ConfigReader, Diagnostic, File, Level, ListMerge, Module, OptionPath, OptionSpec, Output,
+    ReadError, RenderError, Secret, Section, Setting, Type, Unit, UnitAction, Value, explain,
 };
 
 type RenderFn = dyn Fn(&mut dyn ConfigReader) -> Result<Output, RenderError>;
@@ -581,5 +581,107 @@ fn a_trigger_needs_rendered_files_and_a_unit_no_module_renders() {
     insta::assert_snapshot!(
         eval_with(&[SYSTEM], &[app("other.socket", "/etc/app.conf")]).unwrap_err(),
         @"error: module `app` triggers `other.socket`; only services reload or restart"
+    );
+}
+
+/// A module that declares the secret `name`, encrypted in `file`.
+pub(super) fn secrets(
+    module_name: &'static str,
+    name: &'static str,
+    file: &'static str,
+) -> Box<dyn Module> {
+    module(module_name, vec![], &[], move |_| {
+        let mut output = Output::default();
+        let secret = Secret {
+            file: file.into(),
+            owner: "root".into(),
+            group: None,
+            mode: 0o400,
+            link: None,
+        };
+        output.secrets.insert(name.into(), secret);
+        Ok(output)
+    })
+}
+
+#[test]
+fn a_module_reads_a_secret_in_a_path_option_as_the_path_it_is_decrypted_to() {
+    let app = module(
+        "app",
+        vec![
+            ("app.key", OptionSpec::new(Type::Path).runtime()),
+            (
+                "app.keys",
+                OptionSpec::new(Type::List {
+                    item: Box::new(Type::Path),
+                    merge: ListMerge::Set,
+                })
+                .runtime(),
+            ),
+            ("app.password", OptionSpec::new(Type::Str).runtime()),
+        ],
+        &[],
+        |config| {
+            let mut output = Output::default();
+            let app = read(config, "app")?.unwrap();
+            output.files.insert(
+                "/etc/app.conf".into(),
+                File {
+                    text: format!("{app}\n"),
+                    mode: 0o644,
+                },
+            );
+            Ok(output)
+        },
+    );
+    let config = (
+        "system.toml",
+        r#"
+[system]
+hostname = "box"
+
+[app]
+key = { secret = "key" }
+keys = [{ secret = "key" }, "/etc/other.pem"]
+password = { secret = "key" }
+"#,
+    );
+
+    let evaluation = eval_with(
+        &[config, ("secrets/key.age", "ciphertext")],
+        &[secrets("secrets", "key", "secrets/key.age"), app],
+    )
+    .unwrap();
+
+    let app = evaluation
+        .modules()
+        .iter()
+        .find(|rendered| rendered.name == "app")
+        .unwrap();
+    insta::assert_snapshot!(app.output.files["/etc/app.conf"].text, @r#"{ key = "/run/secrets/key", keys = ["/etc/other.pem", "/run/secrets/key"], password = { secret = "key" } }"#);
+    let file = &evaluation.secret_files()["key"];
+    assert_eq!(file.source, "secrets/key.age");
+    assert_eq!(file.hash, blake3::hash(b"ciphertext").to_hex().to_string());
+}
+
+#[test]
+fn a_secret_belongs_to_one_module_and_its_file_must_be_readable() {
+    insta::assert_snapshot!(
+        eval_with(
+            &[SYSTEM, ("secrets/key.age", "x")],
+            &[secrets("a", "key", "secrets/key.age"), secrets("b", "key", "secrets/key.age")],
+        )
+        .unwrap_err(),
+        @"
+    error: secret `key` is rendered by modules `a` and `b`
+     = each one belongs to a single module; the others can set its options instead
+    "
+    );
+    insta::assert_snapshot!(
+        eval_with(&[SYSTEM], &[secrets("a", "key", "secrets/key.age")]).unwrap_err(),
+        @"
+    error: cannot read secret `key` from secrets/key.age: entity not found
+     = help: encrypt it with age to the machine's key, or set its `file`
+    "
     );
 }

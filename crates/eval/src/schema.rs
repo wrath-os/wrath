@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::ordered;
 use crate::path::OptionPath;
-use crate::value::Value;
+use crate::value::{RuntimePart, Value};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -244,7 +244,8 @@ impl Type {
         }
     }
 
-    /// Checks that a resolved value has this type. Runtime values pass where strings do.
+    /// Checks that a resolved value has this type. Runtime values pass where strings do, and a
+    /// secret where a path does.
     pub fn check(&self, value: &Value) -> Result<(), String> {
         let ok = match (self, value) {
             (Self::Freeform, _)
@@ -255,6 +256,10 @@ impl Type {
                 min.is_none_or(|min| *i >= min) && max.is_none_or(|max| *i <= max)
             }
             (Self::Path, Value::Str(s)) => s.starts_with('/') || s.starts_with("~/"),
+            // The file a secret is decrypted to.
+            (Self::Path, Value::Runtime(parts)) => {
+                matches!(parts.as_slice(), [RuntimePart::Secret(_)])
+            }
             (Self::Enum(choices), Value::Str(s)) => choices.contains(s),
             (
                 Self::List {

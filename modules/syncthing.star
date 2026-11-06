@@ -83,9 +83,15 @@ instance = types.record(
     cert = option(
         types.path,
         optional = True,
-        doc = "A file with the device's certificate, such as a decrypted secret.",
+        runtime = True,
+        doc = "A file with the device's certificate, or a secret.",
     ),
-    key = option(types.path, optional = True, doc = "A file with the device's private key."),
+    key = option(
+        types.path,
+        optional = True,
+        runtime = True,
+        doc = "A file with the device's private key, or a secret.",
+    ),
     open_firewall = option(types.bool, default = False),
     devices = types.map(device),
     folders = types.map(folder),

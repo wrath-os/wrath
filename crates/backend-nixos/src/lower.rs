@@ -80,6 +80,7 @@ pub fn lower(model: &Model) -> String {
         ("files", Value::Table(files)),
         ("units", Value::Table(units)),
         ("triggers", Value::Table(triggers)),
+        ("secrets", secrets(model)),
         ("base", Value::Table(model.base.clone())),
         (
             "nixos",
@@ -93,14 +94,37 @@ pub fn lower(model: &Model) -> String {
     formats::json(&input).expect("the shim's input has no runtime values")
 }
 
+/// Each secret with its encrypted file as an absolute path, and the owner as `chown` takes it.
+fn secrets(model: &Model) -> Value {
+    let secrets = model
+        .secrets
+        .iter()
+        .map(|(name, secret)| {
+            let source = std::path::absolute(&secret.source)
+                .map_or_else(|_| secret.source.clone(), |path| path.display().to_string());
+            let owner = format!("{}:{}", secret.owner, secret.group.as_deref().unwrap_or(""));
+            let entry = table([
+                ("source", Value::Str(source)),
+                ("owner", Value::Str(owner)),
+                ("mode", Value::Str(format!("{:04o}", secret.mode))),
+                ("link", Value::Str(secret.link.clone().unwrap_or_default())),
+            ]);
+            (name.clone(), entry)
+        })
+        .collect();
+    Value::Table(secrets)
+}
+
 /// The unit file, with a search path and PATH for programs named without a directory. A unit that
-/// restarts on files gets a hash of their contents, so NixOS sees the unit change with them.
+/// restarts on files or mentions secrets gets a hash of them, so NixOS sees the unit change with
+/// them.
 fn unit_text(unit: &Unit, model: &Model) -> String {
     let mut sections = unit.sections.clone();
-    if !unit.restart_on.is_empty() {
+    let secrets = model.secrets_of(unit);
+    if !unit.restart_on.is_empty() || !secrets.is_empty() {
         let trigger = (
             "X-Restart-Triggers".to_owned(),
-            files_hash(&unit.restart_on, model),
+            restart_hash(&unit.restart_on, &secrets, model),
         );
         match sections.iter_mut().find(|section| section.name == "Unit") {
             Some(section) => section.entries.push(trigger),
@@ -143,7 +167,22 @@ fn unit_text(unit: &Unit, model: &Model) -> String {
 
 /// A hash of the paths and contents of files, which changes when any of them does.
 fn files_hash(paths: &BTreeSet<String>, model: &Model) -> String {
+    restart_hash(paths, &BTreeSet::new(), model)
+}
+
+/// Like [`files_hash`], covering secrets as well: their contents, owner and mode.
+fn restart_hash(paths: &BTreeSet<String>, secrets: &BTreeSet<&str>, model: &Model) -> String {
     let mut hasher = blake3::Hasher::new();
+    for name in secrets {
+        let secret = &model.secrets[*name];
+        let group = secret.group.as_deref().unwrap_or("");
+        let fields = [name, secret.hash.as_str(), &secret.owner, group];
+        for field in fields {
+            hasher.update(field.as_bytes());
+            hasher.update(&[0]);
+        }
+        hasher.update(&secret.mode.to_le_bytes());
+    }
     for path in paths {
         let text = model.files.get(path).map_or("", |file| file.text.as_str());
         hasher.update(path.as_bytes());
@@ -181,7 +220,7 @@ fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
 #[cfg(test)]
 mod tests {
     use distro_eval::UnitAction;
-    use distro_model::File;
+    use distro_model::{File, Secret};
 
     use super::*;
 
@@ -256,6 +295,7 @@ mod tests {
           "packages": [
             "nginx"
           ],
+          "secrets": {},
           "triggers": {
             "systemd-networkd": {
               "reload": "515446256c8120cef626f645d64a6b92a29146ecb9f893c916bd06caad318528"
@@ -273,5 +313,44 @@ mod tests {
           }
         }
         "#);
+    }
+
+    #[test]
+    fn secrets_get_absolute_sources_and_units_that_mention_them_restart_with_them() {
+        let model = |hash: &str| {
+            let mut model = Model::default();
+            let secret = Secret {
+                source: "/srv/config/secrets/key.age".into(),
+                hash: hash.into(),
+                owner: "app".into(),
+                group: None,
+                mode: 0o400,
+                link: Some("/home/app/.ssh/id_ed25519".into()),
+            };
+            model.secrets.insert("key".into(), secret);
+            let unit = Unit {
+                sections: vec![Section {
+                    name: "Service".into(),
+                    entries: vec![("ExecStart".into(), "app --key /run/secrets/key".into())],
+                }],
+                ..Unit::default()
+            };
+            model.units.insert("app.service".into(), unit);
+            model
+        };
+        let text = |model: &Model| unit_text(&model.units["app.service"], model);
+
+        insta::assert_snapshot!(formats::json(&secrets(&model("abc"))).unwrap(), @r#"
+        {
+          "key": {
+            "link": "/home/app/.ssh/id_ed25519",
+            "mode": "0400",
+            "owner": "app:",
+            "source": "/srv/config/secrets/key.age"
+          }
+        }
+        "#);
+        assert!(text(&model("abc")).contains("X-Restart-Triggers="));
+        assert_ne!(text(&model("abc")), text(&model("def")));
     }
 }

@@ -5,7 +5,7 @@ use std::fmt;
 
 use distro_eval::{Unit, Value};
 
-use crate::Model;
+use crate::{Model, Secret};
 
 /// How much applying a change disrupts the running system, least first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -54,6 +54,7 @@ pub struct Plan {
     pub options: Vec<Change>,
     pub packages: Vec<Change>,
     pub files: Vec<Change>,
+    pub secrets: Vec<Change>,
     pub units: Vec<Change>,
     pub base: Vec<Change>,
     pub backends: Vec<Change>,
@@ -77,6 +78,7 @@ impl Plan {
             ("options", self.options.as_slice()),
             ("packages", self.packages.as_slice()),
             ("files", self.files.as_slice()),
+            ("secrets", self.secrets.as_slice()),
             ("units", self.units.as_slice()),
             ("base", self.base.as_slice()),
             ("backends", self.backends.as_slice()),
@@ -137,7 +139,10 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     let mut units = diff(&before.units, &after.units, |before, after| {
         (unit_details(before, after), Some(Tier::Live))
     });
-    units.extend(restarts(before, after, &files));
+    let secrets = diff(&before.secrets, &after.secrets, |before, after| {
+        (secret_details(before, after), Some(Tier::Live))
+    });
+    units.extend(restarts(before, after, &files, &secrets));
     units.extend(triggered(after, &files));
     units.sort_by(|a, b| a.name.cmp(&b.name));
     Plan {
@@ -150,6 +155,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
             |_, _| (Vec::new(), Some(Tier::Live)),
         ),
         files,
+        secrets,
         units,
         base: diff_with_names(&before.base, &after.base, |name, before, after| {
             // The bootloader and kernel only change on the next boot.
@@ -167,17 +173,26 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     }
 }
 
-/// Units that are the same in both models but restart because a file they read changed.
-fn restarts(before: &Model, after: &Model, files: &[Change]) -> Vec<Change> {
+/// Units that are the same in both models but restart because a file they read or a secret
+/// they mention changed.
+fn restarts(before: &Model, after: &Model, files: &[Change], secrets: &[Change]) -> Vec<Change> {
     after
         .units
         .iter()
         .filter(|(name, unit)| before.units.get(*name) == Some(unit))
         .filter_map(|(name, unit)| {
-            let changed: Vec<&str> = files
+            let mentioned = after.secrets_of(unit);
+            let changed: Vec<String> = files
                 .iter()
                 .map(|change| change.name.as_str())
                 .filter(|path| unit.restart_on.contains(*path))
+                .map(str::to_owned)
+                .chain(
+                    secrets
+                        .iter()
+                        .filter(|change| mentioned.contains(change.name.as_str()))
+                        .map(|change| format!("secret {}", change.name)),
+                )
                 .collect();
             (!changed.is_empty()).then(|| Change {
                 kind: ChangeKind::Changed,
@@ -187,6 +202,32 @@ fn restarts(before: &Model, after: &Model, files: &[Change]) -> Vec<Change> {
             })
         })
         .collect()
+}
+
+/// What changed about a secret. Its contents are never shown, only that they changed.
+fn secret_details(before: Option<&Secret>, after: Option<&Secret>) -> Vec<String> {
+    let (Some(before), Some(after)) = (before, after) else {
+        return Vec::new();
+    };
+    let mut details = Vec::new();
+    if before.hash != after.hash {
+        details.push("contents changed".to_owned());
+    }
+    let owner = |secret: &Secret| match &secret.group {
+        Some(group) => format!("{}:{group}", secret.owner),
+        None => secret.owner.clone(),
+    };
+    if owner(before) != owner(after) {
+        details.push(format!("owner {} -> {}", owner(before), owner(after)));
+    }
+    if before.mode != after.mode {
+        details.push(format!("mode {:o} -> {:o}", before.mode, after.mode));
+    }
+    if before.link != after.link {
+        let link = |secret: &Secret| secret.link.clone().unwrap_or_else(|| "none".to_owned());
+        details.push(format!("link {} -> {}", link(before), link(after)));
+    }
+    details
 }
 
 /// Services the system provides that reload or restart because a file they read changed.

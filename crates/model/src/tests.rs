@@ -1,6 +1,6 @@
 use distro_eval::{RuntimePart, Section, Unit, UnitAction, Value};
 
-use crate::{File, Model, plan};
+use crate::{File, Model, Secret, plan};
 
 fn model(port: i64) -> Model {
     let mut model = Model::default();
@@ -68,9 +68,10 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
         }
       },
       "packages": [],
+      "secrets": {},
       "triggers": {},
       "units": {},
-      "version": 3
+      "version": 4
     }
     "#);
 }
@@ -227,4 +228,69 @@ fn services_the_system_provides_reload_or_restart_when_their_files_change() {
           reloads: /etc/systemd/network/10-lan.network changed
     2 changes, tier: live
     ");
+}
+
+#[test]
+fn units_that_mention_a_secret_restart_when_it_changes() {
+    let with_secrets = |token_hash: &str, owner: &str| {
+        let mut model = Model::default();
+        for (name, hash) in [("api-token", token_hash), ("api-token-old", "aaa")] {
+            let secret = Secret {
+                source: format!("/srv/config/secrets/{name}.age"),
+                hash: hash.into(),
+                owner: owner.into(),
+                group: None,
+                mode: 0o400,
+                link: None,
+            };
+            model.secrets.insert(name.into(), secret);
+        }
+        for (name, uses) in [
+            ("app.service", "/run/secrets/api-token"),
+            ("old.service", "/run/secrets/api-token-old"),
+        ] {
+            let unit = Unit {
+                sections: vec![Section {
+                    name: "Service".into(),
+                    entries: vec![("LoadCredential".into(), format!("token:{uses}"))],
+                }],
+                ..Unit::default()
+            };
+            model.units.insert(name.into(), unit);
+        }
+        model
+    };
+    let before = with_secrets("abc", "root");
+
+    assert_eq!(
+        before.secrets_of(&before.units["app.service"]),
+        ["api-token"].into()
+    );
+    insta::assert_snapshot!(plan(&before, &with_secrets("def", "root")).to_string(), @"
+    secrets
+      ~ api-token (tier: live)
+          contents changed
+    units
+      ~ app.service (tier: live)
+          restarts: secret api-token changed
+    2 changes, tier: live
+    ");
+    insta::assert_snapshot!(plan(&before, &with_secrets("abc", "app")).to_string(), @"
+    secrets
+      ~ api-token (tier: live)
+          owner root -> app
+      ~ api-token-old (tier: live)
+          owner root -> app
+    units
+      ~ app.service (tier: live)
+          restarts: secret api-token changed
+      ~ old.service (tier: live)
+          restarts: secret api-token-old changed
+    4 changes, tier: live
+    ");
+
+    let mut moved = before.clone();
+    moved.secrets.get_mut("api-token").unwrap().source = "/elsewhere/api-token.age".into();
+    assert_eq!(moved.hash(), before.hash());
+    assert!(plan(&before, &moved).is_empty());
 }

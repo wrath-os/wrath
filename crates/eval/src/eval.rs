@@ -12,7 +12,9 @@ use std::rc::Rc;
 use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
 use crate::load;
-use crate::module::{ConfigReader, Module, ModuleId, Output, ReadError, RenderError, Setting};
+use crate::module::{
+    ConfigReader, Module, ModuleId, Output, ReadError, RenderError, Secret, Setting,
+};
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
 use crate::schema::{Child, ListMerge, OptionSpec, Schema, Type};
@@ -44,6 +46,16 @@ pub struct Evaluation {
     options: BTreeMap<OptionPath, Resolved>,
     facts: BTreeMap<OptionPath, Value>,
     modules: Vec<Rendered>,
+    secret_files: BTreeMap<String, SecretFile>,
+}
+
+/// The encrypted file of a secret as read when evaluating.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretFile {
+    /// Where the file is, as the configuration's files are named.
+    pub source: String,
+    /// The BLAKE3 hash of the encrypted contents, in hex.
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +122,11 @@ impl Evaluation {
 
     pub fn module_name(&self, module: ModuleId) -> &str {
         &self.modules[module.index()].name
+    }
+
+    /// The encrypted file of each secret, by name.
+    pub fn secret_files(&self) -> &BTreeMap<String, SecretFile> {
+        &self.secret_files
     }
 }
 
@@ -187,7 +204,13 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     if diagnostics.is_empty() {
         diagnostics.extend(shared_outputs(&resolver.rendered));
         diagnostics.extend(bad_triggers(&resolver.rendered));
+        diagnostics.extend(undeclared_secrets(&resolver.rendered, &resolver.options));
     }
+    let secret_files = if diagnostics.is_empty() {
+        read_secrets(&resolver.rendered, config, &mut diagnostics)
+    } else {
+        BTreeMap::new()
+    };
 
     if !diagnostics.is_empty() {
         return Err(EvalError {
@@ -204,7 +227,115 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             .into_iter()
             .map(|rendered| rendered.expect("every module rendered without errors"))
             .collect(),
+        secret_files,
     })
+}
+
+/// References to secrets that no module declares.
+fn undeclared_secrets(
+    rendered: &[Option<Rendered>],
+    options: &BTreeMap<OptionPath, Resolved>,
+) -> Vec<Diagnostic> {
+    let declared: BTreeSet<&String> = rendered
+        .iter()
+        .flatten()
+        .flat_map(|rendered| rendered.output.secrets.keys())
+        .collect();
+    let mut diagnostics = Vec::new();
+    for (path, resolved) in options {
+        for contribution in &resolved.set_by {
+            for name in secret_names(&contribution.value) {
+                if declared.contains(name) {
+                    continue;
+                }
+                let mut diagnostic = Diagnostic::error(format!("there is no secret `{name}`"));
+                if let Some(span) = contribution.site.span() {
+                    diagnostic = diagnostic.label(span, format!("`{path}` refers to it"));
+                }
+                let note = did_you_mean(name, declared.iter().copied())
+                    .unwrap_or_else(|| format!("help: declare it under `[secrets.{name}]`"));
+                diagnostics.push(diagnostic.note(note));
+            }
+        }
+    }
+    diagnostics
+}
+
+/// The value a module reads: a secret in a path option is the path it's decrypted to.
+fn secret_paths(ty: &Type, value: Value) -> Value {
+    match (ty, value) {
+        (Type::Path, Value::Runtime(parts)) => match parts.as_slice() {
+            [RuntimePart::Secret(name)] => Value::Str(Secret::path(name)),
+            _ => Value::Runtime(parts),
+        },
+        (Type::List { item, .. }, Value::List(items)) => Value::List(
+            items
+                .into_iter()
+                .map(|value| secret_paths(item, value))
+                .collect(),
+        ),
+        (Type::Map(spec), Value::Table(entries)) => Value::Table(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key, secret_paths(&spec.ty, value)))
+                .collect(),
+        ),
+        (Type::Record(record), Value::Table(entries)) => Value::Table(
+            entries
+                .into_iter()
+                .map(|(key, value)| {
+                    let value = match record.fields.get(&key) {
+                        Some(spec) => secret_paths(&spec.ty, value),
+                        None => value,
+                    };
+                    (key, value)
+                })
+                .collect(),
+        ),
+        (_, value) => value,
+    }
+}
+
+fn secret_names(value: &Value) -> Vec<&String> {
+    match value {
+        Value::Runtime(parts) => parts
+            .iter()
+            .filter_map(|part| match part {
+                RuntimePart::Secret(name) => Some(name),
+                RuntimePart::Text(_) => None,
+            })
+            .collect(),
+        Value::List(items) => items.iter().flat_map(secret_names).collect(),
+        Value::Table(entries) => entries.values().flat_map(secret_names).collect(),
+        Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) => Vec::new(),
+    }
+}
+
+/// Reads and hashes each secret's encrypted file.
+fn read_secrets(
+    rendered: &[Option<Rendered>],
+    config: &dyn ConfigFs,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> BTreeMap<String, SecretFile> {
+    let mut files = BTreeMap::new();
+    for (name, secret) in rendered
+        .iter()
+        .flatten()
+        .flat_map(|rendered| &rendered.output.secrets)
+    {
+        let source = config.display(&secret.file);
+        match config.read_bytes(&secret.file) {
+            Ok(bytes) => {
+                let hash = blake3::hash(&bytes).to_hex().to_string();
+                files.insert(name.clone(), SecretFile { source, hash });
+            }
+            Err(e) => diagnostics.push(
+                Diagnostic::error(format!("cannot read secret `{name}` from {source}: {e}"))
+                    .note("help: encrypt it with age to the machine's key, or set its `file`"),
+            ),
+        }
+    }
+    files
 }
 
 /// Files, units and base settings that more than one module renders. Each has one owner, so
@@ -218,6 +349,7 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
             ("unit", output.units.keys().collect()),
             ("base setting", output.base.keys().collect()),
             ("backend setting", output.backends.keys().collect()),
+            ("secret", output.secrets.keys().collect()),
         ];
         for (kind, keys) in names {
             for key in keys {
@@ -660,15 +792,18 @@ impl<'a> Resolver<'a> {
         match self.known(path) {
             Known::Leaf(spec) => self
                 .resolve(path, &spec, at)
+                .map(|value| value.map(|value| secret_paths(&spec.ty, value)))
                 .map_err(|Failed| ReadError::Failed),
             Known::Table(spec) => {
                 let mut table = self.skeleton(&spec, path);
                 let mut failed = false;
                 for (leaf, spec) in self.leaves_under(&spec, path.clone()) {
                     match self.resolve(&leaf, &spec, at) {
-                        Ok(Some(value)) => {
-                            insert_nested(&mut table, &leaf.segments()[path.len()..], value)
-                        }
+                        Ok(Some(value)) => insert_nested(
+                            &mut table,
+                            &leaf.segments()[path.len()..],
+                            secret_paths(&spec.ty, value),
+                        ),
                         Ok(None) => {}
                         Err(Failed) => failed = true,
                     }

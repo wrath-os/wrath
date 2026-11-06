@@ -8,12 +8,14 @@ mod plan;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{Evaluation, RuntimePart, Section, Unit, UnitAction, Value, formats};
+use distro_eval::{
+    Evaluation, RuntimePart, Secret as Declared, Section, Unit, UnitAction, Value, formats,
+};
 
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 3;
+pub const VERSION: i64 = 4;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -30,12 +32,46 @@ pub struct Model {
     pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,
     /// Machine facts the configuration read, by dotted path.
     pub facts: BTreeMap<String, Value>,
+    /// Secrets decrypted on the machine, by name.
+    pub secrets: BTreeMap<String, Secret>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
     pub mode: u32,
     pub text: String,
+}
+
+/// A secret, decrypted on the machine to `/run/secrets/<name>`.
+#[derive(Debug, Clone, Eq)]
+pub struct Secret {
+    /// The encrypted file where the system is built. It isn't part of the hash, so moving the
+    /// configuration doesn't change the system.
+    pub source: String,
+    /// The BLAKE3 hash of the encrypted contents, which changes when the secret does.
+    pub hash: String,
+    pub owner: String,
+    /// The owner's group when unset.
+    pub group: Option<String>,
+    pub mode: u32,
+    /// Another path linked to the decrypted file.
+    pub link: Option<String>,
+}
+
+/// Secrets are the same when everything but where the encrypted file is matches.
+impl PartialEq for Secret {
+    fn eq(&self, other: &Self) -> bool {
+        fn key(secret: &Secret) -> (&str, &str, &Option<String>, u32, &Option<String>) {
+            (
+                &secret.hash,
+                &secret.owner,
+                &secret.group,
+                secret.mode,
+                &secret.link,
+            )
+        }
+        key(self) == key(other)
+    }
 }
 
 impl Model {
@@ -66,6 +102,20 @@ impl Model {
             model.base.extend(output.base.clone());
             model.backends.extend(output.backends.clone());
             model.units.extend(output.units.clone());
+            model
+                .secrets
+                .extend(output.secrets.iter().map(|(name, declared)| {
+                    let file = &evaluation.secret_files()[name];
+                    let secret = Secret {
+                        source: file.source.clone(),
+                        hash: file.hash.clone(),
+                        owner: declared.owner.clone(),
+                        group: declared.group.clone(),
+                        mode: declared.mode,
+                        link: declared.link.clone(),
+                    };
+                    (name.clone(), secret)
+                }));
             for (trigger, paths) in &output.triggers {
                 model
                     .triggers
@@ -119,8 +169,27 @@ impl Model {
             let paths = paths.iter().cloned().map(Value::Str).collect();
             actions.insert(action.as_str().to_owned(), Value::List(paths));
         }
+        let secrets = self
+            .secrets
+            .iter()
+            .map(|(name, secret)| {
+                let mut entries = BTreeMap::from([
+                    ("hash".to_owned(), Value::Str(secret.hash.clone())),
+                    ("owner".to_owned(), Value::Str(secret.owner.clone())),
+                    ("mode".to_owned(), Value::Int(i64::from(secret.mode))),
+                ]);
+                if let Some(group) = &secret.group {
+                    entries.insert("group".to_owned(), Value::Str(group.clone()));
+                }
+                if let Some(link) = &secret.link {
+                    entries.insert("link".to_owned(), Value::Str(link.clone()));
+                }
+                (name.clone(), Value::Table(entries))
+            })
+            .collect();
         table([
             ("version", Value::Int(VERSION)),
+            ("secrets", Value::Table(secrets)),
             ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),
             ("packages", Value::List(packages)),
@@ -130,6 +199,22 @@ impl Model {
             ("backends", spell_out_entries(&self.backends)),
             ("facts", spell_out_entries(&self.facts)),
         ])
+    }
+
+    /// The secrets whose decrypted path a unit mentions. The unit restarts when one changes.
+    pub fn secrets_of(&self, unit: &Unit) -> BTreeSet<&str> {
+        let text = unit.text();
+        self.secrets
+            .keys()
+            .filter(|name| {
+                let path = Declared::path(name);
+                text.match_indices(&path).any(|(at, _)| {
+                    !text[at + path.len()..]
+                        .starts_with(|c: char| c.is_alphanumeric() || "-_.".contains(c))
+                })
+            })
+            .map(String::as_str)
+            .collect()
     }
 
     /// The canonical serialization: JSON with sorted keys.

@@ -25,7 +25,8 @@ use std::time::{Duration, Instant};
 use allocative::Allocative;
 use distro_eval::{
     ConfigReader, Diagnostic, File, FileId, Level, ListMerge, Module, OptionPath, OptionSpec,
-    Output, ReadError, RenderError, Setting, Sources, Span, Type, Unit, UnitAction, Value, formats,
+    Output, ReadError, RenderError, Secret, Setting, Sources, Span, Type, Unit, UnitAction, Value,
+    formats,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -38,7 +39,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
 use starlark::syntax::{AstModule, Dialect};
-use starlark::values::none::NoneType;
+use starlark::values::none::{NoneOr, NoneType};
 use starlark::values::{
     NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue, ValueLike,
 };
@@ -593,6 +594,38 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
             .insert(path.to_owned(), file);
         if replaced.is_some() {
             return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
+        }
+        Ok(NoneType)
+    }
+
+    /// Declares a secret, kept encrypted in `file` and decrypted on the machine to
+    /// `/run/secrets/<name>`, owned by `owner` and `group` with `mode`, and linked from `path`.
+    #[allow(clippy::too_many_arguments)]
+    fn secret<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] name: &str,
+        #[starlark(require = named)] file: &str,
+        #[starlark(require = named, default = "root")] owner: &str,
+        #[starlark(require = named, default = NoneOr::None)] group: NoneOr<&str>,
+        #[starlark(require = named, default = 0o400)] mode: u32,
+        #[starlark(require = named, default = NoneOr::None)] path: NoneOr<&str>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, at) = rendering(eval)?;
+        let secret = Secret {
+            file: file.to_owned(),
+            owner: owner.to_owned(),
+            group: group.into_option().map(str::to_owned),
+            mode,
+            link: path.into_option().map(str::to_owned),
+        };
+        let replaced = rendering
+            .output
+            .borrow_mut()
+            .secrets
+            .insert(name.to_owned(), secret);
+        if replaced.is_some() {
+            return Err(rendering.invalid(at, format!("secret `{name}` is declared twice")));
         }
         Ok(NoneType)
     }

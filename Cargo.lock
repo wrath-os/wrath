@@ -569,6 +569,7 @@ dependencies = [
 name = "distro-eval"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "insta",
  "tempfile",
  "toml",
@@ -589,6 +590,7 @@ version = "0.0.0"
 dependencies = [
  "allocative",
  "anyhow",
+ "blake3",
  "distro-eval",
  "insta",
  "starlark",

@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 pub trait ConfigFs {
     fn read(&self, path: &str) -> io::Result<String>;
 
+    /// A file that may not be text, such as an encrypted secret.
+    fn read_bytes(&self, path: &str) -> io::Result<Vec<u8>>;
+
     /// TOML files under `dir`, recursively, as sorted relative paths. A missing directory has none.
     fn toml_files(&self, dir: &str) -> io::Result<Vec<String>>;
 
@@ -30,6 +33,10 @@ impl DirFs {
 impl ConfigFs for DirFs {
     fn read(&self, path: &str) -> io::Result<String> {
         std::fs::read_to_string(self.root.join(path))
+    }
+
+    fn read_bytes(&self, path: &str) -> io::Result<Vec<u8>> {
+        std::fs::read(self.root.join(path))
     }
 
     fn toml_files(&self, dir: &str) -> io::Result<Vec<String>> {
@@ -91,6 +98,10 @@ impl ConfigFs for MemFs {
             .get(path)
             .cloned()
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+    }
+
+    fn read_bytes(&self, path: &str) -> io::Result<Vec<u8>> {
+        self.read(path).map(String::into_bytes)
     }
 
     fn toml_files(&self, dir: &str) -> io::Result<Vec<String>> {
