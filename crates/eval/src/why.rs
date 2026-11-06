@@ -150,12 +150,7 @@ pub fn describe_outputs(evaluation: &Evaluation) -> String {
     }
     for (name, (module, unit)) in units {
         let _ = writeln!(out, "\nunit {name} (from {module})");
-        for section in &unit.sections {
-            let _ = writeln!(out, "[{}]", section.name);
-            for (key, value) in &section.entries {
-                let _ = writeln!(out, "{key}={value}");
-            }
-        }
+        out.push_str(&unit.text());
     }
     triggers.sort();
     for (unit, action, module, paths) in triggers {

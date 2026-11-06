@@ -63,6 +63,7 @@ file /var/lib/syncthing/folders.json (mode 644, from syncthing)
 unit fprintd.service (from fprintd)
 [Unit]
 Description=Fingerprint authentication daemon
+
 [Service]
 BusName=net.reactivated.Fprint
 ExecStart=fprintd
@@ -72,11 +73,13 @@ unit nftables.service (from firewall)
 [Unit]
 Before=network-pre.target
 Description=nftables firewall
+
 [Service]
 ExecStart=nft -f /etc/nftables.conf
 ExecStop=nft flush ruleset
 RemainAfterExit=yes
 Type=oneshot
+
 [Install]
 WantedBy=multi-user.target
 
@@ -84,6 +87,7 @@ unit nginx-main.service (from nginx)
 [Unit]
 After=network.target
 Description=nginx (main)
+
 [Service]
 ExecReload=nginx -c /etc/nginx/main.conf -s reload
 ExecStart=nginx -c /etc/nginx/main.conf -g 'daemon off;'
@@ -91,6 +95,7 @@ LogsDirectory=nginx
 PrivateTmp=yes
 Restart=on-failure
 RuntimeDirectory=nginx-main
+
 [Install]
 WantedBy=multi-user.target
 
@@ -98,10 +103,12 @@ unit syncthing-main.service (from syncthing)
 [Unit]
 After=network.target
 Description=Syncthing (main)
+
 [Service]
 ExecStart=syncthing serve --no-browser --gui-address=127.0.0.1:8384 --home=/var/lib/syncthing
 Restart=on-failure
 User=syncthing
+
 [Install]
 WantedBy=multi-user.target
 

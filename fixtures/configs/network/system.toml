@@ -15,3 +15,7 @@ sections.Network.LLDP = "yes"
 fallback = ["9.9.9.9", "149.112.112.112"]
 dnssec = "no"
 cache = "no-negative"
+
+[services.tailscale]
+enable = true
+trust_interface = true

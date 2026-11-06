@@ -136,6 +136,21 @@ pub struct Section {
 }
 
 impl Unit {
+    /// The unit file's text, with a blank line between sections.
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        for section in &self.sections {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&format!("[{}]\n", section.name));
+            for (key, value) in &section.entries {
+                out.push_str(&format!("{key}={value}\n"));
+            }
+        }
+        out
+    }
+
     /// A unit from a table of sections, each a table of keys. A list value repeats its key.
     /// `[Unit]` (or `[Match]`, in network files) comes first and `[Install]` last; other sections
     /// and all keys are sorted, so the result doesn't depend on how a module built the table.

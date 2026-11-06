@@ -163,23 +163,34 @@ module(name = "x", options = {"a": types.list(option(types.str))}, writes = [], 
     assert!(message.contains("expected a type"), "{message}");
 }
 
-#[test]
-fn networks_and_dns_render_for_networkd_and_resolved() {
-    let evaluation = evaluate_fixture("network", &["base", "network", "system"]);
-    let network = evaluation
+/// The files, units and triggers one module renders, as text.
+fn rendered_by(evaluation: &Evaluation, module: &str) -> String {
+    let output = &evaluation
         .modules()
         .iter()
-        .find(|rendered| rendered.name == "network")
-        .unwrap();
-
+        .find(|rendered| rendered.name == module)
+        .unwrap_or_else(|| panic!("no module `{module}`"))
+        .output;
     let mut out = String::new();
-    for (path, file) in &network.output.files {
+    for (path, file) in &output.files {
         out.push_str(&format!("{path}\n{}\n", file.text));
     }
-    for ((unit, action), paths) in &network.output.triggers {
+    for (name, unit) in &output.units {
+        out.push_str(&format!("{name}\n{}\n", unit.text()));
+    }
+    for ((unit, action), paths) in &output.triggers {
         out.push_str(&format!("{} {unit} on {paths:?}\n", action.as_str()));
     }
-    insta::assert_snapshot!(out, @r#"
+    out
+}
+
+const NETWORK_MODULES: [&str; 5] = ["base", "firewall", "network", "system", "tailscale"];
+
+#[test]
+fn networks_and_dns_render_for_networkd_and_resolved() {
+    let evaluation = evaluate_fixture("network", &NETWORK_MODULES);
+
+    insta::assert_snapshot!(rendered_by(&evaluation, "network"), @r#"
     /etc/systemd/network/10-lan.network
     [Match]
     Name=enp*
@@ -202,4 +213,50 @@ fn networks_and_dns_render_for_networkd_and_resolved() {
     reload systemd-networkd.service on {"/etc/systemd/network/10-lan.network"}
     restart systemd-resolved.service on {"/etc/systemd/resolved.conf.d/distro.conf"}
     "#);
+}
+
+#[test]
+fn tailscale_runs_its_agent_and_networkd_leaves_its_interface_alone() {
+    let evaluation = evaluate_fixture("network", &NETWORK_MODULES);
+
+    insta::assert_snapshot!(rendered_by(&evaluation, "tailscale"), @r#"
+    /etc/systemd/network/50-tailscale.network
+    [Match]
+    Name=tailscale0
+
+    [Link]
+    ActivationPolicy=manual
+    Unmanaged=yes
+
+    tailscaled.service
+    [Unit]
+    After=network-pre.target
+    After=network-online.target
+    After=systemd-resolved.service
+    Description=Tailscale node agent
+    Wants=network-pre.target
+    Wants=network-online.target
+
+    [Service]
+    CacheDirectory=tailscale
+    CacheDirectoryMode=0750
+    ExecStart=tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641 --tun tailscale0
+    ExecStopPost=tailscaled --cleanup
+    Restart=on-failure
+    RuntimeDirectory=tailscale
+    RuntimeDirectoryMode=0755
+    StateDirectory=tailscale
+    StateDirectoryMode=0700
+    Type=notify
+
+    [Install]
+    WantedBy=multi-user.target
+
+    reload systemd-networkd.service on {"/etc/systemd/network/50-tailscale.network"}
+    "#);
+    let firewall = rendered_by(&evaluation, "firewall");
+    assert!(
+        firewall.contains("iifname \"tailscale0\" accept"),
+        "{firewall}"
+    );
 }

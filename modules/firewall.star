@@ -11,6 +11,8 @@ def render(ctx):
         "    ct state established,related accept",
         "    iif lo accept",
     ]
+    for name in firewall["trusted_interfaces"]:
+        rules.append("    iifname \"%s\" accept" % name)
     for port in firewall["allowed_tcp_ports"]:
         rules.append("    tcp dport %d accept" % port)
     for port in firewall["allowed_udp_ports"]:
@@ -37,6 +39,11 @@ module(
             enable = option(types.bool, default = True),
             allowed_tcp_ports = option(types.set(types.port), default = []),
             allowed_udp_ports = option(types.set(types.port), default = []),
+            trusted_interfaces = option(
+                types.set(types.str),
+                default = [],
+                doc = "Interfaces whose traffic is always accepted, such as a VPN's.",
+            ),
         ),
     },
     writes = [],

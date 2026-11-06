@@ -17,18 +17,7 @@ pub fn json(value: &Value) -> Result<String, String> {
 /// A systemd-style INI file, such as a unit or a `.network` file, from a table of sections,
 /// ordered and with repeated keys like a unit.
 pub fn systemd(value: &Value) -> Result<String, String> {
-    let unit = Unit::from_value(value)?;
-    let mut out = String::new();
-    for section in &unit.sections {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        let _ = writeln!(out, "[{}]", section.name);
-        for (key, value) in &section.entries {
-            let _ = writeln!(out, "{key}={value}");
-        }
-    }
-    Ok(out)
+    Ok(Unit::from_value(value)?.text())
 }
 
 fn write_json(out: &mut String, value: &Value, depth: usize) -> Result<(), String> {
