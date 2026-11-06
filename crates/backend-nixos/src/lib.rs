@@ -290,6 +290,30 @@ fn current_generation() -> Result<Generation, String> {
         .ok_or_else(|| "there's no current generation".to_owned())
 }
 
+/// Removes the generations `numbers`, updates the boot menu to match, and collects what only
+/// they used. Returns what the collector said it freed, such as `1532 store paths deleted,
+/// 812.40 MiB freed`. Needs root.
+pub fn clean(numbers: &[u32]) -> Result<String, String> {
+    if !numbers.is_empty() {
+        command(
+            Command::new("nix-env")
+                .args(["--profile", PROFILE, "--delete-generations"])
+                .args(numbers.iter().map(u32::to_string)),
+        )?;
+        command(Command::new(Path::new(PROFILE).join("bin/switch-to-configuration")).arg("boot"))?;
+    }
+    let (stdout, stderr) = run(Command::new("nix-store").arg("--gc"))?;
+    Ok(freed(&format!("{stdout}{stderr}")).unwrap_or_else(|| "nothing freed".to_owned()))
+}
+
+/// The line where Nix's collector says what it freed.
+fn freed(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find(|line| line.contains(" freed"))
+        .map(|line| line.trim().to_owned())
+}
+
 /// Switches back to the previous generation and returns it.
 pub fn rollback() -> Result<Generation, String> {
     command(Command::new("nix-env").args(["--profile", PROFILE, "--rollback"]))?;
@@ -376,6 +400,17 @@ mod tests {
         assert_eq!(factory_message(aborted).as_deref(), Some("x"));
         assert_eq!(factory_message("error: attribute 'x' missing"), None);
     }
+
+    #[test]
+    fn what_the_collector_freed_is_picked_from_its_output() {
+        let output = "finding garbage collector roots...\ndeleting unused links...\n1532 store paths deleted, 812.40 MiB freed\n";
+        assert_eq!(
+            freed(output).as_deref(),
+            Some("1532 store paths deleted, 812.40 MiB freed")
+        );
+        assert_eq!(freed("nothing"), None);
+    }
+
     #[test]
     fn warnings_are_picked_from_what_nix_prints() {
         let stderr = [

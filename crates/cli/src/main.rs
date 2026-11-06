@@ -82,6 +82,15 @@ enum Command {
     },
     /// Show the system's generations
     History,
+    /// Remove old generations and what only they used
+    Clean {
+        /// How many generations before the current one to keep
+        #[arg(long, default_value_t = 3)]
+        keep: usize,
+        /// Remove them without asking first
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Show what changed between two generations
     Diff {
         /// The generation to compare from
@@ -256,6 +265,7 @@ fn main() -> ExitCode {
             None => Ok(ExitCode::FAILURE),
         }),
         Command::History => generations::history(),
+        Command::Clean { keep, yes } => generations::clean(keep, yes),
         Command::Diff { from, to } => generations::diff(from, to),
         Command::Rollback => generations::rollback(),
         Command::Run { package, args } => package_model(cli.config.as_deref(), &modules)

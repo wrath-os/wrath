@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use distro_backend_nixos::{self as backend, Target};
+use distro_backend_nixos::{self as backend, Generation, Target};
 use distro_model::{DEFAULT_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -83,7 +83,7 @@ pub fn apply(
             plan.summary(5)
         ),
     }
-    if !confirmed(yes)? {
+    if !confirmed(yes, "switch to it?")? {
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     }
@@ -97,15 +97,15 @@ pub fn apply(
 
 /// Whether to go ahead after showing the plan: yes with `-y`, else the person at the terminal
 /// says. Without a terminal there's nobody to ask, so it's an error instead of a guess.
-fn confirmed(yes: bool) -> Result<bool, String> {
+fn confirmed(yes: bool, question: &str) -> Result<bool, String> {
     use std::io::{IsTerminal, Write};
     match ask(yes, std::io::stdin().is_terminal()) {
         Ask::No => Ok(true),
-        Ask::Refuse => {
-            Err("nobody to ask whether to switch; pass -y to switch without asking".into())
-        }
+        Ask::Refuse => Err(format!(
+            "nobody to answer `{question}`; pass -y to go ahead without asking"
+        )),
         Ask::Yes => {
-            eprint!("switch to it? [y/N] ");
+            eprint!("{question} [y/N] ");
             let _ = std::io::stderr().flush();
             let mut answer = String::new();
             std::io::stdin()
@@ -243,6 +243,41 @@ fn duration(seconds: u64) -> String {
     } else {
         format!("{n} {unit}s")
     }
+}
+
+/// Removes old generations, keeping the current one and the `keep` before it, and what only
+/// they used, after saying which and asking.
+pub fn clean(keep: usize, yes: bool) -> Result<ExitCode, String> {
+    let generations = backend::history()?;
+    let old = to_remove(&generations, keep);
+    if old.is_empty() {
+        println!("no generations to remove; collecting what nothing uses");
+    } else {
+        let listed: Vec<String> = old.iter().map(u32::to_string).collect();
+        println!(
+            "removes generations {}, keeping the current one and the {keep} before it",
+            listed.join(", ")
+        );
+        if !confirmed(yes, "remove them?")? {
+            println!("nothing changed");
+            return Ok(ExitCode::SUCCESS);
+        }
+    }
+    let freed = backend::clean(&old)?;
+    println!("{freed}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The generations to remove: all but the current one and the `keep` newest others.
+fn to_remove(generations: &[Generation], keep: usize) -> Vec<u32> {
+    let mut others: Vec<u32> = generations
+        .iter()
+        .filter(|generation| !generation.current)
+        .map(|generation| generation.number)
+        .collect();
+    others.sort_unstable();
+    others.truncate(others.len().saturating_sub(keep));
+    others
 }
 
 pub fn activate(system: &Path) -> Result<ExitCode, String> {
@@ -523,6 +558,25 @@ mod tests {
         assert_eq!(ask(true, false), Ask::No);
         assert_eq!(ask(false, true), Ask::Yes);
         assert_eq!(ask(false, false), Ask::Refuse);
+    }
+
+    #[test]
+    fn clean_keeps_the_current_generation_and_the_newest_before_it() {
+        let generation = |number, current| Generation {
+            number,
+            created: String::new(),
+            current,
+            model_hash: None,
+        };
+        let generations = [
+            generation(1, false),
+            generation(2, false),
+            generation(3, true),
+            generation(4, false),
+        ];
+        assert_eq!(to_remove(&generations, 1), [1, 2]);
+        assert_eq!(to_remove(&generations, 0), [1, 2, 4]);
+        assert_eq!(to_remove(&generations, 5), Vec::<u32>::new());
     }
 
     #[test]
