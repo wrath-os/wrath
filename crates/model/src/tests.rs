@@ -415,13 +415,14 @@ fn plan_shows_package_versions_and_the_package_source() {
 
     insta::assert_snapshot!(plan(&before, &after).to_string(), @"
     packages
-      ~ package source (tier: live)
+      ~ package source (tier: soft-reboot)
           github:NixOS/nixpkgs/nixos-unstable: aaaaaaa1 -> bbbbbbb2
+          the base system, such as systemd and D-Bus, runs fully after a soft reboot
       ~ git (for john) (tier: live)
           locked at 2.51.0
       ~ ripgrep (tier: live)
           14.1.0 -> 14.2.0
-    3 changes, tier: live
+    3 changes, tier: soft-reboot
     ");
     insta::assert_snapshot!(plan(&after, &rebuilt).to_string(), @"
     packages

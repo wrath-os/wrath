@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use distro_backend_nixos::{self as backend, Target};
-use distro_model::{LOCK_FILE, Lock, Model, Source};
+use distro_model::{LOCK_FILE, Lock, Model, Source, Tier};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum BuildTarget {
@@ -59,8 +59,29 @@ pub fn apply(root: &Path, config: &Path, model: Model) -> Result<ExitCode, Strin
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
     }
+    // What the running system is, to say afterwards whether the switch did everything.
+    let running = backend::current_model().and_then(|path| crate::read_model(Path::new(path)).ok());
     let system = build(root, &model, BuildTarget::System)?;
-    activate(&system)
+    let code = activate(&system)?;
+    if let Some(note) = running
+        .and_then(|running| distro_model::plan(&running, &model).tier())
+        .and_then(full_effect)
+    {
+        println!("{note}");
+    }
+    Ok(code)
+}
+
+/// When a switch to changes of `tier` takes full effect, if it doesn't right away.
+fn full_effect(tier: Tier) -> Option<&'static str> {
+    match tier {
+        Tier::Live => None,
+        Tier::NextLogin => Some("some changes take effect when users log in again"),
+        Tier::SoftReboot => {
+            Some("some changes take full effect after a soft reboot: `systemctl soft-reboot`")
+        }
+        Tier::Reboot => Some("some changes take effect after a reboot"),
+    }
 }
 
 pub fn activate(system: &Path) -> Result<ExitCode, String> {
@@ -133,6 +154,26 @@ mod tests {
     use distro_model::Locked;
 
     use super::*;
+
+    #[test]
+    fn apply_says_when_a_change_takes_full_effect() {
+        assert_eq!(full_effect(Tier::Live), None);
+        assert!(
+            full_effect(Tier::NextLogin)
+                .unwrap()
+                .contains("log in again")
+        );
+        assert!(
+            full_effect(Tier::SoftReboot)
+                .unwrap()
+                .contains("systemctl soft-reboot")
+        );
+        assert!(
+            full_effect(Tier::Reboot)
+                .unwrap()
+                .contains("after a reboot")
+        );
+    }
 
     #[test]
     fn a_model_is_locked_when_its_lock_has_every_package() {

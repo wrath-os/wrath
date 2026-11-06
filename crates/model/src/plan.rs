@@ -384,11 +384,23 @@ fn source_change(before: Option<&Source>, after: Option<&Source>) -> Option<Chan
         ),
         (None, None) => return None,
     };
+    // A switch can't restart all of the base system, which comes from the package set too. A
+    // first lock pins the packages already running, so only a change of locked source counts.
+    let (details, tier) = match kind {
+        ChangeKind::Changed => (
+            vec![
+                detail,
+                "the base system, such as systemd and D-Bus, runs fully after a soft reboot".into(),
+            ],
+            Tier::SoftReboot,
+        ),
+        ChangeKind::Added | ChangeKind::Removed => (vec![detail], Tier::Live),
+    };
     Some(Change {
         kind,
         name: "package source".into(),
-        details: vec![detail],
-        tier: Some(Tier::Live),
+        details,
+        tier: Some(tier),
     })
 }
 
