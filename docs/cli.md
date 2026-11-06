@@ -98,12 +98,12 @@ $ distro add jq@1.7                   # writes it into your TOML and the lock
 ```
 
 `add` writes what you typed, `packages = ["jq@1.7"]`, and the lock records the nixpkgs revision
-it came from. `add` with a URL declares the source for you, named after the repository:
+it came from. `add` with a URL declares the source for you, named after the last part of the URL:
 
 ```console
-$ distro add github:jqlang/jq#jq
-added [sources.jqlang] url = "github:jqlang/jq"
-added jqlang#jq to users/john.toml
+$ distro add --home john github:jqlang/jq#jq
+declared source jq as github:jqlang/jq
+added jq#jq to users.john.packages in users/john.toml
 ```
 
 ## Commands
@@ -128,7 +128,7 @@ Packages:
 |---|---|
 | `distro run PKG [-- ARGS]` | Runs a package without installing it |
 | `distro shell [PKG...]` | A shell with those packages; with none in a project, the project's environment |
-| `distro add PKG...` | Adds packages to the configuration and locks them |
+| `distro add PKG...` | Adds packages to the configuration and locks them; `--home USER` for a user's own |
 | `distro remove PKG...` | Removes them |
 | `distro search TEXT` | Finds packages by name and description |
 | `distro info PKG` | Versions, where each comes from, what's installed and what a change would download |

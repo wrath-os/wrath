@@ -136,11 +136,7 @@ fn describe(model: &Model, described: &Value, name: &str, picked: &Picked) -> St
 /// path is added to `model` under that URL, so `github:jqlang/jq#jq` needs nothing declared.
 fn package_name(model: &mut Model, reference: &str) -> Result<String, String> {
     let (source, attribute) = package_source(reference);
-    if attribute.contains('@') {
-        return Err(format!(
-            "`{reference}`: picking a version needs the version index, which doesn't exist yet"
-        ));
-    }
+    refuse_version(reference, attribute)?;
     if !reference.contains('#') || model.sources.contains_key(source) {
         return Ok(reference.to_owned());
     }
@@ -152,21 +148,41 @@ fn package_name(model: &mut Model, reference: &str) -> Result<String, String> {
     } else if source.contains(':') {
         source.to_owned()
     } else {
-        let mut known: Vec<&str> = model.sources.keys().map(String::as_str).collect();
-        if !known.contains(&DEFAULT_SOURCE) {
-            known.insert(0, DEFAULT_SOURCE);
-        }
-        return Err(format!(
-            "there's no source `{source}`; the configuration has {}, or give a URL such as \
-             `github:NixOS/nixpkgs/nixos-25.11#{attribute}`",
-            known.join(", ")
-        ));
+        let known = model.sources.keys().map(String::as_str);
+        return Err(no_such_source(source, attribute, known));
     };
     model
         .sources
         .entry(url.clone())
         .or_insert_with(|| Source::follow(&url));
     Ok(format!("{url}#{attribute}"))
+}
+
+/// Refuses a package that picks a version, such as `jq@1.7`.
+pub(crate) fn refuse_version(reference: &str, attribute: &str) -> Result<(), String> {
+    if attribute.contains('@') {
+        return Err(format!(
+            "`{reference}`: picking a version needs the version index, which doesn't exist yet"
+        ));
+    }
+    Ok(())
+}
+
+/// The error for a package from `source`, which isn't one of the `declared` sources or a URL.
+pub(crate) fn no_such_source<'a>(
+    source: &str,
+    attribute: &str,
+    declared: impl Iterator<Item = &'a str>,
+) -> String {
+    let mut known: Vec<&str> = declared.collect();
+    if !known.contains(&DEFAULT_SOURCE) {
+        known.insert(0, DEFAULT_SOURCE);
+    }
+    format!(
+        "there's no source `{source}`; the configuration has {}, or give a URL such as \
+         `github:NixOS/nixpkgs/nixos-25.11#{attribute}`",
+        known.join(", ")
+    )
 }
 
 #[cfg(test)]

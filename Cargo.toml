@@ -21,6 +21,7 @@ starlark_derive = "0.14"
 tempfile = "3"
 thiserror = "2"
 toml = "0.9"
+toml_edit = "0.23"
 vsock = "0.5"
 
 distro-agent = { path = "crates/agent" }

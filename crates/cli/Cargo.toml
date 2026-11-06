@@ -19,6 +19,7 @@ distro-model.workspace = true
 distro-starlark.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

@@ -10,6 +10,7 @@ use distro_model::{LOCK_FILE, Lock, Model};
 
 mod bench;
 mod checks;
+mod edit;
 mod generations;
 mod run;
 mod secret;
@@ -78,6 +79,24 @@ enum Command {
         /// The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
         #[arg(required = true)]
         packages: Vec<String>,
+    },
+    /// Add packages to the configuration and lock them
+    Add {
+        /// The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+        #[arg(required = true)]
+        packages: Vec<String>,
+        /// Add them to this user's packages instead of the system's
+        #[arg(long, value_name = "USER")]
+        home: Option<String>,
+    },
+    /// Remove packages from the configuration
+    Remove {
+        /// The packages, as the configuration names them
+        #[arg(required = true)]
+        packages: Vec<String>,
+        /// Remove them from this user's packages instead of the system's
+        #[arg(long, value_name = "USER")]
+        home: Option<String>,
     },
     /// Lock what isn't locked yet, moving nothing that is
     Lock,
@@ -208,6 +227,10 @@ fn main() -> ExitCode {
             .and_then(|model| run::run(root, model, &package, &args)),
         Command::Shell { packages } => package_model(cli.config.as_deref(), &modules)
             .and_then(|model| run::shell(root, model, &packages)),
+        Command::Add { packages, home } => config()
+            .and_then(|config| edit::add(root, &config, &modules, home.as_deref(), &packages)),
+        Command::Remove { packages, home } => config()
+            .and_then(|config| edit::remove(root, &config, &modules, home.as_deref(), &packages)),
         Command::Lock => config().and_then(|config| lock(root, &config, &modules, None)),
         Command::Update { sources } => {
             config().and_then(|config| lock(root, &config, &modules, Some(&sources)))

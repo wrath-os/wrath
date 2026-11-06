@@ -305,3 +305,26 @@ fn run_refuses_sources_the_configuration_doesnt_have_before_building() {
         "{stderr}"
     );
 }
+
+#[test]
+fn add_and_remove_refuse_what_they_cant_do_before_changing_anything() {
+    let config = basic_with_lock(LOCK);
+    let dir = config.path().to_str().unwrap();
+    let before = std::fs::read_to_string(config.path().join("system.toml")).unwrap();
+
+    let unknown = distro(&["add", "-C", dir, "stabel#jq"]);
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(stderr.contains("there's no source `stabel`"), "{stderr}");
+
+    let nobody = distro(&["add", "-C", dir, "--home", "nobody", "jq"]);
+    let stderr = String::from_utf8_lossy(&nobody.stderr);
+    assert!(stderr.contains("there's no user `nobody`"), "{stderr}");
+
+    let missing = distro(&["remove", "-C", dir, "jq"]);
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("`jq` isn't in packages"), "{stderr}");
+
+    let after = std::fs::read_to_string(config.path().join("system.toml")).unwrap();
+    assert_eq!(before, after);
+}
