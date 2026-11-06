@@ -199,11 +199,43 @@ pub fn activate(system: &Path) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Lists the generations, each with what changed from the one before it.
 pub fn history() -> Result<ExitCode, String> {
+    let mut before: Option<Model> = None;
     for generation in backend::history()? {
         println!("{generation}");
+        let model = generation_model(generation.number).ok();
+        if let (Some(before), Some(after)) = (&before, &model) {
+            println!("      {}", distro_model::plan(before, after).summary(4));
+        }
+        before = model;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Shows what changed going from generation `from` to `to`, or to the current one.
+pub fn diff(from: u32, to: Option<u32>) -> Result<ExitCode, String> {
+    let to = match to {
+        Some(to) => to,
+        None => {
+            let current = backend::history()?.into_iter().find(|g| g.current);
+            current.ok_or("there's no current generation")?.number
+        }
+    };
+    let (before, after) = (generation_model(from)?, generation_model(to)?);
+    println!("generation {from} -> {to}");
+    print!("{}", distro_model::plan(&before, &after));
+    Ok(ExitCode::SUCCESS)
+}
+
+fn generation_model(number: u32) -> Result<Model, String> {
+    let path = backend::generation_model(number);
+    if !path.exists() {
+        return Err(format!(
+            "generation {number} has no model; it doesn't exist, or distro didn't build it"
+        ));
+    }
+    crate::read_model(&path)
 }
 
 pub fn rollback() -> Result<ExitCode, String> {

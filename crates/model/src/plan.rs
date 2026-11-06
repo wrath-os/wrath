@@ -37,6 +37,17 @@ pub enum ChangeKind {
     Changed,
 }
 
+impl ChangeKind {
+    /// How plans mark it: `+`, `-` or `~`.
+    pub fn sign(self) -> char {
+        match self {
+            Self::Added => '+',
+            Self::Removed => '-',
+            Self::Changed => '~',
+        }
+    }
+}
+
 /// One difference between two models.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Change {
@@ -73,6 +84,28 @@ impl Plan {
             .max()
     }
 
+    /// The changes in one line, naming up to `limit` of them: `~ services.web.port, + jq`.
+    /// Options and packages come first, since they're what people change; the rest only show
+    /// when nothing like that changed.
+    pub fn summary(&self, limit: usize) -> String {
+        let mut changes: Vec<&Change> = self.options.iter().chain(&self.packages).collect();
+        if changes.is_empty() {
+            changes = self.sections().flat_map(|(_, changes)| changes).collect();
+        }
+        if changes.is_empty() {
+            return "no changes".to_owned();
+        }
+        let named: Vec<String> = changes
+            .iter()
+            .take(limit)
+            .map(|change| format!("{} {}", change.kind.sign(), change.name))
+            .collect();
+        match changes.len().saturating_sub(limit) {
+            0 => named.join(", "),
+            more => format!("{} and {more} more", named.join(", ")),
+        }
+    }
+
     fn sections(&self) -> impl Iterator<Item = (&'static str, &[Change])> {
         [
             ("options", self.options.as_slice()),
@@ -97,12 +130,7 @@ impl fmt::Display for Plan {
             writeln!(f, "{heading}")?;
             for change in changes {
                 count += 1;
-                let sign = match change.kind {
-                    ChangeKind::Added => '+',
-                    ChangeKind::Removed => '-',
-                    ChangeKind::Changed => '~',
-                };
-                write!(f, "  {sign} {}", change.name)?;
+                write!(f, "  {} {}", change.kind.sign(), change.name)?;
                 if let Some(tier) = change.tier {
                     write!(f, " (tier: {tier})")?;
                 }

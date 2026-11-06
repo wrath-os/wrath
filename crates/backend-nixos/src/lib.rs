@@ -297,6 +297,11 @@ pub fn rollback() -> Result<Generation, String> {
     current_generation()
 }
 
+/// Where generation `number` keeps the model it was built from, when distro built it.
+pub fn generation_model(number: u32) -> PathBuf {
+    Path::new(&format!("{PROFILE}-{number}-link")).join("etc/distro/model.json")
+}
+
 /// Every generation of the system profile, oldest first.
 pub fn history() -> Result<Vec<Generation>, String> {
     let listing =

@@ -1,6 +1,6 @@
 use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value};
 
-use crate::{File, Lock, Locked, Model, Secret, Source, plan};
+use crate::{Change, ChangeKind, File, Lock, Locked, Model, Plan, Secret, Source, plan};
 
 fn model(port: i64) -> Model {
     let mut model = Model::default();
@@ -763,4 +763,35 @@ fn plan_shows_each_source_and_only_the_default_one_needs_a_soft_reboot() {
           not locked yet
     2 changes, tier: live
     ");
+}
+
+#[test]
+fn a_plan_in_one_line_names_what_people_change_first() {
+    let change = |kind, name: &str| Change {
+        kind,
+        name: name.into(),
+        details: Vec::new(),
+        tier: None,
+    };
+    let plan = Plan {
+        options: vec![
+            change(ChangeKind::Changed, "services.web.port"),
+            change(ChangeKind::Added, "users.john.shell"),
+        ],
+        packages: vec![change(ChangeKind::Removed, "htop")],
+        files: vec![change(ChangeKind::Changed, "/etc/web.conf")],
+        ..Plan::default()
+    };
+    assert_eq!(
+        plan.summary(5),
+        "~ services.web.port, + users.john.shell, - htop"
+    );
+    assert_eq!(plan.summary(1), "~ services.web.port and 2 more");
+
+    let only_files = Plan {
+        files: vec![change(ChangeKind::Changed, "/etc/web.conf")],
+        ..Plan::default()
+    };
+    assert_eq!(only_files.summary(5), "~ /etc/web.conf");
+    assert_eq!(Plan::default().summary(5), "no changes");
 }

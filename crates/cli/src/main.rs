@@ -76,6 +76,13 @@ enum Command {
     },
     /// Show the system's generations
     History,
+    /// Show what changed between two generations
+    Diff {
+        /// The generation to compare from
+        from: u32,
+        /// The generation to compare to [default: the current one]
+        to: Option<u32>,
+    },
     /// Switch back to the previous generation
     Rollback,
     /// Run a package's program without installing it
@@ -237,6 +244,7 @@ fn main() -> ExitCode {
             None => Ok(ExitCode::FAILURE),
         }),
         Command::History => generations::history(),
+        Command::Diff { from, to } => generations::diff(from, to),
         Command::Rollback => generations::rollback(),
         Command::Run { package, args } => package_model(cli.config.as_deref(), &modules)
             .and_then(|model| run::run(root, model, &package, &args)),
