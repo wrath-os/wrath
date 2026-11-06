@@ -403,7 +403,37 @@ fn homes_of(evaluation: &Evaluation, module: &str) -> String {
     out
 }
 
-const HOME_MODULES: [&str; 6] = ["files", "git", "jujutsu", "secrets", "system", "users"];
+const HOME_MODULES: [&str; 7] = [
+    "files", "git", "jujutsu", "secrets", "session", "system", "users",
+];
+
+#[test]
+fn session_variables_reach_systemd_and_login_shells() {
+    let evaluation = evaluate_fixture("home", &HOME_MODULES);
+
+    insta::assert_snapshot!(homes_of(&evaluation, "session"), @r#"
+    john ~/.config/distro/session.sh
+    export EDITOR="hx"
+    export GREETING="it's \"quoted\""
+    export PATH="$HOME/bin:${PATH}"
+
+    john ~/.config/environment.d/60-distro.conf
+    EDITOR=hx
+    GREETING=it's "quoted"
+    PATH=$HOME/bin:${PATH}
+    "#);
+}
+
+#[test]
+fn session_variables_cannot_run_commands() {
+    let config = MemFs::new([
+        ("system.toml", "[system]\nhostname = \"box\"\n"),
+        ("users/john.toml", "session_variables.X = \"$(id)\"\n"),
+    ]);
+
+    let error = evaluate_with(&config, &HOME_MODULES).unwrap_err();
+    assert!(error.contains("users.john.session_variables.X"), "{error}");
+}
 
 #[test]
 fn users_configure_git_and_files_in_their_homes() {

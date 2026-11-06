@@ -1,5 +1,6 @@
 description = "John"
 packages = ["mergiraf"]
+session_variables = { EDITOR = "hx", PATH = "$HOME/bin:$${PATH}", GREETING = "it's \"quoted\"" }
 
 [programs.git]
 enable = true

@@ -191,6 +191,13 @@ in
       );
   };
 
+  # Login shells pick up the user's session variables; systemd reads environment.d itself.
+  environment.extraInit = ''
+    if [ -r "$HOME/.config/distro/session.sh" ]; then
+      . "$HOME/.config/distro/session.sh"
+    fi
+  '';
+
   networking.hostName = mkDefault base.system.hostname;
   time.timeZone = mkDefault base.system.timezone;
 
