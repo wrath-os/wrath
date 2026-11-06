@@ -5,6 +5,7 @@
 def render(ctx):
     extend = ctx.read("nixos.extend")
     modules = ctx.read("nixos.modules")
+    replaces = ctx.read("nixos.replaces")
     setting = {}
     if extend != None:
         flake, _, host = extend.partition("#")
@@ -13,6 +14,8 @@ def render(ctx):
         setting = {"flake": flake, "host": host}
     if modules:
         setting["modules"] = modules
+    if replaces:
+        setting["replaces"] = replaces
     if setting:
         ctx.backend("nixos", setting)
 
@@ -29,6 +32,12 @@ module(
             types.list(types.path),
             default = [],
             doc = "NixOS modules added to the system, such as ones not yet replaced by TOML.",
+        ),
+        "nixos.replaces": option(
+            types.set(types.str),
+            default = [],
+            doc = "Units, such as `ollama.service`, that the TOML now provides in place of the " +
+                  "ones NixOS defines. Any other unit both define is an error.",
         ),
     },
     writes = [],

@@ -6,3 +6,4 @@ hostname = "box"
 [nixos]
 extend = "/etc/nixos#box"
 modules = ["/etc/nixos/vm-stubs.nix"]
+replaces = ["ollama.service"]

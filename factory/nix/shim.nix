@@ -18,6 +18,7 @@ let
   input = lib.importJSON distroInput;
   base = input.base;
   session = base.session or null;
+  replaces = input.nixos.replaces or [ ];
   package = name: lib.getAttrFromPath (lib.splitString "." name) pkgs;
   inherit (lib) mkDefault;
 
@@ -60,7 +61,10 @@ in
     ) overridden
     ++ lib.optional (
       config.networking.firewall.enable && input.units ? "nftables.service"
-    ) "the NixOS firewall runs alongside the TOML's networking.firewall; turn one of them off";
+    ) "the NixOS firewall runs alongside the TOML's networking.firewall; turn one of them off"
+    ++ map (name: "nixos.replaces names ${name}, which no module renders") (
+      lib.filter (name: !(input.units ? ${name})) replaces
+    );
 
   environment.systemPackages = [ distro ] ++ map package input.packages;
 
@@ -74,8 +78,9 @@ in
     path: file: "L+ ${path} - - - - ${pkgs.writeText (baseNameOf path) file.text}"
   ) input.files;
 
-  systemd.units = lib.mapAttrs (_: unit: {
-    inherit (unit) text;
+  # A unit NixOS also defines is a conflict, unless the TOML says it replaces that one.
+  systemd.units = lib.mapAttrs (name: unit: {
+    text = if lib.elem name replaces then lib.mkForce unit.text else unit.text;
     wantedBy = unit.wanted_by;
     requiredBy = unit.required_by;
   }) input.units;

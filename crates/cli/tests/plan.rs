@@ -68,7 +68,7 @@ fn a_hybrid_system_names_its_nixos_configuration_and_modules() {
 
     insta::assert_snapshot!(backends.join("\n"), @r#"
     + nixos (tier: reboot)
-        { flake = "/etc/nixos", host = "box", modules = ["/etc/nixos/vm-stubs.nix"] }
+        { flake = "/etc/nixos", host = "box", modules = ["/etc/nixos/vm-stubs.nix"], replaces = ["ollama.service"] }
     "#);
 }
 
