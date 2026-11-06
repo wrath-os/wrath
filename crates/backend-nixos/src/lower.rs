@@ -156,7 +156,7 @@ fn sources_value(model: &Model) -> Value {
     let sources = model
         .sources
         .iter()
-        .map(|(name, Source { url, rev, hash })| {
+        .map(|(name, Source { url, rev, hash, .. })| {
             let mut source = BTreeMap::from([("url".to_owned(), Value::Str(url.clone()))]);
             if !hash.is_empty() {
                 source.insert("hash".to_owned(), Value::Str(hash.clone()));
@@ -529,6 +529,7 @@ mod tests {
                 url: "github:NixOS/nixpkgs/nixos-unstable".into(),
                 rev: Some("1d06008".into()),
                 hash: "sha256-abc".into(),
+                date: None,
             },
         );
         model.sources.insert(

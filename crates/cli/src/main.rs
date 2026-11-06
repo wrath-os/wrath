@@ -105,6 +105,8 @@ enum Command {
         /// Sources to update, such as `nixpkgs` [default: all of them]
         sources: Vec<String>,
     },
+    /// Show each source: what it follows, where it's pinned and how old that is
+    Sources,
     /// Check the configuration for errors, without building it
     Check,
     /// Show where option values come from
@@ -236,6 +238,10 @@ fn main() -> ExitCode {
         Command::Update { sources } => {
             config().and_then(|config| lock(root, &config, &modules, Some(&sources)))
         }
+        Command::Sources => config().and_then(|config| match model(&config, &modules) {
+            Some(model) => generations::sources(&model),
+            None => Ok(ExitCode::FAILURE),
+        }),
         Command::Check => config().and_then(|config| check_config(&config, &modules)),
         Command::Why { all: _, option } => {
             config().and_then(|config| why(&config, &modules, option.as_deref()))

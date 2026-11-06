@@ -54,6 +54,17 @@
       # Where packages come from without a lock: this flake's nixpkgs, which follows this URL.
       defaultUrl = "github:NixOS/nixpkgs/nixos-unstable";
 
+      # When a flake's revision was made, as `2026-10-30`, if it says.
+      date =
+        flake:
+        let
+          stamp = flake.lastModifiedDate or null;
+        in
+        if stamp == null then
+          null
+        else
+          "${builtins.substring 0 4 stamp}-${builtins.substring 4 2 stamp}-${builtins.substring 6 2 stamp}";
+
       # The nixpkgs a lock's source names, pinned by its hash, or the latest without one.
       pinned =
         source:
@@ -137,6 +148,7 @@
             url = sources.${name}.url;
             rev = flake.rev or null;
             hash = flake.narHash;
+            date = date flake;
           };
           default =
             if settings ? flake then
@@ -149,6 +161,7 @@
                   url = flakeRef;
                   rev = extended.rev or null;
                   hash = extended.narHash;
+                  date = date extended;
                 };
               }
             else
@@ -158,6 +171,7 @@
                   url = sources.nixpkgs.url or defaultUrl;
                   rev = packageSet.rev or null;
                   hash = packageSet.narHash;
+                  date = date packageSet;
                 };
               };
         in

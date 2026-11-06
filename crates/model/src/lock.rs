@@ -45,6 +45,8 @@ pub struct Source {
     /// The hash of its contents, which pins it. Empty until the source is locked.
     #[serde(default)]
     pub hash: String,
+    /// When the revision was made, as `2026-10-30`, when the source says.
+    pub date: Option<String>,
 }
 
 impl Source {
@@ -100,6 +102,9 @@ impl Lock {
                 let _ = writeln!(out, "rev = {}", quote(rev));
             }
             let _ = writeln!(out, "hash = {}", quote(&source.hash));
+            if let Some(date) = &source.date {
+                let _ = writeln!(out, "date = {}", quote(date));
+            }
         }
         out.push_str("\n[packages]\n");
         for (name, locked) in &self.packages {
@@ -147,6 +152,7 @@ mod tests {
                         url: "github:NixOS/nixpkgs/nixos-unstable".into(),
                         rev: Some("1d06008".into()),
                         hash: "sha256-abc".into(),
+                        date: Some("2026-10-30".into()),
                     },
                 ),
                 (
@@ -155,6 +161,7 @@ mod tests {
                         url: "github:NixOS/nixpkgs/nixos-25.11".into(),
                         rev: Some("9f2c1aa".into()),
                         hash: "sha256-def".into(),
+                        date: None,
                     },
                 ),
             ]),
@@ -188,6 +195,7 @@ mod tests {
         url = "github:NixOS/nixpkgs/nixos-unstable"
         rev = "1d06008"
         hash = "sha256-abc"
+        date = "2026-10-30"
 
         [sources.stable]
         url = "github:NixOS/nixpkgs/nixos-25.11"

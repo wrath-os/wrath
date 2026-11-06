@@ -287,6 +287,7 @@ fn read_sources(value: &Value) -> Result<BTreeMap<String, Source>, String> {
             url: string_at(fields, "url", name)?,
             rev: optional_string(fields, "rev", name)?,
             hash: string_at(fields, "hash", name)?,
+            date: optional_string(fields, "date", name)?,
         })
     })
 }

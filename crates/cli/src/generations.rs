@@ -198,6 +198,84 @@ fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
     std::fs::write(&path, lock.to_toml()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Prints each source: what it follows, where it's pinned and how old that is.
+pub fn sources(model: &Model) -> Result<ExitCode, String> {
+    let today = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() / 86_400) as i64;
+    print!("{}", sources_table(model, today));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The table `sources` prints, with ages counted to `today`, in days since 1970.
+fn sources_table(model: &Model, today: i64) -> String {
+    let mut rows: Vec<[String; 3]> = model
+        .sources
+        .iter()
+        .map(|(name, source)| [name.clone(), source.url.clone(), pin(source, today)])
+        .collect();
+    if !model.sources.contains_key(DEFAULT_SOURCE) {
+        let factory = [
+            DEFAULT_SOURCE.to_owned(),
+            "the factory's".to_owned(),
+            String::new(),
+        ];
+        rows.insert(0, factory);
+    }
+    let width = |column: usize| rows.iter().map(|row| row[column].len()).max().unwrap_or(0);
+    let (names, urls) = (width(0), width(1));
+    rows.iter()
+        .map(|[name, url, pin]| {
+            format!("{name:names$}  {url:urls$}  {pin}")
+                .trim_end()
+                .to_owned()
+                + "\n"
+        })
+        .collect()
+}
+
+/// Where a source is pinned, as `1d06008, 2026-10-30, 7 days old`.
+fn pin(source: &Source, today: i64) -> String {
+    if !source.is_locked() {
+        return "not locked yet".to_owned();
+    }
+    let rev = source
+        .rev
+        .as_deref()
+        .map_or("pinned by hash", |rev| &rev[..rev.len().min(7)]);
+    match source.date.as_deref() {
+        Some(date) => match days_since_epoch(date) {
+            Some(days) => format!("{rev}, {date}, {}", age(today - days)),
+            None => format!("{rev}, {date}"),
+        },
+        None => rev.to_owned(),
+    }
+}
+
+fn age(days: i64) -> String {
+    match days {
+        ..=0 => "from today".to_owned(),
+        1 => "1 day old".to_owned(),
+        days => format!("{days} days old"),
+    }
+}
+
+/// Days from 1970-01-01 to a date written `2026-10-30`, in the proleptic Gregorian calendar.
+fn days_since_epoch(date: &str) -> Option<i64> {
+    let mut parts = date.splitn(3, '-').map(|part| part.parse::<i64>().ok());
+    let (year, month, day) = (parts.next()??, parts.next()??, parts.next()??);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Howard Hinnant's days_from_civil.
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
+}
+
 /// The factory under `root`, the flake that builds systems.
 fn factory(root: &Path) -> Result<PathBuf, String> {
     let factory = root.join("factory/nix");
@@ -246,12 +324,41 @@ mod tests {
         assert!(matching(Some("0123"), &model).contains("differs"));
         assert!(matching(None, &model).contains("didn't build it"));
     }
+
+    #[test]
+    fn sources_show_their_pin_and_its_age() {
+        assert_eq!(days_since_epoch("1970-01-01"), Some(0));
+        assert_eq!(days_since_epoch("2000-03-01"), Some(11_017));
+        assert_eq!(days_since_epoch("2026-13-01"), None);
+        let today = days_since_epoch("2026-11-06").unwrap();
+
+        let mut model = Model::default();
+        model.sources.insert(
+            "stable".into(),
+            Source {
+                url: "github:NixOS/nixpkgs/nixos-25.11".into(),
+                rev: Some("b6018f87da91".into()),
+                hash: "sha256-abc".into(),
+                date: Some("2026-10-30".into()),
+            },
+        );
+        model
+            .sources
+            .insert("jq".into(), Source::follow("github:jqlang/jq"));
+
+        insta::assert_snapshot!(sources_table(&model, today), @"
+        nixpkgs  the factory's
+        jq       github:jqlang/jq                  not locked yet
+        stable   github:NixOS/nixpkgs/nixos-25.11  b6018f8, 2026-10-30, 7 days old
+        ");
+    }
     #[test]
     fn update_unpins_the_sources_it_names_or_all_of_them() {
         let pinned = |url: &str| Source {
             url: url.into(),
             rev: Some("1d06008".into()),
             hash: "sha256-abc".into(),
+            date: None,
         };
         let mut model = Model::default();
         model.sources.insert("nixpkgs".into(), pinned("github:a/b"));

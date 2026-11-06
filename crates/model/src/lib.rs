@@ -259,16 +259,29 @@ impl Model {
         let sources = self
             .sources
             .iter()
-            .map(|(name, Source { url, rev, hash })| {
-                let mut entry = BTreeMap::from([
-                    ("url".to_owned(), Value::Str(url.clone())),
-                    ("hash".to_owned(), Value::Str(hash.clone())),
-                ]);
-                if let Some(rev) = rev {
-                    entry.insert("rev".to_owned(), Value::Str(rev.clone()));
-                }
-                (name.clone(), Value::Table(entry))
-            })
+            .map(
+                |(
+                    name,
+                    Source {
+                        url,
+                        rev,
+                        hash,
+                        date,
+                    },
+                )| {
+                    let mut entry = BTreeMap::from([
+                        ("url".to_owned(), Value::Str(url.clone())),
+                        ("hash".to_owned(), Value::Str(hash.clone())),
+                    ]);
+                    if let Some(rev) = rev {
+                        entry.insert("rev".to_owned(), Value::Str(rev.clone()));
+                    }
+                    if let Some(date) = date {
+                        entry.insert("date".to_owned(), Value::Str(date.clone()));
+                    }
+                    (name.clone(), Value::Table(entry))
+                },
+            )
             .collect();
         let locked = self
             .locked

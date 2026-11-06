@@ -363,6 +363,7 @@ fn source(url: &str, rev: &str) -> Source {
         url: url.into(),
         rev: Some(rev.into()),
         hash: format!("sha256-{rev}"),
+        date: None,
     }
 }
 

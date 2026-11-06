@@ -117,19 +117,29 @@ fn picked(described: &Value, name: &str) -> Option<Picked> {
     })
 }
 
-/// What a package is and where it came from, as `jq 1.8.1 from nixpkgs at 1d06008 (locked)`.
+/// What a package is and where it came from, as
+/// `jq 1.8.1 from nixpkgs (1d06008, 2026-10-30, locked)`.
 fn describe(model: &Model, described: &Value, name: &str, picked: &Picked) -> String {
     let (source, attribute) = package_source(name);
-    let rev = described["sources"][source]["rev"]
-        .as_str()
-        .map(|rev| format!(" at {}", &rev[..rev.len().min(7)]))
-        .unwrap_or_default();
+    let pinned = &described["sources"][source];
     let how = match model.sources.get(source) {
-        Some(declared) if declared.is_locked() => " (locked)",
-        Some(_) => " (its newest version)",
-        None => " (the factory's)",
+        Some(declared) if declared.is_locked() => "locked",
+        Some(_) => "its newest version",
+        None => "the factory's",
     };
-    format!("{attribute} {} from {source}{rev}{how}", picked.version)
+    let details: Vec<&str> = [
+        pinned["rev"].as_str().map(|rev| &rev[..rev.len().min(7)]),
+        pinned["date"].as_str(),
+        Some(how),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    format!(
+        "{attribute} {} from {source} ({})",
+        picked.version,
+        details.join(", ")
+    )
 }
 
 /// The name the model uses for a package the command line names. A source given as a URL or a
@@ -251,12 +261,13 @@ mod tests {
                 url: "github:NixOS/nixpkgs/nixos-unstable".into(),
                 rev: Some("1d060086d60c".into()),
                 hash: "sha256-abc".into(),
+                date: None,
             },
         );
         let described: Value = serde_json::json!({
             "packages": { "jq": { "version": "1.8.1", "program": "jq" } },
             "sources": {
-                "nixpkgs": { "rev": "1d060086d60c" },
+                "nixpkgs": { "rev": "1d060086d60c", "date": "2026-10-30" },
                 "stable": { "rev": "b6018f87da91" },
             },
         });
@@ -264,15 +275,15 @@ mod tests {
         assert_eq!(jq.program, "jq");
         assert_eq!(
             describe(&model, &described, "jq", &jq),
-            "jq 1.8.1 from nixpkgs at 1d06008 (locked)"
+            "jq 1.8.1 from nixpkgs (1d06008, 2026-10-30, locked)"
         );
         assert_eq!(
             describe(&model, &described, "stable#jq", &jq),
-            "jq 1.8.1 from stable at b6018f8 (its newest version)"
+            "jq 1.8.1 from stable (b6018f8, its newest version)"
         );
         assert_eq!(
             describe(&Model::default(), &described, "jq", &jq),
-            "jq 1.8.1 from nixpkgs at 1d06008 (the factory's)"
+            "jq 1.8.1 from nixpkgs (1d06008, 2026-10-30, the factory's)"
         );
         assert_eq!(picked(&described, "rg"), None);
     }
