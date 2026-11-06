@@ -99,7 +99,7 @@ what commands normally print.
 | `history`, `rollback` | lists generations, goes back to one |
 | `lock`, `update` | pins sources, moves them forward |
 | `run`, `shell` | uses packages without changing anything |
-| `add`, `remove` (planned) | edits the configuration's TOML |
+| `add`, `remove` | edits the configuration's TOML |
 | `why` | explains where a value comes from |
 
 A verb that only makes sense for one size, or that does something subtly different per size,

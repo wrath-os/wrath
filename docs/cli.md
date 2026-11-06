@@ -1,7 +1,7 @@
 # The command line (draft)
 
-A draft of the command set before we add more verbs, so new commands fit one scheme. Nothing
-here is final, and most of it isn't built yet.
+A draft of the command set, so new commands fit one scheme. Nothing here is final; "What's
+built" near the end says how far along it is.
 
 ## Principles
 
@@ -169,14 +169,16 @@ The commands that only make sense in this repository move under `distro dev`: `d
 (running scenarios, today's `check`), `dev status`, `dev bench`. `fill-templates` stays hidden;
 activation runs it, and people don't.
 
-## From today's commands
+## What's built
 
-| Today | Becomes |
-|---|---|
-| `--config DIR` on every command | Found from where you are; `-C DIR` to choose |
-| `check`, `status`, `bench` | `dev test`, `dev status`, `dev bench` |
-| `activate PATH` | `apply PATH` |
-| `--root` | Only on `dev` commands |
+Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `try`, `keep`,
+`history`, `diff`, `rollback`, `clean`, `build`, `apply PATH`, `run`, `shell`, `add`, `remove`,
+`lock`, `update`, `sources`, `check`, `why` for options, files and packages, `options`,
+`secret`, the `dev` commands, and `--json` for `plan`, `status`, `history` and `sources`.
+
+Not yet: finding a project's `distro.toml`, `--user`, versions (`jq@1.7`), `search`, `info`,
+`--json` elsewhere, `--host`, and `--verbose`. `clean` lists the generations it removes rather than
+estimating the space first, and says what it freed afterwards.
 
 ## For people coming from Nix
 
