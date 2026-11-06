@@ -328,3 +328,34 @@ fn add_and_remove_refuse_what_they_cant_do_before_changing_anything() {
     let after = std::fs::read_to_string(config.path().join("system.toml")).unwrap();
     assert_eq!(before, after);
 }
+
+#[test]
+fn why_explains_files_and_packages_by_the_module_and_options_behind_them() {
+    let file = stdout(&distro(&[
+        "why",
+        "-C",
+        "fixtures/configs/basic",
+        "/etc/nginx/main.conf",
+    ]));
+    insta::assert_snapshot!(file, @r#"
+    /etc/nginx/main.conf is written by module `nginx`
+      from what the configuration sets:
+        services.nginx.main.enable = true, set at fixtures/configs/basic/services/web.toml:2:10
+        services.nginx.main.port = 8080, set at fixtures/configs/basic/services/web.toml:3:8
+        services.nginx.main.sites.blog.domains = ["blog.example.com", "box.lan"], set at fixtures/configs/basic/services/web.toml:6:11
+        services.nginx.main.sites.blog.root = "/srv/blog", set at fixtures/configs/basic/services/web.toml:7:8
+    "#);
+
+    let package = stdout(&distro(&[
+        "why",
+        "-C",
+        "fixtures/configs/basic",
+        "nftables",
+    ]));
+    assert!(package.starts_with("nftables is installed for everyone by module `firewall`"));
+
+    let unknown = distro(&["why", "-C", "fixtures/configs/basic", "/etc/nope"]);
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(stderr.contains("no module writes `/etc/nope`"), "{stderr}");
+}

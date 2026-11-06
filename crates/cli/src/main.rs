@@ -133,12 +133,12 @@ enum Command {
         /// Only the options under this one, such as `services.nginx` or `users.john`
         prefix: Option<String>,
     },
-    /// Show where option values come from
+    /// Show where an option's value, a file or a package comes from
     Why {
         /// Explain every option
         #[arg(long, conflicts_with = "option", required_unless_present = "option")]
         all: bool,
-        /// The option, or table of options, to explain
+        /// An option or table of options, a file such as `/etc/nginx/main.conf`, or a package
         option: Option<String>,
     },
     /// Edit secrets and encrypt them to the machine and the people who manage it
@@ -578,12 +578,28 @@ fn read_model(path: &Path) -> Result<Model, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-fn why(config: &Path, modules: &Path, option: Option<&str>) -> Result<ExitCode, String> {
-    let prefix = option.map(OptionPath::parse).transpose()?;
+/// Explains an option or table of options, a file such as `/etc/nginx/main.conf`, or a package.
+fn why(config: &Path, modules: &Path, thing: Option<&str>) -> Result<ExitCode, String> {
     let Some(evaluation) = evaluate(config, modules) else {
         return Ok(ExitCode::FAILURE);
     };
-    print!("{}", distro_eval::explain(&evaluation, prefix.as_ref())?);
+    let Some(thing) = thing else {
+        print!("{}", distro_eval::explain(&evaluation, None)?);
+        return Ok(ExitCode::SUCCESS);
+    };
+    let as_option = OptionPath::parse(thing)
+        .and_then(|option| distro_eval::explain(&evaluation, Some(&option)));
+    match (as_option, distro_eval::explain_output(&evaluation, thing)) {
+        (Ok(explained), _) | (Err(_), Some(explained)) => print!("{explained}"),
+        (Err(_), None) if thing.starts_with(['/', '~']) => {
+            return Err(format!("no module writes `{thing}`"));
+        }
+        (Err(message), None) => {
+            return Err(format!(
+                "{message}, and no module installs a package `{thing}`"
+            ));
+        }
+    }
     Ok(ExitCode::SUCCESS)
 }
 
