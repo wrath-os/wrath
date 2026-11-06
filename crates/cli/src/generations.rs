@@ -55,7 +55,13 @@ pub enum Switch {
 /// Builds the system for `model` and switches to it, unless the running system already has it.
 /// Packages the lock next to `config` doesn't have yet are locked first, so the lock always
 /// describes the running system.
-pub fn apply(root: &Path, config: &Path, model: Model, how: Switch) -> Result<ExitCode, String> {
+pub fn apply(
+    root: &Path,
+    config: &Path,
+    model: Model,
+    how: Switch,
+    yes: bool,
+) -> Result<ExitCode, String> {
     let model = if model.is_locked() {
         model
     } else {
@@ -68,17 +74,63 @@ pub fn apply(root: &Path, config: &Path, model: Model, how: Switch) -> Result<Ex
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
     }
-    // What the running system is, to say afterwards whether the switch did everything.
     let running = backend::current_model().and_then(|path| crate::read_model(Path::new(path)).ok());
+    let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
+    match &running {
+        Some(_) => print!("{plan}"),
+        None => println!(
+            "distro didn't build the running system, so all of it is new: {}",
+            plan.summary(5)
+        ),
+    }
+    if !confirmed(yes)? {
+        println!("nothing changed");
+        return Ok(ExitCode::SUCCESS);
+    }
     let system = build(root, &model, BuildTarget::System)?;
     let code = switch_to(&system, how)?;
-    if let Some(note) = running
-        .and_then(|running| distro_model::plan(&running, &model).tier())
-        .and_then(full_effect)
-    {
+    if let Some(note) = running.and(plan.tier()).and_then(full_effect) {
         println!("{note}");
     }
     Ok(code)
+}
+
+/// Whether to go ahead after showing the plan: yes with `-y`, else the person at the terminal
+/// says. Without a terminal there's nobody to ask, so it's an error instead of a guess.
+fn confirmed(yes: bool) -> Result<bool, String> {
+    use std::io::{IsTerminal, Write};
+    match ask(yes, std::io::stdin().is_terminal()) {
+        Ask::No => Ok(true),
+        Ask::Refuse => {
+            Err("nobody to ask whether to switch; pass -y to switch without asking".into())
+        }
+        Ask::Yes => {
+            eprint!("switch to it? [y/N] ");
+            let _ = std::io::stderr().flush();
+            let mut answer = String::new();
+            std::io::stdin()
+                .read_line(&mut answer)
+                .map_err(|e| format!("reading the answer: {e}"))?;
+            Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+        }
+    }
+}
+
+/// Whether to ask before switching.
+#[derive(Debug, PartialEq, Eq)]
+enum Ask {
+    Yes,
+    No,
+    /// There's nobody to ask.
+    Refuse,
+}
+
+fn ask(yes: bool, terminal: bool) -> Ask {
+    match (yes, terminal) {
+        (true, _) => Ask::No,
+        (false, true) => Ask::Yes,
+        (false, false) => Ask::Refuse,
+    }
 }
 
 /// When a switch to changes of `tier` takes full effect, if it doesn't right away.
@@ -463,6 +515,14 @@ mod tests {
         jq       github:jqlang/jq                  not locked yet
         stable   github:NixOS/nixpkgs/nixos-25.11  b6018f8, 2026-10-30, 7 days old
         ");
+    }
+
+    #[test]
+    fn apply_asks_unless_told_not_to_and_never_guesses() {
+        assert_eq!(ask(true, true), Ask::No);
+        assert_eq!(ask(true, false), Ask::No);
+        assert_eq!(ask(false, true), Ask::Yes);
+        assert_eq!(ask(false, false), Ask::Refuse);
     }
 
     #[test]

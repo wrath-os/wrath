@@ -58,6 +58,9 @@ enum Command {
     Apply {
         /// A system that is already built, such as one `build` made for this machine elsewhere
         system: Option<PathBuf>,
+        /// Switch without asking first
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Switch to the configuration for a while, then back unless you `distro keep` it
     Try {
@@ -66,6 +69,9 @@ enum Command {
         /// How long to try it, such as 90s, 5m or 1h
         #[arg(long = "for", value_name = "DURATION", default_value = "5m")]
         duration: String,
+        /// Switch without asking first
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Keep the system being tried as the current generation
     Keep,
@@ -232,9 +238,15 @@ fn main() -> ExitCode {
             };
             config().and_then(|config| plan(&config, against, &modules))
         }
-        Command::Apply { system } => switch(root, system, Switch::Apply, &config, &modules),
-        Command::Try { system, duration } => generations::parse_duration(&duration)
-            .and_then(|seconds| switch(root, system, Switch::Try(seconds), &config, &modules)),
+        Command::Apply { system, yes } => {
+            switch(root, system, Switch::Apply, yes, &config, &modules)
+        }
+        Command::Try {
+            system,
+            duration,
+            yes,
+        } => generations::parse_duration(&duration)
+            .and_then(|seconds| switch(root, system, Switch::Try(seconds), yes, &config, &modules)),
         Command::Keep => generations::keep(),
         Command::Build { target } => config().and_then(|config| match model(&config, &modules) {
             Some(model) => generations::build(root, &model, target).map(|path| {
@@ -632,6 +644,7 @@ fn switch(
     root: &Path,
     system: Option<PathBuf>,
     how: Switch,
+    yes: bool,
     config: &impl Fn() -> Result<PathBuf, String>,
     modules: &Path,
 ) -> Result<ExitCode, String> {
@@ -640,7 +653,7 @@ fn switch(
     }
     let config = config()?;
     match model(&config, modules) {
-        Some(model) => generations::apply(root, &config, model, how),
+        Some(model) => generations::apply(root, &config, model, how, yes),
         None => Ok(ExitCode::FAILURE),
     }
 }
