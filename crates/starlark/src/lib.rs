@@ -622,7 +622,8 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
     /// Renders a file. With `user`, the path starts with `~/` and the file goes in that user's
     /// home. Text with secrets in it, a runtime value, makes a file the machine fills in,
     /// owned by `owner` and `group` with `mode` (0400 by default); other files are links into
-    /// the store that anyone can read.
+    /// the store that anyone can read. `next_login` says the file is only read when a user logs
+    /// in, so changing it takes effect at the next login.
     #[allow(clippy::too_many_arguments)]
     fn file<'v>(
         #[starlark(this)] _this: StarValue<'v>,
@@ -632,6 +633,7 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named)] user: Option<&str>,
         #[starlark(require = named, default = NoneOr::None)] owner: NoneOr<&str>,
         #[starlark(require = named, default = NoneOr::None)] group: NoneOr<&str>,
+        #[starlark(require = named, default = false)] next_login: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let (rendering, at) = rendering(eval)?;
@@ -654,6 +656,9 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
                 || output.templates.insert(path.to_owned(), template).is_some()
             {
                 return Err(rendering.invalid(at, format!("file `{path}` is rendered twice")));
+            }
+            if next_login {
+                output.next_login.insert(path.to_owned());
             }
             return Ok(NoneType);
         }
@@ -697,6 +702,9 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         };
         if files.insert(path.to_owned(), file).is_some() {
             return Err(rendering.invalid(at, format!("file `{shown}` is rendered twice")));
+        }
+        if next_login {
+            output.next_login.insert(shown);
         }
         Ok(NoneType)
     }

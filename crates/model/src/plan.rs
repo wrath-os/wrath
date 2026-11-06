@@ -127,17 +127,27 @@ impl fmt::Display for Plan {
 
 /// What changes going from `before` to `after`.
 pub fn plan(before: &Model, after: &Model) -> Plan {
-    let file_details = |before: Option<&File>, after: Option<&File>| {
-        let detail = match (before, after) {
-            (Some(before), Some(after)) if before.mode != after.mode => {
-                vec![format!("mode {:o} -> {:o}", before.mode, after.mode)]
+    // A file only read at login changes for a user when they log in again.
+    let file_details = |path: &str, old: Option<&File>, new: Option<&File>| {
+        let detail = match (old, new) {
+            (Some(old), Some(new)) if old.mode != new.mode => {
+                vec![format!("mode {:o} -> {:o}", old.mode, new.mode)]
             }
             _ => Vec::new(),
         };
-        (detail, Some(Tier::Live))
+        let tier = if before.next_login.contains(path) || after.next_login.contains(path) {
+            Tier::NextLogin
+        } else {
+            Tier::Live
+        };
+        (detail, Some(tier))
     };
-    let mut files = diff(&before.files, &after.files, file_details);
-    files.extend(diff(&home_files(before), &home_files(after), file_details));
+    let mut files = diff_with_names(&before.files, &after.files, file_details);
+    files.extend(diff_with_names(
+        &home_files(before),
+        &home_files(after),
+        file_details,
+    ));
     files.extend(diff(
         &before.templates,
         &after.templates,

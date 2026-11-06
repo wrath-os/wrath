@@ -23,8 +23,18 @@ def render(ctx):
             check(user, name, v)
             conf.append("%s=%s" % (name, v))
             sh.append("export %s=%s" % (name, sh_quote(v)))
-        ctx.file("~/.config/environment.d/60-distro.conf", "\n".join(conf) + "\n", user = user)
-        ctx.file("~/.config/distro/session.sh", "\n".join(sh) + "\n", user = user)
+        ctx.file(
+            "~/.config/environment.d/60-distro.conf",
+            "\n".join(conf) + "\n",
+            user = user,
+            next_login = True,
+        )
+        ctx.file(
+            "~/.config/distro/session.sh",
+            "\n".join(sh) + "\n",
+            user = user,
+            next_login = True,
+        )
 
 module(
     name = "session",

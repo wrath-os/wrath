@@ -57,6 +57,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "files": {},
       "homes": {},
       "locked": {},
+      "next_login": [],
       "options": {
         "grafana.password": {
           "runtime": [
@@ -75,7 +76,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "templates": {},
       "triggers": {},
       "units": {},
-      "version": 7
+      "version": 8
     }
     "#);
 }
@@ -510,6 +511,7 @@ fn full_model() -> Model {
             mode: 0o440,
         },
     );
+    model.next_login.insert("~john/.config/app".into());
     let home = model.homes.get_mut("john").unwrap();
     home.files.insert("~/.config/app".into(), file);
     home.units.insert("sync.service".into(), unit);
@@ -614,5 +616,31 @@ fn plan_shows_files_with_secrets_and_restarts_what_reads_them() {
       ~ app.service (tier: live)
           restarts: secret token changed
     2 changes, tier: live
+    ");
+}
+
+#[test]
+fn files_read_at_login_change_at_the_next_login() {
+    let with_session = |text: &str| {
+        let mut model = Model::default();
+        let home = model.homes.entry("john".into()).or_default();
+        let file = File {
+            mode: 0o644,
+            text: text.into(),
+        };
+        home.files
+            .insert("~/.config/environment.d/60-distro.conf".into(), file);
+        model
+            .next_login
+            .insert("~john/.config/environment.d/60-distro.conf".into());
+        model
+    };
+
+    let plan = plan(&with_session("EDITOR=hx\n"), &with_session("EDITOR=vi\n"));
+
+    insta::assert_snapshot!(plan.to_string(), @"
+    files
+      ~ ~john/.config/environment.d/60-distro.conf (tier: next-login)
+    1 change, tier: next-login
     ");
 }

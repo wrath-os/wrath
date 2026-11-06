@@ -86,6 +86,9 @@ pub struct Output {
     pub homes: BTreeMap<String, Home>,
     /// Files with secrets in them, by absolute path, filled in on the machine.
     pub templates: BTreeMap<String, Template>,
+    /// Files read when a user logs in, so changing them takes effect at the next login, by path
+    /// as plans show it: absolute, or as `~user/.profile`.
+    pub next_login: BTreeSet<String>,
 }
 
 /// A file with secrets in it. The text around the secrets is known when the system is built;

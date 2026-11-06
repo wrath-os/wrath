@@ -19,7 +19,7 @@ pub use lock::{LOCK_FILE, Lock, Locked, Source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 7;
+pub const VERSION: i64 = 8;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -46,6 +46,8 @@ pub struct Model {
     pub locked: BTreeMap<String, Locked>,
     /// Files with secrets in them, by path, filled in on the machine.
     pub templates: BTreeMap<String, Template>,
+    /// Files only read when a user logs in, by path as plans show them.
+    pub next_login: BTreeSet<String>,
 }
 
 /// A user's files, by path as `~/.config/git/config`, packages and user units.
@@ -123,6 +125,7 @@ impl Model {
             model.backends.extend(output.backends.clone());
             model.units.extend(output.units.clone());
             model.templates.extend(output.templates.clone());
+            model.next_login.extend(output.next_login.clone());
             model
                 .secrets
                 .extend(output.secrets.iter().map(|(name, declared)| {
@@ -238,11 +241,13 @@ impl Model {
                 (name.clone(), entry)
             })
             .collect();
+        let next_login = self.next_login.iter().cloned().map(Value::Str).collect();
         table([
             ("version", Value::Int(VERSION)),
             ("source", Value::Table(source)),
             ("locked", Value::Table(locked)),
             ("templates", templates_value(&self.templates)),
+            ("next_login", Value::List(next_login)),
             ("secrets", Value::Table(secrets)),
             ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),

@@ -584,6 +584,14 @@ fn session_variables_reach_systemd_and_login_shells() {
     GREETING=it's "quoted"
     PATH=$HOME/bin:${PATH}
     "#);
+    assert_eq!(
+        output_of(&evaluation, "session").next_login,
+        [
+            "~john/.config/distro/session.sh".to_owned(),
+            "~john/.config/environment.d/60-distro.conf".to_owned(),
+        ]
+        .into(),
+    );
 }
 
 #[test]

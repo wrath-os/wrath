@@ -45,6 +45,7 @@ impl Model {
             source: read_source(field("source")?)?,
             locked: read_locked(field("locked")?)?,
             templates: read_templates(field("templates")?)?,
+            next_login: strings(field("next_login")?)?,
         })
     }
 }
