@@ -6,6 +6,7 @@
 
 mod lock;
 mod plan;
+mod read;
 
 use std::collections::{BTreeMap, BTreeSet};
 

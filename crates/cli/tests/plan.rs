@@ -58,7 +58,12 @@ fn modules_render_the_same_model_in_any_load_order() {
 
 #[test]
 fn a_hybrid_system_names_its_nixos_configuration_and_modules() {
-    let plan = stdout(&distro(&["plan", "--config", "fixtures/configs/hybrid"]));
+    let plan = stdout(&distro(&[
+        "plan",
+        "--config",
+        "fixtures/configs/hybrid",
+        "--fresh",
+    ]));
     let backends: Vec<_> = plan
         .lines()
         .skip_while(|line| *line != "backends")
@@ -203,12 +208,73 @@ fn plan_shows_what_the_lock_pins() {
 #[test]
 fn a_broken_lock_is_an_error_naming_the_file() {
     let config = basic_with_lock("version = 1\n");
-    let output = distro(&["plan", "--config", config.path().to_str().unwrap()]);
+    let output = distro(&[
+        "plan",
+        "--config",
+        config.path().to_str().unwrap(),
+        "--fresh",
+    ]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("distro.lock: missing field `source`"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn plans_compare_against_a_model_file_like_the_one_a_system_carries() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty = dir.path().join("model.json");
+    std::fs::write(&empty, distro_model::Model::default().canonical()).unwrap();
+    let fresh = stdout(&distro(&[
+        "plan",
+        "--config",
+        "fixtures/configs/basic",
+        "--fresh",
+    ]));
+
+    let plan = stdout(&distro(&[
+        "plan",
+        "--config",
+        "fixtures/configs/basic",
+        "--against",
+        empty.to_str().unwrap(),
+    ]));
+
+    let (model, rest) = plan.split_once('\n').unwrap();
+    let (against, body) = rest.split_once('\n').unwrap();
+    assert!(fresh.starts_with(model));
+    assert_eq!(
+        against,
+        format!(
+            "against {} (model {})",
+            empty.display(),
+            &distro_model::Model::default().hash()[..16]
+        )
+    );
+    assert_eq!(body, fresh.split_once('\n').unwrap().1);
+}
+
+#[test]
+fn a_model_file_of_another_format_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("model.json");
+    std::fs::write(&old, "{\"version\": 1}\n").unwrap();
+
+    let output = distro(&[
+        "plan",
+        "--config",
+        "fixtures/configs/basic",
+        "--against",
+        old.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("the model is in format version 1"),
         "{stderr}"
     );
 }

@@ -22,6 +22,9 @@ pub const PROFILE: &str = "/nix/var/nix/profiles/system";
 /// Where the running system records the hash of the model it was built from.
 pub const CURRENT_MODEL_HASH: &str = "/run/current-system/etc/distro/model-hash";
 
+/// Where the running system keeps the model it was built from.
+pub const CURRENT_MODEL: &str = "/run/current-system/etc/distro/model.json";
+
 /// What to build from a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -200,6 +203,11 @@ pub fn history() -> Result<Vec<Generation>, String> {
 /// The hash of the model the running system was built from, if it was built by `distro`.
 pub fn current_model_hash() -> Option<String> {
     std::fs::read_to_string(CURRENT_MODEL_HASH).ok()
+}
+
+/// The running system's model file, when distro built the running system.
+pub fn current_model() -> Option<&'static str> {
+    Path::new(CURRENT_MODEL).exists().then_some(CURRENT_MODEL)
 }
 
 fn switch(system: &Path) -> Result<(), String> {

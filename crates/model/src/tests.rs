@@ -438,3 +438,94 @@ fn plan_shows_package_versions_and_the_package_source() {
     3 changes, tier: live
     ");
 }
+
+/// A model with something in every part.
+fn full_model() -> Model {
+    let mut model = with_packages(&lock(
+        "aaaaaaa1",
+        &[("ripgrep", locked("14.1.0", "/nix/store/r1"))],
+    ));
+    model.options.insert(
+        "services.app.token".into(),
+        Value::Runtime(vec![
+            RuntimePart::Text("Bearer ".into()),
+            RuntimePart::Secret("token".into()),
+        ]),
+    );
+    model
+        .options
+        .insert("services.app.ratio".into(), Value::Float(1.0));
+    model.options.insert(
+        "services.app.tags".into(),
+        Value::List(vec![Value::Str("a".into()), Value::Int(-3)]),
+    );
+    let file = File {
+        mode: 0o600,
+        text: "x\n".into(),
+    };
+    model.files.insert("/etc/app.conf".into(), file.clone());
+    let unit = Unit {
+        sections: vec![Section {
+            name: "Service".into(),
+            entries: vec![
+                ("ExecStartPre".into(), "a".into()),
+                ("ExecStartPre".into(), "b".into()),
+            ],
+        }],
+        restart_on: ["/etc/app.conf".into()].into(),
+    };
+    model.units.insert("app.service".into(), unit.clone());
+    model.base.insert("audio".into(), Value::Bool(true));
+    model.backends.insert(
+        "nixos".into(),
+        Value::Table([("x".into(), Value::Int(1))].into()),
+    );
+    model.triggers.insert(
+        ("systemd-networkd.service".into(), UnitAction::Reload),
+        ["/etc/app.conf".into()].into(),
+    );
+    model.facts.insert("host.cpus".into(), Value::Int(8));
+    model.secrets.insert(
+        "token".into(),
+        Secret {
+            source: String::new(),
+            hash: "h".into(),
+            owner: "app".into(),
+            group: Some("wheel".into()),
+            mode: 0o440,
+            link: Some("/home/app/token".into()),
+        },
+    );
+    let home = model.homes.get_mut("john").unwrap();
+    home.files.insert("~/.config/app".into(), file);
+    home.units.insert("sync.service".into(), unit);
+    model
+}
+
+#[test]
+fn a_model_reads_back_from_its_canonical_form() {
+    let model = full_model();
+
+    let read = Model::from_json(&model.canonical()).unwrap();
+
+    assert_eq!(read, model);
+    assert_eq!(read.hash(), model.hash());
+    assert!(plan(&read, &model).is_empty());
+}
+
+#[test]
+fn models_of_another_format_version_are_refused() {
+    let older = Model::default().canonical().replace(
+        &format!("\"version\": {}", crate::VERSION),
+        "\"version\": 1",
+    );
+
+    assert_eq!(
+        Model::from_json(&older).unwrap_err(),
+        format!(
+            "the model is in format version 1, and this distro reads version {}",
+            crate::VERSION
+        )
+    );
+    assert!(Model::from_json("[]").is_err());
+}

@@ -585,6 +585,7 @@ dependencies = [
  "distro-eval",
  "insta",
  "serde",
+ "serde_json",
  "toml",
 ]
 

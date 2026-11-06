@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use distro_backend_nixos as backend;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath};
 use distro_model::{LOCK_FILE, Lock, Model};
@@ -59,14 +60,18 @@ enum Command {
         #[arg(long)]
         run_reproduction: bool,
     },
-    /// Show what would change going from one configuration to another
+    /// Show what would change going to a configuration from the running system or another one
     Plan {
         /// The configuration to plan
         #[arg(long)]
         config: PathBuf,
-        /// The configuration to compare against; without it, everything is new
-        #[arg(long)]
+        /// The configuration, or a `model.json`, to compare against [default: the running
+        /// system's model, or nothing on a system distro didn't build]
+        #[arg(long, conflicts_with = "fresh")]
         against: Option<PathBuf>,
+        /// Compare against nothing, so everything is new
+        #[arg(long)]
+        fresh: bool,
         /// Directory of modules [default: modules under the root]
         #[arg(long)]
         modules: Option<PathBuf>,
@@ -185,12 +190,16 @@ fn main() -> ExitCode {
         Command::Plan {
             config,
             against,
+            fresh,
             modules,
-        } => plan(
-            &config,
-            against.as_deref(),
-            &modules_dir(&cli.root, modules),
-        ),
+        } => {
+            let against = match (against, fresh) {
+                (_, true) => Against::Nothing,
+                (Some(path), false) => Against::Path(path),
+                (None, false) => Against::Running,
+            };
+            plan(&config, against, &modules_dir(&cli.root, modules))
+        }
         Command::Bench {
             modules,
             synthetic,
@@ -410,20 +419,50 @@ fn lock(
     }
 }
 
-fn plan(config: &Path, against: Option<&Path>, modules: &Path) -> Result<ExitCode, String> {
+/// What a plan compares a configuration against.
+enum Against {
+    Nothing,
+    /// A configuration directory, or a model as `model.json`.
+    Path(PathBuf),
+    /// The running system's model, or nothing when distro didn't build it.
+    Running,
+}
+
+fn plan(config: &Path, against: Against, modules: &Path) -> Result<ExitCode, String> {
     let Some(after) = model(config, modules) else {
         return Ok(ExitCode::FAILURE);
     };
-    let before = match against {
-        Some(against) => match model(against, modules) {
-            Some(before) => before,
+    let (before, compared) = match against {
+        Against::Nothing => (Model::default(), None),
+        Against::Path(path) if path.is_file() => {
+            (read_model(&path)?, Some(path.display().to_string()))
+        }
+        Against::Path(path) => match model(&path, modules) {
+            Some(before) => (before, None),
             None => return Ok(ExitCode::FAILURE),
         },
-        None => Model::default(),
+        Against::Running => match backend::current_model() {
+            Some(path) => (
+                read_model(Path::new(path))
+                    .map_err(|e| format!("{e}; plan with --against or --fresh instead"))?,
+                Some("the running system".to_owned()),
+            ),
+            None => (Model::default(), None),
+        },
     };
     println!("model {}", &after.hash()[..16]);
+    if let Some(compared) = compared {
+        println!("against {compared} (model {})", &before.hash()[..16]);
+    }
     print!("{}", distro_model::plan(&before, &after));
     Ok(ExitCode::SUCCESS)
+}
+
+fn read_model(path: &Path) -> Result<Model, String> {
+    std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|json| Model::from_json(&json))
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn why(config: &Path, modules: &Path, option: Option<&str>) -> Result<ExitCode, String> {
