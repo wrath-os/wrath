@@ -916,10 +916,19 @@ fn check_expect(
     }
     match &expect.stdout_contains {
         Some(needle) if !stdout.contains(needle.as_str()) => Err(format!(
-            "`{}`: stdout does not contain {needle:?}",
-            expect.run
+            "`{}`: stdout does not contain {needle:?}, it was {:?}",
+            expect.run,
+            truncate(&stdout, 500)
         )),
         _ => Ok(()),
+    }
+}
+
+/// The first `max` bytes of `text`, cut at a character boundary, with `…` if anything is left.
+fn truncate(text: &str, max: usize) -> String {
+    match text.char_indices().map(|(at, _)| at).find(|&at| at >= max) {
+        Some(at) => format!("{}…", &text[..at]),
+        None => text.to_owned(),
     }
 }
 
@@ -1059,6 +1068,13 @@ mod tests {
         assert_eq!(installable("./factory/nix#x"), "./factory/nix#x");
         assert_eq!(installable("/abs/flake#x"), "/abs/flake#x");
         assert_eq!(installable("github:o/r#x"), "github:o/r#x");
+    }
+
+    #[test]
+    fn truncate_cuts_long_output_at_a_character() {
+        assert_eq!(truncate("short", 10), "short");
+        assert_eq!(truncate("exactly", 7), "exactly");
+        assert_eq!(truncate("åäö and more", 3), "åä…");
     }
 
     #[test]
