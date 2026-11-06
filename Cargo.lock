@@ -601,6 +601,7 @@ dependencies = [
  "insta",
  "starlark",
  "starlark_derive",
+ "tempfile",
 ]
 
 [[package]]

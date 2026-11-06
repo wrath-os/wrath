@@ -19,7 +19,9 @@
 mod convert;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
+use std::path::{Component, Path};
 use std::time::{Duration, Instant};
 
 use allocative::Allocative;
@@ -32,10 +34,10 @@ use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
 use starlark::collections::SmallMap;
 use starlark::environment::{
-    Globals, GlobalsBuilder, LibraryExtension, Methods, MethodsBuilder, MethodsStatic,
-    Module as StarModule,
+    FrozenModule, Globals, GlobalsBuilder, LibraryExtension, Methods, MethodsBuilder,
+    MethodsStatic, Module as StarModule,
 };
-use starlark::eval::Evaluator;
+use starlark::eval::{Evaluator, ReturnFileLoader};
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
 use starlark::syntax::{AstModule, Dialect};
@@ -53,11 +55,13 @@ const TIME_LIMIT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const TIME_LIMIT: Duration = Duration::from_secs(1);
 
-/// Loads a module from source. `path` is how errors refer to the file.
+/// Loads a module from source. `path` is how errors refer to the file, and `root` the modules
+/// directory, which libraries the module loads, as `load("lib/merge.star", "merge")`, are in.
 pub fn load(
     sources: &mut Sources,
     path: &str,
     text: String,
+    root: &Path,
 ) -> Result<Box<dyn Module>, Diagnostic> {
     let file = sources.add(path, text);
     let locate = Locate {
@@ -66,11 +70,17 @@ pub fn load(
     };
     let ast = parse(path, sources.text(file)).map_err(|e| locate.diagnostic(&e))?;
     let globals = globals();
+    let mut libraries = Libraries::new();
+    load_libraries(root, &ast, &globals, &mut libraries, &mut Vec::new())
+        .map_err(|message| Diagnostic::error(format!("{path}: {message}")))?;
     let declared = RefCell::new(None);
     StarModule::with_temp_heap(|module| {
         let loading = Loading(&declared);
+        let loader = loader(&libraries);
+        let file_loader = ReturnFileLoader { modules: &loader };
         let mut eval = Evaluator::new(&module);
         eval.extra = Some(&loading);
+        eval.set_loader(&file_loader);
         set_time_limit(&mut eval);
         eval.eval_module(ast, &globals)
             .map(|_| ())
@@ -83,8 +93,73 @@ pub fn load(
         declared,
         source: sources.text(file).to_owned(),
         globals,
+        libraries,
         locate,
     }))
+}
+
+/// Libraries by the path modules load them by, evaluated once and shared by every render.
+type Libraries = HashMap<String, FrozenModule>;
+
+/// The evaluator's `extra` while a library loads, so `module(...)` can refuse.
+#[derive(ProvidesStaticType)]
+struct LoadingLibrary;
+
+fn loader(libraries: &Libraries) -> HashMap<&str, &FrozenModule> {
+    libraries
+        .iter()
+        .map(|(path, module)| (path.as_str(), module))
+        .collect()
+}
+
+/// Loads the libraries `ast` loads, and theirs, into `libraries`. `stack` holds the libraries
+/// being loaded, to catch one that ends up loading itself.
+fn load_libraries(
+    root: &Path,
+    ast: &AstModule,
+    globals: &Globals,
+    libraries: &mut Libraries,
+    stack: &mut Vec<String>,
+) -> Result<(), String> {
+    for load in ast.loads() {
+        let path = load.module_id;
+        if libraries.contains_key(path) {
+            continue;
+        }
+        if stack.iter().any(|loading| loading == path) {
+            return Err(format!("`{path}` loads itself"));
+        }
+        let relative = Path::new(path);
+        if relative.is_absolute()
+            || relative.extension().is_none_or(|e| e != "star")
+            || relative.components().any(|c| c == Component::ParentDir)
+        {
+            return Err(format!(
+                "`{path}` isn't a library: libraries are `.star` files in the modules directory"
+            ));
+        }
+        let text = std::fs::read_to_string(root.join(relative))
+            .map_err(|e| format!("cannot load `{path}`: {e}"))?;
+        let library = parse(path, &text).map_err(|e| format!("`{path}`: {e}"))?;
+        stack.push(path.to_owned());
+        load_libraries(root, &library, globals, libraries, stack)?;
+        stack.pop();
+        let frozen = StarModule::with_temp_heap(|module| {
+            {
+                let loader = loader(libraries);
+                let file_loader = ReturnFileLoader { modules: &loader };
+                let mut eval = Evaluator::new(&module);
+                eval.extra = Some(&LoadingLibrary);
+                eval.set_loader(&file_loader);
+                set_time_limit(&mut eval);
+                eval.eval_module(library, globals)
+                    .map_err(|e| format!("`{path}`: {e}"))?;
+            }
+            module.freeze().map_err(|e| format!("`{path}`: {e:?}"))
+        })?;
+        libraries.insert(path.to_owned(), frozen);
+    }
+    Ok(())
 }
 
 fn parse(path: &str, source: &str) -> starlark::Result<AstModule> {
@@ -271,6 +346,14 @@ fn std_globals(builder: &mut GlobalsBuilder) {
             .map(|path| OptionPath::parse(path))
             .collect::<Result<_, _>>()
             .map_err(anyhow::Error::msg)?;
+        if eval
+            .extra
+            .is_some_and(|extra| extra.downcast_ref::<LoadingLibrary>().is_some())
+        {
+            return Err(anyhow::anyhow!(
+                "only a module calls `module(...)`; a library holds helpers for modules"
+            ));
+        }
         // While rendering, the file runs again; only the render function matters then.
         if let Some(loading) = eval.extra.and_then(|extra| extra.downcast_ref::<Loading>()) {
             if loading.0.borrow().is_some() {
@@ -376,6 +459,7 @@ struct StarlarkModule {
     declared: Declared,
     source: String,
     globals: Globals,
+    libraries: Libraries,
     locate: Locate,
 }
 
@@ -804,8 +888,11 @@ impl Module for StarlarkModule {
         };
         let ast = parse(&self.locate.path, &self.source);
         let result = StarModule::with_temp_heap(|module| {
+            let loader = loader(&self.libraries);
+            let file_loader = ReturnFileLoader { modules: &loader };
             let mut eval = Evaluator::new(&module);
             eval.extra = Some(&rendering);
+            eval.set_loader(&file_loader);
             set_time_limit(&mut eval);
             eval.eval_module(ast?, &self.globals)?;
             let render = module.get(RENDER).ok_or_else(|| {

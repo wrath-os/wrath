@@ -1,6 +1,8 @@
 # Git for each user who enables it: `~/.config/git/config`, with commits signed by an SSH key
 # such as a secret, settings that apply only in some directories, LFS and delta.
 
+load("lib/merge.star", "merge")
+
 def value(v):
     if type(v) == "bool":
         return "true" if v else "false"
@@ -28,15 +30,6 @@ def gitconfig(settings):
             if type(sub) == "dict":
                 lines += section_lines('%s "%s"' % (section, subsection), sub)
     return "\n".join(lines) + "\n"
-
-def merge(a, b):
-    out = dict(a)
-    for key, v in b.items():
-        if type(v) == "dict" and type(out.get(key)) == "dict":
-            out[key] = merge(out[key], v)
-        else:
-            out[key] = v
-    return out
 
 include = types.record(
     condition = option(types.str, doc = "As in `includeIf`, such as `gitdir:~/work/`."),

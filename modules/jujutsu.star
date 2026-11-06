@@ -1,14 +1,7 @@
 # Jujutsu for each user who enables it: `~/.config/jj/config.toml`, with commits signed by an
 # SSH key such as a secret.
 
-def merge(a, b):
-    out = dict(a)
-    for key, v in b.items():
-        if type(v) == "dict" and type(out.get(key)) == "dict":
-            out[key] = merge(out[key], v)
-        else:
-            out[key] = v
-    return out
+load("lib/merge.star", "merge")
 
 def render(ctx):
     for user, u in ctx.read("users").items():

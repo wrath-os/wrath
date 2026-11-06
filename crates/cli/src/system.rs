@@ -70,7 +70,7 @@ pub fn load_modules(
             continue;
         }
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        match distro_starlark::load(sources, &path.display().to_string(), text) {
+        match distro_starlark::load(sources, &path.display().to_string(), text, dir) {
             Ok(module) => modules.push(module),
             Err(diagnostic) => errors.push(diagnostic),
         }

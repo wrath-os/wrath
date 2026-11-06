@@ -76,12 +76,18 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
     fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Copies the modules directory with the libraries in it.
 fn copy_modules(from: &Path, to: &Path) -> Result<(), String> {
     fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
     let entries = fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?;
     for entry in entries {
         let path = entry.map_err(|e| e.to_string())?.path();
-        if let Some(name) = path.file_name() {
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if path.is_dir() {
+            copy_modules(&path, &to.join(name))?;
+        } else {
             fs::copy(&path, to.join(name)).map_err(|e| format!("{}: {e}", path.display()))?;
         }
     }

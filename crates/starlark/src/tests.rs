@@ -46,7 +46,7 @@ fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, St
         .map(|name| {
             let path = format!("modules/{name}.star");
             let text = std::fs::read_to_string(repo().join(&path)).unwrap();
-            load(&mut sources, &path, text)
+            load(&mut sources, &path, text, &repo().join("modules"))
                 .unwrap_or_else(|e| panic!("{}", distro_eval::render(&[e], &sources)))
         })
         .collect();
@@ -62,8 +62,13 @@ fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, St
 
 fn run(source: &str) -> Result<Evaluation, String> {
     let mut sources = Sources::default();
-    let module = load(&mut sources, "test.star", source.to_owned())
-        .map_err(|e| distro_eval::render(&[e], &sources))?;
+    let module = load(
+        &mut sources,
+        "test.star",
+        source.to_owned(),
+        &repo().join("modules"),
+    )
+    .map_err(|e| distro_eval::render(&[e], &sources))?;
     evaluate(Input {
         sources,
         config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
@@ -410,8 +415,20 @@ module(
     let mut sources = Sources::default();
     let secrets = std::fs::read_to_string(repo().join("modules/secrets.star")).unwrap();
     let modules = vec![
-        load(&mut sources, "app.star", module.to_owned()).unwrap(),
-        load(&mut sources, "modules/secrets.star", secrets).unwrap(),
+        load(
+            &mut sources,
+            "app.star",
+            module.to_owned(),
+            &repo().join("modules"),
+        )
+        .unwrap(),
+        load(
+            &mut sources,
+            "modules/secrets.star",
+            secrets,
+            &repo().join("modules"),
+        )
+        .unwrap(),
     ];
     let config = MemFs::new([
         (
@@ -692,4 +709,75 @@ fn home_files_start_with_a_tilde() {
     27 |                 fail("users.%s.files: `%s` doesn't start with `~/`" % (user, path))
        |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
     "#);
+}
+
+/// Loads `module` with `files` in a temporary modules directory it can `load` from.
+fn load_from(files: &[(&str, &str)], module: &str) -> Result<Evaluation, String> {
+    let dir = tempfile::tempdir().unwrap();
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let mut sources = Sources::default();
+    let module = load(&mut sources, "app.star", module.to_owned(), dir.path())
+        .map_err(|e| distro_eval::render(&[e], &sources))?;
+    evaluate(Input {
+        sources,
+        config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
+        schema: base_schema(),
+        modules: &[module],
+        facts: &Value::Table(BTreeMap::new()),
+    })
+    .map_err(|e| e.to_string())
+}
+
+const LOADS_MERGE: &str = r#"
+load("lib/merge.star", "merge")
+
+def render(ctx):
+    ctx.file("/etc/merged", str(merge({"a": {"b": 1}}, {"a": {"c": 2}})) + "\n")
+
+module(name = "app", options = {}, writes = [], render = render)
+"#;
+
+#[test]
+fn modules_load_helpers_from_libraries() {
+    let files = [
+        (
+            "lib/merge.star",
+            "load(\"lib/deep.star\", \"deep\")\n\ndef merge(a, b):\n    return deep(a, b)\n",
+        ),
+        (
+            "lib/deep.star",
+            "def deep(a, b):\n    out = dict(a)\n    for k, v in b.items():\n        \
+             out[k] = deep(out[k], v) if type(v) == \"dict\" and k in out else v\n    return out\n",
+        ),
+    ];
+
+    let evaluation = load_from(&files, LOADS_MERGE).unwrap();
+
+    let file = &output_of(&evaluation, "app").files["/etc/merged"];
+    assert_eq!(file.text, "{\"a\": {\"b\": 1, \"c\": 2}}\n");
+}
+
+#[test]
+fn libraries_hold_helpers_only_and_stay_in_the_modules_directory() {
+    let calls_module = "module(name = \"lib\", options = {}, writes = [], render = None)\n";
+    let error = load_from(&[("lib/merge.star", calls_module)], LOADS_MERGE).unwrap_err();
+    assert!(
+        error.contains("only a module calls `module(...)`"),
+        "{error}"
+    );
+
+    let error = load_from(&[], LOADS_MERGE).unwrap_err();
+    assert!(error.contains("cannot load `lib/merge.star`"), "{error}");
+
+    let outside = LOADS_MERGE.replace("lib/merge.star", "../merge.star");
+    let error = load_from(&[], &outside).unwrap_err();
+    assert!(error.contains("`../merge.star` isn't a library"), "{error}");
+
+    let cycle = [("lib/merge.star", "load(\"lib/merge.star\", \"merge\")\n")];
+    let error = load_from(&cycle, LOADS_MERGE).unwrap_err();
+    assert!(error.contains("loads itself"), "{error}");
 }

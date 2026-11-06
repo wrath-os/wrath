@@ -1,14 +1,7 @@
 # Services that run in each user's systemd user manager. They start with the user's first
 # session, or at boot for a user with `linger`.
 
-def merge(a, b):
-    out = dict(a)
-    for key, v in b.items():
-        if type(v) == "dict" and type(out.get(key)) == "dict":
-            out[key] = merge(out[key], v)
-        else:
-            out[key] = v
-    return out
+load("lib/merge.star", "merge")
 
 service = types.record(
     description = option(types.str, optional = True),
