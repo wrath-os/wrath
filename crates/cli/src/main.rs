@@ -87,13 +87,7 @@ enum Command {
         sources: Vec<String>,
     },
     /// Check the configuration for errors, without building it
-    Check {
-        /// Scenario files or bad-config directories; these belong to `dev test` now
-        #[arg(hide = true)]
-        files: Vec<PathBuf>,
-        #[command(flatten)]
-        test: TestOptions,
-    },
+    Check,
     /// Show where option values come from
     Why {
         /// Explain every option
@@ -218,10 +212,7 @@ fn main() -> ExitCode {
         Command::Update { sources } => {
             config().and_then(|config| lock(root, &config, &modules, Some(&sources)))
         }
-        Command::Check { files, test } if !files.is_empty() || test.determinism.is_some() => {
-            dev_test(root, &files, test, &modules)
-        }
-        Command::Check { .. } => config().and_then(|config| check_config(&config, &modules)),
+        Command::Check => config().and_then(|config| check_config(&config, &modules)),
         Command::Why { all: _, option } => {
             config().and_then(|config| why(&config, &modules, option.as_deref()))
         }

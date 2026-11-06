@@ -1,7 +1,7 @@
 title = "The printed reproduction command recreates the failing VM and reproduces the failure"
 
 [command]
-run = ["distro", "check", "scenarios/fixtures/always-fails.toml", "--run-reproduction"]
+run = ["distro", "dev", "test", "scenarios/fixtures/always-fails.toml", "--run-reproduction"]
 exit = 1
 stdout_contains = ["reproduced: yes"]
 timeout_secs = 900

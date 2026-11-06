@@ -1,6 +1,6 @@
 title = "Every built-in module renders byte-identical output across fresh interpreters and shuffled inputs"
 
 [command]
-run = ["distro", "check", "--determinism", "modules"]
+run = ["distro", "dev", "test", "--determinism", "modules"]
 stdout_contains = ["PASS"]
 timeout_secs = 600
