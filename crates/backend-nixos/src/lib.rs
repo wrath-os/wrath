@@ -48,14 +48,16 @@ impl Target {
     }
 }
 
+/// A built store path and the warnings evaluating it printed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Built {
+    pub path: PathBuf,
+    pub warnings: Vec<String>,
+}
+
 /// Builds `target` from `model` with the flake in `factory` (normally `factory/nix`), writing
-/// the shim's input to `work`. Returns the built store path.
-pub fn build(
-    model: &Model,
-    factory: &Path,
-    target: Target,
-    work: &Path,
-) -> Result<PathBuf, String> {
+/// the shim's input to `work`.
+pub fn build(model: &Model, factory: &Path, target: Target, work: &Path) -> Result<Built, String> {
     let input = work.join("nixos.json");
     std::fs::write(&input, lower(model)).map_err(|e| format!("{}: {e}", input.display()))?;
     let canonical = |path: &Path| {
@@ -64,18 +66,47 @@ pub fn build(
     };
     let factory = canonical(factory)?;
     let input = canonical(&input)?;
-    let output = command(
-        Command::new("nix")
-            .args([
-                "build",
-                "--impure",
-                "--no-link",
-                "--print-out-paths",
-                "--expr",
-            ])
-            .arg(build_expression(&factory, target, &input)),
-    )?;
-    Ok(PathBuf::from(output.trim()))
+    let (stdout, stderr) = run(Command::new("nix")
+        .args([
+            "build",
+            "--impure",
+            "--no-link",
+            "--print-out-paths",
+            "--expr",
+        ])
+        .arg(build_expression(&factory, target, &input)))?;
+    Ok(Built {
+        path: PathBuf::from(stdout.trim()),
+        warnings: warnings(&stderr),
+    })
+}
+
+/// The warnings in what Nix printed, such as those NixOS modules raise. Nix indents the further
+/// lines of a warning to line up with its first.
+fn warnings(stderr: &str) -> Vec<String> {
+    const PREFIXES: [&str; 2] = ["evaluation warning: ", "trace: warning: "];
+    let mut warnings: Vec<String> = Vec::new();
+    let mut indent = None;
+    for line in stderr.lines() {
+        if let Some((prefix, message)) = PREFIXES
+            .iter()
+            .find_map(|prefix| line.strip_prefix(prefix).map(|message| (prefix, message)))
+        {
+            warnings.push(message.to_owned());
+            indent = Some(" ".repeat(prefix.len()));
+        } else if let (Some(last), Some(rest)) = (
+            warnings.last_mut(),
+            indent
+                .as_deref()
+                .and_then(|indent| line.strip_prefix(indent)),
+        ) {
+            last.push('\n');
+            last.push_str(rest);
+        } else {
+            indent = None;
+        }
+    }
+    warnings
 }
 
 /// The Nix expression that builds `target`. The flake is read through git, so files jj tracks
@@ -145,15 +176,20 @@ fn switch(system: &Path) -> Result<(), String> {
 
 /// Runs a command to completion, returning its stdout, or its last lines of stderr on failure.
 fn command(command: &mut Command) -> Result<String, String> {
+    run(command).map(|(stdout, _)| stdout)
+}
+
+/// Like [`command`], returning stderr as well on success.
+fn run(command: &mut Command) -> Result<(String, String), String> {
     let program = command.get_program().to_string_lossy().into_owned();
     let output = command
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("could not run {program}: {e}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+        return Ok((String::from_utf8_lossy(&output.stdout).into_owned(), stderr));
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
     let lines: Vec<&str> = stderr.lines().collect();
     let tail = lines[lines.len().saturating_sub(10)..].join("\n");
     Err(format!("{program} failed ({}):\n{tail}", output.status))
@@ -162,6 +198,28 @@ fn command(command: &mut Command) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn warnings_are_picked_from_what_nix_prints() {
+        let stderr = [
+            "copying path '/nix/store/abc-x' from 'https://cache.nixos.org'...",
+            "evaluation warning: the TOML sets time zone Europe/Stockholm, NixOS uses UTC",
+            "evaluation warning: The option `a` is obsolete. Use",
+            "                    `b` instead.",
+            "trace: warning: the NixOS firewall runs as well",
+            "building '/nix/store/def-y.drv'...",
+        ]
+        .join("\n");
+
+        assert_eq!(
+            warnings(&stderr),
+            [
+                "the TOML sets time zone Europe/Stockholm, NixOS uses UTC",
+                "The option `a` is obsolete. Use\n`b` instead.",
+                "the NixOS firewall runs as well"
+            ]
+        );
+    }
 
     #[test]
     fn the_expression_reads_the_flake_through_git() {

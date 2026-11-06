@@ -32,10 +32,15 @@ impl From<BuildTarget> for Target {
     }
 }
 
-/// Builds `target` from `model` with the factory under `root` and returns its store path.
+/// Builds `target` from `model` with the factory under `root` and returns its store path. The
+/// backend's warnings go to stderr.
 pub fn build(root: &Path, model: &Model, target: BuildTarget) -> Result<PathBuf, String> {
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
-    backend::build(model, &root.join("factory/nix"), target.into(), work.path())
+    let built = backend::build(model, &root.join("factory/nix"), target.into(), work.path())?;
+    for warning in &built.warnings {
+        eprintln!("warning: {warning}");
+    }
+    Ok(built.path)
 }
 
 /// Builds the system for `model` and switches to it, unless the running system already has it.

@@ -3,8 +3,10 @@
 #
 # The model's own files, units, packages and users are added as they are. Settings of the base
 # system are defaults, so on a system that extends an existing NixOS configuration, that
-# configuration wins where the two overlap. Moving a setting to TOML means deleting it in Nix.
+# configuration wins where the two overlap, with a warning. Moving a setting to TOML means
+# deleting it in Nix.
 {
+  config,
   lib,
   pkgs,
   distro,
@@ -18,9 +20,47 @@ let
   session = base.session or null;
   package = name: lib.getAttrFromPath (lib.splitString "." name) pkgs;
   inherit (lib) mkDefault;
+
+  # Base settings NixOS overrides, as the TOML option, its value, the NixOS option and the value
+  # NixOS uses.
+  overridden = lib.filter (check: check.ours != check.theirs) [
+    {
+      option = "system.hostname";
+      ours = base.system.hostname;
+      nixos = "networking.hostName";
+      theirs = config.networking.hostName;
+    }
+    {
+      option = "system.timezone";
+      ours = base.system.timezone;
+      nixos = "time.timeZone";
+      theirs = config.time.timeZone;
+    }
+    {
+      option = "networking.dhcp";
+      ours = base.networking.dhcp;
+      nixos = "networking.useDHCP";
+      theirs = config.networking.useDHCP;
+    }
+    {
+      option = "boot.loader";
+      ours = base.boot.loader;
+      nixos = "boot.loader";
+      theirs = if config.boot.loader.systemd-boot.enable then "systemd-boot" else "another loader";
+    }
+  ];
 in
 {
   system.stateVersion = mkDefault "26.05";
+
+  warnings =
+    map (
+      check:
+      "the TOML's ${check.option} = ${builtins.toJSON check.ours} is ignored: NixOS's ${check.nixos} is ${builtins.toJSON check.theirs}"
+    ) overridden
+    ++ lib.optional (
+      config.networking.firewall.enable && input.units ? "nftables.service"
+    ) "the NixOS firewall runs alongside the TOML's networking.firewall; turn one of them off";
 
   environment.systemPackages = [ distro ] ++ map package input.packages;
 
