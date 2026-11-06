@@ -24,8 +24,8 @@ pub use diag::{Diagnostic, Label, render};
 pub use eval::{Contribution, EvalError, Evaluation, Input, Rendered, Resolved, Use, evaluate};
 pub use fs::{ConfigFs, DirFs, MemFs};
 pub use module::{
-    ConfigReader, File, Home, Module, ModuleId, Output, ReadError, RenderError, SECRETS_DIR,
-    Secret, Section, Setting, Template, Unit, UnitAction, home_path,
+    ConfigReader, DEFAULT_SOURCE, File, Home, Module, ModuleId, Output, ReadError, RenderError,
+    SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, home_path, package_source,
 };
 pub use path::OptionPath;
 pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};

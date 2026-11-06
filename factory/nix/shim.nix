@@ -11,6 +11,7 @@
   pkgs,
   distro,
   distroInput,
+  distroSources,
   ...
 }:
 
@@ -19,7 +20,7 @@ let
   base = input.base;
   session = base.session or null;
   replaces = input.nixos.replaces or [ ];
-  package = name: lib.getAttrFromPath (lib.splitString "." name) pkgs;
+  package = import ./package.nix lib pkgs distroSources;
   inherit (lib) mkDefault;
 
   # Where the machine fills in a file with secrets in it.

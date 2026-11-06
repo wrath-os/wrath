@@ -42,7 +42,7 @@ impl Model {
             facts: unspelled("facts")?,
             secrets: read_secrets(field("secrets")?)?,
             homes,
-            source: read_source(field("source")?)?,
+            sources: read_sources(field("sources")?)?,
             locked: read_locked(field("locked")?)?,
             templates: read_templates(field("templates")?)?,
             next_login: strings(field("next_login")?)?,
@@ -281,16 +281,14 @@ fn read_home(value: &Value) -> Result<Home, String> {
     })
 }
 
-fn read_source(value: &Value) -> Result<Option<Source>, String> {
-    let fields = table(value, "source")?;
-    if fields.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(Source {
-        url: string_at(fields, "url", "source")?,
-        rev: optional_string(fields, "rev", "source")?,
-        hash: string_at(fields, "hash", "source")?,
-    }))
+fn read_sources(value: &Value) -> Result<BTreeMap<String, Source>, String> {
+    read_tables(value, "sources", |fields, name| {
+        Ok(Source {
+            url: string_at(fields, "url", name)?,
+            rev: optional_string(fields, "rev", name)?,
+            hash: string_at(fields, "hash", name)?,
+        })
+    })
 }
 
 fn read_locked(value: &Value) -> Result<BTreeMap<String, Locked>, String> {

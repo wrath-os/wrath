@@ -15,11 +15,11 @@ use distro_eval::{
     formats,
 };
 
-pub use lock::{LOCK_FILE, Lock, Locked, Source};
+pub use lock::{DEFAULT_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 9;
+pub const VERSION: i64 = 10;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -40,8 +40,8 @@ pub struct Model {
     pub secrets: BTreeMap<String, Secret>,
     /// What goes in users' homes, by user.
     pub homes: BTreeMap<String, Home>,
-    /// Where packages come from, when the configuration has a lock.
-    pub source: Option<Source>,
+    /// Where packages come from, by name. A source the lock doesn't pin has no hash.
+    pub sources: BTreeMap<String, Source>,
     /// The packages, the system's and users', that the lock has resolved.
     pub locked: BTreeMap<String, Locked>,
     /// Files with secrets in them, by path, filled in on the machine.
@@ -116,6 +116,12 @@ impl Model {
         for rendered in evaluation.modules() {
             let output = &rendered.output;
             model.packages.extend(output.packages.iter().cloned());
+            model.sources.extend(
+                output
+                    .sources
+                    .iter()
+                    .map(|(name, url)| (name.clone(), Source::follow(url))),
+            );
             model.files.extend(files_of(&output.files));
             for (user, home) in &output.homes {
                 let ours = model.homes.entry(user.clone()).or_default();
@@ -154,15 +160,39 @@ impl Model {
         model
     }
 
-    /// The model with what `lock` says about its packages. Packages the lock doesn't have yet
-    /// stay unlocked, and the ones it has that the model doesn't use are left out.
+    /// The model with what `lock` says about its sources and packages. A source the
+    /// configuration names gets the lock's pin while its URL is the one locked; a different URL
+    /// stays unpinned until it's locked again. The default source the configuration doesn't name
+    /// is the backend's, so it keeps the lock's pin. Packages are locked while their source is,
+    /// and the ones the model doesn't use are left out.
     pub fn with_lock(mut self, lock: &Lock) -> Self {
+        for (name, locked) in &lock.sources {
+            match self.sources.get_mut(name) {
+                Some(source) if source.url == locked.url => *source = locked.clone(),
+                None if name == DEFAULT_SOURCE => {
+                    self.sources.insert(name.clone(), locked.clone());
+                }
+                _ => {}
+            }
+        }
         self.locked = self
             .all_packages()
+            .filter(|name| {
+                let (source, _) = package_source(name);
+                self.sources.get(source).is_some_and(Source::is_locked)
+            })
             .filter_map(|name| Some((name.to_owned(), lock.packages.get(name)?.clone())))
             .collect();
-        self.source = Some(lock.source.clone());
         self
+    }
+
+    /// Whether every source is pinned and every package locked, so nothing needs resolving.
+    pub fn is_locked(&self) -> bool {
+        self.sources.contains_key(DEFAULT_SOURCE)
+            && self.sources.values().all(Source::is_locked)
+            && self
+                .all_packages()
+                .all(|name| self.locked.contains_key(name))
     }
 
     /// The system's and every user's packages, each once.
@@ -226,14 +256,20 @@ impl Model {
                 (name.clone(), Value::Table(entries))
             })
             .collect();
-        let mut source = BTreeMap::new();
-        if let Some(Source { url, rev, hash }) = &self.source {
-            source.insert("url".to_owned(), Value::Str(url.clone()));
-            source.insert("hash".to_owned(), Value::Str(hash.clone()));
-            if let Some(rev) = rev {
-                source.insert("rev".to_owned(), Value::Str(rev.clone()));
-            }
-        }
+        let sources = self
+            .sources
+            .iter()
+            .map(|(name, Source { url, rev, hash })| {
+                let mut entry = BTreeMap::from([
+                    ("url".to_owned(), Value::Str(url.clone())),
+                    ("hash".to_owned(), Value::Str(hash.clone())),
+                ]);
+                if let Some(rev) = rev {
+                    entry.insert("rev".to_owned(), Value::Str(rev.clone()));
+                }
+                (name.clone(), Value::Table(entry))
+            })
+            .collect();
         let locked = self
             .locked
             .iter()
@@ -248,7 +284,7 @@ impl Model {
         let next_login = self.next_login.iter().cloned().map(Value::Str).collect();
         table([
             ("version", Value::Int(VERSION)),
-            ("source", Value::Table(source)),
+            ("sources", Value::Table(sources)),
             ("locked", Value::Table(locked)),
             ("templates", templates_value(&self.templates)),
             ("next_login", Value::List(next_login)),

@@ -13,7 +13,8 @@ use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
 use crate::load;
 use crate::module::{
-    ConfigReader, Module, ModuleId, Output, ReadError, RenderError, Secret, Setting, home_path,
+    ConfigReader, DEFAULT_SOURCE, Module, ModuleId, Output, ReadError, RenderError, Secret,
+    Setting, home_path, package_source,
 };
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
@@ -215,6 +216,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     if diagnostics.is_empty() {
         diagnostics.extend(shared_outputs(&resolver.rendered));
         diagnostics.extend(bad_triggers(&resolver.rendered));
+        diagnostics.extend(unknown_sources(&resolver.rendered));
         diagnostics.extend(undeclared_secrets(&resolver.rendered, &resolver.options));
     }
     let secret_files = if diagnostics.is_empty() {
@@ -369,7 +371,7 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
                     .map(move |name| format!("{name} (for {user})"))
             })
             .collect();
-        let outputs: [(&str, Vec<String>); 8] = [
+        let outputs: [(&str, Vec<String>); 9] = [
             ("file", output.files.keys().cloned().collect()),
             ("file", output.templates.keys().cloned().collect()),
             ("file", home_files),
@@ -378,6 +380,7 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
             ("base setting", output.base.keys().cloned().collect()),
             ("backend setting", output.backends.keys().cloned().collect()),
             ("secret", output.secrets.keys().cloned().collect()),
+            ("source", output.sources.keys().cloned().collect()),
         ];
         for (kind, keys) in outputs {
             for key in keys {
@@ -397,6 +400,35 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
             .note("each one belongs to a single module; the others can set its options instead")
         })
         .collect()
+}
+
+/// Packages from sources nothing declares. The default source is always there.
+fn unknown_sources(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
+    let rendered: Vec<&Rendered> = rendered.iter().flatten().collect();
+    let declared: BTreeSet<&str> = rendered
+        .iter()
+        .flat_map(|module| module.output.sources.keys().map(String::as_str))
+        .chain([DEFAULT_SOURCE])
+        .collect();
+    let mut diagnostics = Vec::new();
+    for module in rendered {
+        let output = &module.output;
+        let homes = output.homes.values().flat_map(|home| &home.packages);
+        for package in output.packages.iter().chain(homes) {
+            let (source, _) = package_source(package);
+            if !declared.contains(source) {
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "package `{package}` comes from source `{source}`, which isn't declared"
+                    ))
+                    .note(format!(
+                        "help: declare it with `[sources.{source}]` and the `url` it follows"
+                    )),
+                );
+            }
+        }
+    }
+    diagnostics
 }
 
 /// Units that restart or reload on files no module renders, which is most likely a typo, and

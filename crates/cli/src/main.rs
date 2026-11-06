@@ -121,7 +121,7 @@ enum Command {
         #[arg(long)]
         modules: Option<PathBuf>,
     },
-    /// Move the configuration's lock to the newest version of its package set
+    /// Move the configuration's lock to the newest version of its sources
     Update {
         /// The configuration to update
         #[arg(long)]
@@ -129,6 +129,8 @@ enum Command {
         /// Directory of modules [default: modules under the root]
         #[arg(long)]
         modules: Option<PathBuf>,
+        /// Sources to update, such as `nixpkgs` [default: all of them]
+        sources: Vec<String>,
     },
     /// Fill in files with secrets during activation
     #[command(hide = true)]
@@ -249,8 +251,12 @@ fn main() -> ExitCode {
                 None => Ok(ExitCode::FAILURE),
             }
         }
-        Command::Lock { config, modules } => lock(&cli.root, &config, modules, false),
-        Command::Update { config, modules } => lock(&cli.root, &config, modules, true),
+        Command::Lock { config, modules } => lock(&cli.root, &config, modules, None),
+        Command::Update {
+            config,
+            modules,
+            sources,
+        } => lock(&cli.root, &config, modules, Some(&sources)),
         Command::Activate { system } => generations::activate(&system),
         Command::FillTemplates { spec, secrets, out } => templates::fill(&spec, &secrets, &out),
         Command::History => generations::history(),
@@ -423,7 +429,7 @@ fn lock(
     root: &Path,
     config: &Path,
     modules: Option<PathBuf>,
-    update: bool,
+    update: Option<&[String]>,
 ) -> Result<ExitCode, String> {
     match model(config, &modules_dir(root, modules)) {
         Some(model) => generations::lock(root, config, &model, update),

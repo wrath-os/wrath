@@ -5,7 +5,7 @@ use std::fmt;
 
 use distro_eval::{Template, Unit, Value, home_path};
 
-use crate::{File, Locked, Model, Secret, Source};
+use crate::{DEFAULT_SOURCE, File, Locked, Model, Secret, Source};
 
 /// How much applying a change disrupts the running system, least first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -170,15 +170,20 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     units.extend(restarts(before, after, &files, &secrets));
     units.extend(triggered(after, &files));
     units.sort_by(|a, b| a.name.cmp(&b.name));
+    let locking = after.sources.values().any(Source::is_locked);
     Plan {
         options: diff(&before.options, &after.options, |before, after| {
             (vec![value_change(before, after)], None)
         }),
-        packages: source_change(before.source.as_ref(), after.source.as_ref())
+        packages: diff_with_names(&before.sources, &after.sources, source_change)
             .into_iter()
+            .map(|change| Change {
+                name: format!("source {}", change.name),
+                ..change
+            })
             .chain(diff(&packages(before), &packages(after), |old, new| {
                 (
-                    package_details(old.copied(), new.copied(), after.source.is_some()),
+                    package_details(old.copied(), new.copied(), locking),
                     Some(Tier::Live),
                 )
             }))
@@ -361,47 +366,37 @@ fn template_details(before: Option<&Template>, after: Option<&Template>) -> Vec<
     }
 }
 
-/// A change of package source, by revision when both have one.
-fn source_change(before: Option<&Source>, after: Option<&Source>) -> Option<Change> {
-    if before == after {
-        return None;
-    }
+/// How a package source changed. The base system comes from the default source too, and a
+/// switch can't restart all of it, so moving that source to another locked version needs a soft
+/// reboot. Locking a source for the first time pins what's already running.
+fn source_change(
+    name: &str,
+    before: Option<&Source>,
+    after: Option<&Source>,
+) -> (Vec<String>, Option<Tier>) {
     let version = |source: &Source| match &source.rev {
         Some(rev) => rev[..rev.len().min(12)].to_owned(),
-        None => source.hash.clone(),
+        None if source.is_locked() => source.hash.clone(),
+        None => "its newest version".to_owned(),
     };
     let describe = |source: &Source| format!("{} at {}", source.url, version(source));
-    let (kind, detail) = match (before, after) {
-        (None, Some(new)) => (ChangeKind::Added, describe(new)),
-        (Some(old), None) => (ChangeKind::Removed, describe(old)),
-        (Some(old), Some(new)) if old.url == new.url => (
-            ChangeKind::Changed,
-            format!("{}: {} -> {}", new.url, version(old), version(new)),
-        ),
-        (Some(old), Some(new)) => (
-            ChangeKind::Changed,
-            format!("{} -> {}", describe(old), describe(new)),
-        ),
-        (None, None) => return None,
+    let detail = match (before, after) {
+        (Some(old), Some(new)) if old.url == new.url => {
+            format!("{}: {} -> {}", new.url, version(old), version(new))
+        }
+        (Some(old), Some(new)) => format!("{} -> {}", describe(old), describe(new)),
+        (None, Some(source)) | (Some(source), None) => describe(source),
+        (None, None) => String::new(),
     };
-    // A switch can't restart all of the base system, which comes from the package set too. A
-    // first lock pins the packages already running, so only a change of locked source counts.
-    let (details, tier) = match kind {
-        ChangeKind::Changed => (
-            vec![
-                detail,
-                "the base system, such as systemd and D-Bus, runs fully after a soft reboot".into(),
-            ],
-            Tier::SoftReboot,
-        ),
-        ChangeKind::Added | ChangeKind::Removed => (vec![detail], Tier::Live),
-    };
-    Some(Change {
-        kind,
-        name: "package source".into(),
-        details,
-        tier: Some(tier),
-    })
+    let moved = before
+        .zip(after)
+        .is_some_and(|(old, new)| old.is_locked() && new.is_locked());
+    if moved && name == DEFAULT_SOURCE {
+        let reboot = "the base system, such as systemd and D-Bus, runs fully after a soft reboot";
+        (vec![detail, reboot.to_owned()], Some(Tier::SoftReboot))
+    } else {
+        (vec![detail], Some(Tier::Live))
+    }
 }
 
 /// The system's units, and each user's as `name (for user)`.

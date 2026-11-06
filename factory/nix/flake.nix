@@ -103,17 +103,25 @@
       ];
 
       # A system from the shim's input, the JSON `distro` writes, plus extra NixOS modules, and
-      # where its packages come from as a lock records it. Packages come from the lock's source,
-      # or this flake's nixpkgs without one. When the model extends an existing NixOS
-      # configuration, the shim is layered onto it and its packages are that configuration's.
+      # where its packages come from as a lock records them. The base system and packages
+      # without a source come from the `nixpkgs` source, or this flake's nixpkgs without one;
+      # other sources are flakes the input names. When the model extends an existing NixOS
+      # configuration, the shim is layered onto it and `nixpkgs` is that configuration's.
       evalInput =
         input: extra:
         let
           json = lib.importJSON input;
           settings = json.nixos;
+          sources = json.sources or { };
+          named = lib.mapAttrs (_: pinned) (removeAttrs sources [ "nixpkgs" ]);
           modules = [
             ./shim.nix
-            { _module.args.distroInput = input; }
+            {
+              _module.args = {
+                distroInput = input;
+                distroSources = named;
+              };
+            }
           ]
           ++ map (path: /. + path) (settings.modules or [ ])
           ++ extra;
@@ -124,29 +132,42 @@
             else
               settings.flake;
           extended = builtins.getFlake flakeRef;
-          packageSet = if json.source ? url then pinned json.source else nixpkgs;
-        in
-        if settings ? flake then
-          {
-            system = extended.nixosConfigurations.${settings.host}.extendModules {
-              inherit modules;
-              specialArgs = { inherit agent distro; };
-            };
-            source = {
-              url = flakeRef;
-              rev = extended.rev or null;
-              hash = extended.narHash;
-            };
-          }
-        else
-          {
-            system = nixosFrom packageSet modules;
-            source = {
-              url = json.source.url or defaultUrl;
-              rev = packageSet.rev or null;
-              hash = packageSet.narHash;
-            };
+          packageSet = if sources ? nixpkgs then pinned sources.nixpkgs else nixpkgs;
+          locked = name: flake: {
+            url = sources.${name}.url;
+            rev = flake.rev or null;
+            hash = flake.narHash;
           };
+          default =
+            if settings ? flake then
+              {
+                system = extended.nixosConfigurations.${settings.host}.extendModules {
+                  inherit modules;
+                  specialArgs = { inherit agent distro; };
+                };
+                source = {
+                  url = flakeRef;
+                  rev = extended.rev or null;
+                  hash = extended.narHash;
+                };
+              }
+            else
+              {
+                system = nixosFrom packageSet modules;
+                source = {
+                  url = sources.nixpkgs.url or defaultUrl;
+                  rev = packageSet.rev or null;
+                  hash = packageSet.narHash;
+                };
+              };
+        in
+        {
+          inherit (default) system;
+          inherit named;
+          sources = lib.mapAttrs locked named // {
+            nixpkgs = default.source;
+          };
+        };
 
       # The system to build. A lock pins the configuration a system extends too, so one that
       # changed since is refused until it's locked again.
@@ -154,38 +175,40 @@
         input: extra:
         let
           evaluated = evalInput input extra;
-          locked = (lib.importJSON input).source;
+          locked = (lib.importJSON input).sources.nixpkgs or { };
+          current = evaluated.sources.nixpkgs;
         in
-        if locked ? hash && locked.hash != evaluated.source.hash then
+        if locked ? hash && locked.hash != current.hash then
           throw (
-            "${evaluated.source.url} changed since distro.lock was written; "
+            "${current.url} changed since distro.lock was written; "
             + "run `distro lock` to use it as it is now"
           )
         else
           evaluated.system;
 
-      # What the lock records: the source and, for each package the system and its users have,
+      # What the lock records: each source and, for each package the system and its users have,
       # its version and store path.
       resolve =
         input:
         let
           evaluated = evalInput input [ ];
           json = lib.importJSON input;
+          package = import ./package.nix lib evaluated.system.pkgs evaluated.named;
           names = lib.unique (
             json.packages ++ lib.concatMap (home: home.packages) (builtins.attrValues json.homes)
           );
           locked =
             name:
             let
-              package = lib.getAttrFromPath (lib.splitString "." name) evaluated.system.pkgs;
+              found = package name;
             in
             {
-              version = package.version or (builtins.parseDrvName package.name).version;
-              id = package.outPath;
+              version = found.version or (builtins.parseDrvName found.name).version;
+              id = found.outPath;
             };
         in
         {
-          inherit (evaluated) source;
+          inherit (evaluated) sources;
           packages = lib.genAttrs names locked;
         };
     in

@@ -65,11 +65,24 @@ pub enum RenderError {
     Error(Diagnostic),
 }
 
+/// The source packages come from when their name doesn't say, and the one the base system is
+/// built from.
+pub const DEFAULT_SOURCE: &str = "nixpkgs";
+
+/// The source a package comes from and its name there: `stable#git` is `git` from `stable`, and
+/// a name without a source comes from [`DEFAULT_SOURCE`].
+pub fn package_source(name: &str) -> (&str, &str) {
+    name.split_once('#').unwrap_or((DEFAULT_SOURCE, name))
+}
+
 /// What a module contributes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Output {
     pub settings: Vec<Setting>,
     pub packages: BTreeSet<String>,
+    /// Where packages come from, by name, such as `stable` to the URL it follows. Packages
+    /// name theirs as `stable#git`.
+    pub sources: BTreeMap<String, String>,
     /// Files by absolute path.
     pub files: BTreeMap<String, File>,
     /// systemd units by name, such as `syncthing.service`.

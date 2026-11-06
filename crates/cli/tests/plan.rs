@@ -171,9 +171,9 @@ fn basic_with_lock(lock: &str) -> tempfile::TempDir {
     dir
 }
 
-const LOCK: &str = r#"version = 1
+const LOCK: &str = r#"version = 2
 
-[source]
+[sources.nixpkgs]
 url = "github:NixOS/nixpkgs/nixos-unstable"
 rev = "1d06008aaaaaaaaaaaa"
 hash = "sha256-abc"
@@ -197,7 +197,7 @@ fn plan_shows_what_the_lock_pins() {
     let body = plan.split_once('\n').unwrap().1;
     insta::assert_snapshot!(body, @"
     packages
-      + package source (tier: live)
+      + source nixpkgs (tier: live)
           github:NixOS/nixpkgs/nixos-unstable at 1d06008aaaaa
       ~ nginx (tier: live)
           locked at 1.29.1
@@ -207,7 +207,7 @@ fn plan_shows_what_the_lock_pins() {
 
 #[test]
 fn a_broken_lock_is_an_error_naming_the_file() {
-    let config = basic_with_lock("version = 1\n");
+    let config = basic_with_lock("version = 2\n[sources.nixpkgs]\n");
     let output = distro(&[
         "plan",
         "--config",
@@ -218,7 +218,7 @@ fn a_broken_lock_is_an_error_naming_the_file() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("distro.lock: missing field `source`"),
+        stderr.contains("distro.lock: missing field `url`"),
         "{stderr}"
     );
 }

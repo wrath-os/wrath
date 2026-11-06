@@ -76,8 +76,8 @@ pub fn build(model: &Model, factory: &Path, target: Target, work: &Path) -> Resu
     })
 }
 
-/// Resolves `model`'s packages to a lock: from the source of its lock, the latest of that
-/// source when the lock has no hash, or the factory's own nixpkgs without a lock. A system that
+/// Resolves `model`'s packages to a lock: from each source as its lock pins it, or the latest
+/// of a source the lock doesn't pin. Without a `nixpkgs` source, the factory's own. A system that
 /// extends a NixOS configuration takes packages from that configuration, so it is the source.
 pub fn resolve(model: &Model, factory: &Path, work: &Path) -> Result<Lock, String> {
     let (stdout, _) = nix(&["eval", "--json"], model, factory, "resolve", work)?;
@@ -86,14 +86,17 @@ pub fn resolve(model: &Model, factory: &Path, work: &Path) -> Result<Lock, Strin
 
 #[derive(Deserialize)]
 struct Resolved {
-    source: Source,
+    sources: BTreeMap<String, Source>,
     packages: BTreeMap<String, Locked>,
 }
 
 fn parse_resolved(json: &str) -> Result<Lock, String> {
     let resolved: Resolved = serde_json::from_str(json)
         .map_err(|e| format!("cannot read the packages Nix resolved: {e}"))?;
-    Ok(Lock::new(resolved.source, resolved.packages))
+    Ok(Lock {
+        sources: resolved.sources,
+        packages: resolved.packages,
+    })
 }
 
 /// Runs `nix` with `args` on the factory's `function` applied to `model`'s lowered input.
@@ -278,16 +281,18 @@ mod tests {
     #[test]
     fn resolved_packages_become_a_lock() {
         let json = r#"{
-          "source": { "url": "github:NixOS/nixpkgs/nixos-unstable", "rev": "1d06008", "hash": "sha256-abc" },
+          "sources": {
+            "nixpkgs": { "url": "github:NixOS/nixpkgs/nixos-unstable", "rev": "1d06008", "hash": "sha256-abc" },
+            "etc": { "url": "git+file:///etc/nixos", "rev": null, "hash": "sha256-x" }
+          },
           "packages": { "git": { "version": "2.56.0", "id": "/nix/store/xgw-git-2.56.0" } }
         }"#;
 
         let lock = parse_resolved(json).unwrap();
 
-        assert_eq!(lock.source.rev.as_deref(), Some("1d06008"));
+        assert_eq!(lock.sources["nixpkgs"].rev.as_deref(), Some("1d06008"));
+        assert_eq!(lock.sources["etc"].rev, None);
         assert_eq!(lock.packages["git"].version, "2.56.0");
-        let unpinned = r#"{ "source": { "url": "git+file:///etc/nixos", "rev": null, "hash": "sha256-x" }, "packages": {} }"#;
-        assert_eq!(parse_resolved(unpinned).unwrap().source.rev, None);
         assert!(parse_resolved("{}").is_err());
     }
 

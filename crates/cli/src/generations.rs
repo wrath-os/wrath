@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use distro_backend_nixos::{self as backend, Target};
-use distro_model::{LOCK_FILE, Lock, Model, Source, Tier};
+use distro_model::{DEFAULT_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum BuildTarget {
@@ -47,7 +47,7 @@ pub fn build(root: &Path, model: &Model, target: BuildTarget) -> Result<PathBuf,
 /// Packages the lock next to `config` doesn't have yet are locked first, so the lock always
 /// describes the running system.
 pub fn apply(root: &Path, config: &Path, model: Model) -> Result<ExitCode, String> {
-    let model = if is_locked(&model) {
+    let model = if model.is_locked() {
         model
     } else {
         let lock = resolve(root, &model)?;
@@ -104,40 +104,55 @@ pub fn rollback() -> Result<ExitCode, String> {
 }
 
 /// Resolves `model`'s packages and writes the lock next to `config`, then prints how the
-/// packages changed. With `update`, the lock's package set moves to its newest version first.
-pub fn lock(root: &Path, config: &Path, model: &Model, update: bool) -> Result<ExitCode, String> {
-    let mut wanted = model.clone();
-    if update {
-        // A source without a hash is followed to its newest version.
-        let source = wanted.source.get_or_insert_with(|| Source {
-            url: DEFAULT_SOURCE.into(),
-            ..Source::default()
-        });
-        source.rev = None;
-        source.hash.clear();
-    }
+/// packages changed. With `update`, those sources move to their newest version first, or every
+/// source when it names none.
+pub fn lock(
+    root: &Path,
+    config: &Path,
+    model: &Model,
+    update: Option<&[String]>,
+) -> Result<ExitCode, String> {
+    let wanted = match update {
+        Some(names) => follow_newest(model.clone(), names)?,
+        None => model.clone(),
+    };
     let lock = resolve(root, &wanted)?;
     write_lock(config, &lock)?;
     let plan = distro_model::plan(model, &model.clone().with_lock(&lock));
     let count = lock.packages.len();
     let noun = if count == 1 { "package" } else { "packages" };
-    println!("locked {count} {noun} from {}", lock.source.url);
+    let sources: Vec<&str> = lock.sources.keys().map(String::as_str).collect();
+    println!("locked {count} {noun} from {}", sources.join(", "));
     if !plan.is_empty() {
         print!("{plan}");
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// The package set a configuration follows when it has no lock yet. The factory pins it.
-const DEFAULT_SOURCE: &str = "github:NixOS/nixpkgs/nixos-unstable";
-
-/// Whether the model has a lock with every package it uses.
-fn is_locked(model: &Model) -> bool {
-    model.source.is_some()
-        && model
-            .all_packages()
-            .all(|name| model.locked.contains_key(name))
+/// `model` with the sources `names` unpinned, or all of them when it names none, so resolving
+/// takes their newest versions.
+fn follow_newest(mut model: Model, names: &[String]) -> Result<Model, String> {
+    model
+        .sources
+        .entry(DEFAULT_SOURCE.to_owned())
+        .or_insert_with(|| Source::follow(DEFAULT_URL));
+    if let Some(unknown) = names.iter().find(|name| !model.sources.contains_key(*name)) {
+        let known: Vec<&str> = model.sources.keys().map(String::as_str).collect();
+        return Err(format!(
+            "there's no source `{unknown}`; the configuration has {}",
+            known.join(", ")
+        ));
+    }
+    for (name, source) in &mut model.sources {
+        if names.is_empty() || names.contains(name) {
+            *source = Source::follow(&source.url);
+        }
+    }
+    Ok(model)
 }
+
+/// What the default source follows when nothing says otherwise. The factory pins it.
+const DEFAULT_URL: &str = "github:NixOS/nixpkgs/nixos-unstable";
 
 fn resolve(root: &Path, model: &Model) -> Result<Lock, String> {
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
@@ -151,8 +166,6 @@ fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use distro_model::Locked;
-
     use super::*;
 
     #[test]
@@ -176,27 +189,30 @@ mod tests {
     }
 
     #[test]
-    fn a_model_is_locked_when_its_lock_has_every_package() {
-        let mut model = Model::default();
-        model.packages.insert("nginx".into());
-        model
-            .homes
-            .entry("john".into())
-            .or_default()
-            .packages
-            .insert("git".into());
-        let lock = |names: &[&str]| {
-            let packages = names
-                .iter()
-                .map(|name| ((*name).to_owned(), Locked::default()))
-                .collect();
-            Lock::new(Source::default(), packages)
+    fn update_unpins_the_sources_it_names_or_all_of_them() {
+        let pinned = |url: &str| Source {
+            url: url.into(),
+            rev: Some("1d06008".into()),
+            hash: "sha256-abc".into(),
         };
+        let mut model = Model::default();
+        model.sources.insert("nixpkgs".into(), pinned("github:a/b"));
+        model.sources.insert("stable".into(), pinned("github:c/d"));
 
-        assert!(!is_locked(&model));
-        assert!(!is_locked(&model.clone().with_lock(&lock(&["nginx"]))));
-        assert!(is_locked(
-            &model.clone().with_lock(&lock(&["nginx", "git"]))
-        ));
+        let one = follow_newest(model.clone(), &["stable".into()]).unwrap();
+        assert!(one.sources["nixpkgs"].is_locked());
+        assert_eq!(one.sources["stable"], Source::follow("github:c/d"));
+
+        let all = follow_newest(model.clone(), &[]).unwrap();
+        assert!(!all.sources.values().any(Source::is_locked));
+
+        let unknown = follow_newest(model, &["stabel".into()]).unwrap_err();
+        assert_eq!(
+            unknown,
+            "there's no source `stabel`; the configuration has nixpkgs, stable"
+        );
+
+        let fresh = follow_newest(Model::default(), &[]).unwrap();
+        assert_eq!(fresh.sources["nixpkgs"], Source::follow(DEFAULT_URL));
     }
 }

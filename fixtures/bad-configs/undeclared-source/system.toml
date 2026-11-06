@@ -1,0 +1,8 @@
+[system]
+hostname = "box"
+
+[sources.stable]
+url = "github:NixOS/nixpkgs/nixos-25.11"
+
+[users.john]
+packages = ["stable#jq", "unstabel#ripgrep"]

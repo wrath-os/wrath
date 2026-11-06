@@ -72,11 +72,11 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       },
       "packages": [],
       "secrets": {},
-      "source": {},
+      "sources": {},
       "templates": {},
       "triggers": {},
       "units": {},
-      "version": 9
+      "version": 10
     }
     "#);
 }
@@ -358,18 +358,27 @@ fn with_packages(lock: &Lock) -> Model {
     model.with_lock(lock)
 }
 
-fn lock(rev: &str, packages: &[(&str, Locked)]) -> Lock {
-    let source = Source {
-        url: "github:NixOS/nixpkgs/nixos-unstable".into(),
+fn source(url: &str, rev: &str) -> Source {
+    Source {
+        url: url.into(),
         rev: Some(rev.into()),
         hash: format!("sha256-{rev}"),
-    };
+    }
+}
+
+fn lock(rev: &str, packages: &[(&str, Locked)]) -> Lock {
     let packages = packages
         .iter()
         .map(|(name, locked)| ((*name).to_owned(), locked.clone()))
         .collect();
-    Lock::new(source, packages)
+    Lock {
+        sources: [("nixpkgs".to_owned(), source(UNSTABLE, rev))].into(),
+        packages,
+    }
 }
+
+const UNSTABLE: &str = "github:NixOS/nixpkgs/nixos-unstable";
+const STABLE: &str = "github:NixOS/nixpkgs/nixos-25.11";
 
 #[test]
 fn the_model_keeps_what_the_lock_says_about_its_packages() {
@@ -383,7 +392,7 @@ fn the_model_keeps_what_the_lock_says_about_its_packages() {
     );
     let model = with_packages(&lock);
 
-    assert_eq!(model.source.as_ref(), Some(&lock.source));
+    assert_eq!(model.sources, lock.sources);
     assert_eq!(
         model.locked.keys().collect::<Vec<_>>(),
         ["git", "ripgrep"],
@@ -415,7 +424,7 @@ fn plan_shows_package_versions_and_the_package_source() {
 
     insta::assert_snapshot!(plan(&before, &after).to_string(), @"
     packages
-      ~ package source (tier: soft-reboot)
+      ~ source nixpkgs (tier: soft-reboot)
           github:NixOS/nixpkgs/nixos-unstable: aaaaaaa1 -> bbbbbbb2
           the base system, such as systemd and D-Bus, runs fully after a soft reboot
       ~ git (for john) (tier: live)
@@ -432,7 +441,7 @@ fn plan_shows_package_versions_and_the_package_source() {
     ");
     insta::assert_snapshot!(plan(&Model::default(), &before).to_string(), @"
     packages
-      + package source (tier: live)
+      + source nixpkgs (tier: live)
           github:NixOS/nixpkgs/nixos-unstable at aaaaaaa1
       + git (for john) (tier: live)
           not locked yet
@@ -664,5 +673,93 @@ fn plan_shows_files_with_secrets_in_homes() {
       + ~john/.netrc (tier: live)
           with secrets, filled in on the machine for john, mode 400
     1 change, tier: live
+    ");
+}
+
+/// `with_packages` plus `stable#jq` from a declared `stable` source that follows `url`.
+fn with_stable(url: &str, lock: &Lock) -> Model {
+    let mut model = Model::default();
+    model.packages.insert("ripgrep".into());
+    model.packages.insert("stable#jq".into());
+    model.sources.insert("stable".into(), Source::follow(url));
+    model.with_lock(lock)
+}
+
+fn two_sources(stable_rev: &str) -> Lock {
+    let mut lock = lock(
+        "aaaaaaa1",
+        &[
+            ("ripgrep", locked("14.1.0", "/nix/store/r1")),
+            (
+                "stable#jq",
+                locked("1.7", &format!("/nix/store/jq-{stable_rev}")),
+            ),
+            ("stable#old", locked("1.0", "/nix/store/o1")),
+        ],
+    );
+    lock.sources
+        .insert("stable".into(), source(STABLE, stable_rev));
+    lock.sources
+        .insert("gone".into(), source("github:x/y", "cccccc3"));
+    lock
+}
+
+#[test]
+fn named_sources_keep_their_pin_while_their_url_is_the_one_locked() {
+    let model = with_stable(STABLE, &two_sources("bbbbbbb2"));
+    assert_eq!(
+        model.sources.keys().collect::<Vec<_>>(),
+        ["nixpkgs", "stable"],
+        "sources nothing declares are left out, except the default one"
+    );
+    assert!(model.sources["stable"].is_locked());
+    assert_eq!(
+        model.locked.keys().collect::<Vec<_>>(),
+        ["ripgrep", "stable#jq"]
+    );
+    assert!(model.is_locked());
+
+    let moved = with_stable("github:NixOS/nixpkgs/nixos-26.05", &two_sources("bbbbbbb2"));
+    assert_eq!(
+        moved.sources["stable"],
+        Source::follow("github:NixOS/nixpkgs/nixos-26.05")
+    );
+    assert_eq!(
+        moved.locked.keys().collect::<Vec<_>>(),
+        ["ripgrep"],
+        "packages from a source with another URL aren't locked until it is"
+    );
+    assert!(!moved.is_locked());
+
+    assert!(!with_stable(STABLE, &Lock::default()).is_locked());
+    let mut unused = Model::default();
+    unused.packages.insert("ripgrep".into());
+    assert!(
+        !unused.is_locked(),
+        "without a lock, the default source isn't pinned"
+    );
+}
+
+#[test]
+fn plan_shows_each_source_and_only_the_default_one_needs_a_soft_reboot() {
+    let before = with_stable(STABLE, &two_sources("bbbbbbb2"));
+    let after = with_stable(STABLE, &two_sources("ddddddd4"));
+    insta::assert_snapshot!(plan(&before, &after).to_string(), @"
+    packages
+      ~ source stable (tier: live)
+          github:NixOS/nixpkgs/nixos-25.11: bbbbbbb2 -> ddddddd4
+      ~ stable#jq (tier: live)
+          rebuilt, still 1.7
+    2 changes, tier: live
+    ");
+
+    let unpinned = with_stable("github:NixOS/nixpkgs/nixos-26.05", &two_sources("bbbbbbb2"));
+    insta::assert_snapshot!(plan(&before, &unpinned).to_string(), @"
+    packages
+      ~ source stable (tier: live)
+          github:NixOS/nixpkgs/nixos-25.11 at bbbbbbb2 -> github:NixOS/nixpkgs/nixos-26.05 at its newest version
+      ~ stable#jq (tier: live)
+          not locked yet
+    2 changes, tier: live
     ");
 }

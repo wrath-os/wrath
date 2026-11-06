@@ -1,0 +1,2 @@
+error: package `unstabel#ripgrep` comes from source `unstabel`, which isn't declared
+ = help: declare it with `[sources.unstabel]` and the `url` it follows
