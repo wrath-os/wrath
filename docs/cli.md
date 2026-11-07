@@ -156,7 +156,9 @@ Setting up a machine: `distro install -C DIR --disk /dev/... [--role NAME] [--na
 any Linux with Nix and the disk tools, lays out the disks the configuration describes with
 systemd-repart, encrypts them with a passphrase it asks for, builds the system onto them and
 records the machine's role and name. It refuses disks that have partitions unless given `--wipe`.
-Decrypting the machine's keys into it (`--identity`) and matching a role's disks are planned.
+The machine's SSH host key and initrd key, kept encrypted in `secrets/machines/NAME/`, are
+decrypted into it with `--identity FILE`, which stays where install runs. Matching a role's disks
+is planned.
 
 ## Output and the API
 

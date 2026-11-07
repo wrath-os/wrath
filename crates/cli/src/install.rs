@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -104,6 +104,8 @@ pub struct Install<'a> {
     pub role: Option<&'a str>,
     /// Where the disks' passphrase is, instead of asking for it.
     pub passphrase: Option<&'a Path>,
+    /// An age identity that decrypts the machine's keys, which stays where install runs.
+    pub identity: Option<&'a Path>,
     /// Where the new system is mounted while it's installed.
     pub target: &'a Path,
     /// Lay out disks that have partitions already, destroying them.
@@ -178,6 +180,7 @@ pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, Str
     let system = generations::build(root, &model, how.system)?;
     let result = lay_out(&partitions, storage, how, &key, work.path())
         .and_then(|()| backend::install(&system, how.target))
+        .and_then(|()| place_keys(how))
         .and_then(|()| record(how));
     let closed = close(&partitions, how.target);
     result?;
@@ -351,6 +354,59 @@ fn lay_out(
     Ok(())
 }
 
+/// The machine's keys, made before install and kept encrypted in the configuration, by the file
+/// each is decrypted to on the machine.
+const KEYS: [(&str, &str); 2] = [
+    ("ssh_host_ed25519_key.age", "etc/ssh/ssh_host_ed25519_key"),
+    ("initrd_ed25519_key.age", "etc/ssh/initrd_ed25519_key"),
+];
+
+/// Decrypts the machine's keys from `secrets/machines/<name>/` into the new system, with the
+/// identity install was given, and writes their public halves beside them. The identity isn't
+/// copied anywhere.
+fn place_keys(how: &Install) -> Result<(), String> {
+    let Some(name) = how.name else {
+        return Ok(());
+    };
+    let dir = how.config.join("secrets/machines").join(name);
+    for (encrypted, file) in KEYS {
+        let source = dir.join(encrypted);
+        if !source.is_file() {
+            continue;
+        }
+        let identity = how.identity.ok_or_else(|| {
+            format!(
+                "{} is encrypted; give `--identity` with a key that decrypts it",
+                source.display()
+            )
+        })?;
+        let key = how.target.join(file);
+        let parent = key.parent().expect("keys are in a directory");
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        run(Command::new("age")
+            .args(["--decrypt", "--identity"])
+            .arg(identity)
+            .arg("--output")
+            .arg(&key)
+            .arg(&source))?;
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("{}: {e}", key.display()))?;
+        let public = Command::new("ssh-keygen")
+            .args(["-y", "-f"])
+            .arg(&key)
+            .output()
+            .map_err(|e| format!("cannot run ssh-keygen: {e}"))?;
+        if !public.status.success() {
+            return Err(format!("{} isn't an SSH key", source.display()));
+        }
+        let pub_file = key.with_extension("pub");
+        std::fs::write(&pub_file, public.stdout)
+            .map_err(|e| format!("{}: {e}", pub_file.display()))?;
+        println!("placed the machine's {}", key.display());
+    }
+    Ok(())
+}
+
 /// Records the machine's role and name on it, and copies the configuration to where it's
 /// applied from.
 fn record(how: &Install) -> Result<(), String> {
@@ -488,5 +544,31 @@ mod tests {
         assert_eq!(bytes("512M"), 512 << 20);
         assert_eq!(bytes("1G"), 1 << 30);
         assert_eq!(bytes("2T"), 2 << 40);
+    }
+
+    #[test]
+    fn a_machine_whose_keys_are_encrypted_needs_an_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let keys = config.join("secrets/machines/w-01");
+        std::fs::create_dir_all(&keys).unwrap();
+        let install = |name| Install {
+            config: &config,
+            disks: BTreeMap::new(),
+            name,
+            role: None,
+            passphrase: None,
+            identity: None,
+            target: dir.path(),
+            wipe: false,
+            yes: true,
+            system: Target::System,
+        };
+
+        assert_eq!(place_keys(&install(Some("w-01"))), Ok(()));
+        std::fs::write(keys.join("ssh_host_ed25519_key.age"), "").unwrap();
+        let err = place_keys(&install(Some("w-01"))).unwrap_err();
+        assert!(err.contains("give `--identity`"), "{err}");
+        assert_eq!(place_keys(&install(None)), Ok(()));
     }
 }

@@ -159,6 +159,9 @@ enum Command {
         /// A file with the disks' passphrase, instead of asking for it
         #[arg(long, value_name = "FILE")]
         passphrase_file: Option<PathBuf>,
+        /// An age identity that decrypts the machine's keys under `secrets/machines/NAME`
+        #[arg(long, value_name = "FILE")]
+        identity: Option<PathBuf>,
         /// Where the new system is mounted while it's installed
         #[arg(long, default_value = "/mnt")]
         target: PathBuf,
@@ -363,6 +366,7 @@ fn main() -> ExitCode {
             disks,
             name,
             passphrase_file,
+            identity,
             target,
             wipe,
             yes,
@@ -381,6 +385,7 @@ fn main() -> ExitCode {
                     name: name.as_deref(),
                     role: given_role(),
                     passphrase: passphrase_file.as_deref(),
+                    identity: identity.as_deref(),
                     target: &target,
                     wipe,
                     yes,
