@@ -102,13 +102,13 @@ fn error_removing_from_options_that_are_not_sets_or_ordered_lists() {
     insta::assert_snapshot!(err(&[
         ("system.toml", "[system]\nhostname = { remove = [\"box\"] }\nkernel_params = { remove = [\"quiet\"] }\n"),
     ]), @r#"
-    error: only set and ordered lists support `remove`
+    error: only set and ordered lists support `add` and `remove`
      --> system.toml:2:12
       |
     2 | hostname = { remove = ["box"] }
       |            ^^^^^^^^^^^^^^^^^^^^ this option is a string
 
-    error: only set and ordered lists support `remove`
+    error: only set and ordered lists support `add` and `remove`
      --> system.toml:3:17
       |
     3 | kernel_params = { remove = ["quiet"] }
@@ -205,5 +205,37 @@ fn error_ordered_item_without_a_name_or_with_unknown_fields() {
       |
     5 | [[pam.other.auth]]
       | ^^^^^^^^^^^^^^^^^^ unknown field `flags`
+    "#);
+}
+
+#[test]
+fn a_file_adds_to_a_list_and_removes_from_it_at_once() {
+    insta::assert_snapshot!(why(&[
+        SYSTEM,
+        (
+            "users/john.toml",
+            "include = [\"common.toml\"]\npackages = { add = [\"htop\"], remove = [\"git\"] }\n",
+        ),
+        ("common.toml", "packages = [\"git\", \"helix\"]\n"),
+    ], "users.john.packages"), @r#"
+    users.john.packages = ["helix", "htop"]
+      set at users/john.toml:2:20: ["htop"]
+      set at common.toml:1:12: ["git", "helix"]
+      overrides [], default
+      removes ["git"], set at users/john.toml:2:12
+    "#);
+}
+
+#[test]
+fn error_unknown_key_in_a_list_change() {
+    insta::assert_snapshot!(err(&[
+        ("users/john.toml", "packages = { add = [\"htop\"], replace = [\"git\"] }\n"),
+        SYSTEM,
+    ]), @r#"
+    error: unexpected `replace` in a list change
+     --> users/john.toml:1:30
+      |
+    1 | packages = { add = ["htop"], replace = ["git"] }
+      |                              ^^^^^^^ only `add` and `remove` belong here
     "#);
 }

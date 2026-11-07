@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use distro_eval::{Evaluation, OptionPath, Site, Value};
 use distro_model::{Model, package_source};
-use toml_edit::{Array, DocumentMut, Item, Table};
+use toml_edit::{Array, DocumentMut, InlineTable, Item, Table};
 
 use crate::{evaluate, generations, read_lock, run};
 
@@ -39,9 +39,12 @@ pub fn add(
     if names.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    let (file, change) = match config_sites(&evaluation, &option).next() {
-        Some((file, span, _)) => (file, Change::Extend(span)),
-        None => default_file(config, home),
+    let (file, change) = match config_sites(&evaluation, &option).find(|listed| !listed.shared) {
+        Some(listed) => (listed.file, Change::Extend(listed.span)),
+        None => {
+            let (file, keys) = starting_file(config, home);
+            (file, Change::Insert(keys))
+        }
     };
     edits.packages(&file, change, &names);
     let shown = shown_path(config, &file);
@@ -63,27 +66,49 @@ pub fn remove(
     };
     let option = packages_option(&evaluation, home)?;
     let sites: Vec<_> = config_sites(&evaluation, &option).collect();
-    if let Some(missing) = packages
-        .iter()
-        .find(|package| !sites.iter().any(|(_, _, items)| items.contains(package)))
-    {
+    let current = strings(&evaluation.options()[&option].value);
+    if let Some(missing) = packages.iter().find(|package| !current.contains(package)) {
         return Err(format!("`{missing}` isn't in {option}"));
     }
     let mut edits = Edits::default();
-    for (file, span, items) in sites {
+    let mut excluded = Vec::new();
+    for listed in &sites {
         let gone: Vec<String> = packages
             .iter()
-            .filter(|package| items.contains(package))
+            .filter(|package| listed.items.contains(package))
             .cloned()
             .collect();
-        if !gone.is_empty() {
-            edits.packages(&file, Change::Remove(span), &gone);
-            println!(
-                "removed {} from {}",
-                gone.join(", "),
-                shown_path(config, &file)
-            );
+        if gone.is_empty() {
+            continue;
         }
+        let shown = shown_path(config, &listed.file);
+        if listed.shared {
+            println!(
+                "{} comes from {shown}, which other configurations can include too",
+                gone.join(", ")
+            );
+            excluded.extend(gone);
+        } else {
+            edits.packages(&listed.file, Change::Remove(listed.span.clone()), &gone);
+            println!("removed {} from {shown}", gone.join(", "));
+        }
+    }
+    for package in packages {
+        if !sites.iter().any(|listed| listed.items.contains(package)) {
+            println!("{package} comes from a module");
+            excluded.push(package.clone());
+        }
+    }
+    if !excluded.is_empty() {
+        excluded.sort();
+        excluded.dedup();
+        let (file, keys) = starting_file(config, home);
+        println!(
+            "removed {} with `{{ remove = [...] }}` in {}, leaving the shared file alone",
+            excluded.join(", "),
+            shown_path(config, &file)
+        );
+        edits.packages(&file, Change::Exclude(keys), &excluded);
     }
     edits.apply_and_lock(root, config, modules)
 }
@@ -106,41 +131,51 @@ fn packages_option(evaluation: &Evaluation, home: Option<&str>) -> Result<Option
     })
 }
 
-/// Where the configuration sets `option` itself: each file, the span of the value and its items.
+/// A list of packages in one of the configuration's files.
+struct Listed {
+    file: PathBuf,
+    /// Where the list is in the file.
+    span: Range<usize>,
+    items: Vec<String>,
+    /// Whether the file is only reached through an include, so other configurations may share
+    /// it. Commands leave such files alone.
+    shared: bool,
+}
+
+/// Where the configuration sets `option` itself.
 fn config_sites<'a>(
     evaluation: &'a Evaluation,
     option: &OptionPath,
-) -> impl Iterator<Item = (PathBuf, Range<usize>, Vec<String>)> + 'a {
+) -> impl Iterator<Item = Listed> + 'a {
     evaluation.options()[option]
         .set_by
         .iter()
         .filter_map(|contribution| match &contribution.site {
-            Site::Config(span) => Some((
-                PathBuf::from(evaluation.sources().name(span.file)),
-                span.start..span.end,
-                strings(&contribution.value),
-            )),
+            Site::Config(span) => Some(Listed {
+                file: PathBuf::from(evaluation.sources().name(span.file)),
+                span: span.start..span.end,
+                items: strings(&contribution.value),
+                shared: !evaluation.is_starting_file(span.file),
+            }),
             Site::Default | Site::Module { .. } => None,
         })
 }
 
-/// Where packages go when the configuration doesn't list any yet: the user's own file when there
-/// is one, or `system.toml`.
-fn default_file(config: &Path, home: Option<&str>) -> (PathBuf, Change) {
+/// The starting file that holds the packages, and the key in it: the user's own file when there
+/// is one, or `system.toml`. Packages go here when no starting file lists any yet, and so do
+/// removals of what shared files add.
+fn starting_file(config: &Path, home: Option<&str>) -> (PathBuf, Vec<String>) {
     match home {
         Some(user) => {
             let own = config.join("users").join(format!("{user}.toml"));
             if own.exists() {
-                (own, Change::Insert(vec!["packages".into()]))
+                (own, vec!["packages".into()])
             } else {
                 let keys = vec!["users".into(), user.to_owned(), "packages".into()];
-                (config.join("system.toml"), Change::Insert(keys))
+                (config.join("system.toml"), keys)
             }
         }
-        None => (
-            config.join("system.toml"),
-            Change::Insert(vec!["packages".into()]),
-        ),
+        None => (config.join("system.toml"), vec!["packages".into()]),
     }
 }
 
@@ -217,8 +252,10 @@ enum Change {
     Extend(Range<usize>),
     /// Remove from the list whose value is at this span.
     Remove(Range<usize>),
-    /// Set the key at this path, which the file doesn't have yet.
+    /// Add to the list at this key, which isn't a plain list in this file yet.
     Insert(Vec<String>),
+    /// Remove, in this file, items that files it includes add, with `{ remove = [...] }`.
+    Exclude(Vec<String>),
 }
 
 /// Changes to make to files, applied together: each file's lists from the back, so the spans
@@ -251,14 +288,15 @@ impl Edits {
         for (file, mut changes) in self.packages {
             changes.sort_by_key(|(change, _)| match change {
                 Change::Extend(span) | Change::Remove(span) => std::cmp::Reverse(span.start),
-                Change::Insert(_) => std::cmp::Reverse(0),
+                Change::Insert(_) | Change::Exclude(_) => std::cmp::Reverse(0),
             });
             let (_, text) = text_of(&mut texts, &file);
             for (change, names) in changes {
                 *text = match change {
                     Change::Extend(span) => extend(text, span, &names),
                     Change::Remove(span) => remove_items(text, span, &names),
-                    Change::Insert(keys) => insert(text, &keys, &names),
+                    Change::Insert(keys) => edit_list(text, &keys, &names, true),
+                    Change::Exclude(keys) => edit_list(text, &keys, &names, false),
                 }
                 .map_err(|e| format!("{}: {e}", file.display()))?;
             }
@@ -374,8 +412,10 @@ fn edit_array(
     ))
 }
 
-/// `text` with the key at `keys` set to the list `names`.
-fn insert(text: &str, keys: &[String], names: &[String]) -> Result<String, String> {
+/// `text` with `names` added to, or removed from, the list at `keys`, whatever form it has: no
+/// key yet, a plain list, or `{ add = [...], remove = [...] }`. Removing turns a plain list into
+/// that table.
+fn edit_list(text: &str, keys: &[String], names: &[String], add: bool) -> Result<String, String> {
     let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
     let (last, tables) = keys.split_last().ok_or("no key to set")?;
     let mut table = doc.as_table_mut();
@@ -386,9 +426,53 @@ fn insert(text: &str, keys: &[String], names: &[String]) -> Result<String, Strin
             .as_table_mut()
             .ok_or_else(|| format!("`{key}` isn't a table"))?;
     }
-    let array: Array = names.iter().map(String::as_str).collect();
-    table.insert(last, toml_edit::value(array));
+    let names: Array = names.iter().map(String::as_str).collect();
+    let list = match table.remove(last) {
+        None => None,
+        Some(Item::Value(value)) => Some(value),
+        Some(_) => return Err(format!("`{last}` isn't a list")),
+    };
+    let edited = match (list, add) {
+        (None, true) => toml_edit::Value::Array(names),
+        (None, false) => change_table(InlineTable::new(), REMOVE_KEY, names)?,
+        (Some(toml_edit::Value::Array(mut array)), true) => {
+            array.extend(names);
+            toml_edit::Value::Array(array)
+        }
+        (Some(toml_edit::Value::Array(array)), false) => {
+            let mut change = InlineTable::new();
+            if !array.is_empty() {
+                change.insert(ADD_KEY, toml_edit::Value::Array(array));
+            }
+            change_table(change, REMOVE_KEY, names)?
+        }
+        (Some(toml_edit::Value::InlineTable(change)), add) => {
+            change_table(change, if add { ADD_KEY } else { REMOVE_KEY }, names)?
+        }
+        (Some(_), _) => return Err(format!("`{last}` isn't a list")),
+    };
+    table.insert(last, Item::Value(edited));
     Ok(doc.to_string())
+}
+
+const ADD_KEY: &str = "add";
+const REMOVE_KEY: &str = "remove";
+
+/// `change`, an `{ add = [...], remove = [...] }` table, with `names` appended under `key`.
+fn change_table(
+    mut change: InlineTable,
+    key: &str,
+    names: Array,
+) -> Result<toml_edit::Value, String> {
+    match change.get_mut(key) {
+        Some(toml_edit::Value::Array(array)) => array.extend(names),
+        Some(_) => return Err(format!("`{key}` isn't a list")),
+        None => {
+            change.insert(key, toml_edit::Value::Array(names));
+        }
+    }
+    change.fmt();
+    Ok(toml_edit::Value::InlineTable(change))
 }
 
 fn strings(value: &Value) -> Vec<String> {
@@ -448,14 +532,58 @@ mod tests {
     fn a_missing_list_is_added_where_toml_allows_it() {
         let text = "[system]\nhostname = \"box\"\n";
         assert_eq!(
-            insert(text, &["packages".into()], &["jq".into()]).unwrap(),
+            edit_list(text, &["packages".into()], &["jq".into()], true).unwrap(),
             "packages = [\"jq\"]\n[system]\nhostname = \"box\"\n"
         );
         let keys = ["users".into(), "john".into(), "packages".into()];
-        let users = insert("[users.john]\nshell = \"bash\"\n", &keys, &["jq".into()]).unwrap();
+        let users = edit_list(
+            "[users.john]\nshell = \"bash\"\n",
+            &keys,
+            &["jq".into()],
+            true,
+        )
+        .unwrap();
         assert_eq!(
             users,
             "[users.john]\nshell = \"bash\"\npackages = [\"jq\"]\n"
+        );
+    }
+
+    #[test]
+    fn removing_what_a_shared_file_adds_writes_a_removal() {
+        let keys = ["packages".into()];
+        let gone = ["git".into()];
+        let cases = [
+            (
+                "[system]\n",
+                "packages = { remove = [\"git\"] }\n[system]\n",
+            ),
+            (
+                "packages = [\"htop\"]\n",
+                "packages = { add = [\"htop\"], remove = [\"git\"] }\n",
+            ),
+            (
+                "packages = { remove = [\"jq\"] }\n",
+                "packages = { remove = [\"jq\", \"git\"] }\n",
+            ),
+            ("packages = []\n", "packages = { remove = [\"git\"] }\n"),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(
+                edit_list(text, &keys, &gone, false).unwrap(),
+                expected,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn adding_next_to_a_removal_writes_add() {
+        let keys = ["users".into(), "john".into(), "packages".into()];
+        let text = "[users.john]\npackages = { remove = [\"git\"] }\n";
+        assert_eq!(
+            edit_list(text, &keys, &["htop".into()], true).unwrap(),
+            "[users.john]\npackages = { remove = [\"git\"], add = [\"htop\"] }\n"
         );
     }
 

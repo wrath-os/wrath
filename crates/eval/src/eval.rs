@@ -46,6 +46,9 @@ pub struct Input<'a> {
 #[derive(Debug)]
 pub struct Evaluation {
     sources: Sources,
+    /// The files the configuration starts from, as opposed to files only reached through an
+    /// include.
+    starting_files: HashSet<FileId>,
     options: BTreeMap<OptionPath, Resolved>,
     facts: BTreeMap<OptionPath, Value>,
     modules: Vec<Rendered>,
@@ -100,6 +103,12 @@ pub struct Use {
 impl Evaluation {
     pub fn sources(&self) -> &Sources {
         &self.sources
+    }
+
+    /// Whether the configuration starts from `file`, rather than only reaching it through an
+    /// include. Commands edit starting files and leave shared ones alone.
+    pub fn is_starting_file(&self, file: FileId) -> bool {
+        self.starting_files.contains(&file)
     }
 
     pub fn options(&self) -> &BTreeMap<OptionPath, Resolved> {
@@ -177,6 +186,11 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     let (files, load_diagnostics) = load::load(config, &mut sources);
     diagnostics.extend(load_diagnostics);
     let walked = walk::walk(&schema, &sources, &files);
+    let starting_files = files
+        .iter()
+        .filter(|loaded| loaded.start)
+        .map(|loaded| loaded.file)
+        .collect();
     diagnostics.extend(walked.diagnostics);
 
     let mut definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>> = BTreeMap::new();
@@ -239,6 +253,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     }
     Ok(Evaluation {
         sources,
+        starting_files,
         options: resolver.options,
         facts: resolver.facts_used,
         modules: resolver

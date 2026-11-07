@@ -66,8 +66,15 @@ The **starting file** owns the configuration: `system.toml`, `hosts/<name>.toml`
 file can't change what includes it. The starting file is where `add` and `remove` write unless
 told otherwise, it's named on the first line of output, and the lock sits next to it.
 
-When `remove` takes out something an included file adds, it writes the removal into the starting
-file and says so, leaving the shared file alone.
+When `remove` takes out something an included file or a module adds, it writes the removal into
+the starting file and says so, leaving the shared file alone. A file that both adds to a list and
+removes from it writes `packages = { add = ["htop"], remove = ["mergiraf"] }`; a plain list stays
+the usual form, and `remove` only turns it into that table when it has to.
+
+Removals are for the one-off case, such as one host out of fifteen that wants everything in
+`common.toml` but one package. A file that removes several things from the same include is a
+sign the include should be split into profiles. Removing something nothing adds is an error, so a
+removal doesn't outlive what it removed.
 
 Inside a project's shell, the project's packages and variables shadow the user's home. That's the
 one place two disagreeing values aren't an error: the project doesn't change the home, it scopes

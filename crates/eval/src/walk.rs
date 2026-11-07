@@ -16,7 +16,8 @@ use crate::suggest::did_you_mean;
 use crate::template::{self, Part};
 use crate::value::Value;
 
-/// The key of a removal, `{ remove = [...] }`.
+/// The keys of a change to a list, `{ add = [...], remove = [...] }`.
+pub(crate) const ADD: &str = "add";
 pub(crate) const REMOVE: &str = "remove";
 
 /// One place that sets an option.
@@ -213,17 +214,9 @@ impl Walker<'_> {
             {
                 self.table(spec, &path, table, file, false);
             }
-            DeValue::Table(table) if table.contains_key(REMOVE) => {
-                match self.removal(spec, span, table, file) {
-                    Ok(raw) => self.out.definitions.push(Definition {
-                        path,
-                        value: raw,
-                        level: Level::Normal,
-                        site: Site::Config(span),
-                        reason: None,
-                        action: Action::Remove,
-                    }),
-                    Err(diagnostic) => self.out.diagnostics.push(diagnostic),
+            DeValue::Table(table) if table.contains_key(ADD) || table.contains_key(REMOVE) => {
+                if let Err(diagnostic) = self.list_change(spec, &path, span, table, file) {
+                    self.out.diagnostics.push(diagnostic);
                 }
             }
             _ => match self.leaf(value, file) {
@@ -257,25 +250,47 @@ impl Walker<'_> {
         }
     }
 
-    /// `{ remove = [...] }` on a set or ordered list.
-    fn removal(
-        &self,
+    /// `{ add = [...], remove = [...] }` on a set or ordered list, with either key or both.
+    fn list_change(
+        &mut self,
         spec: &OptionSpec,
+        path: &OptionPath,
         span: Span,
         table: &DeTable<'_>,
         file: FileId,
-    ) -> Result<Raw, Diagnostic> {
+    ) -> Result<(), Diagnostic> {
         if !spec.ty.merges_items() {
             return Err(
-                Diagnostic::error("only set and ordered lists support `remove`")
+                Diagnostic::error("only set and ordered lists support `add` and `remove`")
                     .label(span, format!("this option is {}", spec.ty.describe())),
             );
         }
-        only_keys(table, &[REMOVE], "a removal", file)?;
-        let items = table
-            .get(REMOVE)
-            .expect("only tables with `remove` are removals");
-        self.raw(items, file)
+        only_keys(table, &[ADD, REMOVE], "a list change", file)?;
+        if let Some(items) = table.get(ADD) {
+            self.out.definitions.push(Definition {
+                path: path.clone(),
+                value: self.raw(items, file)?,
+                level: if self.defaults {
+                    Level::Default
+                } else {
+                    Level::Normal
+                },
+                site: Site::Config(Span::new(file, items.span())),
+                reason: None,
+                action: Action::Set,
+            });
+        }
+        if let Some(items) = table.get(REMOVE) {
+            self.out.definitions.push(Definition {
+                path: path.clone(),
+                value: self.raw(items, file)?,
+                level: Level::Normal,
+                site: Site::Config(span),
+                reason: None,
+                action: Action::Remove,
+            });
+        }
+        Ok(())
     }
 
     /// A value, a default written `{ default = ... }`, or a forced value written
