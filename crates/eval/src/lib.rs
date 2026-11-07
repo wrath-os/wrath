@@ -39,7 +39,7 @@ pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};
 pub use template::Part;
 pub use value::{RuntimePart, Value};
-pub use walk::{Action, Definition, Level, Raw, Site};
+pub use walk::{Action, DeclaredSource, Definition, Level, Raw, Site};
 pub use why::{describe_outputs, explain, explain_output};
 
 #[cfg(test)]

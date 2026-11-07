@@ -194,9 +194,9 @@ fn package_name(
     let (source, attribute) = package_source(reference);
     run::refuse_version(reference, attribute)?;
     let declared: BTreeMap<String, String> = evaluation
-        .modules()
+        .declared_sources()
         .iter()
-        .flat_map(|module| module.output.sources.clone())
+        .map(|(name, source)| (name.clone(), source.url.clone()))
         .collect();
     if !reference.contains('#') || declared.contains_key(source) {
         return Ok(reference.to_owned());
@@ -211,7 +211,7 @@ fn package_name(
             let name = source_name(source, |name| {
                 declared.contains_key(name) || edits.declares(name)
             });
-            edits.source(&config.join("system.toml"), &name, source);
+            edits.source(&starting_file(config, None).0, &name, source);
             println!("declared source {name} as {source}");
             name
         }

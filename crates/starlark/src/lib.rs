@@ -889,29 +889,6 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         })
     }
 
-    /// Declares where packages can come from: `name` follows `url`, such as
-    /// `github:NixOS/nixpkgs/nixos-25.11`, and packages name it as `name#package`.
-    fn source<'v>(
-        #[starlark(this)] _this: StarValue<'v>,
-        #[starlark(require = pos)] name: &str,
-        #[starlark(require = pos)] url: &str,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<NoneType> {
-        let (rendering, at) = rendering(eval)?;
-        if name.is_empty() || name.contains('#') {
-            return Err(rendering.invalid(at, format!("source name `{name}` can't have `#`")));
-        }
-        let replaced = rendering
-            .output
-            .borrow_mut()
-            .sources
-            .insert(name.to_owned(), url.to_owned());
-        if replaced.is_some() {
-            return Err(rendering.invalid(at, format!("source `{name}` is declared twice")));
-        }
-        Ok(NoneType)
-    }
-
     /// Adds a package to the system, or with `user`, to that user's packages. `stable#git` is
     /// `git` from the source `stable`.
     fn package<'v>(

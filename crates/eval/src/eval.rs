@@ -25,7 +25,9 @@ use crate::source::{FileId, Sources, Span};
 use crate::suggest::{closest, did_you_mean};
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
-use crate::walk::{self, Action, Definition, Level, MACHINE, REMOVE, Raw, Site, mark_instances};
+use crate::walk::{
+    self, Action, DeclaredSource, Definition, Level, MACHINE, REMOVE, Raw, Site, mark_instances,
+};
 
 /// The roots of references to machine values, with [`MACHINE`]: `${facts.cpu.count}`,
 /// `${machine.name}`.
@@ -62,6 +64,7 @@ pub struct Evaluation {
     declared: BTreeMap<String, Span>,
     machines: BTreeMap<String, Machine>,
     requirements: Vec<Requirement>,
+    declared_sources: BTreeMap<String, DeclaredSource>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
 }
@@ -135,6 +138,11 @@ impl Evaluation {
     /// The machine values the configuration refers to, such as `facts.cpu.count`.
     pub fn machine_values_used(&self) -> &BTreeSet<OptionPath> {
         &self.machine_values
+    }
+
+    /// Where packages and included files come from, by name, as `[sources]` declares them.
+    pub fn declared_sources(&self) -> &BTreeMap<String, DeclaredSource> {
+        &self.declared_sources
     }
 
     /// What a machine needs to run the configuration, from `[machine.requires]`.
@@ -271,7 +279,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     if diagnostics.is_empty() {
         diagnostics.extend(shared_outputs(&resolver.rendered));
         diagnostics.extend(bad_triggers(&resolver.rendered));
-        diagnostics.extend(unknown_sources(&resolver.rendered));
+        diagnostics.extend(unknown_sources(&resolver.rendered, &walked.sources));
         diagnostics.extend(undeclared_secrets(&resolver.rendered, &resolver.options));
     }
     let secret_files = if diagnostics.is_empty() {
@@ -294,6 +302,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         declared: resolver.declared,
         machines,
         requirements: walked.requirements,
+        declared_sources: walked.sources,
         modules: resolver
             .rendered
             .into_iter()
@@ -432,7 +441,7 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
                     .map(move |name| format!("{name} (for {user})"))
             })
             .collect();
-        let outputs: [(&str, Vec<String>); 9] = [
+        let outputs: [(&str, Vec<String>); 8] = [
             ("file", output.files.keys().cloned().collect()),
             ("file", output.templates.keys().cloned().collect()),
             ("file", home_files),
@@ -441,7 +450,6 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
             ("base setting", output.base.keys().cloned().collect()),
             ("backend setting", output.backends.keys().cloned().collect()),
             ("secret", output.secrets.keys().cloned().collect()),
-            ("source", output.sources.keys().cloned().collect()),
         ];
         for (kind, keys) in outputs {
             for key in keys {
@@ -464,11 +472,14 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
 }
 
 /// Packages from sources nothing declares. The default source is always there.
-fn unknown_sources(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
+fn unknown_sources(
+    rendered: &[Option<Rendered>],
+    sources: &BTreeMap<String, DeclaredSource>,
+) -> Vec<Diagnostic> {
     let rendered: Vec<&Rendered> = rendered.iter().flatten().collect();
-    let declared: BTreeSet<&str> = rendered
-        .iter()
-        .flat_map(|module| module.output.sources.keys().map(String::as_str))
+    let declared: BTreeSet<&str> = sources
+        .keys()
+        .map(String::as_str)
         .chain([DEFAULT_SOURCE])
         .collect();
     let mut diagnostics = Vec::new();

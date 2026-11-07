@@ -59,6 +59,17 @@ pub fn explain(evaluation: &Evaluation, prefix: Option<&OptionPath>) -> Result<S
             out.push('\n');
         }
     }
+    for (name, source) in evaluation.declared_sources() {
+        let path = OptionPath::root().child("sources").child(name.as_str());
+        if path.starts_with(prefix) {
+            let _ = writeln!(
+                out,
+                "{path} = {:?}\n  set at {}",
+                source.url,
+                evaluation.sources().location(source.at)
+            );
+        }
+    }
     if out.is_empty() {
         let names: Vec<String> = evaluation
             .options()

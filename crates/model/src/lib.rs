@@ -112,17 +112,16 @@ impl Model {
                 .values()
                 .flat_map(|resolved| machine_values(&resolved.value))
                 .collect(),
+            sources: evaluation
+                .declared_sources()
+                .iter()
+                .map(|(name, source)| (name.clone(), Source::follow(&source.url)))
+                .collect(),
             ..Self::default()
         };
         for rendered in evaluation.modules() {
             let output = &rendered.output;
             model.packages.extend(output.packages.iter().cloned());
-            model.sources.extend(
-                output
-                    .sources
-                    .iter()
-                    .map(|(name, url)| (name.clone(), Source::follow(url))),
-            );
             model.files.extend(files_of(&output.files));
             for (user, home) in &output.homes {
                 let ours = model.homes.entry(user.clone()).or_default();

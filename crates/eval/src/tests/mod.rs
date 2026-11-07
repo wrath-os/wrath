@@ -646,3 +646,4 @@ mod lists;
 mod machine;
 mod modules;
 mod roles;
+mod sources;

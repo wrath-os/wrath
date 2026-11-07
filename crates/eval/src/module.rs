@@ -80,9 +80,6 @@ pub fn package_source(name: &str) -> (&str, &str) {
 pub struct Output {
     pub settings: Vec<Setting>,
     pub packages: BTreeSet<String>,
-    /// Where packages come from, by name, such as `stable` to the URL it follows. Packages
-    /// name theirs as `stable#git`.
-    pub sources: BTreeMap<String, String>,
     /// Files by absolute path.
     pub files: BTreeMap<String, File>,
     /// systemd units by name, such as `syncthing.service`.
