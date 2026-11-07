@@ -56,6 +56,12 @@ filesystem = types.record(
     mount = option(types.path, optional = True),
     options = option(types.list(types.str), default = []),
     subvolumes = option(types.map(subvolume), default = {}),
+    degraded = option(
+        types.one_of(["boot", "stop"]),
+        default = "boot",
+        doc = "With a disk of a RAID missing, boot from the others and say so, or stop until " +
+              "someone boots it by hand.",
+    ),
 )
 
 UNITS = {"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024, "T": 1024 * 1024 * 1024 * 1024}
@@ -144,7 +150,10 @@ def render(ctx):
             ctx.error(at + ["raid"], "raid1 needs at least two partitions")
         if "mount" in fs and fs["subvolumes"]:
             ctx.error(at + ["mount"], "a filesystem with subvolumes mounts them, not itself")
-        extra = ["device=" + member for member in members[1:]]
+        # Booting with a member missing mounts degraded, after waiting for every member; otherwise
+        # the mount names each member, so it waits for all of them.
+        degraded = fs["raid"] != "single" and fs["degraded"] == "boot"
+        extra = ["degraded"] if degraded else ["device=" + member for member in members[1:]]
         if "mount" in fs:
             mounts.append({
                 "path": fs["mount"],
@@ -164,6 +173,7 @@ def render(ctx):
             "name": name,
             "format": fs["format"],
             "raid": fs["raid"],
+            "degraded": "boot" if degraded else "stop",
             "members": members,
             "subvolumes": sorted(fs["subvolumes"].keys()),
         })

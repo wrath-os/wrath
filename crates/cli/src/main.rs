@@ -300,11 +300,14 @@ fn main() -> ExitCode {
     // Commands that switch the machine, which a project has nothing to do with.
     let machine = || config().and_then(|config| refuse_project(&config).map(|()| config));
     let result = match cli.command {
-        Command::Status => machine().and_then(|config| match model(&config, &modules) {
-            Some(model) if is_home(&config) => home::status(&model),
-            Some(model) if json => print_serde(&generations::status_json(&model)),
-            Some(model) => generations::status(&model),
-            None => Ok(ExitCode::FAILURE),
+        Command::Status => machine().and_then(|config| {
+            generations::warn_degraded();
+            match model(&config, &modules) {
+                Some(model) if is_home(&config) => home::status(&model),
+                Some(model) if json => print_serde(&generations::status_json(&model)),
+                Some(model) => generations::status(&model),
+                None => Ok(ExitCode::FAILURE),
+            }
         }),
         Command::Plan { against, fresh } => {
             let against = match (against, fresh) {

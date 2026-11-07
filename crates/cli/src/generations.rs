@@ -239,6 +239,41 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Says which filesystems the machine runs with a disk missing. It's about the machine, so it's
+/// said before anything about its configuration.
+pub fn warn_degraded() {
+    for note in degraded(Path::new(DEGRADED)) {
+        println!("{note}");
+    }
+}
+
+/// Where the boot leaves a note for each filesystem it mounted with a disk missing.
+const DEGRADED: &str = "/run/distro";
+
+/// What the notes in `dir` say: each filesystem running without some of its disks, and what to do
+/// about it.
+fn degraded(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut notes: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let filesystem = name.strip_prefix("degraded-")?;
+            let missing = std::fs::read_to_string(entry.path()).ok()?;
+            Some(format!(
+                "warning: {filesystem} is running without {}; once the disk is back or \
+                 replaced, rebalance it with `btrfs balance start -dconvert=raid1 \
+                 -mconvert=raid1 /`",
+                missing.split_whitespace().collect::<Vec<_>>().join(", ")
+            ))
+        })
+        .collect();
+    notes.sort();
+    notes
+}
+
 /// Whether the running system, whose model hash is `running`, is `model`.
 pub(crate) fn matching(running: Option<&str>, model: &Model) -> &'static str {
     match running {
@@ -761,5 +796,26 @@ mod tests {
 
         let fresh = follow_newest(&[(None, Model::default())], &[]).unwrap();
         assert_eq!(fresh[0].1.sources["nixpkgs"], Source::follow(DEFAULT_URL));
+    }
+
+    #[test]
+    fn status_says_which_filesystems_run_with_a_disk_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(degraded(&dir.path().join("none")).is_empty());
+        std::fs::write(
+            dir.path().join("degraded-root"),
+            " /dev/mapper/nvme1-system\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other"), "").unwrap();
+
+        assert_eq!(
+            degraded(dir.path()),
+            [
+                "warning: root is running without /dev/mapper/nvme1-system; once the disk is back \
+              or replaced, rebalance it with `btrfs balance start -dconvert=raid1 \
+              -mconvert=raid1 /`"
+            ]
+        );
     }
 }

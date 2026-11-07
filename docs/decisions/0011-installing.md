@@ -73,8 +73,12 @@ A passphrase is set at install. TPM2 and FIDO2 are enrolled afterwards with `sys
 on every container of the machine. Unlocking over SSH in the initrd is an option for machines
 without someone at the keyboard.
 
-A root across several disks needs all of them unlocked before it mounts, in any order. That is
-tested, including booting with one disk missing.
+A root across several disks needs all of them unlocked before it mounts, in any order. With one
+missing, a filesystem's `degraded` setting decides: `"boot"`, the default, waits a while for the
+missing disk, then mounts degraded from the others and says so at boot, in the journal and in
+`distro status`; `"stop"` waits for every disk, so the machine doesn't come up until someone boots
+it by hand. A machine that won't come up is usually worse than one running on fewer disks while
+saying so.
 
 ### Keys are made ahead of install
 

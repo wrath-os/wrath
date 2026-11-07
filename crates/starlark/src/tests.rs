@@ -941,7 +941,7 @@ fn disks_are_laid_out_and_mounted_by_name() {
           "format": "btrfs",
           "options": [
             "subvol=@root",
-            "device=/dev/mapper/nvme1-system"
+            "degraded"
           ],
           "path": "/"
         },
@@ -957,7 +957,7 @@ fn disks_are_laid_out_and_mounted_by_name() {
           "options": [
             "subvol=@nix",
             "noatime",
-            "device=/dev/mapper/nvme1-system"
+            "degraded"
           ],
           "path": "/nix"
         }
@@ -990,6 +990,7 @@ fn disks_are_laid_out_and_mounted_by_name() {
       ],
       "spanning": [
         {
+          "degraded": "boot",
           "format": "btrfs",
           "members": [
             "/dev/mapper/nvme0-system",
@@ -1075,6 +1076,22 @@ fn disks_are_laid_out_and_mounted_by_name() {
       "spanning": []
     }
     "#);
+}
+
+#[test]
+fn a_raid_that_stops_without_a_disk_waits_for_all_of_them() {
+    let stop = storage_of(
+        "[disks.d]\ndevices.count = 2\npartitions.esp = { size = \"1G\", format = \"vfat\", \
+         mount = \"/boot\", on = \"first\" }\npartitions.s = { size = \"rest\" }\n\n\
+         [filesystems.root]\nraid = \"raid1\"\ndegraded = \"stop\"\non = [\"d.s\"]\nmount = \"/\"\n",
+    )
+    .unwrap();
+    assert!(
+        stop.contains("\"device=/dev/disk/by-partlabel/d1-s\""),
+        "{stop}"
+    );
+    assert!(stop.contains("\"degraded\": \"stop\""), "{stop}");
+    assert!(!stop.contains("\"degraded\"\n"), "{stop}");
 }
 
 #[test]

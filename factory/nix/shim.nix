@@ -22,7 +22,12 @@ let
   storage = base.storage or {
     partitions = [ ];
     mounts = [ ];
+    spanning = [ ];
   };
+  # Filesystems across disks that boot with a member missing, and the members that may be.
+  degraded = lib.filter (fs: fs.degraded == "boot") storage.spanning;
+  mapperName = lib.removePrefix "/dev/mapper/";
+  optional = lib.concatMap (fs: map mapperName (lib.tail fs.members)) degraded;
   replaces = input.nixos.replaces or [ ];
   package = import ./package.nix lib pkgs distroSources;
   inherit (lib) mkDefault;
@@ -281,7 +286,12 @@ in
   boot.initrd.luks.devices = lib.listToAttrs (
     map (
       partition:
-      lib.nameValuePair partition.label { device = "/dev/disk/by-partlabel/${partition.label}"; }
+      lib.nameValuePair partition.label (
+        { device = "/dev/disk/by-partlabel/${partition.label}"; }
+        // lib.optionalAttrs (lib.elem partition.label optional) {
+          crypttabExtraOpts = [ "nofail" ];
+        }
+      )
     ) (lib.filter (partition: partition.encrypt) storage.partitions)
   );
   fileSystems = lib.listToAttrs (
@@ -298,6 +308,42 @@ in
   );
   swapDevices = map (mount: { inherit (mount) device; }) (
     lib.filter (mount: mount.format == "swap") storage.mounts
+  );
+  # btrfs holds back a filesystem's devices until every member is there, so one with a member
+  # missing would never mount. Instead the initrd waits for the members a while, then mounts with
+  # what's there, and leaves a note for `distro status`.
+  boot.initrd.services.udev.rules = lib.concatMapStrings (
+    fs: lib.concatMapStrings (member: ''
+      ENV{DM_NAME}=="${mapperName member}", ENV{SYSTEMD_READY}="1"
+    '') fs.members
+  ) degraded;
+  boot.initrd.systemd.services = lib.listToAttrs (
+    map (
+      fs:
+      lib.nameValuePair "distro-wait-${fs.name}" {
+        description = "Wait for the disks of ${fs.name}";
+        after = [ "cryptsetup.target" ];
+        before = [ "sysroot.mount" ];
+        requiredBy = [ "sysroot.mount" ];
+        unitConfig.DefaultDependencies = false;
+        serviceConfig.Type = "oneshot";
+        script = ''
+          for _ in $(seq 30); do
+            missing=""
+            for member in ${lib.escapeShellArgs fs.members}; do
+              [ -e "$member" ] || missing="$missing $member"
+            done
+            [ -z "$missing" ] && exit 0
+            sleep 1
+          done
+          message="distro: ${fs.name} boots degraded, without$missing"
+          echo "$message"
+          echo "$message" > /dev/console
+          mkdir -p /run/distro
+          echo "$missing" > /run/distro/degraded-${fs.name}
+        '';
+      }
+    ) degraded
   );
 
   networking.hostName = mkDefault base.system.hostname;

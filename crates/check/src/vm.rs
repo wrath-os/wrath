@@ -73,7 +73,11 @@ pub enum Step {
     },
     /// Stops the VM and boots what was installed on its blank disks, with UEFI, typing
     /// `passphrase` on the console when the disks ask for one.
-    BootInstalled { passphrase: Option<String> },
+    /// `missing` leaves out those blank disks, by index, to boot with them gone.
+    BootInstalled {
+        passphrase: Option<String>,
+        missing: Vec<usize>,
+    },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -131,12 +135,13 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 13] = [
+pub const STEP_FIELDS: [&str; 14] = [
     "apply_config",
     "prepare_build",
     "target",
     "boot_installed",
     "passphrase",
+    "missing",
     "apply_home",
     "as_user",
     "expect_plan",
@@ -155,6 +160,8 @@ struct RawStep {
     target: Option<String>,
     boot_installed: Option<bool>,
     passphrase: Option<String>,
+    #[serde(default)]
+    missing: Vec<usize>,
     apply_home: Option<String>,
     as_user: Option<String>,
     #[serde(default)]
@@ -180,6 +187,7 @@ impl TryFrom<RawStep> for Step {
         if raw.boot_installed == Some(true) {
             return Ok(Self::BootInstalled {
                 passphrase: raw.passphrase,
+                missing: raw.missing,
             });
         }
         if let Some(config) = raw.apply_home {
@@ -407,7 +415,7 @@ impl VmRun<'_> {
         self.prepare_dir(boot, &firmware)?;
 
         let _tpm = self.spec.tpm.then(|| self.start_swtpm()).transpose()?;
-        let args = self.qemu_args(boot, &firmware, pick_cid())?;
+        let args = self.qemu_args(boot, &firmware, pick_cid(), &[])?;
         self.write_interactive_script(&args)?;
 
         let mut qemu = self.spawn(&args)?;
@@ -517,6 +525,7 @@ impl VmRun<'_> {
         boot: Boot,
         firmware: &FirmwarePaths,
         cid: u32,
+        missing: &[usize],
     ) -> Result<QemuArgs, String> {
         let mut argv: Vec<String> = [
             "-machine",
@@ -586,7 +595,7 @@ impl VmRun<'_> {
                 ]);
             }
         }
-        for n in 0..self.spec.blank_disks.len() {
+        for n in (0..self.spec.blank_disks.len()).filter(|n| !missing.contains(n)) {
             argv.extend([
                 "-drive".into(),
                 format!("if=virtio,format=qcow2,file=blank{n}.qcow2"),
@@ -767,8 +776,12 @@ impl VmRun<'_> {
                 Step::PrepareBuild { config, target } => {
                     self.prepare_build(agent, config, target.as_deref(), deadline)?;
                 }
-                Step::BootInstalled { passphrase } => {
-                    self.boot_installed(qemu, agent, firmware, passphrase.as_deref(), deadline)?;
+                Step::BootInstalled {
+                    passphrase,
+                    missing,
+                } => {
+                    let passphrase = passphrase.as_deref();
+                    self.boot_installed(qemu, agent, firmware, passphrase, missing, deadline)?;
                     booted = boot_id(agent, deadline)?;
                 }
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
@@ -858,6 +871,7 @@ impl VmRun<'_> {
         agent: &mut Client<VsockStream>,
         firmware: &FirmwarePaths,
         passphrase: Option<&str>,
+        missing: &[usize],
         deadline: Instant,
     ) -> Result<(), String> {
         let _ = qemu.0.kill();
@@ -867,7 +881,7 @@ impl VmRun<'_> {
             self.dir.join("console.log"),
             self.dir.join("console-live.log"),
         );
-        let args = self.qemu_args(Boot::Installed, firmware, pick_cid())?;
+        let args = self.qemu_args(Boot::Installed, firmware, pick_cid(), missing)?;
         *qemu = self.spawn(&args)?;
         if let Some(passphrase) = passphrase {
             self.type_at_prompt(passphrase, deadline)?;
