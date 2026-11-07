@@ -53,8 +53,8 @@ pub fn explain(evaluation: &Evaluation, prefix: Option<&OptionPath>) -> Result<S
                 if let [contribution] = option.set_by.as_slice() {
                     let _ = write!(out, ", {}", origin(evaluation, contribution));
                 }
-            } else if let Some(fact) = evaluation.facts_used().get(&used.path) {
-                let _ = write!(out, " = {fact}, read from the machine");
+            } else if evaluation.machine_values_used().contains(&used.path) {
+                out.push_str(", filled in on the machine");
             }
             out.push('\n');
         }

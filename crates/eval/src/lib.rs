@@ -21,7 +21,9 @@ mod walk;
 mod why;
 
 pub use diag::{Diagnostic, Label, render};
-pub use eval::{Contribution, EvalError, Evaluation, Input, Rendered, Resolved, Use, evaluate};
+pub use eval::{
+    Contribution, EvalError, Evaluation, Input, MACHINE_VALUES, Rendered, Resolved, Use, evaluate,
+};
 pub use fs::{ConfigFs, DirFs, MemFs};
 pub use load::roles;
 pub use module::{

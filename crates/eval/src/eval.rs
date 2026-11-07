@@ -20,13 +20,19 @@ use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
 use crate::schema::{Child, EVERY, ListMerge, OptionSpec, Schema, Type};
 use crate::source::{FileId, Sources, Span};
-use crate::suggest::did_you_mean;
+use crate::suggest::{closest, did_you_mean};
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
 use crate::walk::{self, Action, Definition, Level, REMOVE, Raw, Site, mark_instances};
 
-/// The root of `${facts.…}` references.
+/// The roots of references to machine values: `${facts.cpu.count}`, `${machine.name}`.
 const FACTS: &str = "facts";
+const MACHINE: &str = "machine";
+
+/// The machine values a configuration can refer to: facts the machine detects, and values it's
+/// given. They're filled in on the machine when it switches, so the build doesn't depend on them.
+pub const MACHINE_VALUES: [&str; 2] = ["facts.cpu.count", "machine.name"];
+
 /// References to a secret's contents start with this, as `${secret.api-token}`.
 const SECRET: &str = "secret";
 
@@ -39,8 +45,6 @@ pub struct Input<'a> {
     /// Options declared outside modules. Module options are added to it.
     pub schema: Schema,
     pub modules: &'a [Box<dyn Module>],
-    /// A table of machine facts.
-    pub facts: &'a Value,
 }
 
 /// The result of evaluating a configuration: one resolved value per option that has one, and
@@ -52,7 +56,7 @@ pub struct Evaluation {
     /// include.
     starting_files: HashSet<FileId>,
     options: BTreeMap<OptionPath, Resolved>,
-    facts: BTreeMap<OptionPath, Value>,
+    machine_values: BTreeSet<OptionPath>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
 }
@@ -85,7 +89,7 @@ pub struct Resolved {
     pub overridden: Vec<Contribution>,
     /// Removals of items from a set or ordered list.
     pub removed_by: Vec<Contribution>,
-    /// Options and facts the value's references read.
+    /// Options and machine values the value's references read.
     pub uses: Vec<Use>,
 }
 
@@ -123,9 +127,9 @@ impl Evaluation {
         self.options.get(&path).map(|resolved| &resolved.value)
     }
 
-    /// Machine facts the configuration read, by path under `facts`.
-    pub fn facts_used(&self) -> &BTreeMap<OptionPath, Value> {
-        &self.facts
+    /// The machine values the configuration refers to, such as `facts.cpu.count`.
+    pub fn machine_values_used(&self) -> &BTreeSet<OptionPath> {
+        &self.machine_values
     }
 
     /// What each module rendered, in the order the modules were given.
@@ -164,7 +168,6 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         role,
         mut schema,
         modules,
-        facts,
     } = input;
     let mut diagnostics = Vec::new();
     // Options in every entry of a map come last, so the map is declared whatever the order.
@@ -207,7 +210,6 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         schema: &schema,
         modules,
         writes: modules.iter().map(|module| module.writes()).collect(),
-        facts,
         // A definition that failed to load may be the one that sets a required option, so
         // missing options are only reported when everything loaded.
         report_missing: diagnostics.is_empty(),
@@ -225,7 +227,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         rendered: vec![None; modules.len()],
         stack: Vec::new(),
         options: BTreeMap::new(),
-        facts_used: BTreeMap::new(),
+        machine_values: BTreeSet::new(),
         diagnostics: Vec::new(),
     };
     for id in 0..modules.len() {
@@ -258,7 +260,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         sources,
         starting_files,
         options: resolver.options,
-        facts: resolver.facts_used,
+        machine_values: resolver.machine_values,
         modules: resolver
             .rendered
             .into_iter()
@@ -339,7 +341,9 @@ fn secret_names(value: &Value) -> Vec<&String> {
             .iter()
             .filter_map(|part| match part {
                 RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => Some(name),
-                RuntimePart::Text(_) => None,
+                RuntimePart::Text(_) | RuntimePart::Machine(_) | RuntimePart::QuotedMachine(_) => {
+                    None
+                }
             })
             .collect(),
         Value::List(items) => items.iter().flat_map(secret_names).collect(),
@@ -555,7 +559,6 @@ struct Resolver<'a> {
     schema: &'a Schema,
     modules: &'a [Box<dyn Module>],
     writes: Vec<Vec<OptionPath>>,
-    facts: &'a Value,
     report_missing: bool,
     definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>>,
     /// The files that include each file.
@@ -566,7 +569,7 @@ struct Resolver<'a> {
     rendered: Vec<Option<Rendered>>,
     stack: Vec<Frame>,
     options: BTreeMap<OptionPath, Resolved>,
-    facts_used: BTreeMap<OptionPath, Value>,
+    machine_values: BTreeSet<OptionPath>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1368,10 +1371,10 @@ impl<'a> Resolver<'a> {
                         for part in parts {
                             match part {
                                 RuntimePart::Text(text) => push_text(&mut out, &text),
-                                secret
-                                @ (RuntimePart::Secret(_) | RuntimePart::QuotedSecret(_)) => {
-                                    out.push(secret)
-                                }
+                                filled @ (RuntimePart::Secret(_)
+                                | RuntimePart::QuotedSecret(_)
+                                | RuntimePart::Machine(_)
+                                | RuntimePart::QuotedMachine(_)) => out.push(filled),
                             }
                         }
                     }
@@ -1403,7 +1406,7 @@ impl<'a> Resolver<'a> {
             .split_first()
             .map(|(first, rest)| (first.as_str(), rest))
         {
-            Some((FACTS, fact)) => return self.fact(path, fact, span, uses),
+            Some((FACTS | MACHINE, _)) => return self.machine_value(path, span, uses),
             Some((SECRET, [name])) => {
                 return Some(Value::Runtime(vec![RuntimePart::Secret(name.clone())]));
             }
@@ -1444,33 +1447,29 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    fn fact(
+    /// A machine value, filled in on the machine: one of [`MACHINE_VALUES`].
+    fn machine_value(
         &mut self,
         path: &OptionPath,
-        fact: &[String],
         span: Span,
         uses: &mut Vec<Use>,
     ) -> Option<Value> {
-        let found = fact
-            .iter()
-            .try_fold(self.facts, |value, segment| match value {
-                Value::Table(entries) => entries.get(segment),
-                _ => None,
-            });
-        match found {
-            Some(value) => {
-                self.facts_used.insert(path.clone(), value.clone());
-                uses.push(Use { path: path.clone() });
-                Some(value.clone())
-            }
-            None => {
-                self.diagnostics.push(
-                    Diagnostic::error(format!("unknown machine fact `{path}`"))
-                        .label(span, "referenced here"),
-                );
-                None
-            }
+        let name = path.to_string();
+        if MACHINE_VALUES.contains(&name.as_str()) {
+            self.machine_values.insert(path.clone());
+            uses.push(Use { path: path.clone() });
+            return Some(Value::Runtime(vec![RuntimePart::Machine(name)]));
         }
+        let note = match closest(&name, MACHINE_VALUES) {
+            Some(known) => format!("help: did you mean `{known}`?"),
+            None => format!("the machine values are {}", MACHINE_VALUES.join(", ")),
+        };
+        self.diagnostics.push(
+            Diagnostic::error(format!("unknown machine value `{path}`"))
+                .label(span, "referenced here")
+                .note(note),
+        );
+        None
     }
 }
 

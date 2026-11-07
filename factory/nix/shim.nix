@@ -172,11 +172,17 @@ in
       '';
   };
 
-  # Files with secrets in them are filled in after the secrets on every boot and switch, into a
-  # new directory on ramfs that then replaces /run/distro/templates in one step. A file that
-  # can't be filled in is left out with an error. Their paths link into that directory.
+  # Files with secrets or machine values in them are filled in on every boot and switch, after
+  # the secrets, into a new directory on ramfs that then replaces /run/distro/templates in one
+  # step. A file that can't be filled in is left out with an error. Their paths link into that
+  # directory.
   system.activationScripts.distroTemplates = lib.mkIf (templates != [ ]) {
-    deps = [ "distroSecrets" ];
+    deps = [
+      "specialfs"
+      "users"
+      "groups"
+    ]
+    ++ lib.optional (input.secrets != { }) "distroSecrets";
     text =
       let
         spec = pkgs.writeText "distro-templates.json" (

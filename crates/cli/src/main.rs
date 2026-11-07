@@ -328,7 +328,9 @@ fn main() -> ExitCode {
             })
             .map(exit_code),
         },
-        Command::FillTemplates { spec, secrets, out } => templates::fill(&spec, &secrets, &out),
+        Command::FillTemplates { spec, secrets, out } => {
+            templates::fill(&spec, &secrets, &templates::machine_values(), &out)
+        }
     };
     match result {
         Ok(code) => code,

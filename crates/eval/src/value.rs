@@ -26,6 +26,11 @@ pub enum RuntimePart {
     /// A secret's contents inside a quoted string of a file format. Contents with quotes,
     /// backslashes or control characters would need escaping there, so they are refused.
     QuotedSecret(String),
+    /// A machine value, such as `facts.cpu.count` or `machine.name`, by its dotted path.
+    Machine(String),
+    /// A machine value inside a quoted string of a file format, refused like a quoted secret
+    /// when it would need escaping.
+    QuotedMachine(String),
 }
 
 impl Value {
@@ -130,6 +135,9 @@ impl fmt::Display for Value {
                             }
                             RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => {
                                 write!(template, "${{secret.{name}}}")?
+                            }
+                            RuntimePart::Machine(path) | RuntimePart::QuotedMachine(path) => {
+                                write!(template, "${{{path}}}")?
                             }
                         }
                     }

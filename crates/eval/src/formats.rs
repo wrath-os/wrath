@@ -49,8 +49,8 @@ fn to_toml(value: &Value) -> Result<TomlValue, String> {
     })
 }
 
-/// [`json`] for a value that may contain secrets: the text around them, and each secret as a
-/// [`RuntimePart::QuotedSecret`] to fill in on the machine.
+/// [`json`] for a value that may contain secrets or machine values: the text around them, and each
+/// as a [`RuntimePart::QuotedSecret`] or [`RuntimePart::QuotedMachine`] to fill in on the machine.
 pub fn json_parts(value: &Value) -> Result<Vec<RuntimePart>, String> {
     with_secrets(value, json)
 }
@@ -91,7 +91,7 @@ fn with_secrets(
         if start > 0 {
             parts.push(RuntimePart::Text(rest[..start].to_owned()));
         }
-        parts.push(RuntimePart::QuotedSecret(secrets[index].clone()));
+        parts.push(secrets[index].clone());
         rest = &rest[end + MARKER_END.len_utf8()..];
     }
     if !rest.is_empty() {
@@ -100,9 +100,9 @@ fn with_secrets(
     Ok(parts)
 }
 
-/// `value` with runtime values turned into strings that mark each secret, recorded in
-/// `secrets` by index.
-fn mark(value: &Value, secrets: &mut Vec<String>) -> Result<Value, String> {
+/// `value` with runtime values turned into strings that mark each secret and machine value,
+/// recorded in `secrets` by index as the quoted part that fills the marker in.
+fn mark(value: &Value, secrets: &mut Vec<RuntimePart>) -> Result<Value, String> {
     Ok(match value {
         Value::Str(text) if text.contains(MARKER_START) => {
             return Err(format!(
@@ -113,14 +113,20 @@ fn mark(value: &Value, secrets: &mut Vec<String>) -> Result<Value, String> {
             let mut text = String::new();
             for part in parts {
                 match part {
-                    RuntimePart::Text(part) => text.push_str(part),
+                    RuntimePart::Text(part) => {
+                        text.push_str(part);
+                        continue;
+                    }
                     RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => {
-                        text.push(MARKER_START);
-                        text.push_str(&secrets.len().to_string());
-                        text.push(MARKER_END);
-                        secrets.push(name.clone());
+                        secrets.push(RuntimePart::QuotedSecret(name.clone()));
+                    }
+                    RuntimePart::Machine(path) | RuntimePart::QuotedMachine(path) => {
+                        secrets.push(RuntimePart::QuotedMachine(path.clone()));
                     }
                 }
+                text.push(MARKER_START);
+                text.push_str(&(secrets.len() - 1).to_string());
+                text.push(MARKER_END);
             }
             Value::Str(text)
         }
@@ -308,6 +314,8 @@ mod tests {
                     RuntimePart::Text(text) => text.clone(),
                     RuntimePart::Secret(name) => format!("<{name}>"),
                     RuntimePart::QuotedSecret(name) => format!("<quoted {name}>"),
+                    RuntimePart::Machine(path) => format!("<machine {path}>"),
+                    RuntimePart::QuotedMachine(path) => format!("<quoted machine {path}>"),
                 })
                 .collect()
         };

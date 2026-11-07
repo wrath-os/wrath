@@ -1,7 +1,5 @@
 //! End-to-end evaluation tests: configuration in, values, provenance and errors out.
 
-use std::collections::BTreeMap;
-
 use crate::{
     Input, ListMerge, MemFs, Module, OptionPath, OptionSpec, Schema, Sources, Type, Value,
     evaluate, explain,
@@ -83,14 +81,12 @@ pub(crate) fn schema() -> Schema {
         "system.kernel_params",
         OptionSpec::new(Type::list(Type::Str, ListMerge::Atomic)).optional(),
     );
+    declare(
+        &mut schema,
+        "system.motd",
+        OptionSpec::new(Type::Str).optional().runtime(),
+    );
     schema
-}
-
-pub(crate) fn facts() -> Value {
-    Value::Table(BTreeMap::from([(
-        "cpu".into(),
-        Value::Table(BTreeMap::from([("count".into(), Value::Int(32))])),
-    )]))
 }
 
 fn eval(files: &[(&str, &str)]) -> Result<crate::Evaluation, String> {
@@ -115,7 +111,6 @@ pub(crate) fn eval_role(
         role,
         schema: schema(),
         modules,
-        facts: &facts(),
     })
     .map_err(|e| e.to_string())
 }
@@ -197,9 +192,6 @@ fn references_keep_their_type_or_build_strings() {
 [services.grafana.main]
 port = 3001
 
-[services.nginx.main]
-workers = "${facts.cpu.count}"
-
 [services.nginx.main.sites.blog]
 domains = ["blog.example.com", "${system.hostname}.lan"]
 proxy = "http://127.0.0.1:${services.grafana.main.port}"
@@ -208,28 +200,16 @@ proxy = "http://127.0.0.1:${services.grafana.main.port}"
     ]);
 
     assert_eq!(
-        evaluation.get("services.nginx.main.workers"),
-        Some(&Value::Int(32))
-    );
-    assert_eq!(
         evaluation.get("services.nginx.main.sites.blog.proxy"),
         Some(&Value::Str("http://127.0.0.1:3001".into()))
     );
-    assert_eq!(
-        evaluation
-            .facts_used()
-            .keys()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>(),
-        ["facts.cpu.count"]
-    );
     insta::assert_snapshot!(why(&evaluation, "services.nginx.main.sites.blog"), @r#"
     services.nginx.main.sites.blog.domains = ["blog.example.com", "box.lan"]
-      set at services/web.toml:9:11
+      set at services/web.toml:6:11
       overrides [], default
       uses system.hostname = "box", set at system.toml:2:12
     services.nginx.main.sites.blog.proxy = "http://127.0.0.1:3001"
-      set at services/web.toml:10:9
+      set at services/web.toml:7:9
       uses services.grafana.main.port = 3001, set at services/web.toml:3:8
     "#);
 }
@@ -574,11 +554,12 @@ fn error_unknown_fact_and_malformed_reference() {
     3 | timezone = "${system."
       |             ^^^^^^^^^ in this reference
 
-    error: unknown machine fact `facts.gpu`
+    error: unknown machine value `facts.gpu`
      --> system.toml:2:13
       |
     2 | hostname = "${facts.gpu}"
       |             ^^^^^^^^^^^^ referenced here
+      = the machine values are facts.cpu.count, machine.name
     "#);
 }
 
@@ -662,5 +643,6 @@ fn error_required_option_not_set() {
 
 mod defaults;
 mod lists;
+mod machine;
 mod modules;
 mod roles;

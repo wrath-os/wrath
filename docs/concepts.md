@@ -66,8 +66,10 @@ with its own service manager. A **unit** is a raw systemd unit, for what only Li
 A **home** is what a configuration puts in one user's home directory: files, packages, services
 and session variables.
 
-A **fact** is something read from the machine, such as its CPU count, that a configuration
-depends on.
+A **machine value** is something that differs between machines running the same configuration:
+a **fact** the machine detects, such as `${facts.cpu.count}`, or a value it's given, such as
+`${machine.name}`. Like secrets, machine values are filled in on the machine when it switches,
+so they only go in options that are filled in there too, and the build is the same everywhere.
 
 ## Making it so
 

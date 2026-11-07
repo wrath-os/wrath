@@ -53,10 +53,10 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
     {
       "backends": {},
       "base": {},
-      "facts": {},
       "files": {},
       "homes": {},
       "locked": {},
+      "machine": [],
       "next_login": [],
       "options": {
         "grafana.password": {
@@ -76,7 +76,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "templates": {},
       "triggers": {},
       "units": {},
-      "version": 10
+      "version": 11
     }
     "#);
 }
@@ -498,7 +498,7 @@ fn full_model() -> Model {
         ("systemd-networkd.service".into(), UnitAction::Reload),
         ["/etc/app.conf".into()].into(),
     );
-    model.facts.insert("host.cpus".into(), Value::Int(8));
+    model.machine.insert("facts.cpu.count".into());
     model.secrets.insert(
         "token".into(),
         Secret {

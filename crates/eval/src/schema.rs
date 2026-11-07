@@ -264,6 +264,10 @@ impl Type {
             (Self::Path, Value::Runtime(parts)) => {
                 matches!(parts.as_slice(), [RuntimePart::Secret(_)])
             }
+            // A whole machine value, such as `facts.cpu.count`, which is a number on the machine.
+            (Self::Int { .. }, Value::Runtime(parts)) => {
+                matches!(parts.as_slice(), [RuntimePart::Machine(_)])
+            }
             (Self::Enum(choices), Value::Str(s)) => choices.contains(s),
             (
                 Self::List {

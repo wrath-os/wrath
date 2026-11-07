@@ -19,7 +19,7 @@ pub use lock::{DEFAULT_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 10;
+pub const VERSION: i64 = 11;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -34,8 +34,9 @@ pub struct Model {
     pub backends: BTreeMap<String, Value>,
     /// Files that make services the system provides reload or restart, by service and action.
     pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,
-    /// Machine facts the configuration read, by dotted path.
-    pub facts: BTreeMap<String, Value>,
+    /// Machine values the configuration refers to, such as `facts.cpu.count`, filled in on the
+    /// machine.
+    pub machine: BTreeSet<String>,
     /// Secrets decrypted on the machine, by name.
     pub secrets: BTreeMap<String, Secret>,
     /// What goes in users' homes, by user.
@@ -106,10 +107,10 @@ impl Model {
                 .iter()
                 .map(|(path, resolved)| (path.to_string(), resolved.value.clone()))
                 .collect(),
-            facts: evaluation
-                .facts_used()
+            machine: evaluation
+                .machine_values_used()
                 .iter()
-                .map(|(path, value)| (path.to_string(), value.clone()))
+                .map(ToString::to_string)
                 .collect(),
             ..Self::default()
         };
@@ -310,7 +311,10 @@ impl Model {
             ("units", units_value(&self.units)),
             ("base", spell_out_entries(&self.base)),
             ("backends", spell_out_entries(&self.backends)),
-            ("facts", spell_out_entries(&self.facts)),
+            (
+                "machine",
+                Value::List(self.machine.iter().cloned().map(Value::Str).collect()),
+            ),
         ])
     }
 
@@ -332,7 +336,9 @@ impl Model {
             .flat_map(|template| &template.parts)
             .filter_map(|part| match part {
                 RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => Some(name),
-                RuntimePart::Text(_) => None,
+                RuntimePart::Text(_) | RuntimePart::Machine(_) | RuntimePart::QuotedMachine(_) => {
+                    None
+                }
             });
         mentioned.chain(in_templates).map(String::as_str).collect()
     }
@@ -435,7 +441,8 @@ fn section_value(section: &Section) -> Value {
     ])
 }
 
-/// Runtime parts as a list of tables like `{ text = ".." }` and `{ secret = ".." }`.
+/// Runtime parts as a list of tables like `{ text = ".." }`, `{ secret = ".." }` and
+/// `{ machine = "facts.cpu.count" }`.
 pub fn spell_out_parts(parts: &[RuntimePart]) -> Value {
     Value::List(
         parts
@@ -445,6 +452,8 @@ pub fn spell_out_parts(parts: &[RuntimePart]) -> Value {
                     RuntimePart::Text(text) => ("text", text),
                     RuntimePart::Secret(name) => ("secret", name),
                     RuntimePart::QuotedSecret(name) => ("quoted_secret", name),
+                    RuntimePart::Machine(path) => ("machine", path),
+                    RuntimePart::QuotedMachine(path) => ("quoted_machine", path),
                 };
                 table([(kind, Value::Str(text.clone()))])
             })

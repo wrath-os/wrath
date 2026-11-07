@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use distro_eval::{
     ConfigFs, DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output, Schema,
-    Sources, Type, Value, describe_outputs, evaluate, explain,
+    Sources, Type, describe_outputs, evaluate, explain,
 };
 
 use super::load;
@@ -56,7 +55,6 @@ fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, St
         role: None,
         schema: Schema::default(),
         modules: &modules,
-        facts: &Value::Table(BTreeMap::new()),
     })
     .map_err(|e| e.to_string())
 }
@@ -76,7 +74,6 @@ fn run(source: &str) -> Result<Evaluation, String> {
         role: None,
         schema: base_schema(),
         modules: &[module],
-        facts: &Value::Table(BTreeMap::new()),
     })
     .map_err(|e| e.to_string())
 }
@@ -446,7 +443,6 @@ module(
         role: None,
         schema: base_schema(),
         modules: &modules,
-        facts: &Value::Table(BTreeMap::new()),
     })
     .unwrap_or_else(|e| panic!("{e}"));
 
@@ -745,7 +741,6 @@ fn load_from(files: &[(&str, &str)], module: &str) -> Result<Evaluation, String>
         role: None,
         schema: base_schema(),
         modules: &[module],
-        facts: &Value::Table(BTreeMap::new()),
     })
     .map_err(|e| e.to_string())
 }

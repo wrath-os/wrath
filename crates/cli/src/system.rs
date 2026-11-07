@@ -1,10 +1,9 @@
 //! Evaluating a configuration directory with the modules in a module directory.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use distro_eval::{ConfigFs, DirFs, Evaluation, Input, Module, Schema, Sources, Value, render};
+use distro_eval::{ConfigFs, DirFs, Evaluation, Input, Module, Schema, Sources, render};
 
 /// The order modules are loaded and run in. The result must not depend on it.
 #[derive(Debug, Clone, Copy)]
@@ -48,7 +47,6 @@ fn evaluate_with(
         role,
         schema: Schema::default(),
         modules: &modules,
-        facts: &host_facts(),
     })
     .map_err(|e| e.to_string())
 }
@@ -87,16 +85,6 @@ pub fn load_modules(
     } else {
         Err(render(&errors, sources))
     }
-}
-
-/// Facts about the machine `distro` runs on, for `${facts.…}` references.
-fn host_facts() -> Value {
-    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
-    let cpu = BTreeMap::from([(
-        "count".to_owned(),
-        Value::Int(i64::try_from(cpus).unwrap_or(i64::MAX)),
-    )]);
-    Value::Table(BTreeMap::from([("cpu".to_owned(), Value::Table(cpu))]))
 }
 
 /// A Fisher-Yates shuffle driven by a small xorshift generator, so a seed always gives the same

@@ -39,7 +39,7 @@ impl Model {
             base: unspelled("base")?,
             backends: unspelled("backends")?,
             triggers: read_triggers(field("triggers")?)?,
-            facts: unspelled("facts")?,
+            machine: strings(field("machine")?)?.into_iter().collect(),
             secrets: read_secrets(field("secrets")?)?,
             homes,
             sources: read_sources(field("sources")?)?,
@@ -120,6 +120,12 @@ fn runtime_parts(entries: &BTreeMap<String, Value>) -> Option<Vec<RuntimePart>> 
                 }
                 (kind, Value::Str(name)) if kind == "quoted_secret" => {
                     Some(RuntimePart::QuotedSecret(name.clone()))
+                }
+                (kind, Value::Str(path)) if kind == "machine" => {
+                    Some(RuntimePart::Machine(path.clone()))
+                }
+                (kind, Value::Str(path)) if kind == "quoted_machine" => {
+                    Some(RuntimePart::QuotedMachine(path.clone()))
                 }
                 _ => None,
             }
