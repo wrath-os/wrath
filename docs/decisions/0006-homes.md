@@ -1,6 +1,6 @@
 # 0006: Homes and user configurations
 
-Status: proposed, 2026-11-06. Needs a decision before user configurations are built.
+Status: accepted, 2026-11-07.
 
 ## Context
 
@@ -42,15 +42,12 @@ A standalone user configuration has its own generations under `~/.local/state/di
 `plan`, `apply`, `history` and `rollback` work on them the same way. Its tiers stop at "next
 login", since nothing it changes needs a reboot.
 
-## Left out on purpose
+## A baseline for a home
 
-Layering, where the system sets a baseline for john's home and john adds to it. It's useful in
-shared machines and offices, but it brings back merge rules between two owners, which is the
-subtle-difference problem again. If it's needed later, it should work through `include`, which
-configurations already have, so one owner still decides what goes in.
+A system baseline that a user adds to works through 0007: the user's configuration includes the
+baseline as defaults, keeps what they like and changes the rest. The user's configuration is the
+starting file, so one owner still decides what goes in.
 
 ## Questions
 
-- Is one owner per home acceptable, or is the system baseline plus personal additions a case
-  that has to work from the start?
 - The name of the "the user manages this home" setting.

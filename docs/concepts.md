@@ -30,6 +30,14 @@ An **option** is one typed setting with a dotted name, such as `services.nginx.m
 has one value. Two files setting it differently is an error, never a silent override. `distro why`
 says where each value comes from.
 
+A **default** (planned) is a value others may change: `{ default = "Europe/Stockholm" }`, or every
+value in a file included with `as = "defaults"`. A set value beats a default, and when two
+defaults disagree, the file that includes the other wins.
+
+The **starting file** (planned) is the file a configuration starts from, such as `system.toml` or
+a project's `distro.toml`. It owns the configuration: included files can't change it, and `add`
+writes to it.
+
 A **module** declares options and turns their values into packages, files, services and settings.
 Modules are written in Starlark and can share code through **libraries**. Users write TOML, and
 only write modules to add something new.
