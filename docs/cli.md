@@ -152,13 +152,14 @@ Understanding the configuration:
 
 Secrets: `distro secret edit NAME`, `distro secret list`, `distro secret rekey`.
 
-Setting up a machine: `distro install -C DIR --disk /dev/... [--role NAME] [--name NAME]`, from
-any Linux with Nix and the disk tools, lays out the disks the configuration describes with
+Setting up a machine: `distro install -C DIR [--disk NAME=/dev/...] [--role NAME] [--name NAME]`,
+from any Linux with Nix and the disk tools, lays out the disks the configuration describes with
 systemd-repart, encrypts them with a passphrase it asks for, builds the system onto them and
 records the machine's role and name. It refuses disks that have partitions unless given `--wipe`.
 The machine's SSH host key and initrd key, kept encrypted in `secrets/machines/NAME/`, are
-decrypted into it with `--identity FILE`, which stays where install runs. Matching a role's disks
-is planned.
+decrypted into it with `--identity FILE`, which stays where install runs. Without `--disk`, it finds
+the disks the configuration describes by kind and size, refusing to guess when more than enough
+fit, and records them on the machine.
 
 ## Output and the API
 

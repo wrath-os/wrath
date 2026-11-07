@@ -137,7 +137,11 @@ pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, Str
         .get("storage")
         .ok_or("the configuration describes no disks to install on; add them under `[disks]`")?;
     let partitions = partitions(storage);
-    let disks = named(storage, &how.disks)?;
+    let disks = if how.disks.is_empty() {
+        match_disks(storage, &list_blocks()?, how.wipe)?
+    } else {
+        named(storage, &how.disks)?
+    };
     check_disks(storage, &disks)?;
     let how = &Install { disks, ..*how };
     println!("installing onto:");
@@ -216,6 +220,146 @@ fn named(
             names.join(", ")
         )),
     }
+}
+
+/// A disk of the machine, as `lsblk` sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    pub path: PathBuf,
+    pub name: String,
+    pub size: u64,
+    /// How it's attached, such as `nvme` or `sata`, when lsblk knows.
+    pub transport: String,
+    /// It has a partition table or partitions already.
+    pub partitioned: bool,
+    /// Something on it is mounted, such as the live system install runs from.
+    pub mounted: bool,
+}
+
+/// The disks in `lsblk --json --bytes --output NAME,PATH,SIZE,TYPE,TRAN,PTTYPE,MOUNTPOINTS`.
+pub fn blocks(json: &str) -> Result<Vec<Block>, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("cannot read what lsblk says: {e}"))?;
+    Ok(parsed["blockdevices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|device| device["type"] == "disk")
+        .map(|device| Block {
+            path: PathBuf::from(device["path"].as_str().unwrap_or_default()),
+            name: device["name"].as_str().unwrap_or_default().to_owned(),
+            size: device["size"].as_u64().unwrap_or(0),
+            transport: device["tran"].as_str().unwrap_or_default().to_owned(),
+            partitioned: !device["pttype"].is_null()
+                || device["children"].as_array().is_some_and(|c| !c.is_empty()),
+            mounted: mounted(device),
+        })
+        .collect())
+}
+
+fn mounted(device: &serde_json::Value) -> bool {
+    let here = device["mountpoints"]
+        .as_array()
+        .is_some_and(|points| points.iter().any(|point| !point.is_null()));
+    here || device["children"]
+        .as_array()
+        .is_some_and(|children| children.iter().any(mounted))
+}
+
+/// The machine's disks for each disk the layout describes: those it names by path, or those of
+/// the kind and size it asks for. Disks with partitions count only with `wipe`, and mounted ones
+/// never do. More disks fitting than a description wants is an error, rather than a guess.
+pub fn match_disks(
+    storage: &Value,
+    blocks: &[Block],
+    wipe: bool,
+) -> Result<BTreeMap<String, Vec<PathBuf>>, String> {
+    let Value::Table(disks) = field(storage, "disks") else {
+        return Err("the configuration describes no disks".into());
+    };
+    let mut chosen: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    let mut taken: Vec<PathBuf> = Vec::new();
+    for (name, disk) in disks {
+        let paths = strings(field(disk, "paths"));
+        if !paths.is_empty() {
+            chosen.insert(name.clone(), paths.iter().map(PathBuf::from).collect());
+            continue;
+        }
+        let count = match field(disk, "count") {
+            Value::Int(n) => *n as usize,
+            _ => 1,
+        };
+        let kind = text(disk, "kind");
+        let at_least = text(disk, "at_least");
+        let least = bytes(&at_least);
+        let fits: Vec<&Block> = blocks
+            .iter()
+            .filter(|block| !block.mounted && (wipe || !block.partitioned))
+            .filter(|block| block.size >= least && !taken.contains(&block.path))
+            .filter(|block| match kind.as_str() {
+                "nvme" => block.transport == "nvme" || block.name.starts_with("nvme"),
+                "sata" => block.transport == "sata",
+                "virtio" => block.name.starts_with("vd"),
+                _ => true,
+            })
+            .collect();
+        if fits.len() != count {
+            let wanted = describe(count, &kind, &at_least);
+            let listed: Vec<String> = fits
+                .iter()
+                .map(|block| format!("{} ({}G)", block.path.display(), block.size >> 30))
+                .collect();
+            let found = if listed.is_empty() {
+                "none".to_owned()
+            } else {
+                listed.join(", ")
+            };
+            let hint = if fits.len() < count && !wipe {
+                "; disks with partitions count with `--wipe`"
+            } else {
+                ""
+            };
+            return Err(format!(
+                "the disk `{name}` is {wanted}, and this machine has {} that fit: {found}{hint}; \
+                 name them with `--disk {name}=/dev/...`",
+                fits.len()
+            ));
+        }
+        let paths: Vec<PathBuf> = fits.iter().map(|block| block.path.clone()).collect();
+        taken.extend(paths.iter().cloned());
+        chosen.insert(name.clone(), paths);
+    }
+    Ok(chosen)
+}
+
+/// What a disk description asks for, such as `2 nvme disks of at least 500G`.
+fn describe(count: usize, kind: &str, at_least: &str) -> String {
+    let kind = if kind == "any" || kind.is_empty() {
+        String::new()
+    } else {
+        format!("{kind} ")
+    };
+    let plural = if count == 1 { "" } else { "s" };
+    let size = if at_least.is_empty() {
+        String::new()
+    } else {
+        format!(" of at least {at_least}")
+    };
+    format!("{count} {kind}disk{plural}{size}")
+}
+
+/// The machine's disks, as `lsblk` lists them.
+fn list_blocks() -> Result<Vec<Block>, String> {
+    let output = Command::new("lsblk")
+        .args([
+            "--json",
+            "--bytes",
+            "--output",
+            "NAME,PATH,SIZE,TYPE,TRAN,PTTYPE,MOUNTPOINTS",
+        ])
+        .output()
+        .map_err(|e| format!("cannot run lsblk: {e}"))?;
+    blocks(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Checks there are devices for every disk the layout has, as many as it wants.
@@ -414,6 +558,11 @@ fn record(how: &Install) -> Result<(), String> {
         role: how.role.map(str::to_owned),
         name: how.name.map(str::to_owned),
         values: BTreeMap::new(),
+        disks: how
+            .disks
+            .iter()
+            .map(|(disk, devices)| (disk.clone(), devices.iter().map(|d| stable(d)).collect()))
+            .collect(),
     };
     let file = how
         .target
@@ -421,6 +570,29 @@ fn record(how: &Install) -> Result<(), String> {
     machine::record(&file, &given)?;
     let config = how.target.join("etc/distro");
     run(Command::new("cp").arg("-rT").arg(how.config).arg(&config))
+}
+
+/// A disk's name in `/dev/disk/by-id`, which stays the same across boots and other disks coming
+/// and going, or its path when it has none there, as a virtual disk without a serial number.
+fn stable(device: &Path) -> String {
+    let resolved = device
+        .canonicalize()
+        .unwrap_or_else(|_| device.to_path_buf());
+    let Ok(entries) = std::fs::read_dir("/dev/disk/by-id") else {
+        return device.display().to_string();
+    };
+    let mut names: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.canonicalize().is_ok_and(|target| target == resolved))
+        .collect();
+    // Names from the disk's model and serial read better than its WWN.
+    names.sort_by_key(|path| path.to_string_lossy().contains("/wwn-"));
+    names
+        .first()
+        .map_or(device, PathBuf::as_path)
+        .display()
+        .to_string()
 }
 
 /// Unmounts the target and closes what was opened, after an install or a failed one.
@@ -570,5 +742,88 @@ mod tests {
         let err = place_keys(&install(Some("w-01"))).unwrap_err();
         assert!(err.contains("give `--identity`"), "{err}");
         assert_eq!(place_keys(&install(None)), Ok(()));
+    }
+
+    const LSBLK: &str = r#"{"blockdevices": [
+      {"name": "sda", "path": "/dev/sda", "size": 32000000000, "type": "disk", "tran": "usb",
+       "pttype": "dos", "mountpoints": [null],
+       "children": [{"name": "sda1", "path": "/dev/sda1", "size": 31000000000, "type": "part",
+         "tran": null, "pttype": "dos", "mountpoints": ["/iso"]}]},
+      {"name": "nvme0n1", "path": "/dev/nvme0n1", "size": 1000204886016, "type": "disk",
+       "tran": "nvme", "pttype": null, "mountpoints": [null]},
+      {"name": "nvme1n1", "path": "/dev/nvme1n1", "size": 1000204886016, "type": "disk",
+       "tran": "nvme", "pttype": "gpt", "mountpoints": [null],
+       "children": [{"name": "nvme1n1p1", "path": "/dev/nvme1n1p1", "size": 1000, "type": "part",
+         "tran": "nvme", "pttype": "gpt", "mountpoints": [null]}]},
+      {"name": "sdb", "path": "/dev/sdb", "size": 256000000000, "type": "disk", "tran": "sata",
+       "pttype": null, "mountpoints": [null]},
+      {"name": "sr0", "path": "/dev/sr0", "size": 1000, "type": "rom", "tran": "sata",
+       "pttype": null, "mountpoints": [null]}
+    ]}"#;
+
+    fn wanting(disks: &[(&str, i64, &str, &str)]) -> Value {
+        let disks = disks
+            .iter()
+            .map(|(name, count, kind, at_least)| {
+                let disk = BTreeMap::from([
+                    ("count".to_owned(), Value::Int(*count)),
+                    ("kind".to_owned(), Value::Str((*kind).into())),
+                    ("at_least".to_owned(), Value::Str((*at_least).into())),
+                    ("paths".to_owned(), Value::List(vec![])),
+                ]);
+                ((*name).to_owned(), Value::Table(disk))
+            })
+            .collect();
+        Value::Table(BTreeMap::from([("disks".to_owned(), Value::Table(disks))]))
+    }
+
+    #[test]
+    fn lsblk_says_which_disks_are_free() {
+        let blocks = blocks(LSBLK).unwrap();
+        let names: Vec<(&str, bool, bool)> = blocks
+            .iter()
+            .map(|b| (b.name.as_str(), b.partitioned, b.mounted))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("sda", true, true),
+                ("nvme0n1", false, false),
+                ("nvme1n1", true, false),
+                ("sdb", false, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn disks_are_matched_by_kind_and_size_and_never_guessed() {
+        let blocks = blocks(LSBLK).unwrap();
+        let matched = |storage: &Value, wipe| match_disks(storage, &blocks, wipe);
+
+        let one = matched(&wanting(&[("main", 1, "nvme", "500G")]), false).unwrap();
+        assert_eq!(one["main"], [PathBuf::from("/dev/nvme0n1")]);
+
+        let both = matched(&wanting(&[("nvme", 2, "nvme", "500G")]), true).unwrap();
+        assert_eq!(both["nvme"].len(), 2);
+
+        let err = matched(&wanting(&[("nvme", 2, "nvme", "500G")]), false).unwrap_err();
+        assert_eq!(
+            err,
+            "the disk `nvme` is 2 nvme disks of at least 500G, and this machine has 1 that fit: \
+             /dev/nvme0n1 (931G); disks with partitions count with `--wipe`; name them with \
+             `--disk nvme=/dev/...`"
+        );
+
+        // The live system's USB stick is mounted, so it never fits, even with `--wipe`.
+        let err = matched(&wanting(&[("main", 1, "any", "")]), true).unwrap_err();
+        assert!(err.contains("has 3 that fit"), "{err}");
+        assert!(!err.contains("/dev/sda "), "{err}");
+
+        let split = matched(
+            &wanting(&[("fast", 1, "nvme", "500G"), ("slow", 1, "sata", "100G")]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(split["slow"], [PathBuf::from("/dev/sdb")]);
     }
 }

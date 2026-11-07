@@ -8,13 +8,16 @@ pub(crate) const MACHINE_FILE: &str = "/var/lib/distro/machine.toml";
 const MACHINES: &str = "machines.toml";
 const ROLE: &str = "role";
 const NAME: &str = "name";
+const DISKS: &str = "disks";
 
-/// What a machine was given: `role = "worker"`, `name = "w-03"`, and values such as its zone.
+/// What a machine was given: `role = "worker"`, `name = "w-03"`, values such as its zone, and the
+/// disks install laid out, as `[disks]` with each of the configuration's disks and its devices.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Given {
     pub role: Option<String>,
     pub name: Option<String>,
     pub values: BTreeMap<String, String>,
+    pub disks: BTreeMap<String, Vec<String>>,
 }
 
 impl Given {
@@ -30,6 +33,12 @@ impl Given {
             .map_err(|e| format!("{}: {e}", file.display()))?;
         let mut given = Self::default();
         for (key, item) in doc.iter() {
+            if key == DISKS {
+                given.disks = disks(item).ok_or_else(|| {
+                    format!("{}: `disks` lists each disk's devices", file.display())
+                })?;
+                continue;
+            }
             let value = item
                 .as_str()
                 .ok_or_else(|| format!("{}: `{key}` isn't a string", file.display()))?
@@ -56,6 +65,14 @@ impl Given {
         for (key, value) in &self.values {
             doc[key.as_str()] = toml_edit::value(value.as_str());
         }
+        if !self.disks.is_empty() {
+            let mut disks = toml_edit::Table::new();
+            for (name, devices) in &self.disks {
+                disks[name.as_str()] =
+                    toml_edit::value(devices.iter().collect::<toml_edit::Array>());
+            }
+            doc[DISKS] = toml_edit::Item::Table(disks);
+        }
         doc.to_string()
     }
 
@@ -70,6 +87,18 @@ impl Given {
                     .map(|(key, value)| (format!("machine.{key}"), value.clone())),
             )
     }
+}
+
+/// The devices of each disk in `[disks]`.
+fn disks(item: &toml_edit::Item) -> Option<BTreeMap<String, Vec<String>>> {
+    item.as_table_like()?
+        .iter()
+        .map(|(name, devices)| {
+            let devices = devices.as_array()?;
+            let devices = devices.iter().map(|d| d.as_str().map(str::to_owned));
+            Some((name.to_owned(), devices.collect::<Option<Vec<_>>>()?))
+        })
+        .collect()
 }
 
 /// Writes `given` to `file`, as what a machine was given at install.
@@ -147,6 +176,7 @@ pub(crate) fn merge(given: Given, listed: Option<Listed>, role: &str) -> Result<
         role: Some(listed.role),
         name: Some(listed.name),
         values,
+        disks: given.disks,
     })
 }
 
@@ -241,9 +271,14 @@ mod tests {
         let file = dir.path().join("machine.toml");
         assert_eq!(Given::read(&file).unwrap(), Given::default());
 
-        std::fs::write(&file, "role = \"worker\"\nname = \"w-03\"\nzone = \"a\"\n").unwrap();
+        std::fs::write(
+            &file,
+            "role = \"worker\"\nname = \"w-03\"\nzone = \"a\"\n\n[disks]\nmain = [\"/dev/vda\"]\n",
+        )
+        .unwrap();
         let given = Given::read(&file).unwrap();
         assert_eq!(given.role.as_deref(), Some("worker"));
+        assert_eq!(given.disks["main"], ["/dev/vda"]);
         let values: Vec<(String, String)> = given.machine_values().collect();
         assert_eq!(
             values,
@@ -306,6 +341,7 @@ mod tests {
             role: Some("worker".into()),
             name: Some("old".into()),
             values: BTreeMap::from([("zone".into(), "b".into()), ("rack".into(), "7".into())]),
+            disks: BTreeMap::from([("main".into(), vec!["/dev/disk/by-id/nvme-a".into()])]),
         };
 
         assert_eq!(merge(given.clone(), None, "worker").unwrap(), given);
@@ -313,6 +349,7 @@ mod tests {
         assert_eq!(merged.name.as_deref(), Some("w-03"));
         assert_eq!(merged.values["zone"], "a");
         assert_eq!(merged.values["rack"], "7");
+        assert_eq!(merged.disks, given.disks);
         let err = merge(given, Some(listed("worker", "a")), "gpu-worker").unwrap_err();
         assert_eq!(
             err,

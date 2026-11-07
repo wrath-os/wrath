@@ -150,8 +150,9 @@ enum Command {
     /// Lay out a machine's disks and install the configuration on them, from a live system
     Install {
         /// A disk to install on, as `NAME=/dev/...` for the configuration's disk NAME, or just
-        /// the device when it has one disk. Repeat it for a disk with several devices
-        #[arg(long = "disk", required = true, value_name = "DEVICE")]
+        /// the device when it has one disk. Repeat it for a disk with several devices. Without
+        /// it, the machine's disks are matched to what the configuration describes
+        #[arg(long = "disk", value_name = "DEVICE")]
         disks: Vec<String>,
         /// The machine's name, recorded on it
         #[arg(long)]
