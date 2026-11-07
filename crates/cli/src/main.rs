@@ -120,6 +120,8 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Run a project's services until you stop them
+    Up,
     /// Start a shell with packages, without installing them; in a project, with its packages and
     /// environment too
     Shell {
@@ -317,6 +319,13 @@ fn main() -> ExitCode {
         Command::Rollback => generations::rollback(),
         Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, _)| run::run(root, model, &package, &args)),
+        Command::Up => {
+            package_context(cli.config.as_deref(), &modules).and_then(|(model, project)| {
+                let project =
+                    project.ok_or("only a project has services to run; `distro up` runs in one")?;
+                run::up(root, model, &project)
+            })
+        }
         Command::Shell { packages } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, project)| run::shell(root, model, &packages, project.as_deref())),
         Command::Add { packages, home } => config()

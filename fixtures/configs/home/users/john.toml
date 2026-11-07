@@ -33,14 +33,14 @@ text = "theme = \"onedark\"\n"
 
 [services.notes-sync]
 description = "Sync notes"
-exec = "notes sync --watch"
+command = ["notes", "sync", "--watch"]
 environment = { NOTES_DIR = "/srv/my notes" }
-after = ["network-online.target"]
-settings.Service.Nice = 10
+systemd.Unit.After = ["network-online.target"]
+systemd.Service.Nice = 10
 
 [services.manual]
-exec = "sleep infinity"
-wanted_by = []
+command = ["sleep", "infinity"]
+autostart = false
 
 [files."~/.netrc"]
 text = "machine example.com password ${secret.git-signing}\n"

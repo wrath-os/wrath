@@ -1,6 +1,6 @@
 //! Projects: finding the one a command runs in, and what its shell sets on top of the home.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -199,6 +199,114 @@ pub fn split_lock(lock: Lock, shared: &Model) -> (Lock, Lock) {
     )
 }
 
+/// process-compose's configuration for the project's services in `model`, which `distro up`
+/// runs, or `None` when it has none. Commands run as written, without a shell, and every string
+/// is YAML single-quoted, the one form process-compose reads without changing backslashes.
+pub fn compose(model: &Model) -> Option<String> {
+    let services = services(model);
+    if services.is_empty() {
+        return None;
+    }
+    let mut out = String::from("version: '0.5'\nprocesses:\n");
+    for (name, service) in &services {
+        let command: Vec<String> = service.command.iter().map(|arg| quoted(arg)).collect();
+        let restart = match service.restart.as_str() {
+            "always" => "always",
+            "never" => "no",
+            _ => "on_failure",
+        };
+        out.push_str(&format!("  {}:\n", quoted(name)));
+        out.push_str(&format!("    entrypoint: [{}]\n", command.join(", ")));
+        out.push_str(&format!("    availability: {{restart: '{restart}'}}\n"));
+        out.push_str(&format!("    disabled: {}\n", !service.autostart));
+        if !service.environment.is_empty() {
+            let pairs: Vec<String> = service
+                .environment
+                .iter()
+                .map(|(key, value)| quoted(&format!("{key}={value}")))
+                .collect();
+            out.push_str(&format!("    environment: [{}]\n", pairs.join(", ")));
+        }
+        if let Some(port) = service.ready.strip_prefix("tcp:") {
+            let probe = format!("bash -c \"(exec 3<>/dev/tcp/127.0.0.1/{port})\"");
+            out.push_str(&format!(
+                "    readiness_probe: {{exec: {{command: {}}}, period_seconds: 1}}\n",
+                quoted(&probe)
+            ));
+        }
+        let needs: Vec<String> = service
+            .needs
+            .iter()
+            .filter_map(|other| {
+                let condition = match services.get(other)?.ready.as_str() {
+                    "exit" => "process_completed_successfully",
+                    "started" => "process_started",
+                    _ => "process_healthy",
+                };
+                Some(format!("{}: {{condition: {condition}}}", quoted(other)))
+            })
+            .collect();
+        if !needs.is_empty() {
+            out.push_str(&format!("    depends_on: {{{}}}\n", needs.join(", ")));
+        }
+    }
+    Some(out)
+}
+
+/// `text` as a YAML single-quoted string.
+fn quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+/// A project's service, as its options say.
+#[derive(Debug, Default)]
+struct Service {
+    command: Vec<String>,
+    environment: BTreeMap<String, String>,
+    restart: String,
+    needs: Vec<String>,
+    ready: String,
+    autostart: bool,
+}
+
+/// The project's services, from the options under `services`.
+fn services(model: &Model) -> BTreeMap<String, Service> {
+    let mut services: BTreeMap<String, Service> = BTreeMap::new();
+    let strings = |value: &Value| match value {
+        Value::List(items) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::Str(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    for (path, value) in &model.options {
+        let Some(rest) = path.strip_prefix("services.") else {
+            continue;
+        };
+        let Some((name, field)) = rest.split_once('.') else {
+            continue;
+        };
+        let service = services.entry(name.to_owned()).or_default();
+        match (field, value) {
+            ("command", value) => service.command = strings(value),
+            ("needs", value) => service.needs = strings(value),
+            ("restart", Value::Str(text)) => service.restart = text.clone(),
+            ("ready", Value::Str(text)) => service.ready = text.clone(),
+            ("autostart", Value::Bool(on)) => service.autostart = *on,
+            (field, Value::Str(text)) => {
+                if let Some(name) = field.strip_prefix("environment.") {
+                    service.environment.insert(name.to_owned(), text.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    services
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +428,61 @@ mod tests {
         assert_eq!(ours.sources.keys().collect::<Vec<_>>(), ["acme", "nixpkgs"]);
         assert_eq!(local.packages.keys().collect::<Vec<_>>(), ["bacon"]);
         assert_eq!(local.sources.keys().collect::<Vec<_>>(), ["mine"]);
+    }
+
+    #[test]
+    fn services_run_with_process_compose_as_written() {
+        let mut model = Model::default();
+        let set = |model: &mut Model, path: &str, value: Value| {
+            model.options.insert(path.to_owned(), value);
+        };
+        let list =
+            |items: &[&str]| Value::List(items.iter().map(|s| Value::Str((*s).into())).collect());
+        set(
+            &mut model,
+            "services.db.command",
+            list(&["postgres", "-D", "it's \\here"]),
+        );
+        set(
+            &mut model,
+            "services.db.ready",
+            Value::Str("tcp:5432".into()),
+        );
+        set(
+            &mut model,
+            "services.db.restart",
+            Value::Str("always".into()),
+        );
+        set(&mut model, "services.db.autostart", Value::Bool(true));
+        set(
+            &mut model,
+            "services.db.environment.PGDATA",
+            Value::Str("/srv/db".into()),
+        );
+        set(&mut model, "services.migrate.command", list(&["migrate"]));
+        set(
+            &mut model,
+            "services.migrate.ready",
+            Value::Str("exit".into()),
+        );
+        set(&mut model, "services.migrate.needs", list(&["db"]));
+        set(&mut model, "services.migrate.autostart", Value::Bool(false));
+
+        assert_eq!(compose(&Model::default()), None);
+        insta::assert_snapshot!(compose(&model).unwrap(), @r#"
+        version: '0.5'
+        processes:
+          'db':
+            entrypoint: ['postgres', '-D', 'it''s \here']
+            availability: {restart: 'always'}
+            disabled: false
+            environment: ['PGDATA=/srv/db']
+            readiness_probe: {exec: {command: 'bash -c "(exec 3<>/dev/tcp/127.0.0.1/5432)"'}, period_seconds: 1}
+          'migrate':
+            entrypoint: ['migrate']
+            availability: {restart: 'on_failure'}
+            disabled: true
+            depends_on: {'db': {condition: process_healthy}}
+        "#);
     }
 }

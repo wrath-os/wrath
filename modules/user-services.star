@@ -1,46 +1,13 @@
-# Services that run in each user's systemd user manager. They start with the user's first
-# session, or at boot for a user with `linger`.
+# Services that run for each user, in their systemd user manager. They start with the user's
+# first session, or at boot for a user with `linger`. They're written the way a project's are.
 
-load("lib/merge.star", "merge")
-
-service = types.record(
-    description = option(types.str, optional = True),
-    exec = option(types.str, doc = "The command, with arguments. Commands on PATH need no path."),
-    environment = option(types.map(types.str), default = {}),
-    restart = option(types.str, default = "on-failure"),
-    after = option(types.list(types.str), default = []),
-    wanted_by = option(
-        types.list(types.str),
-        default = ["default.target"],
-        doc = "Targets that start it. `[]` leaves it to be started by hand.",
-    ),
-    settings = option(
-        types.freeform,
-        default = {},
-        doc = "Anything else in the unit, by section, such as `Service.Nice`.",
-    ),
-)
+load("lib/service.star", "check_services", "service", "systemd_unit")
 
 def render(ctx):
     for user, u in ctx.read("users").items():
+        check_services(ctx, ["users", user, "services"], u["services"])
         for name, s in u["services"].items():
-            unit = {
-                "Unit": {"Description": s.get("description", name)},
-                "Service": {
-                    "ExecStart": s["exec"],
-                    "Restart": s["restart"],
-                },
-            }
-            if s["after"]:
-                unit["Unit"]["After"] = s["after"]
-            if s["environment"]:
-                unit["Service"]["Environment"] = [
-                    "\"%s=%s\"" % (k, v.replace("\\", "\\\\").replace("\"", "\\\""))
-                    for k, v in sorted(s["environment"].items())
-                ]
-            if s["wanted_by"]:
-                unit["Install"] = {"WantedBy": s["wanted_by"]}
-            ctx.unit(name + ".service", merge(unit, s["settings"]), user = user)
+            ctx.unit(name + ".service", systemd_unit(name, s), user = user)
 
 module(
     name = "user-services",

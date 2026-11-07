@@ -41,7 +41,8 @@ port = 5433
 
 ### What a project sets
 
-`packages`, `environment`, `sources` and `include`. Services join when 0005 is decided.
+`packages`, `environment`, `services`, `sources` and `include`. Services are written the way homes
+write them (0005), and `distro up` runs them with process-compose until you stop it.
 
 `environment` is what homes call `session_variables` today. Homes rename it to `environment`, so
 the same thing has the same name everywhere.
@@ -76,7 +77,6 @@ a shell with rust, sqlx-cli, jq, bacon; exit to leave
 
 ### Later
 
-- Services, with 0005.
 - Entering the environment on `cd`, as direnv does.
 
 ## Rejected

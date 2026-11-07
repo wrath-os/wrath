@@ -1,6 +1,7 @@
 //! `distro run` and `distro shell`: packages without installing them. A package comes from where
 //! the configuration would get it, so `jq` is the jq its lock pins, and nothing is written.
 
+use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -54,10 +55,7 @@ pub fn shell(
         return Err("name the packages the shell should have".into());
     }
     let environment = Environment::build(root, model, &wanted)?;
-    let inherited: Vec<PathBuf> = std::env::var_os("PATH")
-        .iter()
-        .flat_map(std::env::split_paths)
-        .collect();
+    let inherited = inherited_path();
     if let Some(dir) = project {
         keep(&environment.path, &dir.join(".distro/shell"));
         let shadowed = project::shadows(
@@ -72,8 +70,7 @@ pub fn shell(
         }
     }
     let shell = std::env::var_os("SHELL").unwrap_or_else(|| "bash".into());
-    let path = std::env::join_paths(std::iter::once(environment.path.join("bin")).chain(inherited))
-        .map_err(|e| format!("cannot set PATH: {e}"))?;
+    let path = path_with(&environment.path.join("bin"), &inherited)?;
     let names: Vec<&str> = environment
         .packages
         .iter()
@@ -86,6 +83,49 @@ pub fn shell(
             .env("PATH", path)
             .env("DISTRO_SHELL", names.join(" ")),
     ))
+}
+
+/// Runs the services of the project at `project` with process-compose, in place of this process,
+/// with the project's packages and variables, until you stop them.
+pub fn up(root: &Path, model: Model, project: &Path) -> Result<ExitCode, String> {
+    let compose = project::compose(&model)
+        .ok_or("the project has no services; add them under `[services]`")?;
+    let state = project.join(".distro");
+    std::fs::create_dir_all(&state).map_err(|e| format!("{}: {e}", state.display()))?;
+    let file = state.join("process-compose.yaml");
+    std::fs::write(&file, compose).map_err(|e| format!("{}: {e}", file.display()))?;
+    let lookup = |name: &str| std::env::var(name).ok();
+    let variables = project::variables(&model, lookup);
+    let mut wanted: Vec<String> = model.packages.iter().cloned().collect();
+    wanted.push(PROCESS_COMPOSE.to_owned());
+    let environment = Environment::build(root, model, &wanted)?;
+    keep(&environment.path, &state.join("up"));
+    let bin = environment.path.join("bin");
+    let path = path_with(&bin, &inherited_path())?;
+    Err(exec(
+        Command::new(bin.join(PROCESS_COMPOSE))
+            .args(["up", "--config"])
+            .arg(&file)
+            .envs(variables)
+            .env("PATH", path),
+    ))
+}
+
+/// What runs a project's services.
+const PROCESS_COMPOSE: &str = "process-compose";
+
+/// The `PATH` this process inherited.
+fn inherited_path() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .collect()
+}
+
+/// A `PATH` with `dir` first, then `inherited`.
+fn path_with(dir: &Path, inherited: &[PathBuf]) -> Result<OsString, String> {
+    std::env::join_paths(std::iter::once(dir).chain(inherited.iter().map(PathBuf::as_path)))
+        .map_err(|e| format!("cannot set PATH: {e}"))
 }
 
 fn exec(command: &mut Command) -> String {

@@ -844,3 +844,63 @@ fn a_module_says_which_configurations_it_belongs_to() {
     let error = load_one(module("[\"laptop\"]")).unwrap_err();
     assert!(error.contains("not `laptop`"), "{error}");
 }
+
+#[test]
+fn services_wait_for_what_they_need_and_for_being_ready() {
+    let config = MemFs::new([
+        ("system.toml", ""),
+        (
+            "users/john.toml",
+            "[services.db]\ncommand = [\"postgres\", \"-D\", \"/srv/my db\"]\nready = \"tcp:5432\"\n\
+             restart = \"always\"\n\n\
+             [services.migrate]\ncommand = [\"migrate\", \"--to\", \"$LATEST\"]\nready = \"exit\"\n\
+             needs = [\"db\"]\nautostart = false\n",
+        ),
+    ]);
+    let evaluation = evaluate_with(&config, &["users", "user-services"]).unwrap();
+
+    insta::assert_snapshot!(homes_of(&evaluation, "user-services"), @r#"
+    john unit db.service
+    [Unit]
+    Description=db
+
+    [Service]
+    ExecStart=postgres -D "/srv/my db"
+    ExecStartPost=bash -c 'until (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 0.2; done'
+    Restart=always
+
+    [Install]
+    WantedBy=default.target
+
+    john unit migrate.service
+    [Unit]
+    After=db.service
+    Description=migrate
+    Requires=db.service
+
+    [Service]
+    ExecStart=migrate --to "$$LATEST"
+    RemainAfterExit=yes
+    Type=oneshot
+    "#);
+}
+
+#[test]
+fn services_say_what_they_need_and_how_they_are_ready() {
+    let config = MemFs::new([
+        ("system.toml", ""),
+        (
+            "users/john.toml",
+            "[services.app]\ncommand = [\"app\"]\nready = \"tcp:http\"\nneeds = [\"dbb\"]\n",
+        ),
+    ]);
+    let error = evaluate_with(&config, &["users", "user-services"]).unwrap_err();
+    insta::assert_snapshot!(error, @r#"
+    error: `ready` is `started`, `exit` or `tcp:PORT`, not `tcp:http`
+     --> users/john.toml:3:9
+      |
+    3 | ready = "tcp:http"
+      |         ^^^^^^^^^^ `users.john.services.app.ready` is set here
+      = reported by modules/user-services.star
+    "#);
+}
