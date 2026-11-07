@@ -19,7 +19,7 @@ lock and commands:
 |---|---|---|
 | system | `/etc/distro` | the machine, and the homes of the users on it |
 | user (planned) | `~/.config/distro` | one user's home, on a machine they may not administer |
-| project (planned) | `distro.toml` in a project | the packages, environment and services a project needs |
+| project | `distro.toml` in a project | the packages, environment and (planned) services a project needs |
 
 The configuration a command acts on is its **context**: `-C DIR`, or the nearest project, or
 the system. Output always says which one it is.

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use distro_eval::{ConfigFs, Evaluation, Input, Module, Schema, Sources, render};
+use distro_eval::{ConfigFs, DirFs, Evaluation, Input, Module, Schema, Sources, render};
 
 /// The order modules are loaded and run in. The result must not depend on it.
 #[derive(Debug, Clone, Copy)]
@@ -22,6 +22,12 @@ pub fn evaluate_dir(
     role: Option<&str>,
 ) -> Result<Evaluation, String> {
     evaluate_with(&crate::fetch::Sourced::dir(config), modules, order, role)
+}
+
+/// Evaluates the project at `config` as everyone else has it, without `distro.local.toml`.
+pub fn evaluate_shared(config: &Path, modules: &Path) -> Result<Evaluation, String> {
+    let shared = crate::fetch::Sourced::new(crate::project::Shared(DirFs::new(config)), config);
+    evaluate_with(&shared, modules, ModuleOrder::Sorted, None)
 }
 
 /// Like [`evaluate_dir`], for a configuration from anywhere, with modules in sorted order.

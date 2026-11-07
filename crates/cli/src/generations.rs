@@ -396,12 +396,14 @@ pub fn rollback() -> Result<ExitCode, String> {
 /// then prints how each role's packages changed. The first role pins the sources and the others
 /// keep those pins, so every role runs the same software. With `update`, those sources move to
 /// their newest version first, or every source when it names none. A configuration of one
-/// machine has a single role, `None`.
+/// machine has a single role, `None`. A project with a local file passes `shared`, the project
+/// without it: what that uses goes in `distro.lock`, and the rest in `distro.local.lock`.
 pub fn lock(
     root: &Path,
     config: &Path,
     models: &[(Option<String>, Model)],
     update: Option<&[String]>,
+    shared: Option<&Model>,
 ) -> Result<ExitCode, String> {
     let models = match update {
         Some(names) => follow_newest(models, names)?,
@@ -425,7 +427,14 @@ pub fn lock(
     let mut lock = lock.ok_or("there's nothing to lock")?;
     // Files were read from these versions, whatever resolving found since.
     lock.sources.extend(crate::fetch::fetched());
-    write_lock(config, &lock)?;
+    match shared {
+        Some(shared) => {
+            let (ours, local) = crate::project::split_lock(lock.clone(), shared);
+            write_lock(config, &ours)?;
+            write_lock_file(&config.join(crate::project::LOCAL_LOCK), &local)?;
+        }
+        None => write_lock(config, &lock)?,
+    }
     let count = lock.packages.len();
     let noun = if count == 1 { "package" } else { "packages" };
     let sources: Vec<&str> = lock.sources.keys().map(String::as_str).collect();
@@ -486,8 +495,11 @@ fn resolve(root: &Path, model: &Model) -> Result<Lock, String> {
 }
 
 pub(crate) fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
-    let path = config.join(LOCK_FILE);
-    std::fs::write(&path, lock.to_toml()).map_err(|e| format!("{}: {e}", path.display()))
+    write_lock_file(&config.join(LOCK_FILE), lock)
+}
+
+fn write_lock_file(path: &Path, lock: &Lock) -> Result<(), String> {
+    std::fs::write(path, lock.to_toml()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Prints each source: what it follows, where it's pinned and how old that is.

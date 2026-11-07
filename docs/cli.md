@@ -176,9 +176,11 @@ Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `t
 `lock`, `update`, `sources`, `check`, `why` for options, files and packages, `options`,
 `secret`, the `dev` commands, `--json` for `plan`, `status`, `history` and `sources`, and
 `--role` for configurations with `roles/`, which defaults to the machine's role from install or
-`machines.toml`. `apply` and `try` check `[machine.requires]` first.
+`machines.toml`. `apply` and `try` check `[machine.requires]` first. Projects: found from the
+current directory, with `shell`, `run`, `add`, `remove`, `check`, `lock`, `update` and `why`, and
+`distro.local.lock` for what only `distro.local.toml` adds.
 
-Not yet: projects, user configurations on their own, versions (`jq@1.7`), `search`, `info`,
+Not yet: services in projects, user configurations on their own, versions (`jq@1.7`), `search`, `info`,
 `--json` elsewhere, `--host`, and `--verbose`. `clean` lists the generations it removes rather
 than estimating the space first, and says what it freed afterwards.
 

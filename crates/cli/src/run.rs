@@ -9,7 +9,7 @@ use distro_backend_nixos::Target;
 use distro_model::{DEFAULT_SOURCE, Model, Source, package_source};
 use serde_json::Value;
 
-use crate::generations;
+use crate::{generations, project};
 
 /// Runs `package`'s program with `args`, in place of this process.
 pub fn run(root: &Path, model: Model, package: &str, args: &[String]) -> Result<ExitCode, String> {
@@ -26,18 +26,48 @@ pub fn run(root: &Path, model: Model, package: &str, args: &[String]) -> Result<
     Err(exec(Command::new(program).args(args)))
 }
 
-/// Starts the user's shell with `packages` first on the `PATH`, in place of this process.
-pub fn shell(root: &Path, model: Model, packages: &[String]) -> Result<ExitCode, String> {
-    let environment = Environment::build(root, model, packages)?;
-    let shell = std::env::var_os("SHELL").unwrap_or_else(|| "bash".into());
-    let path = std::env::join_paths(
-        std::iter::once(environment.path.join("bin")).chain(
-            std::env::var_os("PATH")
-                .iter()
-                .flat_map(std::env::split_paths),
+/// Starts the user's shell with `packages` first on the `PATH`, in place of this process. In the
+/// project at `project`, the shell has the project's packages and variables too, and says what
+/// they hide from the home.
+pub fn shell(
+    root: &Path,
+    model: Model,
+    packages: &[String],
+    project: Option<&Path>,
+) -> Result<ExitCode, String> {
+    let lookup = |name: &str| std::env::var(name).ok();
+    let (mut wanted, variables): (Vec<String>, _) = match project {
+        Some(_) => (
+            model.packages.iter().cloned().collect(),
+            project::variables(&model, lookup),
         ),
-    )
-    .map_err(|e| format!("cannot set PATH: {e}"))?;
+        None => (Vec::new(), Vec::new()),
+    };
+    wanted.extend(
+        packages
+            .iter()
+            .filter(|p| !wanted.contains(p))
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+    if wanted.is_empty() {
+        return Err("name the packages the shell should have".into());
+    }
+    let environment = Environment::build(root, model, &wanted)?;
+    let inherited: Vec<PathBuf> = std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .collect();
+    if let Some(dir) = project {
+        keep(&environment.path, &dir.join(".distro/shell"));
+        let shadowed = project::shadows(&environment.programs(), &variables, &inherited, lookup);
+        if !shadowed.is_empty() {
+            eprintln!("  hides {} from your home", shadowed.join(", "));
+        }
+    }
+    let shell = std::env::var_os("SHELL").unwrap_or_else(|| "bash".into());
+    let path = std::env::join_paths(std::iter::once(environment.path.join("bin")).chain(inherited))
+        .map_err(|e| format!("cannot set PATH: {e}"))?;
     let names: Vec<&str> = environment
         .packages
         .iter()
@@ -46,6 +76,7 @@ pub fn shell(root: &Path, model: Model, packages: &[String]) -> Result<ExitCode,
     eprintln!("a shell with {}; exit to leave", names.join(", "));
     Err(exec(
         Command::new(shell)
+            .envs(variables)
             .env("PATH", path)
             .env("DISTRO_SHELL", names.join(" ")),
     ))

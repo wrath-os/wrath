@@ -167,6 +167,7 @@ fn config_sites<'a>(
 fn starting_file(config: &Path, home: Option<&str>) -> (PathBuf, Vec<String>) {
     let start = match crate::role(config) {
         Some(role) => config.join("roles").join(format!("{role}.toml")),
+        None if crate::is_project(config) => crate::project::starting_file(config),
         None => config.join("system.toml"),
     };
     match home {

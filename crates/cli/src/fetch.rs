@@ -48,8 +48,15 @@ pub struct Sourced<F> {
 
 impl Sourced<DirFs> {
     pub fn dir(config: &Path) -> Self {
+        Self::new(DirFs::new(config), config)
+    }
+}
+
+impl<F> Sourced<F> {
+    /// `inner`, the configuration at `config`, with the sources its lock pins.
+    pub fn new(inner: F, config: &Path) -> Self {
         Self {
-            inner: DirFs::new(config),
+            inner,
             lock: crate::read_lock(config).ok().flatten(),
         }
     }

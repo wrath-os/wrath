@@ -18,6 +18,7 @@ mod fetch;
 mod generations;
 mod machine;
 mod options;
+mod project;
 mod run;
 mod secret;
 mod system;
@@ -118,10 +119,10 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
-    /// Start a shell with packages, without installing them
+    /// Start a shell with packages, without installing them; in a project, with its packages and
+    /// environment too
     Shell {
         /// The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
-        #[arg(required = true)]
         packages: Vec<String>,
     },
     /// Add packages to the configuration and lock them
@@ -264,8 +265,10 @@ fn main() -> ExitCode {
     let modules = modules_dir(&root, cli.modules);
     let root = root.as_path();
     let config = || config_dir(cli.config.as_deref());
+    // Commands that switch the machine, which a project has nothing to do with.
+    let machine = || config().and_then(|config| refuse_project(&config).map(|()| config));
     let result = match cli.command {
-        Command::Status => config().and_then(|config| match model(&config, &modules) {
+        Command::Status => machine().and_then(|config| match model(&config, &modules) {
             Some(model) if json => print_serde(&generations::status_json(&model)),
             Some(model) => generations::status(&model),
             None => Ok(ExitCode::FAILURE),
@@ -276,19 +279,20 @@ fn main() -> ExitCode {
                 (Some(path), false) => Against::Path(path),
                 (None, false) => Against::Running,
             };
-            config().and_then(|config| plan(&config, against, &modules, json))
+            machine().and_then(|config| plan(&config, against, &modules, json))
         }
         Command::Apply { system, yes } => {
-            switch(root, system, Switch::Apply, yes, &config, &modules)
+            switch(root, system, Switch::Apply, yes, &machine, &modules)
         }
         Command::Try {
             system,
             duration,
             yes,
-        } => generations::parse_duration(&duration)
-            .and_then(|seconds| switch(root, system, Switch::Try(seconds), yes, &config, &modules)),
+        } => generations::parse_duration(&duration).and_then(|seconds| {
+            switch(root, system, Switch::Try(seconds), yes, &machine, &modules)
+        }),
         Command::Keep => generations::keep(),
-        Command::Build { target } => config().and_then(|config| match model(&config, &modules) {
+        Command::Build { target } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => generations::build(root, &model, target).map(|path| {
                 println!("{}", path.display());
                 ExitCode::SUCCESS
@@ -300,10 +304,10 @@ fn main() -> ExitCode {
         Command::Clean { keep, yes } => generations::clean(keep, yes),
         Command::Diff { from, to } => generations::diff(from, to),
         Command::Rollback => generations::rollback(),
-        Command::Run { package, args } => package_model(cli.config.as_deref(), &modules)
-            .and_then(|model| run::run(root, model, &package, &args)),
-        Command::Shell { packages } => package_model(cli.config.as_deref(), &modules)
-            .and_then(|model| run::shell(root, model, &packages)),
+        Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
+            .and_then(|(model, _)| run::run(root, model, &package, &args)),
+        Command::Shell { packages } => package_context(cli.config.as_deref(), &modules)
+            .and_then(|(model, project)| run::shell(root, model, &packages, project.as_deref())),
         Command::Add { packages, home } => config()
             .and_then(|config| edit::add(root, &config, &modules, home.as_deref(), &packages)),
         Command::Remove { packages, home } => config()
@@ -384,10 +388,16 @@ fn machine_role(config: &Path) -> Option<String> {
     Some(role)
 }
 
-/// The configuration a command acts on: the one given, or the system's. The context goes to
-/// stderr first, so output always says which configuration it's about.
+/// The configuration a command acts on: the one given, the project it runs in, or the system's.
+/// The context goes to stderr first, so output always says which configuration it's about.
 fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
-    let config = given.unwrap_or(Path::new(SYSTEM_CONFIG));
+    let found = match given {
+        Some(_) => None,
+        None => current_project(),
+    };
+    let config = given
+        .or(found.as_deref())
+        .unwrap_or(Path::new(SYSTEM_CONFIG));
     if !config.is_dir() {
         return Err(match given {
             Some(_) => format!("{}: no such configuration directory", config.display()),
@@ -395,6 +405,10 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
                 format!("there's no system configuration in {SYSTEM_CONFIG}; give one with -C DIR")
             }
         });
+    }
+    if is_project(config) {
+        eprintln!("{}", project::header(config));
+        return Ok(config.to_path_buf());
     }
     let kind = if given.is_some() { "config" } else { "system" };
     match given_role() {
@@ -404,14 +418,37 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
     Ok(config.to_path_buf())
 }
 
-/// The model packages come from for `run` and `shell`: the configuration's, or with none, an
-/// empty one, whose packages come from the factory's nixpkgs.
-fn package_model(given: Option<&Path>, modules: &Path) -> Result<Model, String> {
-    if given.is_none() && !Path::new(SYSTEM_CONFIG).is_dir() {
-        return Ok(Model::default());
+fn current_project() -> Option<PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| project::find(&cwd))
+}
+
+fn is_project(config: &Path) -> bool {
+    distro_eval::kind_of(&distro_eval::DirFs::new(config)) == distro_eval::ConfigKind::Project
+}
+
+/// Refuses a project for commands about the machine and its generations.
+fn refuse_project(config: &Path) -> Result<(), String> {
+    if is_project(config) {
+        return Err("a project has no generations to switch; `distro shell` enters it".into());
+    }
+    Ok(())
+}
+
+/// The model packages come from for `run` and `shell`, and the project when the context is one:
+/// the configuration's, or with none, an empty one, whose packages come from the factory's
+/// nixpkgs.
+fn package_context(
+    given: Option<&Path>,
+    modules: &Path,
+) -> Result<(Model, Option<PathBuf>), String> {
+    if given.is_none() && current_project().is_none() && !Path::new(SYSTEM_CONFIG).is_dir() {
+        return Ok((Model::default(), None));
     }
     let config = config_dir(given)?;
-    model(&config, modules).ok_or_else(|| "the configuration has errors".to_owned())
+    let model = model(&config, modules).ok_or("the configuration has errors")?;
+    Ok((model, is_project(&config).then_some(config)))
 }
 
 /// Evaluates the configuration and says whether it has errors, without building anything: for
@@ -649,10 +686,28 @@ fn with_lock(config: &Path, model: Model) -> Option<Model> {
     Some(model)
 }
 
-/// The lock next to `config`, if there is one.
+/// The lock next to `config`, if there is one. A project's local file adds the packages it locks
+/// on its own.
 pub(crate) fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
-    let path = config.join(LOCK_FILE);
-    match std::fs::read_to_string(&path) {
+    let lock = read_lock_file(&config.join(LOCK_FILE))?;
+    if !(is_project(config) && project::has_local(config)) {
+        return Ok(lock);
+    }
+    let Some(local) = read_lock_file(&config.join(project::LOCAL_LOCK))? else {
+        return Ok(lock);
+    };
+    let mut lock = lock.unwrap_or_default();
+    for (name, source) in local.sources {
+        lock.sources.entry(name).or_insert(source);
+    }
+    for (name, locked) in local.packages {
+        lock.packages.entry(name).or_insert(locked);
+    }
+    Ok(Some(lock))
+}
+
+fn read_lock_file(path: &Path) -> Result<Option<Lock>, String> {
+    match std::fs::read_to_string(path) {
         Ok(text) => Lock::parse(&text)
             .map(Some)
             .map_err(|e| format!("{}: {e}", path.display())),
@@ -667,6 +722,18 @@ fn lock(
     modules: &Path,
     update: Option<&[String]>,
 ) -> Result<ExitCode, String> {
+    if is_project(config) && project::has_local(config) {
+        let shared = system::evaluate_shared(config, modules)
+            .inspect_err(|errors| eprint!("{errors}"))
+            .ok()
+            .and_then(|evaluation| with_lock(config, Model::from_evaluation(&evaluation)));
+        let (Some(shared), Some(mut model)) = (shared, model(config, modules)) else {
+            return Ok(ExitCode::FAILURE);
+        };
+        // What the local file removes is still locked for everyone else.
+        model.packages.extend(shared.packages.iter().cloned());
+        return generations::lock(root, config, &[(None, model)], update, Some(&shared));
+    }
     // One lock serves every role, so every role is locked, whichever `--role` says.
     let mut models = Vec::new();
     for role in all_roles(config)? {
@@ -675,7 +742,7 @@ fn lock(
         };
         models.push((role, model));
     }
-    generations::lock(root, config, &models, update)
+    generations::lock(root, config, &models, update, None)
 }
 
 /// What a plan compares a configuration against.
