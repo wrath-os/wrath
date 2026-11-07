@@ -88,9 +88,11 @@ fn expand(text: &str, lookup: &impl Fn(&str) -> Option<String>) -> String {
     out
 }
 
-/// What the project's shell hides from the home: programs that are on `path` already, and
-/// variables `lookup` has with a different value.
+/// What the project's shell hides from the home: programs in `bin` that `path` has a different
+/// one of, with both versions when the store says, and variables `lookup` has with a different
+/// value.
 pub fn shadows(
+    bin: &Path,
     programs: &[String],
     variables: &[(String, String)],
     path: &[PathBuf],
@@ -98,8 +100,20 @@ pub fn shadows(
 ) -> Vec<String> {
     let mut shadowed: Vec<String> = programs
         .iter()
-        .filter(|program| path.iter().any(|dir| dir.join(program.as_str()).exists()))
-        .cloned()
+        .filter_map(|program| {
+            let home = path
+                .iter()
+                .map(|dir| dir.join(program.as_str()))
+                .find(|candidate| candidate.exists())?;
+            let (home, ours) = (resolved(&home), resolved(&bin.join(program.as_str())));
+            if home == ours {
+                return None;
+            }
+            Some(match (store_version(&home), store_version(&ours)) {
+                (Some(old), Some(new)) if old != new => format!("{program} {old} with {new}"),
+                _ => program.clone(),
+            })
+        })
         .collect();
     shadowed.sort();
     shadowed.extend(
@@ -109,6 +123,27 @@ pub fn shadows(
             .map(|(name, _)| format!("${name}")),
     );
     shadowed
+}
+
+fn resolved(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The version in a store path such as `/nix/store/<hash>-jq-1.8.2-bin/bin/jq`: `1.8.2`.
+fn store_version(path: &Path) -> Option<String> {
+    let entry = path.strip_prefix("/nix/store").ok()?.components().next()?;
+    let entry = entry.as_os_str().to_str()?;
+    let (_, name) = entry.split_once('-')?;
+    let (dash, _) = name
+        .match_indices('-')
+        .find(|(at, _)| name[at + 1..].starts_with(|c: char| c.is_ascii_digit()))?;
+    let version = &name[dash + 1..];
+    let outputs = ["-bin", "-out", "-lib", "-dev", "-man"];
+    let version = outputs
+        .iter()
+        .find_map(|output| version.strip_suffix(output))
+        .unwrap_or(version);
+    Some(version.to_owned())
 }
 
 /// A project as everyone else has it: without `distro.local.toml`.
@@ -222,17 +257,43 @@ mod tests {
 
     #[test]
     fn the_shell_says_what_it_hides_from_the_home() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("jq"), "").unwrap();
-        let programs = ["rg".to_owned(), "jq".to_owned()];
+        let (home, ours) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        for program in ["jq", "hx"] {
+            std::fs::write(home.path().join(program), "").unwrap();
+            std::fs::write(ours.path().join(program), "").unwrap();
+        }
+        // The same program as the home's hides nothing.
+        std::fs::remove_file(ours.path().join("hx")).unwrap();
+        std::os::unix::fs::symlink(home.path().join("hx"), ours.path().join("hx")).unwrap();
+        let programs = ["rg".to_owned(), "jq".to_owned(), "hx".to_owned()];
         let variables = [
             ("EDITOR".to_owned(), "nvim".to_owned()),
             ("HOME".to_owned(), "/home/john".to_owned()),
             ("RUST_LOG".to_owned(), "info".to_owned()),
         ];
 
-        let shadowed = shadows(&programs, &variables, &[dir.path().to_path_buf()], env);
+        let path = [home.path().to_path_buf()];
+        let shadowed = shadows(ours.path(), &programs, &variables, &path, env);
         assert_eq!(shadowed, ["jq", "$EDITOR"]);
+    }
+
+    #[test]
+    fn versions_come_from_store_paths() {
+        let version = |path: &str| store_version(Path::new(path));
+        assert_eq!(
+            version("/nix/store/abc-jq-1.8.2-bin/bin/jq").as_deref(),
+            Some("1.8.2")
+        );
+        assert_eq!(
+            version("/nix/store/abc-ripgrep-15.2.0/bin/rg").as_deref(),
+            Some("15.2.0")
+        );
+        assert_eq!(
+            version("/nix/store/abc-python3-3.13.1/bin/python").as_deref(),
+            Some("3.13.1")
+        );
+        assert_eq!(version("/nix/store/abc-hello/bin/hello"), None);
+        assert_eq!(version("/usr/bin/jq"), None);
     }
 
     #[test]

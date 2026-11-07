@@ -60,7 +60,13 @@ pub fn shell(
         .collect();
     if let Some(dir) = project {
         keep(&environment.path, &dir.join(".distro/shell"));
-        let shadowed = project::shadows(&environment.programs(), &variables, &inherited, lookup);
+        let shadowed = project::shadows(
+            &environment.path.join("bin"),
+            &environment.programs(),
+            &variables,
+            &inherited,
+            lookup,
+        );
         if !shadowed.is_empty() {
             eprintln!("  hides {} from your home", shadowed.join(", "));
         }
