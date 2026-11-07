@@ -365,7 +365,7 @@ fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagno
         None => Err(Diagnostic::error(format!(
             "this configuration has roles, so it needs one: {list}"
         ))
-        .note("help: pick one with `--role NAME`")),
+        .note("help: pick one with `--role NAME`, or name this machine in `machines.toml`")),
         Some(role) if roles.iter().any(|name| name == role) => Ok(format!("roles/{role}.toml")),
         Some(role) => {
             let mut diagnostic = Diagnostic::error(format!("there's no role `{role}`"))

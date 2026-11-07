@@ -14,6 +14,7 @@ mod bench;
 mod checks;
 mod edit;
 mod generations;
+mod machine;
 mod options;
 mod run;
 mod secret;
@@ -328,9 +329,8 @@ fn main() -> ExitCode {
             })
             .map(exit_code),
         },
-        Command::FillTemplates { spec, secrets, out } => {
-            templates::fill(&spec, &secrets, &templates::machine_values(), &out)
-        }
+        Command::FillTemplates { spec, secrets, out } => templates::machine_values()
+            .and_then(|machine| templates::fill(&spec, &secrets, &machine, &out)),
     };
     match result {
         Ok(code) => code,
@@ -343,9 +343,34 @@ fn main() -> ExitCode {
 
 /// The role given with `--role`, set once when the command line is read.
 static ROLE: OnceLock<Option<String>> = OnceLock::new();
+/// The role this machine runs, looked up the first time a command needs it.
+static MACHINE_ROLE: OnceLock<Option<String>> = OnceLock::new();
 
-fn role() -> Option<&'static str> {
+fn given_role() -> Option<&'static str> {
     ROLE.get().and_then(Option::as_deref)
+}
+
+/// The role to act as: the one given, or else this machine's, when the configuration has more
+/// than one.
+fn role(config: &Path) -> Option<&'static str> {
+    given_role().or_else(|| MACHINE_ROLE.get_or_init(|| machine_role(config)).as_deref())
+}
+
+/// The role this machine runs in `config`: its only role, the one it was installed as, or else
+/// its entry in `machines.toml`.
+fn machine_role(config: &Path) -> Option<String> {
+    match all_roles(config).as_deref() {
+        Ok([_, _, ..]) => {}
+        Ok([only]) => return only.clone(),
+        Ok([]) | Err(_) => return None,
+    }
+    let given = machine::Given::read(Path::new(machine::MACHINE_FILE))
+        .inspect_err(|message| eprintln!("warning: {message}"))
+        .unwrap_or_default();
+    let listed = machine::name(&given).and_then(|name| machine::listed(config, &name));
+    let role = machine::role(&given, listed.as_ref())?;
+    eprintln!("role {role}, this machine's");
+    Some(role)
 }
 
 /// The configuration a command acts on: the one given, or the system's. The context goes to
@@ -361,7 +386,7 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
         });
     }
     let kind = if given.is_some() { "config" } else { "system" };
-    match role() {
+    match given_role() {
         Some(role) => eprintln!("{kind} {}, role {role}", config.display()),
         None => eprintln!("{kind} {}", config.display()),
     }
@@ -381,7 +406,7 @@ fn package_model(given: Option<&Path>, modules: &Path) -> Result<Model, String> 
 /// Evaluates the configuration and says whether it has errors, without building anything: for
 /// the role given, or every role when none is.
 fn check_config(config: &Path, modules: &Path) -> Result<ExitCode, String> {
-    if let Some(role) = role() {
+    if let Some(role) = given_role() {
         return Ok(check_role(config, modules, Some(role)));
     }
     let mut failed = false;
@@ -561,10 +586,10 @@ fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
     modules.unwrap_or_else(|| under_root(root, Path::new("modules")))
 }
 
-/// Evaluates a configuration for the role given with `--role`, or prints why it can't and returns
+/// Evaluates a configuration for the role to act as, or prints why it can't and returns
 /// `None`.
 fn evaluate(config: &Path, modules: &Path) -> Option<Evaluation> {
-    evaluate_as(config, modules, role())
+    evaluate_as(config, modules, role(config))
 }
 
 fn evaluate_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Evaluation> {
@@ -587,7 +612,7 @@ pub(crate) fn all_roles(config: &Path) -> Result<Vec<Option<String>>, String> {
 /// The configuration's model, with its lock when it has one, or prints why it can't and
 /// returns `None`.
 fn model(config: &Path, modules: &Path) -> Option<Model> {
-    model_as(config, modules, role())
+    model_as(config, modules, role(config))
 }
 
 fn model_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
@@ -748,10 +773,17 @@ fn switch(
         return generations::switch_to(&system, how);
     }
     let config = config()?;
-    match model(&config, modules) {
-        Some(model) => generations::apply(root, &config, model, how, yes),
-        None => Ok(ExitCode::FAILURE),
-    }
+    let Some(model) = model(&config, modules) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    let record = machine::prepare(
+        &config,
+        Path::new(machine::MACHINE_FILE),
+        role(&config),
+        &model.machine,
+        templates::facts(),
+    )?;
+    generations::apply(root, &config, model, how, yes, record)
 }
 
 /// Prints `value` as JSON, for `--json`.

@@ -165,7 +165,7 @@ fn config_sites<'a>(
 /// is one, or the role's file or `system.toml`. Packages go here when no starting file lists any
 /// yet, and so do removals of what shared files add.
 fn starting_file(config: &Path, home: Option<&str>) -> (PathBuf, Vec<String>) {
-    let start = match crate::role() {
+    let start = match crate::role(config) {
         Some(role) => config.join("roles").join(format!("{role}.toml")),
         None => config.join("system.toml"),
     };

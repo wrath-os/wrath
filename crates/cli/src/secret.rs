@@ -66,7 +66,7 @@ struct Secrets {
 impl Secrets {
     fn load(dir: &Path, modules: &Path) -> Result<Self, String> {
         let config = Editing(DirFs::new(dir));
-        let evaluation = system::evaluate(&config, modules, crate::role())?;
+        let evaluation = system::evaluate(&config, modules, crate::role(dir))?;
         let recipients = match evaluation.get("system.secret_recipients") {
             Some(Value::List(items)) => items
                 .iter()

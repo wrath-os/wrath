@@ -55,13 +55,16 @@ pub enum Switch {
 
 /// Builds the system for `model` and switches to it, unless the running system already has it.
 /// Packages the lock next to `config` doesn't have yet are locked first, so the lock always
-/// describes the running system.
+/// describes the running system. `record` is what this machine records about itself before
+/// switching; when it changes, the machine switches again even to the same model, so files are
+/// filled in with the new values.
 pub fn apply(
     root: &Path,
     config: &Path,
     model: Model,
     how: Switch,
     yes: bool,
+    record: Option<crate::machine::Record>,
 ) -> Result<ExitCode, String> {
     let model = if model.is_locked() {
         model
@@ -71,9 +74,12 @@ pub fn apply(
         model.with_lock(&lock)
     };
     let hash = model.hash();
-    if backend::current_model_hash().as_deref() == Some(hash.as_str()) {
+    if record.is_none() && backend::current_model_hash().as_deref() == Some(hash.as_str()) {
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(record) = &record {
+        println!("{record}");
     }
     let running = backend::current_model().and_then(|path| crate::read_model(Path::new(path)).ok());
     let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
@@ -89,6 +95,9 @@ pub fn apply(
         return Ok(ExitCode::SUCCESS);
     }
     let system = build(root, &model, BuildTarget::System)?;
+    if let Some(record) = record {
+        record.write()?;
+    }
     let code = switch_to(&system, how)?;
     if let Some(note) = running.and(plan.tier()).and_then(full_effect) {
         println!("{note}");

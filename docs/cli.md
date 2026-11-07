@@ -175,7 +175,8 @@ Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `t
 `history`, `diff`, `rollback`, `clean`, `build`, `apply PATH`, `run`, `shell`, `add`, `remove`,
 `lock`, `update`, `sources`, `check`, `why` for options, files and packages, `options`,
 `secret`, the `dev` commands, `--json` for `plan`, `status`, `history` and `sources`, and
-`--role` for configurations with `roles/`.
+`--role` for configurations with `roles/`, which defaults to the machine's role from install or
+`machines.toml`.
 
 Not yet: finding a project's `distro.toml`, `--user`, versions (`jq@1.7`), `search`, `info`,
 `--json` elsewhere, `--host`, and `--verbose`. `clean` lists the generations it removes rather than

@@ -9,6 +9,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::process::ExitCode;
 
+use crate::machine::{Given, MACHINE_FILE};
+
 /// Writes each file in `spec`, a JSON table of names to lists of parts, to `out`, readable by
 /// root only; activation then gives it its owner and mode. A file that can't be filled in is
 /// left out with an error, and the others are still written.
@@ -96,47 +98,23 @@ fn refuse_escapes(what: &str, value: &str) -> Result<(), String> {
     }
 }
 
-/// Where a machine keeps the role and values it was given at install.
-const MACHINE_FILE: &str = "/var/lib/distro/machine.toml";
-
 /// This machine's values, by dotted path as configurations refer to them: what it detects, and
 /// what it was given. A machine that wasn't given a name has none, and keeps the hostname the
 /// network gives it.
-pub fn machine_values() -> BTreeMap<String, String> {
-    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
-    let mut values = BTreeMap::from([("facts.cpu.count".to_owned(), cpus.to_string())]);
-    values.extend(given_values(Path::new(MACHINE_FILE)));
-    values
+pub fn machine_values() -> Result<BTreeMap<String, String>, String> {
+    let given = Given::read(Path::new(MACHINE_FILE))?;
+    Ok(facts().chain(given.machine_values()).collect())
 }
 
-/// The values in `machine_file`, as `machine.<key>`: `name = "w-03"` gives `machine.name`.
-fn given_values(machine_file: &Path) -> BTreeMap<String, String> {
-    let Some(doc) = std::fs::read_to_string(machine_file)
-        .ok()
-        .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
-    else {
-        return BTreeMap::new();
-    };
-    doc.iter()
-        .filter_map(|(key, item)| Some((format!("machine.{key}"), item.as_str()?.to_owned())))
-        .collect()
+/// What this machine detects about itself.
+pub(crate) fn facts() -> impl Iterator<Item = (String, String)> {
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    std::iter::once(("facts.cpu.count".to_owned(), cpus.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn given_values_come_from_the_machine_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("machine.toml");
-        assert!(given_values(&file).is_empty());
-
-        std::fs::write(&file, "role = \"worker\"\nname = \"w-03\"\n").unwrap();
-        let values = given_values(&file);
-        assert_eq!(values["machine.name"], "w-03");
-        assert_eq!(values["machine.role"], "worker");
-    }
 
     #[test]
     fn files_get_their_secrets_and_a_bad_one_doesnt_stop_the_rest() {

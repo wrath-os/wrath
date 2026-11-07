@@ -56,7 +56,7 @@ fn the_other_roles_are_left_out() {
 fn error_no_role_given() {
     insta::assert_snapshot!(err(&ROLES, None), @"
     error: this configuration has roles, so it needs one: gpu-worker, worker
-     = help: pick one with `--role NAME`
+     = help: pick one with `--role NAME`, or name this machine in `machines.toml`
     ");
 }
 
