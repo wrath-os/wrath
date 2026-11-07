@@ -1,0 +1,201 @@
+# A machine's disks: their partitions, which are encrypted, and the filesystems on them, laid out
+# by `distro install`. The booted system unlocks and mounts them by name: each partition is
+# labelled `<disk><n>-<partition>`, such as `nvme0-system`, and an encrypted one opens under the
+# same name.
+
+device = types.record(
+    count = option(types.int, default = 1, doc = "How many such disks the machine has."),
+    kind = option(types.one_of(["nvme", "sata", "virtio", "any"]), default = "any"),
+    at_least = option(types.str, optional = True, doc = "The smallest size, such as `500G`."),
+    paths = option(
+        types.list(types.str),
+        default = [],
+        doc = "The disks themselves, such as `/dev/disk/by-id/...`, for a machine that isn't a " +
+              "role. Instead of `count`, `kind` and `at_least`.",
+    ),
+)
+
+partition = types.record(
+    size = option(types.str, doc = "Such as `1G`, or `rest` for what's left on the disk."),
+    format = option(
+        types.one_of(["vfat", "ext4", "xfs", "btrfs", "swap"]),
+        optional = True,
+        doc = "A filesystem on just this partition. One on several is under `filesystems`.",
+    ),
+    mount = option(types.path, optional = True),
+    options = option(types.list(types.str), default = []),
+    encrypt = option(types.bool, default = False, doc = "Encrypted with LUKS."),
+    on = option(
+        types.one_of(["all", "first"]),
+        default = "all",
+        doc = "Whether every one of the disks gets the partition, or only the first.",
+    ),
+)
+
+disk = types.record(
+    devices = option(device, default = {}),
+    partitions = option(
+        types.map(partition),
+        default = {},
+        doc = "By name. Fixed sizes come first, by name, and the `rest` last.",
+    ),
+)
+
+subvolume = types.record(
+    mount = option(types.path, optional = True),
+    options = option(types.list(types.str), default = []),
+)
+
+filesystem = types.record(
+    format = option(types.one_of(["btrfs"]), default = "btrfs"),
+    raid = option(types.one_of(["single", "raid1"]), default = "single"),
+    on = option(
+        types.list(types.str),
+        doc = "Partitions as `<disk>.<partition>`, on every disk that has them.",
+    ),
+    mount = option(types.path, optional = True),
+    options = option(types.list(types.str), default = []),
+    subvolumes = option(types.map(subvolume), default = {}),
+)
+
+UNITS = {"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024, "T": 1024 * 1024 * 1024 * 1024}
+
+def size_of(text):
+    """Bytes in a size such as `512M`, or None when it isn't one."""
+    if len(text) < 2 or text[-1] not in UNITS or not text[:-1].isdigit():
+        return None
+    return int(text[:-1]) * UNITS[text[-1]]
+
+def laid_out(partitions):
+    """The partitions in the order they go on the disk, each with its `name`."""
+    named = [dict(p, name = name) for name, p in sorted(partitions.items())]
+    return [p for p in named if p["size"] != "rest"] + [p for p in named if p["size"] == "rest"]
+
+def count_of(devices):
+    return len(devices["paths"]) or devices["count"]
+
+def device_path(p, label):
+    """Where a partition is once booted: an encrypted one is opened under its label."""
+    if p["encrypt"]:
+        return "/dev/mapper/" + label
+    return "/dev/disk/by-partlabel/" + label
+
+def render(ctx):
+    disks = ctx.read("disks")
+    filesystems = ctx.read("filesystems")
+    if not disks and not filesystems:
+        return
+    partitions = []
+    mounts = []
+    used = {}
+    # Each partition's devices once booted, one per disk that has it, by `<disk>.<partition>`.
+    device_paths = {}
+    for name, d in disks.items():
+        devices = d["devices"]
+        count = count_of(devices)
+        if count < 1:
+            ctx.error(["disks", name, "devices", "count"], "a disk needs at least one device")
+        if "at_least" in devices and size_of(devices["at_least"]) == None:
+            ctx.error(["disks", name, "devices", "at_least"], "a size is like `500G`")
+        parts = laid_out(d["partitions"])
+        rest = [p for p in parts if p["size"] == "rest"]
+        if len(rest) > 1:
+            ctx.error(["disks", name, "partitions"], "only one partition can take the `rest`")
+        for p in parts:
+            at = ["disks", name, "partitions", p["name"]]
+            if p["size"] != "rest" and size_of(p["size"]) == None:
+                ctx.error(at + ["size"], "a size is like `1G`, or `rest`")
+            if ("format" in p) != ("mount" in p) and p.get("format") != "swap":
+                ctx.error(at, "a partition with a filesystem needs a mount, and one with a " +
+                              "mount needs its filesystem")
+            ref = name + "." + p["name"]
+            used[ref] = p
+            device_paths[ref] = []
+            for n in range(count if p["on"] == "all" else 1):
+                label = "%s%d-%s" % (name, n, p["name"])
+                device_paths[ref].append(device_path(p, label))
+                partitions.append({
+                    "label": label,
+                    "disk": name,
+                    "device": n,
+                    "size": p["size"],
+                    "format": p.get("format", ""),
+                    "encrypt": p["encrypt"],
+                })
+            if "format" in p:
+                mounts.append({
+                    "path": p.get("mount", ""),
+                    "device": device_paths[ref][0],
+                    "format": p["format"],
+                    "options": p["options"],
+                })
+    spanning = []
+    for name, fs in filesystems.items():
+        at = ["filesystems", name]
+        members = []
+        for ref in fs["on"]:
+            if ref not in used:
+                ctx.error(at + ["on"], "there's no partition `%s`; partitions are named as " % ref +
+                          "`<disk>.<partition>`")
+            if "format" in used[ref]:
+                ctx.error(at + ["on"], "`%s` has a filesystem of its own" % ref)
+            members.extend(device_paths[ref])
+        if fs["raid"] == "raid1" and len(members) < 2:
+            ctx.error(at + ["raid"], "raid1 needs at least two partitions")
+        if "mount" in fs and fs["subvolumes"]:
+            ctx.error(at + ["mount"], "a filesystem with subvolumes mounts them, not itself")
+        extra = ["device=" + member for member in members[1:]]
+        if "mount" in fs:
+            mounts.append({
+                "path": fs["mount"],
+                "device": members[0],
+                "format": fs["format"],
+                "options": fs["options"] + extra,
+            })
+        for sub, s in fs["subvolumes"].items():
+            if "mount" in s:
+                mounts.append({
+                    "path": s["mount"],
+                    "device": members[0],
+                    "format": fs["format"],
+                    "options": ["subvol=" + sub] + s["options"] + extra,
+                })
+        spanning.append({
+            "name": name,
+            "format": fs["format"],
+            "raid": fs["raid"],
+            "members": members,
+            "subvolumes": sorted(fs["subvolumes"].keys()),
+        })
+    paths = [m["path"] for m in mounts if m["path"]]
+    seen = {}
+    for path in paths:
+        if path in seen:
+            ctx.error(["filesystems"], "`%s` is mounted twice" % path)
+        seen[path] = True
+    if "/" not in paths:
+        ctx.error(["disks"], "nothing is mounted at `/`")
+    ctx.base("storage", {
+        "disks": {
+            name: {
+                "count": count_of(d["devices"]),
+                "kind": d["devices"]["kind"],
+                "at_least": d["devices"].get("at_least", ""),
+                "paths": d["devices"]["paths"],
+            }
+            for name, d in disks.items()
+        },
+        "partitions": partitions,
+        "mounts": sorted(mounts, key = lambda m: m["path"]),
+        "spanning": spanning,
+    })
+
+module(
+    name = "disks",
+    options = {
+        "disks": types.map(disk),
+        "filesystems": types.map(filesystem),
+    },
+    writes = [],
+    render = render,
+)

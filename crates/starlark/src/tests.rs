@@ -904,3 +904,202 @@ fn services_say_what_they_need_and_how_they_are_ready() {
       = reported by modules/user-services.star
     "#);
 }
+
+/// The storage layout the `disks` module renders for `system`, as JSON.
+fn storage_of(system: &str) -> Result<String, String> {
+    let config = MemFs::new([("system.toml", system)]);
+    let evaluation = evaluate_with(&config, &["disks"])?;
+    let storage = &output_of(&evaluation, "disks").base["storage"];
+    Ok(distro_eval::formats::json(storage).unwrap())
+}
+
+#[test]
+fn disks_are_laid_out_and_mounted_by_name() {
+    let raid = storage_of(
+        "[disks.nvme]\ndevices = { count = 2, kind = \"nvme\", at_least = \"500G\" }\n\
+         partitions.esp = { size = \"1G\", format = \"vfat\", mount = \"/boot\", on = \"first\" }\n\
+         partitions.system = { size = \"rest\", encrypt = true }\n\n\
+         [filesystems.root]\nraid = \"raid1\"\non = [\"nvme.system\"]\n\
+         subvolumes.\"@root\" = { mount = \"/\" }\n\
+         subvolumes.\"@nix\" = { mount = \"/nix\", options = [\"noatime\"] }\n\
+         subvolumes.\"@persist\" = {}\n",
+    )
+    .unwrap();
+    insta::assert_snapshot!(raid, @r#"
+    {
+      "disks": {
+        "nvme": {
+          "at_least": "500G",
+          "count": 2,
+          "kind": "nvme",
+          "paths": []
+        }
+      },
+      "mounts": [
+        {
+          "device": "/dev/mapper/nvme0-system",
+          "format": "btrfs",
+          "options": [
+            "subvol=@root",
+            "device=/dev/mapper/nvme1-system"
+          ],
+          "path": "/"
+        },
+        {
+          "device": "/dev/disk/by-partlabel/nvme0-esp",
+          "format": "vfat",
+          "options": [],
+          "path": "/boot"
+        },
+        {
+          "device": "/dev/mapper/nvme0-system",
+          "format": "btrfs",
+          "options": [
+            "subvol=@nix",
+            "noatime",
+            "device=/dev/mapper/nvme1-system"
+          ],
+          "path": "/nix"
+        }
+      ],
+      "partitions": [
+        {
+          "device": 0,
+          "disk": "nvme",
+          "encrypt": false,
+          "format": "vfat",
+          "label": "nvme0-esp",
+          "size": "1G"
+        },
+        {
+          "device": 0,
+          "disk": "nvme",
+          "encrypt": true,
+          "format": "",
+          "label": "nvme0-system",
+          "size": "rest"
+        },
+        {
+          "device": 1,
+          "disk": "nvme",
+          "encrypt": true,
+          "format": "",
+          "label": "nvme1-system",
+          "size": "rest"
+        }
+      ],
+      "spanning": [
+        {
+          "format": "btrfs",
+          "members": [
+            "/dev/mapper/nvme0-system",
+            "/dev/mapper/nvme1-system"
+          ],
+          "name": "root",
+          "raid": "raid1",
+          "subvolumes": [
+            "@nix",
+            "@persist",
+            "@root"
+          ]
+        }
+      ]
+    }
+    "#);
+
+    let laptop = storage_of(
+        "[disks.main]\ndevices.paths = [\"/dev/disk/by-id/nvme-laptop\"]\n\
+         partitions.esp = { size = \"512M\", format = \"vfat\", mount = \"/boot\" }\n\
+         partitions.swap = { size = \"16G\", format = \"swap\", encrypt = true }\n\
+         partitions.system = { size = \"rest\", format = \"ext4\", mount = \"/\", encrypt = true }\n",
+    )
+    .unwrap();
+    insta::assert_snapshot!(laptop, @r#"
+    {
+      "disks": {
+        "main": {
+          "at_least": "",
+          "count": 1,
+          "kind": "any",
+          "paths": [
+            "/dev/disk/by-id/nvme-laptop"
+          ]
+        }
+      },
+      "mounts": [
+        {
+          "device": "/dev/mapper/main0-swap",
+          "format": "swap",
+          "options": [],
+          "path": ""
+        },
+        {
+          "device": "/dev/mapper/main0-system",
+          "format": "ext4",
+          "options": [],
+          "path": "/"
+        },
+        {
+          "device": "/dev/disk/by-partlabel/main0-esp",
+          "format": "vfat",
+          "options": [],
+          "path": "/boot"
+        }
+      ],
+      "partitions": [
+        {
+          "device": 0,
+          "disk": "main",
+          "encrypt": false,
+          "format": "vfat",
+          "label": "main0-esp",
+          "size": "512M"
+        },
+        {
+          "device": 0,
+          "disk": "main",
+          "encrypt": true,
+          "format": "swap",
+          "label": "main0-swap",
+          "size": "16G"
+        },
+        {
+          "device": 0,
+          "disk": "main",
+          "encrypt": true,
+          "format": "ext4",
+          "label": "main0-system",
+          "size": "rest"
+        }
+      ],
+      "spanning": []
+    }
+    "#);
+}
+
+#[test]
+fn disks_say_what_doesnt_fit() {
+    let errors: Vec<String> = [
+        "[disks.a]\npartitions.x = { size = \"rest\", format = \"ext4\", mount = \"/\" }\n\
+         partitions.y = { size = \"rest\" }\n",
+        "[disks.a]\npartitions.x = { size = \"10 gigs\", format = \"ext4\", mount = \"/\" }\n",
+        "[disks.a]\npartitions.x = { size = \"rest\", format = \"ext4\" }\n",
+        "[disks.a]\npartitions.x = { size = \"rest\" }\n\n[filesystems.root]\non = [\"a.y\"]\n\
+         mount = \"/\"\n",
+        "[disks.a]\npartitions.x = { size = \"rest\" }\n\n[filesystems.root]\nraid = \"raid1\"\n\
+         on = [\"a.x\"]\nmount = \"/\"\n",
+        "[disks.a]\npartitions.x = { size = \"1G\", format = \"ext4\", mount = \"/srv\" }\n",
+    ]
+    .iter()
+    .map(|system| storage_of(system).unwrap_err())
+    .map(|error| error.lines().next().unwrap_or_default().to_owned())
+    .collect();
+    insta::assert_snapshot!(errors.join("\n"), @"
+    error: only one partition can take the `rest`
+    error: a size is like `1G`, or `rest`
+    error: a partition with a filesystem needs a mount, and one with a mount needs its filesystem
+    error: there's no partition `a.y`; partitions are named as `<disk>.<partition>`
+    error: raid1 needs at least two partitions
+    error: nothing is mounted at `/`
+    ");
+}

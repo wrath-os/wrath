@@ -19,6 +19,10 @@ let
   input = lib.importJSON distroInput;
   base = input.base;
   session = base.session or null;
+  storage = base.storage or {
+    partitions = [ ];
+    mounts = [ ];
+  };
   replaces = input.nixos.replaces or [ ];
   package = import ./package.nix lib pkgs distroSources;
   inherit (lib) mkDefault;
@@ -272,6 +276,29 @@ in
       . "$HOME/.config/distro/session.sh"
     fi
   '';
+
+  # The disks `distro install` laid out, unlocked and mounted by the names it gave them.
+  boot.initrd.luks.devices = lib.listToAttrs (
+    map (
+      partition:
+      lib.nameValuePair partition.label { device = "/dev/disk/by-partlabel/${partition.label}"; }
+    ) (lib.filter (partition: partition.encrypt) storage.partitions)
+  );
+  fileSystems = lib.listToAttrs (
+    map (
+      mount:
+      lib.nameValuePair mount.path (
+        {
+          inherit (mount) device;
+          fsType = mount.format;
+        }
+        // lib.optionalAttrs (mount.options != [ ]) { inherit (mount) options; }
+      )
+    ) (lib.filter (mount: mount.format != "swap") storage.mounts)
+  );
+  swapDevices = map (mount: { inherit (mount) device; }) (
+    lib.filter (mount: mount.format == "swap") storage.mounts
+  );
 
   networking.hostName = mkDefault base.system.hostname;
   time.timeZone = mkDefault base.system.timezone;
