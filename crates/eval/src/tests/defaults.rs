@@ -332,3 +332,19 @@ fn why_says_where_a_referenced_value_came_from() {
       uses services.grafana.main.port = 3002, set at system.toml:5:8
     "#);
 }
+
+#[test]
+fn default_is_an_ordinary_key_in_freeform_settings() {
+    let evaluation = ok(&[
+        SYSTEM,
+        (
+            "services/grafana.toml",
+            "[services.grafana.main.settings]\npush.default = \"upstream\"\n",
+        ),
+    ]);
+
+    assert_eq!(
+        evaluation.get("services.grafana.main.settings.push.default"),
+        Some(&Value::Str("upstream".into()))
+    );
+}

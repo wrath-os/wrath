@@ -209,8 +209,7 @@ impl Walker<'_> {
             DeValue::Table(table)
                 if matches!(spec.ty, Type::Freeform)
                     && !table.contains_key("secret")
-                    && !table.contains_key("force")
-                    && !table.contains_key("default") =>
+                    && !table.contains_key("force") =>
             {
                 self.table(spec, &path, table, file, false);
             }
