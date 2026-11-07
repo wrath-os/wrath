@@ -657,7 +657,13 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    distro_check::parse_scenario(&path, &id, "", &text).map_err(|e| e.to_string())
+    // A scenario's milestone is the directory it's in, such as `acceptance/m2`.
+    let milestone = file
+        .parent()
+        .and_then(Path::file_name)
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    distro_check::parse_scenario(&path, &id, &milestone, &text).map_err(|e| e.to_string())
 }
 
 fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
