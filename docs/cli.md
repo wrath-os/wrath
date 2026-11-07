@@ -152,8 +152,9 @@ Understanding the configuration:
 
 Secrets: `distro secret edit NAME`, `distro secret list`, `distro secret rekey`.
 
-Setting up a machine: `distro install`, covering disks, file systems, encryption and the
-machine's key, gets its own design.
+Setting up a machine: `distro install --config DIR --role NAME --identity FILE`, from any Linux
+with Nix, lays out the disks the configuration describes, encrypts them, builds the system into
+them, and decrypts the machine's keys into it (planned).
 
 ## Output and the API
 
