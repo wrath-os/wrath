@@ -59,8 +59,9 @@ same for every machine with a role. They're allowed in the options secrets are a
 option that changes the build refuses them. Facts work this way for every configuration, one
 machine or many.
 
-`system.hostname` defaults to `${machine.name}`. A machine's name is the one given at install, or
-its hostname.
+`system.hostname` defaults to `${machine.name}`. A machine's name is the one given at install or in
+`machines.toml`. A machine that wasn't given one keeps the hostname the network gives it. Its
+current hostname can't stand in for a name: at boot, before anything sets it, there is none.
 
 A role declares the machine values it needs, so a missing one is an error at `check` or
 `install` rather than on the machine:

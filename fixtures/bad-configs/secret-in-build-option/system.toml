@@ -1,2 +1,2 @@
 [system]
-hostname = { secret = "name" }
+timezone = { secret = "name" }

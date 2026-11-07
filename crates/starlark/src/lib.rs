@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 
 use allocative::Allocative;
 use distro_eval::{
-    ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, Module, OptionPath,
-    OptionSpec, Output, ReadError, RenderError, RuntimePart, Secret, Setting, Sources, Span,
-    Template, Type, Unit, UnitAction, Value, formats, home_path,
+    ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, MACHINE_VALUES, Module,
+    OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart, Secret, Setting, Sources,
+    Span, Template, Type, Unit, UnitAction, Value, formats, home_path,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -292,6 +292,22 @@ fn globals() -> Globals {
 
 #[starlark_module]
 fn std_globals(builder: &mut GlobalsBuilder) {
+    /// A machine value, such as `machine_value("machine.name")`, filled in on the machine when it
+    /// switches. Only options and files filled in there take it, like a secret.
+    fn machine_value<'v>(
+        #[starlark(require = pos)] name: &str,
+        heap: Heap<'v>,
+    ) -> anyhow::Result<StarValue<'v>> {
+        if !MACHINE_VALUES.contains(&name) {
+            anyhow::bail!(
+                "unknown machine value `{name}`; the machine values are {}",
+                MACHINE_VALUES.join(", ")
+            );
+        }
+        let part = RuntimePart::Machine(name.to_owned());
+        Ok(heap.alloc(convert::Runtime(vec![part])))
+    }
+
     /// Declares an option: a type with a default, documentation and flags.
     fn option<'v>(
         #[starlark(require = pos)] r#type: StarValue<'v>,

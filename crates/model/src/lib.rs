@@ -108,9 +108,9 @@ impl Model {
                 .map(|(path, resolved)| (path.to_string(), resolved.value.clone()))
                 .collect(),
             machine: evaluation
-                .machine_values_used()
-                .iter()
-                .map(ToString::to_string)
+                .options()
+                .values()
+                .flat_map(|resolved| machine_values(&resolved.value))
                 .collect(),
             ..Self::default()
         };
@@ -158,6 +158,15 @@ impl Model {
                     .extend(paths.iter().cloned());
             }
         }
+        let templates = model.templates.values().chain(
+            model
+                .homes
+                .values()
+                .flat_map(|home| home.templates.values()),
+        );
+        model
+            .machine
+            .extend(templates.flat_map(|template| machine_parts(&template.parts)));
         model
     }
 
@@ -482,3 +491,23 @@ fn spell_out_entries(entries: &BTreeMap<String, Value>) -> Value {
 
 #[cfg(test)]
 mod tests;
+
+/// The machine values in `value`, such as `machine.name`, by dotted path.
+fn machine_values(value: &Value) -> Vec<String> {
+    match value {
+        Value::Runtime(parts) => machine_parts(parts),
+        Value::List(items) => items.iter().flat_map(machine_values).collect(),
+        Value::Table(entries) => entries.values().flat_map(machine_values).collect(),
+        Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) => Vec::new(),
+    }
+}
+
+fn machine_parts(parts: &[RuntimePart]) -> Vec<String> {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            RuntimePart::Machine(path) | RuntimePart::QuotedMachine(path) => Some(path.clone()),
+            RuntimePart::Text(_) | RuntimePart::Secret(_) | RuntimePart::QuotedSecret(_) => None,
+        })
+        .collect()
+}

@@ -1,2 +1,5 @@
 [system]
 timezone = "UTC"
+
+[networking.networks.lan]
+dhcp = "yes"

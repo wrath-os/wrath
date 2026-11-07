@@ -223,6 +223,20 @@ in
       '';
   };
 
+  # A configuration without a hostname leaves NixOS's empty and has the machine's name filled
+  # into /etc/hostname with the other files: systemd reads it on boot, and a switch sets it here.
+  system.activationScripts.distroHostname = lib.mkIf (base.system.hostname == "") {
+    deps = [
+      "etc"
+      "distroTemplates"
+    ];
+    text = ''
+      if [ -s /etc/hostname ]; then
+        tr -d '\n' < /etc/hostname > /proc/sys/kernel/hostname
+      fi
+    '';
+  };
+
   # Users' files are links into the store, made on every boot and switch.
   system.activationScripts.distroHomes = {
     deps = [
