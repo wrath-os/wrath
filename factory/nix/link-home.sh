@@ -1,5 +1,6 @@
-# Links a user's files into their home from the store, and removes links an earlier generation
-# made that are gone now. A file that is there and wasn't linked by this script is left alone.
+# Links a user's files into their home from the store, run as root or as the user, and removes
+# links an earlier generation made that are gone now. A file that is there and wasn't linked by
+# this script is left alone.
 # When the user's systemd manager runs, units in ~/.config/systemd/user that went away are
 # stopped and the ones that changed are restarted.
 #
@@ -18,7 +19,14 @@ units=$home/.config/systemd/user
 
 manager=()
 if systemctl is-active --quiet "user@$(id -u "$user").service"; then
-    manager=(systemctl --user --machine="$user@")
+    # Run as the user themselves, for a home of its own, their manager is their own.
+    if [ "$(id -u)" = "$(id -u "$user")" ]; then
+        # Outside a login session, such as under runuser, the manager is still where it runs.
+        export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+        manager=(systemctl --user)
+    else
+        manager=(systemctl --user --machine="$user@")
+    fi
 fi
 
 # Creates `dir` and the directories above it, up to the home, owned by the user.

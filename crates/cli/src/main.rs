@@ -16,6 +16,7 @@ mod edit;
 mod facts;
 mod fetch;
 mod generations;
+mod home;
 mod machine;
 mod options;
 mod project;
@@ -269,6 +270,7 @@ fn main() -> ExitCode {
     let machine = || config().and_then(|config| refuse_project(&config).map(|()| config));
     let result = match cli.command {
         Command::Status => machine().and_then(|config| match model(&config, &modules) {
+            Some(model) if is_home(&config) => home::status(&model),
             Some(model) if json => print_serde(&generations::status_json(&model)),
             Some(model) => generations::status(&model),
             None => Ok(ExitCode::FAILURE),
@@ -293,16 +295,25 @@ fn main() -> ExitCode {
         }),
         Command::Keep => generations::keep(),
         Command::Build { target } => machine().and_then(|config| match model(&config, &modules) {
-            Some(model) => generations::build(root, &model, target).map(|path| {
-                println!("{}", path.display());
-                ExitCode::SUCCESS
-            }),
+            Some(model) => {
+                let target = if is_home(&config) {
+                    backend::Target::Home
+                } else {
+                    target.into()
+                };
+                generations::build(root, &model, target).map(|path| {
+                    println!("{}", path.display());
+                    ExitCode::SUCCESS
+                })
+            }
             None => Ok(ExitCode::FAILURE),
         }),
         Command::History if json => generations::history_json().and_then(|v| print_serde(&v)),
+        Command::History if home::is_context() => home::history(),
         Command::History => generations::history(),
         Command::Clean { keep, yes } => generations::clean(keep, yes),
         Command::Diff { from, to } => generations::diff(from, to),
+        Command::Rollback if home::is_context() => home::rollback(),
         Command::Rollback => generations::rollback(),
         Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, _)| run::run(root, model, &package, &args)),
@@ -388,12 +399,13 @@ fn machine_role(config: &Path) -> Option<String> {
     Some(role)
 }
 
-/// The configuration a command acts on: the one given, the project it runs in, or the system's.
+/// The configuration a command acts on: the one given, the project it runs in, your own when you
+/// aren't root and have one, or the system's.
 /// The context goes to stderr first, so output always says which configuration it's about.
 fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
     let found = match given {
         Some(_) => None,
-        None => current_project(),
+        None => current_project().or_else(home::dir),
     };
     let config = given
         .or(found.as_deref())
@@ -410,12 +422,20 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
         eprintln!("{}", project::header(config));
         return Ok(config.to_path_buf());
     }
+    if is_home(config) {
+        eprintln!("home {}", config.display());
+        return Ok(config.to_path_buf());
+    }
     let kind = if given.is_some() { "config" } else { "system" };
     match given_role() {
         Some(role) => eprintln!("{kind} {}, role {role}", config.display()),
         None => eprintln!("{kind} {}", config.display()),
     }
     Ok(config.to_path_buf())
+}
+
+fn is_home(config: &Path) -> bool {
+    distro_eval::kind_of(&distro_eval::DirFs::new(config)) == distro_eval::ConfigKind::Home
 }
 
 fn current_project() -> Option<PathBuf> {
@@ -767,6 +787,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
             Some(before) => (before, None),
             None => return Ok(ExitCode::FAILURE),
         },
+        Against::Running if is_home(config) => (home::current()?, Some("your home".to_owned())),
         Against::Running => match backend::current_model() {
             Some(path) => (
                 read_model(Path::new(path))
@@ -859,9 +880,21 @@ fn switch(
     modules: &Path,
 ) -> Result<ExitCode, String> {
     if let Some(system) = system {
+        if system.join("activate").exists() && system.join("distro/model.json").exists() {
+            return home::switch_to(&system);
+        }
         return generations::switch_to(&system, how);
     }
     let config = config()?;
+    if is_home(&config) {
+        let Some(model) = model(&config, modules) else {
+            return Ok(ExitCode::FAILURE);
+        };
+        return match how {
+            Switch::Apply => home::apply(root, &config, model, yes),
+            Switch::Try(_) => Err("trying a home isn't built yet; apply it, and roll back".into()),
+        };
+    }
     let role = role(&config);
     let Some(evaluation) = evaluate(&config, modules) else {
         return Ok(ExitCode::FAILURE);

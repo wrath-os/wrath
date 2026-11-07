@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 use distro_model::{Lock, Locked, Model, Source};
 use serde::Deserialize;
 
+pub mod home;
 pub use generations::Generation;
 use generations::parse_generations;
 pub use lower::lower;
@@ -42,12 +43,16 @@ pub enum Target {
     /// The model's packages in one environment, for running them without installing them: their
     /// programs under `bin`, and `share/distro/packages.json` with their versions and sources.
     Environment,
+    /// A user's home on its own: `profile` with their packages, `activate`, which links their
+    /// files in as them, and the model under `distro`.
+    Home,
 }
 
 impl Target {
     fn function(self) -> &'static str {
         match self {
             Self::System => "toplevel",
+            Self::Home => "home",
             Self::TestSystem => "testToplevel",
             Self::TestImage => "testImage",
             Self::TestVmSystem => "testVmToplevel",

@@ -248,30 +248,8 @@ in
         link =
           name: user:
           let
-            files = input.homes.${name}.files or { };
-            # A file of the same name in the store, which systemd wants of a link to a unit.
-            target =
-              path: file:
-              let
-                base = baseNameOf path;
-              in
-              "${
-                pkgs.writeTextFile {
-                  name = lib.strings.sanitizeDerivationName base;
-                  destination = "/${base}";
-                  inherit (file) text executable;
-                }
-              }/${base}";
-            links = pkgs.writeText "distro-home-${name}" (
-              lib.concatStrings (
-                lib.mapAttrsToList (path: file: "${path}\t${target path file}\n") files
-              )
-              + lib.concatStrings (
-                lib.mapAttrsToList (path: file: "${path}\t${filled file}\n") (
-                  input.homes.${name}.templates or { }
-                )
-              )
-            );
+            home = input.homes.${name} or { };
+            links = import ./home-links.nix { inherit lib pkgs; } name home filled;
           in
           "PATH=${config.systemd.package}/bin:$PATH "
           + lib.escapeShellArgs [

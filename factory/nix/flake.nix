@@ -275,6 +275,55 @@
           name = "distro-environment";
           paths = map package json.packages ++ [ described ];
         };
+
+      # A user's home on its own, for a configuration of one home: `profile`, their packages in
+      # one environment, the model it was built from, and `activate`, which links their files into
+      # the home as the user who runs it. Login shells find the packages through
+      # `~/.config/distro/profile.sh`, and systemd's user manager through environment.d.
+      home =
+        input:
+        let
+          evaluated = evalInput input [ ];
+          json = lib.importJSON input;
+          inherit (evaluated.system) pkgs;
+          package = import ./package.nix lib pkgs evaluated.named;
+          name = builtins.head (builtins.attrNames json.homes);
+          ours = json.homes.${name};
+          bin = "$HOME/.local/state/distro/profiles/home/profile/bin";
+          onPath = {
+            "~/.config/distro/profile.sh" = {
+              text = ''
+                export PATH="${bin}:$PATH"
+                if [ -r "$HOME/.config/distro/session.sh" ]; then
+                  . "$HOME/.config/distro/session.sh"
+                fi
+              '';
+              executable = false;
+            };
+            "~/.config/environment.d/50-distro-profile.conf" = {
+              text = "PATH=${bin}:$PATH\n";
+              executable = false;
+            };
+          };
+          links = import ./home-links.nix { inherit lib pkgs; } name (
+            ours // { files = ours.files // onPath; }
+          ) (_: throw "distro: a home of its own can't have files with secrets in them yet");
+          profile = pkgs.buildEnv {
+            name = "distro-home-profile";
+            paths = map package ours.packages;
+          };
+          activate = pkgs.writeShellScript "activate" ''
+            PATH=${pkgs.systemd}/bin:$PATH exec ${pkgs.bash}/bin/bash ${./link-home.sh} \
+              "$(id -un)" "$(id -gn)" "$HOME" ${links}
+          '';
+        in
+        pkgs.runCommand "distro-home" { } ''
+          mkdir -p $out/distro
+          ln -s ${profile} $out/profile
+          ln -s ${activate} $out/activate
+          cp ${pkgs.writeText "model.json" json.model} $out/distro/model.json
+          cp ${pkgs.writeText "model-hash" json.model_hash} $out/distro/model-hash
+        '';
     in
     {
       packages.${system} = {
@@ -284,7 +333,7 @@
 
       # Entry points for `distro`, which passes the path of the shim's input.
       lib.${system} = {
-        inherit environment resolve;
+        inherit environment home resolve;
         toplevel = input: (fromInput input [ ]).config.system.build.toplevel;
         testToplevel = input: (fromInput input diskHarness).config.system.build.toplevel;
         testImage = input: image "distro-test" (fromInput input diskHarness);

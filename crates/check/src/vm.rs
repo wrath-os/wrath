@@ -54,6 +54,9 @@ pub enum Step {
         expect_plan: Vec<String>,
         try_for: Option<String>,
     },
+    /// Builds a user's own configuration on the host, copies it into the VM, and applies it there
+    /// as `user`, without root.
+    ApplyHome { config: String, user: String },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -108,8 +111,10 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 7] = [
+pub const STEP_FIELDS: [&str; 9] = [
     "apply_config",
+    "apply_home",
+    "as_user",
     "expect_plan",
     "try_for",
     "run",
@@ -122,6 +127,8 @@ pub const STEP_FIELDS: [&str; 7] = [
 #[serde(deny_unknown_fields)]
 struct RawStep {
     apply_config: Option<String>,
+    apply_home: Option<String>,
+    as_user: Option<String>,
     #[serde(default)]
     expect_plan: Vec<String>,
     try_for: Option<String>,
@@ -136,6 +143,12 @@ impl TryFrom<RawStep> for Step {
     type Error = String;
 
     fn try_from(raw: RawStep) -> Result<Self, Self::Error> {
+        if let Some(config) = raw.apply_home {
+            let user = raw
+                .as_user
+                .ok_or("`apply_home` needs `as_user`, the user it belongs to")?;
+            return Ok(Self::ApplyHome { config, user });
+        }
         let run_fields = raw.exit != 0 || raw.stdout_contains.is_some();
         let apply_fields = !raw.expect_plan.is_empty() || raw.try_for.is_some();
         match (raw.apply_config, raw.run, raw.expect_no_reboot) {
@@ -647,6 +660,9 @@ impl VmRun<'_> {
                     self.apply_config(agent, current, config, expect_plan, try_for, deadline)?;
                     current = config;
                 }
+                Step::ApplyHome { config, user } => {
+                    self.apply_home(agent, config, user, deadline)?
+                }
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
@@ -693,6 +709,31 @@ impl VmRun<'_> {
         let (code, _, stderr) = run_shell(agent, switch, deadline)?;
         if code != Some(0) {
             return Err(format!("switching to `{config}` failed: {}", stderr.trim()));
+        }
+        Ok(())
+    }
+
+    fn apply_home(
+        &self,
+        agent: &mut Client<VsockStream>,
+        config: &str,
+        user: &str,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let home = self.host.distro(&["build", "--config", config])?;
+        let home = home.trim();
+        self.copy_in(agent, home, deadline)?;
+        let apply = format!("distro apply {home}");
+        let (code, _, stderr) = run_shell(
+            agent,
+            argv(&["runuser", "-l", user, "-c", &apply]),
+            deadline,
+        )?;
+        if code != Some(0) {
+            return Err(format!(
+                "applying the home `{config}` failed: {}",
+                stderr.trim()
+            ));
         }
         Ok(())
     }

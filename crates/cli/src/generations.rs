@@ -66,15 +66,7 @@ pub fn apply(
     yes: bool,
     record: Option<crate::machine::Record>,
 ) -> Result<ExitCode, String> {
-    let model = if model.is_locked() {
-        crate::fetch::record(config)?;
-        model
-    } else {
-        let mut lock = resolve(root, &model)?;
-        lock.sources.extend(crate::fetch::fetched());
-        write_lock(config, &lock)?;
-        model.with_lock(&lock)
-    };
+    let model = locked(root, config, model)?;
     let hash = model.hash();
     if record.is_none() && backend::current_model_hash().as_deref() == Some(hash.as_str()) {
         println!("the running system already has model {}", &hash[..16]);
@@ -107,9 +99,22 @@ pub fn apply(
     Ok(code)
 }
 
+/// `model` with its packages locked: locks what the lock next to `config` doesn't have yet, so
+/// the lock always describes what runs.
+pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, String> {
+    if model.is_locked() {
+        crate::fetch::record(config)?;
+        return Ok(model);
+    }
+    let mut lock = resolve(root, &model)?;
+    lock.sources.extend(crate::fetch::fetched());
+    write_lock(config, &lock)?;
+    Ok(model.with_lock(&lock))
+}
+
 /// Whether to go ahead after showing the plan: yes with `-y`, else the person at the terminal
 /// says. Without a terminal there's nobody to ask, so it's an error instead of a guess.
-fn confirmed(yes: bool, question: &str) -> Result<bool, String> {
+pub(crate) fn confirmed(yes: bool, question: &str) -> Result<bool, String> {
     use std::io::{IsTerminal, Write};
     match ask(yes, std::io::stdin().is_terminal()) {
         Ask::No => Ok(true),
@@ -232,7 +237,7 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
 }
 
 /// Whether the running system, whose model hash is `running`, is `model`.
-fn matching(running: Option<&str>, model: &Model) -> &'static str {
+pub(crate) fn matching(running: Option<&str>, model: &Model) -> &'static str {
     match running {
         Some(hash) if hash == model.hash() => "it matches the configuration",
         Some(_) => "the configuration differs from it; `distro plan` shows how",
