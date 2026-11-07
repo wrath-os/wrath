@@ -1,7 +1,7 @@
 description = "John"
 packages = ["mergiraf"]
 linger = true
-session_variables = { EDITOR = "hx", PATH = "$HOME/bin:$${PATH}", GREETING = "it's \"quoted\"" }
+environment = { EDITOR = "hx", PATH = "$HOME/bin:$${PATH}", GREETING = "it's \"quoted\"" }
 
 [programs.git]
 enable = true

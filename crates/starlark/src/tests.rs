@@ -596,7 +596,7 @@ fn users_run_their_own_services() {
 }
 
 #[test]
-fn session_variables_reach_systemd_and_login_shells() {
+fn environment_reaches_systemd_and_login_shells() {
     let evaluation = evaluate_fixture("home", &HOME_MODULES);
 
     insta::assert_snapshot!(homes_of(&evaluation, "session"), @r#"
@@ -621,14 +621,14 @@ fn session_variables_reach_systemd_and_login_shells() {
 }
 
 #[test]
-fn session_variables_cannot_run_commands() {
+fn environment_variables_cannot_run_commands() {
     let config = MemFs::new([
         ("system.toml", "[system]\nhostname = \"box\"\n"),
-        ("users/john.toml", "session_variables.X = \"$(id)\"\n"),
+        ("users/john.toml", "environment.X = \"$(id)\"\n"),
     ]);
 
     let error = evaluate_with(&config, &HOME_MODULES).unwrap_err();
-    assert!(error.contains("users.john.session_variables.X"), "{error}");
+    assert!(error.contains("users.john.environment.X"), "{error}");
 }
 
 #[test]

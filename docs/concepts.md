@@ -65,7 +65,7 @@ its command, environment, user, restart policy and the services it needs. Each p
 with its own service manager. A **unit** is a raw systemd unit, for what only Linux has.
 
 A **home** is what a configuration puts in one user's home directory: files, packages, services
-and session variables.
+and environment variables.
 
 A **machine value** is something that differs between machines running the same configuration:
 a **fact** the machine detects, such as `${facts.cpu.count}`, or a value it's given, such as

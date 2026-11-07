@@ -1,8 +1,9 @@
-# Environment variables for each user's sessions: systemd's user manager and graphical sessions
-# read `~/.config/environment.d`, and login shells source `~/.config/distro/session.sh`.
+# Environment variables for each user's sessions, from `environment`: systemd's user manager and
+# graphical sessions read `~/.config/environment.d`, and login shells source
+# `~/.config/distro/session.sh`.
 
 def check(ctx, user, name, v):
-    where = ["users", user, "session_variables", name]
+    where = ["users", user, "environment", name]
     if "\n" in v:
         ctx.error(where, "a value can't span lines")
     if "$(" in v or "`" in v:
@@ -14,7 +15,7 @@ def sh_quote(v):
 
 def render(ctx):
     for user, u in ctx.read("users").items():
-        variables = u["session_variables"]
+        variables = u["environment"]
         if not variables:
             continue
         conf = []
@@ -40,7 +41,7 @@ module(
     name = "session",
     options = {},
     user_options = {
-        "session_variables": option(
+        "environment": option(
             types.map(types.str),
             default = {},
             doc = "Variables every session of the user has. Values may refer to others as `$NAME`.",
