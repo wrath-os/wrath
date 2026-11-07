@@ -43,6 +43,8 @@ pub struct Input<'a> {
     pub sources: Sources,
     pub config: &'a dyn ConfigFs,
     pub kind: ConfigKind,
+    /// The user a home configuration belongs to.
+    pub user: Option<&'a str>,
     /// The role to evaluate, for a configuration with `roles/`.
     pub role: Option<&'a str>,
     /// Options declared outside modules. Module options are added to it.
@@ -193,6 +195,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         mut sources,
         config,
         kind,
+        user,
         role,
         mut schema,
         modules,
@@ -222,9 +225,9 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         diagnostics: load_diagnostics,
         role,
         sources: declared_sources,
-    } = load::load(config, &mut sources, kind, role);
+    } = load::load(config, &mut sources, kind, user, role);
     diagnostics.extend(load_diagnostics);
-    let walked = walk::walk(&schema, &sources, &files);
+    let walked = walk::walk(&schema, &sources, &files, kind == ConfigKind::Home);
     let starting_files = files
         .iter()
         .filter(|loaded| loaded.start)
@@ -239,7 +242,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             role.as_deref(),
             &walked.machine_values,
         ),
-        ConfigKind::Project => (BTreeMap::new(), Vec::new()),
+        ConfigKind::Project | ConfigKind::Home => (BTreeMap::new(), Vec::new()),
     };
     diagnostics.extend(machine_diagnostics);
 

@@ -54,10 +54,13 @@ pub(crate) fn schema() -> Schema {
     declare(
         &mut schema,
         "users",
-        OptionSpec::new(Type::map(OptionSpec::new(Type::record([(
-            "packages",
-            OptionSpec::new(Type::list(Type::Str, ListMerge::Set)).default(Value::List(vec![])),
-        )])))),
+        OptionSpec::new(Type::map(OptionSpec::new(Type::record([
+            (
+                "packages",
+                OptionSpec::new(Type::list(Type::Str, ListMerge::Set)).default(Value::List(vec![])),
+            ),
+            ("shell", OptionSpec::new(Type::Str).optional().account()),
+        ])))),
     );
     let rule = Type::record([
         ("name", OptionSpec::new(Type::Str)),
@@ -106,6 +109,7 @@ pub(crate) fn eval_fs(config: &MemFs) -> Result<crate::Evaluation, String> {
         sources: Sources::default(),
         config,
         kind: ConfigKind::System,
+        user: None,
         role: None,
         schema: schema(),
         modules: &[],
@@ -122,6 +126,7 @@ pub(crate) fn eval_role(
         sources: Sources::default(),
         config: &MemFs::new(files.iter().copied()),
         kind: ConfigKind::System,
+        user: None,
         role,
         schema: schema(),
         modules,
@@ -656,6 +661,7 @@ fn error_required_option_not_set() {
 }
 
 mod defaults;
+mod homes;
 mod lists;
 mod machine;
 mod modules;

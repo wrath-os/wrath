@@ -33,4 +33,5 @@ module(
     user_options = {"files": types.map(file)},
     writes = [],
     render = render,
+    configurations = ["system", "home"],
 )

@@ -315,6 +315,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<StarValue<'v>>,
         #[starlark(require = named, default = false)] optional: bool,
         #[starlark(require = named, default = false)] runtime: bool,
+        #[starlark(require = named, default = false)] account: bool,
         #[starlark(require = named, default = "")] doc: &str,
     ) -> anyhow::Result<StarOption> {
         let mut spec = OptionSpec::new(type_of(r#type)?);
@@ -324,6 +325,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
             .map_err(anyhow::Error::msg)?;
         spec.optional = optional;
         spec.runtime = runtime;
+        spec.account = account;
         spec.doc = doc.to_owned();
         Ok(StarOption(spec))
     }
@@ -371,8 +373,10 @@ fn std_globals(builder: &mut GlobalsBuilder) {
                 .map(|kind| match kind.as_str() {
                     "system" => Ok(ConfigKind::System),
                     "project" => Ok(ConfigKind::Project),
+                    "home" => Ok(ConfigKind::Home),
                     other => Err(anyhow::anyhow!(
-                        "a module is for \"system\" or \"project\" configurations, not `{other}`"
+                        "a module is for \"system\", \"project\" or \"home\" configurations, \
+                         not `{other}`"
                     )),
                 })
                 .collect::<anyhow::Result<_>>()?,

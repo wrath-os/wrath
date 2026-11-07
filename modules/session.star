@@ -49,4 +49,5 @@ module(
     },
     writes = [],
     render = render,
+    configurations = ["system", "home"],
 )

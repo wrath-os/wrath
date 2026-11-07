@@ -9,6 +9,7 @@ fn eval_project(files: &[(&str, &str)]) -> Result<crate::Evaluation, String> {
         sources: Sources::default(),
         config: &MemFs::new(files.iter().copied()),
         kind: ConfigKind::Project,
+        user: None,
         role: None,
         schema: schema(),
         modules: &[],

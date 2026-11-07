@@ -107,9 +107,11 @@ pub(crate) struct Walked {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub(crate) fn walk(schema: &Schema, sources: &Sources, files: &[LoadedFile]) -> Walked {
+pub(crate) fn walk(schema: &Schema, sources: &Sources, files: &[LoadedFile], home: bool) -> Walked {
     let mut walker = Walker {
         sources,
+        home,
+        frame: false,
         defaults: false,
         out: Walked::default(),
     };
@@ -121,6 +123,10 @@ pub(crate) fn walk(schema: &Schema, sources: &Sources, files: &[LoadedFile]) -> 
 
 struct Walker<'a> {
     sources: &'a Sources,
+    /// Whether this is a user's own configuration, which can't set their account.
+    home: bool,
+    /// Whether the file being walked is one of the configuration's own.
+    frame: bool,
     /// Whether the file being walked gives defaults.
     defaults: bool,
     out: Walked,
@@ -129,6 +135,7 @@ struct Walker<'a> {
 impl Walker<'_> {
     fn file(&mut self, schema: &Schema, loaded: &LoadedFile) {
         self.defaults = loaded.defaults;
+        self.frame = loaded.frame;
         // Files that don't parse were reported while loading.
         let Ok(table) = DeTable::parse(self.sources.text(loaded.file)) else {
             return;
@@ -220,12 +227,12 @@ impl Walker<'_> {
             if top && name == INCLUDE {
                 continue;
             }
-            if top && path.is_empty() && name == MACHINE {
+            if top && self.frame && name == MACHINE {
                 self.machine(value, file);
                 continue;
             }
             // Read while loading, with the includes.
-            if top && path.is_empty() && name == SOURCES {
+            if top && self.frame && name == SOURCES {
                 continue;
             }
             let child = path.child(name);
@@ -255,6 +262,14 @@ impl Walker<'_> {
                 | Type::Enum(_)
                 | Type::List { .. } => unreachable!("only tables of options are walked"),
             };
+            if self.home && child_spec.account {
+                self.out.diagnostics.push(
+                    Diagnostic::error(format!("`{child}` belongs to the account"))
+                        .label(Span::new(file, key.span()), "set here")
+                        .note("the machine's administrator sets it in the system configuration"),
+                );
+                continue;
+            }
             self.node(&child_spec, child, value, file);
         }
     }

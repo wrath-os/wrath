@@ -68,6 +68,8 @@ pub struct OptionSpec {
     pub optional: bool,
     /// The option may hold values only known at service start, such as secrets.
     pub runtime: bool,
+    /// The option belongs to a user's account, which only a system configuration sets.
+    pub account: bool,
     pub doc: String,
 }
 
@@ -78,6 +80,7 @@ impl OptionSpec {
             default: None,
             optional: false,
             runtime: false,
+            account: false,
             doc: String::new(),
         }
     }
@@ -94,6 +97,11 @@ impl OptionSpec {
 
     pub fn runtime(mut self) -> Self {
         self.runtime = true;
+        self
+    }
+
+    pub fn account(mut self) -> Self {
+        self.account = true;
         self
     }
 

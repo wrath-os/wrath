@@ -49,10 +49,13 @@ fn evaluate_with(
     let kind = distro_eval::kind_of(config);
     let mut modules = load_modules(modules, &mut sources, order)?;
     modules.retain(|module| module.configurations().contains(&kind));
+    // A home belongs to whoever runs the command.
+    let user = std::env::var("USER").ok();
     distro_eval::evaluate(Input {
         sources,
         config,
         kind,
+        user: user.as_deref(),
         role,
         schema: Schema::default(),
         modules: &modules,

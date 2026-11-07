@@ -29,6 +29,9 @@ pub(crate) struct LoadedFile {
     pub file: FileId,
     /// The option the file's top-level keys belong to.
     pub root: OptionPath,
+    /// Whether the file is one of the configuration's own, where `include`, `[sources]` and
+    /// `[machine]` are read, as opposed to a file that configures one user of a system.
+    pub frame: bool,
     /// Whether the configuration starts from this file, rather than only reaching it through
     /// includes.
     pub start: bool,
@@ -64,11 +67,17 @@ pub(crate) fn load(
     fs: &dyn ConfigFs,
     sources: &mut Sources,
     kind: ConfigKind,
+    user: Option<&str>,
     role_given: Option<&str>,
 ) -> Loaded {
+    let root = match (kind, user) {
+        (ConfigKind::Home, Some(user)) => OptionPath::root().child("users").child(user),
+        _ => OptionPath::root(),
+    };
     let mut loader = Loader {
         fs,
         sources,
+        root: root.clone(),
         files: Vec::new(),
         seen: HashMap::new(),
         declared: BTreeMap::new(),
@@ -79,10 +88,11 @@ pub(crate) fn load(
     let start = match kind {
         ConfigKind::System => starting_file(fs, role_given),
         ConfigKind::Project => project_file(fs),
+        ConfigKind::Home => home_file(fs, user),
     };
     let role = match start {
         Ok(path) => {
-            loader.add(None, &path, &OptionPath::root(), None);
+            loader.add(None, &path, &root, None);
             path.strip_prefix("roles/")
                 .and_then(|name| name.strip_suffix(".toml"))
                 .map(str::to_owned)
@@ -116,6 +126,8 @@ pub(crate) fn load(
 struct Loader<'a> {
     fs: &'a dyn ConfigFs,
     sources: &'a mut Sources,
+    /// What the configuration's own files configure: everything, or a home's `users.<name>`.
+    root: OptionPath,
     files: Vec<LoadedFile>,
     /// Each file read or being read, by its source and path, with its index in `files` once it
     /// has one.
@@ -243,9 +255,11 @@ impl Loader<'_> {
         };
         let file = self.sources.add(display, text);
         self.seen.insert(key, Some(self.files.len()));
+        let frame = *root == self.root;
         self.files.push(LoadedFile {
             file,
             root: root.clone(),
+            frame,
             start: inclusion.is_none(),
             inclusions: inclusion.into_iter().collect(),
             defaults: false,
@@ -263,7 +277,7 @@ impl Loader<'_> {
                 return;
             }
         };
-        if let Some(sources) = table.get_ref().get(SOURCES).filter(|_| root.is_empty()) {
+        if let Some(sources) = table.get_ref().get(SOURCES).filter(|_| frame) {
             match origin {
                 None => self.declare(sources, file),
                 Some(name) => self.diagnostics.push(
@@ -500,9 +514,12 @@ pub enum ConfigKind {
     System,
     /// A project's development environment: `distro.toml`, or `distro.local.toml` over it.
     Project,
+    /// One user's own home: `home.toml`, configuring their entry in `users`.
+    Home,
 }
 
 const PROJECT: &str = "distro.toml";
+const HOME: &str = "home.toml";
 const PROJECT_LOCAL: &str = "distro.local.toml";
 
 /// The file a project starts from: the local file when there is one, so its owner can change
@@ -520,17 +537,34 @@ fn project_file(fs: &dyn ConfigFs) -> Result<String, Diagnostic> {
     )
 }
 
-/// The kind of configuration in `fs`: a project when it has `distro.toml` or `distro.local.toml`
-/// and no `system.toml` or roles, otherwise a system.
+/// The file a user's own configuration starts from.
+fn home_file(fs: &dyn ConfigFs, user: Option<&str>) -> Result<String, Diagnostic> {
+    if user.is_none() {
+        return Err(Diagnostic::error(
+            "a home configuration needs the user it belongs to",
+        ));
+    }
+    match fs.read(HOME) {
+        Ok(_) => Ok(HOME.to_owned()),
+        Err(_) => Err(
+            Diagnostic::error(format!("`{}` does not exist", fs.display(HOME)))
+                .note("help: a user's own configuration starts from `home.toml`"),
+        ),
+    }
+}
+
+/// The kind of configuration in `fs`: a system when it has `system.toml` or roles, a project when
+/// it has `distro.toml` or `distro.local.toml`, a home when it has `home.toml`, otherwise a system.
 pub fn kind_of(fs: &dyn ConfigFs) -> ConfigKind {
     let project = [PROJECT, PROJECT_LOCAL]
         .iter()
         .any(|file| fs.read(file).is_ok());
     let system = fs.read(SYSTEM).is_ok() || roles(fs).is_ok_and(|roles| !roles.is_empty());
-    if project && !system {
-        ConfigKind::Project
-    } else {
-        ConfigKind::System
+    let home = fs.read(HOME).is_ok();
+    match (system, project, home) {
+        (false, true, _) => ConfigKind::Project,
+        (false, false, true) => ConfigKind::Home,
+        _ => ConfigKind::System,
     }
 }
 
