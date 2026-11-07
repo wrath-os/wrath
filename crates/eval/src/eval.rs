@@ -23,11 +23,11 @@ use crate::source::{FileId, Sources, Span};
 use crate::suggest::{closest, did_you_mean};
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
-use crate::walk::{self, Action, Definition, Level, REMOVE, Raw, Site, mark_instances};
+use crate::walk::{self, Action, Definition, Level, MACHINE, REMOVE, Raw, Site, mark_instances};
 
-/// The roots of references to machine values: `${facts.cpu.count}`, `${machine.name}`.
+/// The roots of references to machine values, with [`MACHINE`]: `${facts.cpu.count}`,
+/// `${machine.name}`.
 const FACTS: &str = "facts";
-const MACHINE: &str = "machine";
 
 /// The machine values a configuration can refer to: facts the machine detects, and values it's
 /// given. They're filled in on the machine when it switches, so the build doesn't depend on them.
@@ -57,6 +57,7 @@ pub struct Evaluation {
     starting_files: HashSet<FileId>,
     options: BTreeMap<OptionPath, Resolved>,
     machine_values: BTreeSet<OptionPath>,
+    declared: BTreeMap<String, Span>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
 }
@@ -130,6 +131,11 @@ impl Evaluation {
     /// The machine values the configuration refers to, such as `facts.cpu.count`.
     pub fn machine_values_used(&self) -> &BTreeSet<OptionPath> {
         &self.machine_values
+    }
+
+    /// The values each machine is given, declared in `[machine.values]`, and where.
+    pub fn machine_values_declared(&self) -> &BTreeMap<String, Span> {
+        &self.declared
     }
 
     /// What each module rendered, in the order the modules were given.
@@ -228,6 +234,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         stack: Vec::new(),
         options: BTreeMap::new(),
         machine_values: BTreeSet::new(),
+        declared: walked.machine_values,
         diagnostics: Vec::new(),
     };
     for id in 0..modules.len() {
@@ -261,6 +268,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         starting_files,
         options: resolver.options,
         machine_values: resolver.machine_values,
+        declared: resolver.declared,
         modules: resolver
             .rendered
             .into_iter()
@@ -570,6 +578,8 @@ struct Resolver<'a> {
     stack: Vec<Frame>,
     options: BTreeMap<OptionPath, Resolved>,
     machine_values: BTreeSet<OptionPath>,
+    /// The values each machine is given, declared in `[machine.values]`.
+    declared: BTreeMap<String, Span>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1447,7 +1457,8 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// A machine value, filled in on the machine: one of [`MACHINE_VALUES`].
+    /// A machine value, filled in on the machine: one of [`MACHINE_VALUES`], or a value declared
+    /// in `[machine.values]`.
     fn machine_value(
         &mut self,
         path: &OptionPath,
@@ -1455,14 +1466,34 @@ impl<'a> Resolver<'a> {
         uses: &mut Vec<Use>,
     ) -> Option<Value> {
         let name = path.to_string();
-        if MACHINE_VALUES.contains(&name.as_str()) {
+        let declared = match path.segments() {
+            [first, key] if first == MACHINE => self.declared.contains_key(key),
+            _ => false,
+        };
+        if declared || MACHINE_VALUES.contains(&name.as_str()) {
             self.machine_values.insert(path.clone());
             uses.push(Use { path: path.clone() });
             return Some(Value::Runtime(vec![RuntimePart::Machine(name)]));
         }
-        let note = match closest(&name, MACHINE_VALUES) {
-            Some(known) => format!("help: did you mean `{known}`?"),
-            None => format!("the machine values are {}", MACHINE_VALUES.join(", ")),
+        // A given value that's close to a declared one is likely a typo, and otherwise likely
+        // missing its declaration, even when it's close to `machine.name`.
+        let note = if path.segments()[0] == MACHINE {
+            let declared: Vec<String> = self
+                .declared
+                .keys()
+                .map(|key| format!("{MACHINE}.{key}"))
+                .collect();
+            match closest(&name, declared.iter().map(String::as_str)) {
+                Some(known) => format!("help: did you mean `{known}`?"),
+                None => {
+                    "help: declare it in `[machine.values]`, so each machine is given it".to_owned()
+                }
+            }
+        } else {
+            match closest(&name, MACHINE_VALUES) {
+                Some(known) => format!("help: did you mean `{known}`?"),
+                None => format!("the machine values are {}", MACHINE_VALUES.join(", ")),
+            }
         };
         self.diagnostics.push(
             Diagnostic::error(format!("unknown machine value `{path}`"))

@@ -20,6 +20,10 @@ use crate::value::Value;
 pub(crate) const ADD: &str = "add";
 pub(crate) const REMOVE: &str = "remove";
 
+/// `[machine.values]`, where a configuration declares what each machine is given.
+pub(crate) const MACHINE: &str = "machine";
+const VALUES: &str = "values";
+
 /// One place that sets an option.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Definition {
@@ -94,6 +98,8 @@ pub(crate) struct Walked {
     pub definitions: Vec<Definition>,
     /// Map entries the configuration names, such as `services.nginx.main`.
     pub instances: BTreeSet<OptionPath>,
+    /// Values each machine is given, declared in `[machine.values]`, and where.
+    pub machine_values: BTreeMap<String, Span>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -143,6 +149,44 @@ impl Walker<'_> {
         self.table(spec, &loaded.root, table.get_ref(), loaded.file, true);
     }
 
+    /// `[machine.values]`: the values each machine is given, such as its zone.
+    fn machine(&mut self, value: &Spanned<DeValue<'_>>, file: FileId) {
+        let DeValue::Table(machine) = value.get_ref() else {
+            return self.out.diagnostics.push(
+                Diagnostic::error(format!(
+                    "`machine` is a table, found {}",
+                    value.get_ref().type_str()
+                ))
+                .label(Span::new(file, value.span()), "expected `[machine.values]`"),
+            );
+        };
+        if let Err(diagnostic) = only_keys(machine, &[VALUES], "`[machine]`", file) {
+            self.out.diagnostics.push(diagnostic);
+        }
+        let Some(declarations) = machine.get(VALUES) else {
+            return;
+        };
+        let DeValue::Table(declarations) = declarations.get_ref() else {
+            return self.out.diagnostics.push(
+                Diagnostic::error("`machine.values` is a table of declarations").label(
+                    Span::new(file, declarations.span()),
+                    "expected a table, such as `zone = { type = \"string\" }`",
+                ),
+            );
+        };
+        for (key, declaration) in declarations.iter() {
+            match machine_value(declaration, file) {
+                Ok(()) => {
+                    self.out
+                        .machine_values
+                        .entry(key.get_ref().to_string())
+                        .or_insert(Span::new(file, key.span()));
+                }
+                Err(diagnostic) => self.out.diagnostics.push(diagnostic),
+            }
+        }
+    }
+
     fn table(
         &mut self,
         spec: &OptionSpec,
@@ -154,6 +198,10 @@ impl Walker<'_> {
         for (key, value) in table.iter() {
             let name: &str = key.get_ref();
             if top && name == INCLUDE {
+                continue;
+            }
+            if top && path.is_empty() && name == MACHINE {
+                self.machine(value, file);
                 continue;
             }
             let child = path.child(name);
@@ -398,6 +446,35 @@ pub(crate) fn mark_instances(
             }
             Child::Freeform | Child::None => return,
         };
+    }
+}
+
+/// Checks one declaration in `[machine.values]`: `{ type = "string" }`, with an optional `doc`.
+fn machine_value(declaration: &Spanned<DeValue<'_>>, file: FileId) -> Result<(), Diagnostic> {
+    let span = Span::new(file, declaration.span());
+    let DeValue::Table(table) = declaration.get_ref() else {
+        return Err(
+            Diagnostic::error("a machine value is declared with its type")
+                .label(span, "expected `{ type = \"string\" }`"),
+        );
+    };
+    only_keys(table, &["type", "doc"], "a machine value", file)?;
+    let Some(ty) = table.get("type") else {
+        return Err(
+            Diagnostic::error("a machine value is declared with its type")
+                .label(span, "expected `type = \"string\"`"),
+        );
+    };
+    if !matches!(ty.get_ref(), DeValue::String(name) if name == "string") {
+        return Err(Diagnostic::error("machine values are strings")
+            .label(Span::new(file, ty.span()), "expected `\"string\"`"));
+    }
+    match table.get("doc") {
+        Some(doc) if !matches!(doc.get_ref(), DeValue::String(_)) => {
+            Err(Diagnostic::error("a machine value's `doc` is a string")
+                .label(Span::new(file, doc.span()), "expected a string"))
+        }
+        _ => Ok(()),
     }
 }
 

@@ -70,6 +70,7 @@ A **machine value** is something that differs between machines running the same 
 a **fact** the machine detects, such as `${facts.cpu.count}`, or a value it's given, such as
 `${machine.name}`. Like secrets, machine values are filled in on the machine when it switches,
 so they only go in options that are filled in there too, and the build is the same everywhere.
+Values other than the name are declared in `[machine.values]`, as `zone = { type = "string" }`.
 
 ## Making it so
 

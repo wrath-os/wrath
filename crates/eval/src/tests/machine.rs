@@ -70,6 +70,90 @@ fn error_unknown_machine_values() {
       |
     2 | motd = "${facts.cpu.cuont} ${machine.zone}"
       |                            ^^^^^^^^^^^^^^^ referenced here
-      = help: did you mean `machine.name`?
+      = help: declare it in `[machine.values]`, so each machine is given it
+    "#);
+}
+
+const ZONE: (&str, &str) = (
+    "system.toml",
+    "[system]\nhostname = \"box\"\n\n[machine.values]\nzone = { type = \"string\" }\n",
+);
+
+#[test]
+fn declared_machine_values_are_filled_in_on_the_machine() {
+    let evaluation = ok(&[
+        ZONE,
+        (
+            "services/motd.toml",
+            "[system]\nmotd = \"in ${machine.zone}\"\n",
+        ),
+    ]);
+
+    assert_eq!(
+        evaluation.get("system.motd"),
+        Some(&Value::Runtime(vec![
+            RuntimePart::Text("in ".into()),
+            RuntimePart::Machine("machine.zone".into()),
+        ]))
+    );
+    let declared: Vec<&str> = evaluation
+        .machine_values_declared()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(declared, ["zone"]);
+    insta::assert_snapshot!(why(&evaluation, "system.motd"), @r#"
+    system.motd = { runtime = "in ${machine.zone}" }
+      set at services/motd.toml:2:8
+      uses machine.zone, filled in on the machine
+    "#);
+}
+
+#[test]
+fn machine_values_declared_in_an_included_file_count() {
+    let evaluation = ok(&[
+        (
+            "system.toml",
+            "include = [\"common.toml\"]\n\n[system]\nmotd = \"${machine.zone}\"\n",
+        ),
+        (
+            "common.toml",
+            "[system]\nhostname = \"box\"\n\n[machine.values]\nzone = { type = \"string\" }\n",
+        ),
+    ]);
+
+    assert!(evaluation.machine_values_declared().contains_key("zone"));
+}
+
+#[test]
+fn error_bad_machine_value_declarations() {
+    insta::assert_snapshot!(err(&[(
+        "system.toml",
+        "[system]\nhostname = \"box\"\n\n[machine]\nvalue = {}\n\n[machine.values]\n\
+         zone = { type = \"int\" }\nrack = \"string\"\nrow = { type = \"string\", doc = 1 }\n",
+    )]), @r#"
+    error: unexpected `value` in `[machine]`
+     --> system.toml:5:1
+      |
+    5 | value = {}
+      | ^^^^^ only `values` belongs here
+
+    error: a machine value is declared with its type
+     --> system.toml:9:8
+      |
+    9 | rack = "string"
+      |        ^^^^^^^^ expected `{ type = "string" }`
+
+    error: a machine value's `doc` is a string
+      --> system.toml:10:32
+       |
+    10 | row = { type = "string", doc = 1 }
+       |                                ^ expected a string
+
+    error: machine values are strings
+     --> system.toml:8:17
+      |
+    8 | zone = { type = "int" }
+      |                 ^^^^^ expected `"string"`
     "#);
 }
