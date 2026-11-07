@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use distro_eval::{ConfigFs, DirFs, Evaluation, Input, Module, Schema, Sources, render};
+use distro_eval::{ConfigFs, Evaluation, Input, Module, Schema, Sources, render};
 
 /// The order modules are loaded and run in. The result must not depend on it.
 #[derive(Debug, Clone, Copy)]
@@ -21,7 +21,7 @@ pub fn evaluate_dir(
     order: ModuleOrder,
     role: Option<&str>,
 ) -> Result<Evaluation, String> {
-    evaluate_with(&DirFs::new(config), modules, order, role)
+    evaluate_with(&crate::fetch::Sourced::dir(config), modules, order, role)
 }
 
 /// Like [`evaluate_dir`], for a configuration from anywhere, with modules in sorted order.

@@ -67,9 +67,11 @@ pub fn apply(
     record: Option<crate::machine::Record>,
 ) -> Result<ExitCode, String> {
     let model = if model.is_locked() {
+        crate::fetch::record(config)?;
         model
     } else {
-        let lock = resolve(root, &model)?;
+        let mut lock = resolve(root, &model)?;
+        lock.sources.extend(crate::fetch::fetched());
         write_lock(config, &lock)?;
         model.with_lock(&lock)
     };
@@ -420,7 +422,9 @@ pub fn lock(
             None => lock = Some(resolved),
         }
     }
-    let lock = lock.ok_or("there's nothing to lock")?;
+    let mut lock = lock.ok_or("there's nothing to lock")?;
+    // Files were read from these versions, whatever resolving found since.
+    lock.sources.extend(crate::fetch::fetched());
     write_lock(config, &lock)?;
     let count = lock.packages.len();
     let noun = if count == 1 { "package" } else { "packages" };
@@ -481,7 +485,7 @@ fn resolve(root: &Path, model: &Model) -> Result<Lock, String> {
     backend::resolve(model, &factory(root)?, work.path())
 }
 
-fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
+pub(crate) fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
     let path = config.join(LOCK_FILE);
     std::fs::write(&path, lock.to_toml()).map_err(|e| format!("{}: {e}", path.display()))
 }

@@ -65,6 +65,19 @@
         else
           "${builtins.substring 0 4 stamp}-${builtins.substring 4 2 stamp}-${builtins.substring 6 2 stamp}";
 
+      # A lock's source as a tree of files, pinned by its hash, or the latest without one. Only
+      # sources packages come from are read as flakes, so a source of files needs no flake.nix.
+      tree =
+        source:
+        builtins.fetchTree (
+          if source ? hash then
+            removeAttrs (builtins.parseFlakeRef source.url) [ "ref" ]
+            // { narHash = source.hash; }
+            // lib.optionalAttrs (source ? rev) { inherit (source) rev; }
+          else
+            builtins.parseFlakeRef source.url
+        );
+
       # The nixpkgs a lock's source names, pinned by its hash, or the latest without one.
       pinned =
         source:
@@ -144,12 +157,17 @@
               settings.flake;
           extended = builtins.getFlake flakeRef;
           packageSet = if sources ? nixpkgs then pinned sources.nixpkgs else nixpkgs;
-          locked = name: flake: {
-            url = sources.${name}.url;
-            rev = flake.rev or null;
-            hash = flake.narHash;
-            date = date flake;
-          };
+          locked =
+            name: source:
+            let
+              fetched = tree source;
+            in
+            {
+              inherit (source) url;
+              rev = fetched.rev or null;
+              hash = fetched.narHash;
+              date = date fetched;
+            };
           default =
             if settings ? flake then
               {
@@ -178,7 +196,7 @@
         {
           inherit (default) system;
           inherit named;
-          sources = lib.mapAttrs locked named // {
+          sources = lib.mapAttrs locked (removeAttrs sources [ "nixpkgs" ]) // {
             nixpkgs = default.source;
           };
         };

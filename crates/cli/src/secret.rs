@@ -9,6 +9,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use distro_eval::{ConfigFs, DirFs, Value};
 
+use crate::fetch::Sourced;
 use crate::system;
 
 #[derive(Debug, clap::Subcommand)]
@@ -65,7 +66,7 @@ struct Secrets {
 
 impl Secrets {
     fn load(dir: &Path, modules: &Path) -> Result<Self, String> {
-        let config = Editing(DirFs::new(dir));
+        let config = Editing(Sourced::dir(dir));
         let evaluation = system::evaluate(&config, modules, crate::role(dir))?;
         let recipients = match evaluation.get("system.secret_recipients") {
             Some(Value::List(items)) => items
@@ -218,7 +219,7 @@ fn edit_in_editor(name: &str, contents: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// A configuration whose secrets may not exist yet, as when creating one.
-struct Editing(DirFs);
+struct Editing(Sourced<DirFs>);
 
 impl ConfigFs for Editing {
     fn read(&self, path: &str) -> io::Result<String> {
@@ -238,5 +239,9 @@ impl ConfigFs for Editing {
 
     fn display(&self, path: &str) -> String {
         self.0.display(path)
+    }
+
+    fn source(&self, name: &str, url: &str) -> Result<Box<dyn ConfigFs>, String> {
+        self.0.source(name, url)
     }
 }

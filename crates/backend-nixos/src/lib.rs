@@ -385,6 +385,79 @@ fn factory_message(stderr: &str) -> Option<String> {
     Some(message.trim_end_matches('\'').to_owned())
 }
 
+/// A source as a tree of files, so a configuration can include files from it: the tree pinned by
+/// `source`'s hash, from the store when it's there already.
+pub fn fetch_source(source: &Source) -> Result<PathBuf, String> {
+    let pinned = format!(
+        "removeAttrs (builtins.parseFlakeRef {url}) [ \"ref\" ] // {{ narHash = {hash}; }}{rev}",
+        url = nix_string(&source.url),
+        hash = nix_string(&source.hash),
+        rev = source
+            .rev
+            .as_deref()
+            .map(|rev| format!(" // {{ rev = {}; }}", nix_string(rev)))
+            .unwrap_or_default(),
+    );
+    let expression = format!("(builtins.fetchTree ({pinned})).outPath");
+    let (stdout, _) = run(Command::new("nix").args(["eval", "--raw", "--expr", &expression]))
+        .map_err(|message| {
+            if message.contains("hash mismatch") {
+                "its files changed since the lock pinned them".to_owned()
+            } else {
+                message
+            }
+        })?;
+    Ok(PathBuf::from(stdout.trim()))
+}
+
+/// The newest version of the source at `url`, pinned, and its tree of files.
+pub fn follow_source(url: &str) -> Result<(Source, PathBuf), String> {
+    let expression = format!(
+        "let tree = builtins.fetchTree (builtins.parseFlakeRef {url}); in \
+         {{ path = tree.outPath; rev = tree.rev or null; hash = tree.narHash; \
+         date = tree.lastModifiedDate or null; }}",
+        url = nix_string(url)
+    );
+    let (stdout, _) =
+        run(Command::new("nix").args(["eval", "--impure", "--json", "--expr", &expression]))?;
+    parse_followed(url, &stdout)
+}
+
+#[derive(Deserialize)]
+struct Followed {
+    path: PathBuf,
+    rev: Option<String>,
+    hash: String,
+    /// As Nix gives it, `20261030123456`.
+    date: Option<String>,
+}
+
+fn parse_followed(url: &str, json: &str) -> Result<(Source, PathBuf), String> {
+    let followed: Followed = serde_json::from_str(json)
+        .map_err(|e| format!("cannot read the source Nix fetched: {e}"))?;
+    let date = followed
+        .date
+        .filter(|stamp| stamp.len() >= 8)
+        .map(|stamp| format!("{}-{}-{}", &stamp[..4], &stamp[4..6], &stamp[6..8]));
+    let source = Source {
+        url: url.to_owned(),
+        rev: followed.rev,
+        hash: followed.hash,
+        date,
+    };
+    Ok((source, followed.path))
+}
+
+/// `text` as a Nix string literal.
+fn nix_string(text: &str) -> String {
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('\n', "\\n");
+    format!("\"{escaped}\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,5 +554,24 @@ mod tests {
             flake_ref(installed),
             "path:/nix/store/abc-distro/share/distro/factory/nix"
         );
+    }
+
+    #[test]
+    fn strings_reach_nix_as_written() {
+        assert_eq!(nix_string("github:a/b"), "\"github:a/b\"");
+        assert_eq!(nix_string("a\"${b}\\"), "\"a\\\"\\${b}\\\\\"");
+    }
+
+    #[test]
+    fn a_followed_source_is_pinned_with_its_date() {
+        let (source, path) = parse_followed(
+            "github:acme/templates",
+            r#"{"path":"/nix/store/x-source","rev":"abc","hash":"sha256-h","date":"20261030123456"}"#,
+        )
+        .unwrap();
+        assert_eq!(path, PathBuf::from("/nix/store/x-source"));
+        assert_eq!(source.rev.as_deref(), Some("abc"));
+        assert_eq!(source.date.as_deref(), Some("2026-10-30"));
+        assert!(source.is_locked());
     }
 }

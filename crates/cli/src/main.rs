@@ -14,6 +14,7 @@ mod bench;
 mod checks;
 mod edit;
 mod facts;
+mod fetch;
 mod generations;
 mod machine;
 mod options;
@@ -240,6 +241,15 @@ struct TestOptions {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     ROLE.set(cli.role.clone()).expect("the role is set once");
+    fetch::set(match &cli.command {
+        Command::Update { sources } => fetch::Fetching::Newest(sources.clone()),
+        Command::Lock
+        | Command::Apply { .. }
+        | Command::Try { .. }
+        | Command::Add { .. }
+        | Command::Remove { .. } => fetch::Fetching::Missing,
+        _ => fetch::Fetching::Pinned,
+    });
     let json = cli.json;
     if json
         && !matches!(
@@ -626,18 +636,21 @@ fn model_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> 
 /// `model` with the lock next to `config`, when it has one, or prints why it can't be read and
 /// returns `None`.
 fn with_lock(config: &Path, model: Model) -> Option<Model> {
-    match read_lock(config) {
-        Ok(Some(lock)) => Some(model.with_lock(&lock)),
-        Ok(None) => Some(model),
+    let mut model = match read_lock(config) {
+        Ok(Some(lock)) => model.with_lock(&lock),
+        Ok(None) => model,
         Err(message) => {
             eprintln!("error: {message}");
-            None
+            return None;
         }
-    }
+    };
+    // Files were included from these versions, which the lock gets when it's written.
+    model.sources.extend(fetch::fetched());
+    Some(model)
 }
 
 /// The lock next to `config`, if there is one.
-fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
+pub(crate) fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
     let path = config.join(LOCK_FILE);
     match std::fs::read_to_string(&path) {
         Ok(text) => Lock::parse(&text)
