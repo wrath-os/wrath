@@ -309,3 +309,26 @@ fn error_malformed_includes() {
       |                                                                                        ^^ only `path` and `as` belong here
     "#);
 }
+
+#[test]
+fn why_says_where_a_referenced_value_came_from() {
+    let evaluation = ok(&[
+        (
+            "system.toml",
+            "include = [{ path = \"project.toml\", as = \"defaults\" }]\n\
+             [system]\nhostname = \"box\"\n[services.grafana.main]\nport = 3002\n",
+        ),
+        (
+            "project.toml",
+            "[services.grafana.main]\nport = 3001\n\
+             [services.nginx.main.sites.blog]\n\
+             proxy = \"http://127.0.0.1:${services.grafana.main.port}\"\n",
+        ),
+    ]);
+
+    insta::assert_snapshot!(why(&evaluation, "services.nginx.main.sites.blog.proxy"), @r#"
+    services.nginx.main.sites.blog.proxy = "http://127.0.0.1:3002"
+      default at project.toml:4:9
+      uses services.grafana.main.port = 3002, set at system.toml:5:8
+    "#);
+}

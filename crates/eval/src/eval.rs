@@ -95,7 +95,6 @@ pub struct Contribution {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Use {
     pub path: OptionPath,
-    pub span: Span,
 }
 
 impl Evaluation {
@@ -1404,10 +1403,7 @@ impl<'a> Resolver<'a> {
         let diagnostic = match self.known(path) {
             Known::Leaf(spec) => match self.resolve(path, &spec, Some(span)) {
                 Ok(Some(value)) => {
-                    uses.push(Use {
-                        path: path.clone(),
-                        span,
-                    });
+                    uses.push(Use { path: path.clone() });
                     return Some(value);
                 }
                 Ok(None) => Diagnostic::error(format!("`{path}` is not set"))
@@ -1446,10 +1442,7 @@ impl<'a> Resolver<'a> {
         match found {
             Some(value) => {
                 self.facts_used.insert(path.clone(), value.clone());
-                uses.push(Use {
-                    path: path.clone(),
-                    span,
-                });
+                uses.push(Use { path: path.clone() });
                 Some(value.clone())
             }
             None => {

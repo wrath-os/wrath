@@ -47,12 +47,16 @@ pub fn explain(evaluation: &Evaluation, prefix: Option<&OptionPath>) -> Result<S
             );
         }
         for used in &resolved.uses {
-            let _ = writeln!(
-                out,
-                "  uses {} at {}",
-                used.path,
-                evaluation.sources().location(used.span)
-            );
+            let _ = write!(out, "  uses {}", used.path);
+            if let Some(option) = evaluation.options().get(&used.path) {
+                let _ = write!(out, " = {}", option.value);
+                if let [contribution] = option.set_by.as_slice() {
+                    let _ = write!(out, ", {}", origin(evaluation, contribution));
+                }
+            } else if let Some(fact) = evaluation.facts_used().get(&used.path) {
+                let _ = write!(out, " = {fact}, read from the machine");
+            }
+            out.push('\n');
         }
     }
     if out.is_empty() {

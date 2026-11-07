@@ -218,10 +218,10 @@ proxy = "http://127.0.0.1:${services.grafana.main.port}"
     services.nginx.main.sites.blog.domains = ["blog.example.com", "box.lan"]
       set at services/web.toml:9:11
       overrides [], default
-      uses system.hostname at services/web.toml:9:33
+      uses system.hostname = "box", set at system.toml:2:12
     services.nginx.main.sites.blog.proxy = "http://127.0.0.1:3001"
       set at services/web.toml:10:9
-      uses services.grafana.main.port at services/web.toml:10:27
+      uses services.grafana.main.port = 3001, set at services/web.toml:3:8
     "#);
 }
 
