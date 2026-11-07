@@ -100,6 +100,18 @@ pub(crate) fn eval_with(
     eval_role(files, modules, None)
 }
 
+/// Evaluates the configuration in `config`, with no modules.
+pub(crate) fn eval_fs(config: &MemFs) -> Result<crate::Evaluation, String> {
+    evaluate(Input {
+        sources: Sources::default(),
+        config,
+        role: None,
+        schema: schema(),
+        modules: &[],
+    })
+    .map_err(|e| e.to_string())
+}
+
 pub(crate) fn eval_role(
     files: &[(&str, &str)],
     modules: &[Box<dyn Module>],

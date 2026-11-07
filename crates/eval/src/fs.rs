@@ -16,6 +16,13 @@ pub trait ConfigFs {
 
     /// How locations refer to a file.
     fn display(&self, path: &str) -> String;
+
+    /// The files of the source `name`, which follows `url`, for including them. The
+    /// configuration's lock says which version.
+    fn source(&self, name: &str, url: &str) -> Result<Box<dyn ConfigFs>, String> {
+        let _ = url;
+        Err(format!("source `{name}` isn't available here"))
+    }
 }
 
 /// A configuration directory on disk.
@@ -79,6 +86,7 @@ fn collect_toml(root: &Path, dir: &Path, files: &mut Vec<String>) -> io::Result<
 #[derive(Debug, Clone, Default)]
 pub struct MemFs {
     files: BTreeMap<String, String>,
+    sources: BTreeMap<String, MemFs>,
 }
 
 impl MemFs {
@@ -88,7 +96,15 @@ impl MemFs {
                 .into_iter()
                 .map(|(path, text)| (path.to_owned(), text.to_owned()))
                 .collect(),
+            sources: BTreeMap::new(),
         }
+    }
+
+    /// The tree with a source `name` holding `files`.
+    #[must_use]
+    pub fn with_source(mut self, name: &str, files: MemFs) -> Self {
+        self.sources.insert(name.to_owned(), files);
+        self
     }
 }
 
@@ -116,6 +132,13 @@ impl ConfigFs for MemFs {
 
     fn display(&self, path: &str) -> String {
         path.to_owned()
+    }
+
+    fn source(&self, name: &str, _url: &str) -> Result<Box<dyn ConfigFs>, String> {
+        match self.sources.get(name) {
+            Some(files) => Ok(Box::new(files.clone())),
+            None => Err(format!("no source `{name}` in memory")),
+        }
     }
 }
 

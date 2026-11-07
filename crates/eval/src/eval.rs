@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
-use crate::load;
+use crate::load::{self, DeclaredSource};
 use crate::machines::{self, Machine};
 use crate::module::{
     ConfigReader, DEFAULT_SOURCE, Module, ModuleId, Output, ReadError, RenderError, Secret,
@@ -25,9 +25,7 @@ use crate::source::{FileId, Sources, Span};
 use crate::suggest::{closest, did_you_mean};
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
-use crate::walk::{
-    self, Action, DeclaredSource, Definition, Level, MACHINE, REMOVE, Raw, Site, mark_instances,
-};
+use crate::walk::{self, Action, Definition, Level, MACHINE, REMOVE, Raw, Site, mark_instances};
 
 /// The roots of references to machine values, with [`MACHINE`]: `${facts.cpu.count}`,
 /// `${machine.name}`.
@@ -217,7 +215,12 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             )));
         }
     }
-    let (files, load_diagnostics, role) = load::load(config, &mut sources, role);
+    let load::Loaded {
+        files,
+        diagnostics: load_diagnostics,
+        role,
+        sources: declared_sources,
+    } = load::load(config, &mut sources, role);
     diagnostics.extend(load_diagnostics);
     let walked = walk::walk(&schema, &sources, &files);
     let starting_files = files
@@ -279,7 +282,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     if diagnostics.is_empty() {
         diagnostics.extend(shared_outputs(&resolver.rendered));
         diagnostics.extend(bad_triggers(&resolver.rendered));
-        diagnostics.extend(unknown_sources(&resolver.rendered, &walked.sources));
+        diagnostics.extend(unknown_sources(&resolver.rendered, &declared_sources));
         diagnostics.extend(undeclared_secrets(&resolver.rendered, &resolver.options));
     }
     let secret_files = if diagnostics.is_empty() {
@@ -302,7 +305,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         declared: resolver.declared,
         machines,
         requirements: walked.requirements,
-        declared_sources: walked.sources,
+        declared_sources,
         modules: resolver
             .rendered
             .into_iter()

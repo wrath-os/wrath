@@ -6,7 +6,7 @@
 //! included file configures the same scope as the file that includes it. A file included with
 //! `{ path = "...", as = "defaults" }` gives defaults, and so does everything it includes.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use toml::Spanned;
@@ -21,6 +21,8 @@ use crate::walk::only_keys;
 
 /// The key that includes other files. It's only recognised at the top of a file.
 pub(crate) const INCLUDE: &str = "include";
+/// The table of sources, read while loading from files at the top of the configuration.
+pub(crate) const SOURCES: &str = "sources";
 
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedFile {
@@ -45,23 +47,33 @@ pub(crate) struct Inclusion {
     pub as_defaults: bool,
 }
 
+/// What loading a configuration found.
+pub(crate) struct Loaded {
+    pub files: Vec<LoadedFile>,
+    pub diagnostics: Vec<Diagnostic>,
+    /// The role it started from.
+    pub role: Option<String>,
+    /// Sources by name, from `[sources]` in its local files.
+    pub sources: BTreeMap<String, DeclaredSource>,
+}
+
 /// Loads the files of a configuration, starting from `role_given`, or else its only role or
-/// `system.toml`, and returns the role it started from.
-pub(crate) fn load(
-    fs: &dyn ConfigFs,
-    sources: &mut Sources,
-    role_given: Option<&str>,
-) -> (Vec<LoadedFile>, Vec<Diagnostic>, Option<String>) {
+/// `system.toml`. Files included from sources are loaded last, once every local file has said
+/// which sources there are.
+pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources, role_given: Option<&str>) -> Loaded {
     let mut loader = Loader {
         fs,
         sources,
         files: Vec::new(),
         seen: HashMap::new(),
+        declared: BTreeMap::new(),
+        pending: Vec::new(),
+        trees: HashMap::new(),
         diagnostics: Vec::new(),
     };
     let role = match starting_file(fs, role_given) {
         Ok(path) => {
-            loader.add(&path, &OptionPath::root(), None);
+            loader.add(None, &path, &OptionPath::root(), None);
             path.strip_prefix("roles/")
                 .and_then(|name| name.strip_suffix(".toml"))
                 .map(str::to_owned)
@@ -76,17 +88,31 @@ pub(crate) fn load(
         let name = path.strip_prefix("users/")?.strip_suffix(".toml")?;
         (!name.contains('/')).then(|| OptionPath::root().child("users").child(name))
     });
+    for (include, root) in std::mem::take(&mut loader.pending) {
+        loader.add_from_source(include, &root);
+    }
     let mut diagnostics = loader.diagnostics;
     diagnostics.extend(mark_defaults(&mut loader.files, loader.sources));
-    (loader.files, diagnostics, role)
+    Loaded {
+        files: loader.files,
+        diagnostics,
+        role,
+        sources: loader.declared,
+    }
 }
 
 struct Loader<'a> {
     fs: &'a dyn ConfigFs,
     sources: &'a mut Sources,
     files: Vec<LoadedFile>,
-    /// Each path read or being read, with its index in `files` once it has one.
-    seen: HashMap<String, Option<usize>>,
+    /// Each file read or being read, by its source and path, with its index in `files` once it
+    /// has one.
+    seen: HashMap<(Option<String>, String), Option<usize>>,
+    declared: BTreeMap<String, DeclaredSource>,
+    /// Includes from sources, loaded once every local file is, with the root they configure.
+    pending: Vec<(Include, OptionPath)>,
+    /// The files of each source fetched so far, or `None` when it couldn't be.
+    trees: HashMap<String, Option<Box<dyn ConfigFs>>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -96,7 +122,7 @@ impl Loader<'_> {
             Ok(paths) => {
                 for path in paths {
                     match root(&path) {
-                        Some(root) => self.add(&path, &root, None),
+                        Some(root) => self.add(None, &path, &root, None),
                         None => self.diagnostics.push(
                             Diagnostic::error(format!(
                                 "`{}` is not loaded",
@@ -117,11 +143,56 @@ impl Loader<'_> {
         }
     }
 
-    /// Reads a file and the files it includes. `inclusion` is the include entry naming it, `None`
-    /// for a file the configuration starts from.
-    fn add(&mut self, path: &str, root: &OptionPath, inclusion: Option<Inclusion>) {
+    /// Loads a file included from a source, fetching the source the first time.
+    fn add_from_source(&mut self, include: Include, root: &OptionPath) {
+        let Some((name, name_at)) = include.source else {
+            return;
+        };
+        let Some(url) = self
+            .declared
+            .get(&name)
+            .map(|declared| declared.url.clone())
+        else {
+            let note = did_you_mean(&name, self.declared.keys()).unwrap_or_else(|| {
+                format!("help: declare it with `[sources.{name}]` and the `url` it follows")
+            });
+            return self.diagnostics.push(
+                Diagnostic::error(format!("there's no source `{name}`"))
+                    .label(name_at, "included from here")
+                    .note(note),
+            );
+        };
+        let tree =
+            self.trees
+                .entry(name.clone())
+                .or_insert_with(|| match self.fs.source(&name, &url) {
+                    Ok(tree) => Some(tree),
+                    Err(message) => {
+                        self.diagnostics.push(
+                            Diagnostic::error(format!("cannot fetch source `{name}`: {message}"))
+                                .label(name_at, "included from here"),
+                        );
+                        None
+                    }
+                });
+        if tree.is_some() {
+            self.add(Some(&name), &include.path, root, Some(include.inclusion));
+        }
+    }
+
+    /// Reads a file and the files it includes, from the source `origin` or else the
+    /// configuration. `inclusion` is the include entry naming it, `None` for a file the
+    /// configuration starts from.
+    fn add(
+        &mut self,
+        origin: Option<&str>,
+        path: &str,
+        root: &OptionPath,
+        inclusion: Option<Inclusion>,
+    ) {
         let included_at = inclusion.map(|inclusion| inclusion.at);
-        if let Some(&index) = self.seen.get(path) {
+        let key = (origin.map(str::to_owned), path.to_owned());
+        if let Some(&index) = self.seen.get(&key) {
             if let Some(index) = index {
                 let loaded = &mut self.files[index];
                 match inclusion {
@@ -131,26 +202,35 @@ impl Loader<'_> {
             }
             return;
         }
-        self.seen.insert(path.to_owned(), None);
-        let text = match self.fs.read(path) {
+        self.seen.insert(key.clone(), None);
+        let (read, display) = match origin {
+            None => (self.fs.read(path), self.fs.display(path)),
+            Some(name) => {
+                let tree = self.trees[name]
+                    .as_ref()
+                    .expect("only fetched sources are read");
+                (tree.read(path), format!("{name}:{path}"))
+            }
+        };
+        let text = match read {
             Ok(text) => text,
             Err(e) if e.kind() == io::ErrorKind::NotFound && included_at.is_none() => {
                 self.diagnostics.push(
-                    Diagnostic::error(format!("`{}` does not exist", self.fs.display(path)))
+                    Diagnostic::error(format!("`{display}` does not exist"))
                         .note("help: every configuration starts from `system.toml`"),
                 );
                 return;
             }
             Err(e) => {
                 self.diagnostics.push(
-                    Diagnostic::error(format!("cannot read `{}`: {e}", self.fs.display(path)))
+                    Diagnostic::error(format!("cannot read `{display}`: {e}"))
                         .label_opt(included_at, "included here"),
                 );
                 return;
             }
         };
-        let file = self.sources.add(self.fs.display(path), text);
-        self.seen.insert(path.to_owned(), Some(self.files.len()));
+        let file = self.sources.add(display, text);
+        self.seen.insert(key, Some(self.files.len()));
         self.files.push(LoadedFile {
             file,
             root: root.clone(),
@@ -158,8 +238,10 @@ impl Loader<'_> {
             inclusions: inclusion.into_iter().collect(),
             defaults: false,
         });
-        let (includes, diagnostics) = match DeTable::parse(self.sources.text(file)) {
-            Ok(table) => includes(table.get_ref(), file),
+        // Owned, so the loader can change while the table is read.
+        let text = self.sources.text(file).to_owned();
+        let table = match DeTable::parse(&text) {
+            Ok(table) => table,
             Err(e) => {
                 let message = e.message().trim().replace('\n', "; ");
                 self.diagnostics.push(
@@ -169,9 +251,68 @@ impl Loader<'_> {
                 return;
             }
         };
+        if let Some(sources) = table.get_ref().get(SOURCES).filter(|_| root.is_empty()) {
+            match origin {
+                None => self.declare(sources, file),
+                Some(name) => self.diagnostics.push(
+                    Diagnostic::error(format!("a file from source `{name}` can't declare sources"))
+                        .label(Span::new(file, sources.span()), "declared here")
+                        .note("help: declare it in the configuration that includes this file"),
+                ),
+            }
+        }
+        let (includes, diagnostics) = includes(table.get_ref(), file);
         self.diagnostics.extend(diagnostics);
         for include in includes {
-            self.add(&include.path, root, Some(include.inclusion));
+            match (&include.source, origin) {
+                (Some(_), None) => self.pending.push((include, root.clone())),
+                (Some((name, at)), Some(own)) if name != own => self.diagnostics.push(
+                    Diagnostic::error(format!(
+                        "a file from source `{own}` can't include files from `{name}`"
+                    ))
+                    .label(*at, "included here")
+                    .note(
+                        "help: include it from the configuration, which says which sources it \
+                         uses",
+                    ),
+                ),
+                (None, _) | (Some(_), Some(_)) => {
+                    self.add(origin, &include.path, root, Some(include.inclusion));
+                }
+            }
+        }
+    }
+
+    /// Reads `[sources]` from a local file.
+    fn declare(&mut self, value: &Spanned<DeValue<'_>>, file: FileId) {
+        let DeValue::Table(sources) = value.get_ref() else {
+            return self.diagnostics.push(
+                Diagnostic::error("`sources` is a table of sources by name")
+                    .label(Span::new(file, value.span()), "expected `[sources.NAME]`")
+                    .note("help: for example `[sources.stable]` with `url = \"github:...\"`"),
+            );
+        };
+        for (name, source) in sources.iter() {
+            let name = name.get_ref();
+            let (url, at) = match source_url(name, source, file) {
+                Ok(found) => found,
+                Err(diagnostic) => {
+                    self.diagnostics.push(diagnostic);
+                    continue;
+                }
+            };
+            match self.declared.get(name.as_ref()) {
+                None => {
+                    self.declared
+                        .insert(name.to_string(), DeclaredSource { url, at });
+                }
+                Some(existing) if existing.url == url => {}
+                Some(existing) => self.diagnostics.push(
+                    Diagnostic::error(format!("source `{name}` is defined twice, differently"))
+                        .label(existing.at, format!("follows {}", existing.url))
+                        .label(at, format!("follows {url}")),
+                ),
+            }
         }
     }
 }
@@ -179,6 +320,8 @@ impl Loader<'_> {
 /// One entry of a file's `include` list.
 struct Include {
     path: String,
+    /// The source it's from, written `source = "..."`, and where.
+    source: Option<(String, Span)>,
     inclusion: Inclusion,
 }
 
@@ -203,13 +346,13 @@ fn includes(table: &DeTable<'_>, file: FileId) -> (Vec<Include>, Vec<Diagnostic>
     (found, diagnostics)
 }
 
-/// An include entry: a path, or `{ path = "...", as = "defaults" }`.
+/// An include entry: a path, or `{ path = "...", source = "...", as = "defaults" }`.
 fn include(item: &Spanned<DeValue<'_>>, file: FileId) -> Result<Include, Diagnostic> {
     let at = Span::new(file, item.span());
-    let (path, as_defaults) = match item.get_ref() {
-        DeValue::String(_) => (item, false),
+    let (path, source, as_defaults) = match item.get_ref() {
+        DeValue::String(_) => (item, None, false),
         DeValue::Table(table) => {
-            only_keys(table, &["path", "as"], "an include", file)?;
+            only_keys(table, &["path", "source", "as"], "an include", file)?;
             let as_defaults = match table.get("as") {
                 None => false,
                 Some(how) => match how.get_ref() {
@@ -220,10 +363,22 @@ fn include(item: &Spanned<DeValue<'_>>, file: FileId) -> Result<Include, Diagnos
                     }
                 },
             };
+            let source = match table.get("source") {
+                None => None,
+                Some(source) => match source.get_ref() {
+                    DeValue::String(name) => {
+                        Some((name.to_string(), Span::new(file, source.span())))
+                    }
+                    _ => {
+                        return Err(Diagnostic::error("`source` names a source")
+                            .label(Span::new(file, source.span()), "expected a string"));
+                    }
+                },
+            };
             let path = table.get("path").ok_or_else(|| {
                 Diagnostic::error("an include needs `path`").label(at, "add `path = \"...\"`")
             })?;
-            (path, as_defaults)
+            (path, source, as_defaults)
         }
         _ => return Err(invalid_include(at)),
     };
@@ -231,6 +386,7 @@ fn include(item: &Spanned<DeValue<'_>>, file: FileId) -> Result<Include, Diagnos
     match path.get_ref() {
         DeValue::String(path) if !path.starts_with('/') => Ok(Include {
             path: path.to_string(),
+            source,
             inclusion: Inclusion {
                 at: span,
                 as_defaults,
@@ -249,6 +405,13 @@ fn invalid_include(span: Span) -> Diagnostic {
             "expected a path, or `{ path = \"...\", as = \"defaults\" }`",
         )
         .note("help: for example `include = [\"profiles/laptop.toml\"]`")
+}
+
+/// A source as a configuration declares it: the URL it follows, and where that's written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredSource {
+    pub url: String,
+    pub at: Span,
 }
 
 /// Works out which files give defaults: those included as defaults, and everything they include.
@@ -375,5 +538,42 @@ fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagno
             }
             Err(diagnostic)
         }
+    }
+}
+
+/// The URL of one source, `[sources.NAME]` with `url = "..."`, and where it's written.
+fn source_url(
+    name: &str,
+    source: &Spanned<DeValue<'_>>,
+    file: FileId,
+) -> Result<(String, Span), Diagnostic> {
+    let span = Span::new(file, source.span());
+    if name.is_empty() || name.contains('#') {
+        return Err(
+            Diagnostic::error(format!("source name `{name}` can't have `#` in it"))
+                .label(span, "packages name a source as `NAME#package`"),
+        );
+    }
+    let DeValue::Table(table) = source.get_ref() else {
+        return Err(
+            Diagnostic::error(format!("source `{name}` is a table with its `url`"))
+                .label(span, "expected `{ url = \"...\" }`"),
+        );
+    };
+    only_keys(table, &["url"], "a source", file)?;
+    match table.get("url") {
+        Some(url) => match url.get_ref() {
+            DeValue::String(text) => Ok((text.to_string(), Span::new(file, url.span()))),
+            other => Err(Diagnostic::error(format!(
+                "a source's `url` is a string, found {}",
+                other.type_str()
+            ))
+            .label(
+                Span::new(file, url.span()),
+                "expected a URL such as `github:owner/repo`",
+            )),
+        },
+        None => Err(Diagnostic::error(format!("source `{name}` has no `url`"))
+            .label(span, "expected `url = \"...\"`")),
     }
 }

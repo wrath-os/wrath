@@ -7,7 +7,7 @@ use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
 use crate::diag::Diagnostic;
-use crate::load::{INCLUDE, LoadedFile};
+use crate::load::{INCLUDE, LoadedFile, SOURCES};
 use crate::module::ModuleId;
 use crate::path::OptionPath;
 use crate::requires::{self, Requirement};
@@ -25,15 +25,6 @@ pub(crate) const REMOVE: &str = "remove";
 pub(crate) const MACHINE: &str = "machine";
 const VALUES: &str = "values";
 const REQUIRES: &str = "requires";
-/// `[sources]`, where packages and included files come from.
-const SOURCES: &str = "sources";
-
-/// A source as a configuration declares it: the URL it follows, and where that's written.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeclaredSource {
-    pub url: String,
-    pub at: Span,
-}
 
 /// One place that sets an option.
 #[derive(Debug, Clone, PartialEq)]
@@ -113,8 +104,6 @@ pub(crate) struct Walked {
     pub machine_values: BTreeMap<String, Span>,
     /// What a machine needs, from `[machine.requires]`.
     pub requirements: Vec<Requirement>,
-    /// Sources by name, from `[sources]`.
-    pub sources: BTreeMap<String, DeclaredSource>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -218,40 +207,6 @@ impl Walker<'_> {
         }
     }
 
-    /// `[sources]`: where packages and included files come from, by name.
-    fn sources(&mut self, value: &Spanned<DeValue<'_>>, file: FileId) {
-        let DeValue::Table(sources) = value.get_ref() else {
-            return self.out.diagnostics.push(
-                Diagnostic::error("`sources` is a table of sources by name")
-                    .label(Span::new(file, value.span()), "expected `[sources.NAME]`")
-                    .note("help: for example `[sources.stable]` with `url = \"github:...\"`"),
-            );
-        };
-        for (name, source) in sources.iter() {
-            match source_url(name.get_ref(), source, file) {
-                Ok((url, at)) => self.source(name.get_ref(), url, at),
-                Err(diagnostic) => self.out.diagnostics.push(diagnostic),
-            }
-        }
-    }
-
-    /// Adds a source, unless another file defines it differently.
-    fn source(&mut self, name: &str, url: String, at: Span) {
-        match self.out.sources.get(name) {
-            None => {
-                self.out
-                    .sources
-                    .insert(name.to_owned(), DeclaredSource { url, at });
-            }
-            Some(existing) if existing.url == url => {}
-            Some(existing) => self.out.diagnostics.push(
-                Diagnostic::error(format!("source `{name}` is defined twice, differently"))
-                    .label(existing.at, format!("follows {}", existing.url))
-                    .label(at, format!("follows {url}")),
-            ),
-        }
-    }
-
     fn table(
         &mut self,
         spec: &OptionSpec,
@@ -269,8 +224,8 @@ impl Walker<'_> {
                 self.machine(value, file);
                 continue;
             }
+            // Read while loading, with the includes.
             if top && path.is_empty() && name == SOURCES {
-                self.sources(value, file);
                 continue;
             }
             let child = path.child(name);
@@ -515,43 +470,6 @@ pub(crate) fn mark_instances(
             }
             Child::Freeform | Child::None => return,
         };
-    }
-}
-
-/// The URL of one source, `[sources.NAME]` with `url = "..."`, and where it's written.
-fn source_url(
-    name: &str,
-    source: &Spanned<DeValue<'_>>,
-    file: FileId,
-) -> Result<(String, Span), Diagnostic> {
-    let span = Span::new(file, source.span());
-    if name.is_empty() || name.contains('#') {
-        return Err(
-            Diagnostic::error(format!("source name `{name}` can't have `#` in it"))
-                .label(span, "packages name a source as `NAME#package`"),
-        );
-    }
-    let DeValue::Table(table) = source.get_ref() else {
-        return Err(
-            Diagnostic::error(format!("source `{name}` is a table with its `url`"))
-                .label(span, "expected `{ url = \"...\" }`"),
-        );
-    };
-    only_keys(table, &["url"], "a source", file)?;
-    match table.get("url") {
-        Some(url) => match url.get_ref() {
-            DeValue::String(text) => Ok((text.to_string(), Span::new(file, url.span()))),
-            other => Err(Diagnostic::error(format!(
-                "a source's `url` is a string, found {}",
-                other.type_str()
-            ))
-            .label(
-                Span::new(file, url.span()),
-                "expected a URL such as `github:owner/repo`",
-            )),
-        },
-        None => Err(Diagnostic::error(format!("source `{name}` has no `url`"))
-            .label(span, "expected `url = \"...\"`")),
     }
 }
 

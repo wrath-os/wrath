@@ -27,7 +27,7 @@ pub use eval::{
     Contribution, EvalError, Evaluation, Input, MACHINE_VALUES, Rendered, Resolved, Use, evaluate,
 };
 pub use fs::{ConfigFs, DirFs, MemFs};
-pub use load::roles;
+pub use load::{DeclaredSource, roles};
 pub use machines::Machine;
 pub use module::{
     ConfigReader, DEFAULT_SOURCE, File, Home, Module, ModuleId, Output, ReadError, RenderError,
@@ -39,7 +39,7 @@ pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};
 pub use template::Part;
 pub use value::{RuntimePart, Value};
-pub use walk::{Action, DeclaredSource, Definition, Level, Raw, Site};
+pub use walk::{Action, Definition, Level, Raw, Site};
 pub use why::{describe_outputs, explain, explain_output};
 
 #[cfg(test)]

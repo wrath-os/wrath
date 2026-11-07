@@ -306,7 +306,7 @@ fn error_malformed_includes() {
      --> system.toml:1:88
       |
     1 | include = [{ path = "a.toml", as = "values" }, { as = "defaults" }, { path = "b.toml", if = 1 }]
-      |                                                                                        ^^ only `path` and `as` belong here
+      |                                                                                        ^^ only `path` and `source` and `as` belong here
     "#);
 }
 
