@@ -10,6 +10,7 @@
   lib,
   pkgs,
   distro,
+  factoryInputs,
   distroInput,
   distroSources,
   ...
@@ -86,6 +87,9 @@ in
     );
 
   environment.systemPackages = [ distro ] ++ map package input.packages;
+  # distro builds on the machine from the factory it's installed with; keeping the factory's
+  # inputs lets it evaluate without the network.
+  system.extraDependencies = factoryInputs;
 
   environment.etc =
     lib.mapAttrs (_: file: { inherit (file) text mode; }) input.etc

@@ -17,7 +17,7 @@
         crates = [ "agent" ];
         mainProgram = "distro-agent";
       };
-      distro = pkgs.callPackage ./rust-package.nix {
+      cli = pkgs.callPackage ./rust-package.nix {
         pname = "distro-cli";
         crates = [
           "agent"
@@ -30,15 +30,39 @@
         ];
         mainProgram = "distro";
       };
+      # distro as installed on a machine: the binary, and under `share/distro` what it builds from,
+      # this factory, the modules and the crates the factory compiles, so the machine can evaluate
+      # and build its own configuration.
+      distro =
+        let
+          root = ../..;
+          source = lib.fileset.toSource {
+            inherit root;
+            fileset = lib.fileset.unions [
+              (root + "/Cargo.toml")
+              (root + "/Cargo.lock")
+              (root + "/crates")
+              (root + "/factory/nix")
+              (root + "/modules")
+            ];
+          };
+        in
+        pkgs.runCommand "distro" { meta.mainProgram = "distro"; } ''
+          mkdir -p $out/bin $out/share
+          cp ${cli}/bin/distro $out/bin/distro
+          cp -r ${source} $out/share/distro
+        '';
 
       inherit (nixpkgs) lib;
+      # The factory's pinned inputs, which machines keep so they can evaluate offline.
+      factoryInputs = [ nixpkgs.outPath ];
 
       # A NixOS system with packages from `packageSet`, a nixpkgs flake.
       nixosFrom =
         packageSet: modules:
         packageSet.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit agent distro; };
+          specialArgs = { inherit agent distro factoryInputs; };
           modules = modules ++ [
             {
               nixpkgs.pkgs = import packageSet {
@@ -180,7 +204,7 @@
               {
                 system = extended.nixosConfigurations.${settings.host}.extendModules {
                   inherit modules;
-                  specialArgs = { inherit agent distro; };
+                  specialArgs = { inherit agent distro factoryInputs; };
                 };
                 source = {
                   url = flakeRef;

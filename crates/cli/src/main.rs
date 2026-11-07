@@ -926,16 +926,17 @@ fn why(config: &Path, modules: &Path, thing: Option<&str>) -> Result<ExitCode, S
 }
 
 /// Where distro's own files are: `factory/nix` and `modules`, and in a checkout `acceptance` too.
-/// It's `--root`, else `$DISTRO_ROOT`, else the checkout the running binary was built in, else
-/// the current directory. Inside that checkout it's `.`, so paths in messages stay short.
+/// It's `--root`, else `$DISTRO_ROOT`, else the checkout the running binary was built in or the
+/// copy an installed binary keeps in `share/distro`, else the current directory. Inside that
+/// checkout it's `.`, so paths in messages stay short.
 fn find_root(given: Option<PathBuf>, from_env: Option<PathBuf>) -> PathBuf {
     if let Some(root) = given.or(from_env) {
         return root;
     }
     let Some(checkout) = std::env::current_exe().ok().and_then(|exe| {
         exe.ancestors()
+            .flat_map(|dir| [dir.to_path_buf(), dir.join("share/distro")])
             .find(|dir| dir.join("factory/nix/flake.nix").is_file())
-            .map(Path::to_path_buf)
     }) else {
         return PathBuf::from(".");
     };
