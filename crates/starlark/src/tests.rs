@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use distro_eval::{
-    ConfigFs, DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output, Schema,
-    Sources, Type, describe_outputs, evaluate, explain,
+    ConfigFs, ConfigKind, DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output,
+    Schema, Sources, Type, describe_outputs, evaluate, explain,
 };
 
 use super::load;
@@ -52,6 +52,7 @@ fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, St
     evaluate(Input {
         sources,
         config,
+        kind: ConfigKind::System,
         role: None,
         schema: Schema::default(),
         modules: &modules,
@@ -71,6 +72,7 @@ fn run(source: &str) -> Result<Evaluation, String> {
     evaluate(Input {
         sources,
         config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
+        kind: ConfigKind::System,
         role: None,
         schema: base_schema(),
         modules: &[module],
@@ -440,6 +442,7 @@ module(
     let evaluation = evaluate(Input {
         sources,
         config: &config,
+        kind: ConfigKind::System,
         role: None,
         schema: base_schema(),
         modules: &modules,
@@ -738,6 +741,7 @@ fn load_from(files: &[(&str, &str)], module: &str) -> Result<Evaluation, String>
     evaluate(Input {
         sources,
         config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
+        kind: ConfigKind::System,
         role: None,
         schema: base_schema(),
         modules: &[module],
@@ -812,4 +816,27 @@ module(name = "picky", options = {}, writes = [], render = render)
     3 |     ctx.error("system.timezone", "pick a timezone")
       |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
     "#);
+}
+
+#[test]
+fn a_module_says_which_configurations_it_belongs_to() {
+    let module = |configurations: &str| {
+        format!(
+            "module(name = \"m\", options = {{}}, writes = [], render = lambda ctx: None, \
+             configurations = {configurations})"
+        )
+    };
+    let load_one = |source: String| {
+        let mut sources = Sources::default();
+        load(&mut sources, "m.star", source, &repo().join("modules"))
+            .map(|module| module.configurations().to_vec())
+            .map_err(|e| distro_eval::render(&[e], &sources))
+    };
+
+    assert_eq!(
+        load_one(module("[\"system\", \"project\"]")),
+        Ok(vec![ConfigKind::System, ConfigKind::Project])
+    );
+    let error = load_one(module("[\"laptop\"]")).unwrap_err();
+    assert!(error.contains("not `laptop`"), "{error}");
 }

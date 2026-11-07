@@ -27,7 +27,7 @@ pub use eval::{
     Contribution, EvalError, Evaluation, Input, MACHINE_VALUES, Rendered, Resolved, Use, evaluate,
 };
 pub use fs::{ConfigFs, DirFs, MemFs};
-pub use load::{DeclaredSource, roles};
+pub use load::{ConfigKind, DeclaredSource, kind_of, roles};
 pub use machines::Machine;
 pub use module::{
     ConfigReader, DEFAULT_SOURCE, File, Home, Module, ModuleId, Output, ReadError, RenderError,

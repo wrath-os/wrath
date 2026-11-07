@@ -60,7 +60,12 @@ pub(crate) struct Loaded {
 /// Loads the files of a configuration, starting from `role_given`, or else its only role or
 /// `system.toml`. Files included from sources are loaded last, once every local file has said
 /// which sources there are.
-pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources, role_given: Option<&str>) -> Loaded {
+pub(crate) fn load(
+    fs: &dyn ConfigFs,
+    sources: &mut Sources,
+    kind: ConfigKind,
+    role_given: Option<&str>,
+) -> Loaded {
     let mut loader = Loader {
         fs,
         sources,
@@ -71,7 +76,11 @@ pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources, role_given: Option<
         trees: HashMap::new(),
         diagnostics: Vec::new(),
     };
-    let role = match starting_file(fs, role_given) {
+    let start = match kind {
+        ConfigKind::System => starting_file(fs, role_given),
+        ConfigKind::Project => project_file(fs),
+    };
+    let role = match start {
         Ok(path) => {
             loader.add(None, &path, &OptionPath::root(), None);
             path.strip_prefix("roles/")
@@ -83,11 +92,14 @@ pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources, role_given: Option<
             None
         }
     };
-    loader.add_listed("services", |_| Some(OptionPath::root()));
-    loader.add_listed("users", |path| {
-        let name = path.strip_prefix("users/")?.strip_suffix(".toml")?;
-        (!name.contains('/')).then(|| OptionPath::root().child("users").child(name))
-    });
+    // A project's own directories belong to the project, not its configuration.
+    if kind == ConfigKind::System {
+        loader.add_listed("services", |_| Some(OptionPath::root()));
+        loader.add_listed("users", |path| {
+            let name = path.strip_prefix("users/")?.strip_suffix(".toml")?;
+            (!name.contains('/')).then(|| OptionPath::root().child("users").child(name))
+        });
+    }
     for (include, root) in std::mem::take(&mut loader.pending) {
         loader.add_from_source(include, &root);
     }
@@ -478,6 +490,48 @@ fn mark_defaults(files: &mut [LoadedFile], sources: &Sources) -> Vec<Diagnostic>
         );
     }
     diagnostics
+}
+
+/// The size of configuration being evaluated, which decides the file it starts from and the
+/// modules it has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigKind {
+    /// A machine: `system.toml` or a role, with `services/` and `users/`.
+    System,
+    /// A project's development environment: `distro.toml`, or `distro.local.toml` over it.
+    Project,
+}
+
+const PROJECT: &str = "distro.toml";
+const PROJECT_LOCAL: &str = "distro.local.toml";
+
+/// The file a project starts from: the local file when there is one, so its owner can change
+/// anything in the project.
+fn project_file(fs: &dyn ConfigFs) -> Result<String, Diagnostic> {
+    if fs.read(PROJECT_LOCAL).is_ok() {
+        return Ok(PROJECT_LOCAL.to_owned());
+    }
+    if fs.read(PROJECT).is_ok() {
+        return Ok(PROJECT.to_owned());
+    }
+    Err(
+        Diagnostic::error(format!("`{}` does not exist", fs.display(PROJECT)))
+            .note("help: a project starts from `distro.toml`"),
+    )
+}
+
+/// The kind of configuration in `fs`: a project when it has `distro.toml` or `distro.local.toml`
+/// and no `system.toml` or roles, otherwise a system.
+pub fn kind_of(fs: &dyn ConfigFs) -> ConfigKind {
+    let project = [PROJECT, PROJECT_LOCAL]
+        .iter()
+        .any(|file| fs.read(file).is_ok());
+    let system = fs.read(SYSTEM).is_ok() || roles(fs).is_ok_and(|roles| !roles.is_empty());
+    if project && !system {
+        ConfigKind::Project
+    } else {
+        ConfigKind::System
+    }
 }
 
 /// The roles a configuration has: the names of the files directly in `roles/`, sorted. None when

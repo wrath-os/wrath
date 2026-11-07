@@ -1,8 +1,8 @@
 //! End-to-end evaluation tests: configuration in, values, provenance and errors out.
 
 use crate::{
-    Input, ListMerge, MemFs, Module, OptionPath, OptionSpec, Schema, Sources, Type, Value,
-    evaluate, explain,
+    ConfigKind, Input, ListMerge, MemFs, Module, OptionPath, OptionSpec, Schema, Sources, Type,
+    Value, evaluate, explain,
 };
 
 pub(crate) fn schema() -> Schema {
@@ -105,6 +105,7 @@ pub(crate) fn eval_fs(config: &MemFs) -> Result<crate::Evaluation, String> {
     evaluate(Input {
         sources: Sources::default(),
         config,
+        kind: ConfigKind::System,
         role: None,
         schema: schema(),
         modules: &[],
@@ -120,6 +121,7 @@ pub(crate) fn eval_role(
     evaluate(Input {
         sources: Sources::default(),
         config: &MemFs::new(files.iter().copied()),
+        kind: ConfigKind::System,
         role,
         schema: schema(),
         modules,
@@ -657,5 +659,6 @@ mod defaults;
 mod lists;
 mod machine;
 mod modules;
+mod projects;
 mod roles;
 mod sources;

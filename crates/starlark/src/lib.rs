@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 
 use allocative::Allocative;
 use distro_eval::{
-    ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, MACHINE_VALUES, Module,
-    OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart, Secret, Setting, Sources,
-    Span, Template, Type, Unit, UnitAction, Value, formats, home_path,
+    ConfigKind, ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, MACHINE_VALUES,
+    Module, OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart, Secret, Setting,
+    Sources, Span, Template, Type, Unit, UnitAction, Value, formats, home_path,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -176,6 +176,7 @@ struct Declared {
     name: String,
     options: Vec<(OptionPath, OptionSpec)>,
     writes: Vec<OptionPath>,
+    configurations: Vec<ConfigKind>,
 }
 
 /// The evaluator's `extra` while a module file loads.
@@ -335,6 +336,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] user_options: Option<SmallMap<String, StarValue<'v>>>,
         #[starlark(require = named)] writes: StarValue<'v>,
         #[starlark(require = named)] render: StarValue<'v>,
+        #[starlark(require = named)] configurations: Option<StarValue<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let every_user = OptionPath::root().child("users").child(EVERY);
@@ -362,6 +364,19 @@ fn std_globals(builder: &mut GlobalsBuilder) {
             .map(|path| OptionPath::parse(path))
             .collect::<Result<_, _>>()
             .map_err(anyhow::Error::msg)?;
+        let configurations = match configurations {
+            None => vec![ConfigKind::System],
+            Some(value) => strings(value)?
+                .iter()
+                .map(|kind| match kind.as_str() {
+                    "system" => Ok(ConfigKind::System),
+                    "project" => Ok(ConfigKind::Project),
+                    other => Err(anyhow::anyhow!(
+                        "a module is for \"system\" or \"project\" configurations, not `{other}`"
+                    )),
+                })
+                .collect::<anyhow::Result<_>>()?,
+        };
         if eval
             .extra
             .is_some_and(|extra| extra.downcast_ref::<LoadingLibrary>().is_some())
@@ -379,6 +394,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
                 name: name.to_owned(),
                 options: declared_options,
                 writes,
+                configurations,
             });
         }
         eval.module().set(RENDER, render);
@@ -919,6 +935,10 @@ impl Module for StarlarkModule {
 
     fn writes(&self) -> Vec<OptionPath> {
         self.declared.writes.clone()
+    }
+
+    fn configurations(&self) -> &[ConfigKind] {
+        &self.declared.configurations
     }
 
     fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError> {

@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
-use crate::load::{self, DeclaredSource};
+use crate::load::{self, ConfigKind, DeclaredSource};
 use crate::machines::{self, Machine};
 use crate::module::{
     ConfigReader, DEFAULT_SOURCE, Module, ModuleId, Output, ReadError, RenderError, Secret,
@@ -42,6 +42,7 @@ pub struct Input<'a> {
     /// Sources so far, normally the modules' own files, so module spans resolve.
     pub sources: Sources,
     pub config: &'a dyn ConfigFs,
+    pub kind: ConfigKind,
     /// The role to evaluate, for a configuration with `roles/`.
     pub role: Option<&'a str>,
     /// Options declared outside modules. Module options are added to it.
@@ -191,6 +192,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     let Input {
         mut sources,
         config,
+        kind,
         role,
         mut schema,
         modules,
@@ -220,7 +222,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         diagnostics: load_diagnostics,
         role,
         sources: declared_sources,
-    } = load::load(config, &mut sources, role);
+    } = load::load(config, &mut sources, kind, role);
     diagnostics.extend(load_diagnostics);
     let walked = walk::walk(&schema, &sources, &files);
     let starting_files = files
@@ -229,14 +231,16 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         .map(|loaded| loaded.file)
         .collect();
     diagnostics.extend(walked.diagnostics);
-    let roles = load::roles(config).unwrap_or_default();
-    let (machines, machine_diagnostics) = machines::machines(
-        config,
-        &mut sources,
-        &roles,
-        role.as_deref(),
-        &walked.machine_values,
-    );
+    let (machines, machine_diagnostics) = match kind {
+        ConfigKind::System => machines::machines(
+            config,
+            &mut sources,
+            &load::roles(config).unwrap_or_default(),
+            role.as_deref(),
+            &walked.machine_values,
+        ),
+        ConfigKind::Project => (BTreeMap::new(), Vec::new()),
+    };
     diagnostics.extend(machine_diagnostics);
 
     let mut definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>> = BTreeMap::new();

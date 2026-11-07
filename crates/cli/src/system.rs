@@ -40,10 +40,13 @@ fn evaluate_with(
     role: Option<&str>,
 ) -> Result<Evaluation, String> {
     let mut sources = Sources::default();
-    let modules = load_modules(modules, &mut sources, order)?;
+    let kind = distro_eval::kind_of(config);
+    let mut modules = load_modules(modules, &mut sources, order)?;
+    modules.retain(|module| module.configurations().contains(&kind));
     distro_eval::evaluate(Input {
         sources,
         config,
+        kind,
         role,
         schema: Schema::default(),
         modules: &modules,

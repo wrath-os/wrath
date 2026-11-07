@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diag::Diagnostic;
+use crate::load::ConfigKind;
 use crate::path::OptionPath;
 use crate::schema::OptionSpec;
 use crate::source::Span;
@@ -36,6 +37,11 @@ pub trait Module {
 
     /// Option prefixes the module may set.
     fn writes(&self) -> Vec<OptionPath>;
+
+    /// The kinds of configuration the module belongs to.
+    fn configurations(&self) -> &[ConfigKind] {
+        &[ConfigKind::System]
+    }
 
     fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError>;
 }

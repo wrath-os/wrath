@@ -1,5 +1,5 @@
-# Packages for everyone on the machine. A user's own packages go under `packages` in
-# `users/<name>.toml`.
+# Packages for everyone on the machine, or for a project's shell. A user's own packages go under
+# `packages` in `users/<name>.toml`.
 
 def render(ctx):
     for package in ctx.read("packages"):
@@ -12,4 +12,5 @@ module(
     },
     writes = [],
     render = render,
+    configurations = ["system", "project"],
 )
