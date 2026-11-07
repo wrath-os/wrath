@@ -1,7 +1,7 @@
 # 0004: The module language
 
-Status: accepted, 2026-11-05 (spike S4). Modules are written in Starlark. Static typing is
-deferred.
+Status: accepted, 2026-11-05 (spike S4), and confirmed 2026-11-07. Modules are written in
+Starlark. Static typing is deferred.
 
 ## Context
 

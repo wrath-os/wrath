@@ -60,9 +60,10 @@ includes secrets is filled in on the machine, so the secret never reaches the bu
 A **secret** is a value encrypted with age next to the configuration, decrypted only on the
 machine, and referenced as `{ secret = "name" }` or `${secret.name}`.
 
-A **service** (planned, see decision 0005) is a program that's kept running, or a task run once, with
-its command, environment, user, restart policy and the services it needs. Each platform runs it
-with its own service manager. A **unit** is a raw systemd unit, for what only Linux has.
+A **service** is a program that's kept running, or a task run once. A machine's services are its
+platform's own: on Linux, systemd **units**. A home's or a project's services are written the same
+way everywhere, with a command, environment, restart policy, readiness and the services they need
+(planned for projects, which run them with `distro up`).
 
 A **home** is what a configuration puts in one user's home directory: files, packages, services
 and environment variables.
