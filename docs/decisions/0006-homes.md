@@ -48,6 +48,31 @@ A system baseline that a user adds to works through 0007: the user's configurati
 baseline as defaults, keeps what they like and changes the rest. The user's configuration is the
 starting file, so one owner still decides what goes in.
 
+## A user configuration on its own
+
+Added 2026-11-07, with what's needed to build it.
+
+- The starting file is `~/.config/distro/home.toml`. It holds what `users/<name>.toml` holds, with
+  its own `distro.lock` and sources (0009) next to it.
+- Its root is `users.<name>`, so nothing outside the home is reachable. Options under
+  `users.<name>` that belong to the account, such as `shell`, `groups` and `uid`, are marked
+  account-only by their modules. A user configuration setting one gets an error saying the
+  machine's administrator sets it.
+- A command run by a user who isn't root acts on `~/.config/distro` when it exists, unless `-C`
+  or a project says otherwise. Root acts on the system.
+- Generations live in `~/.local/state/distro`. Each is a built home: packages, files, user
+  services and environment. Switching links the files, switches the profile and reloads the
+  user's services, without root. It refuses to replace a file distro didn't put there.
+- The system model records which homes the system manages. `apply` in a user configuration
+  refuses when the system manages that home, naming the setting that hands it over.
+- `distro init --user` pins the new configuration to the nixpkgs the system runs, so they share
+  what's downloaded. After that the two are locked separately.
+- A home inside a system configuration is part of the system's generation: `apply` and `update`
+  switch the system and its homes together, never one without the other. The step that puts a
+  home in place should be the same code in both cases. That comes after the standalone case
+  works.
+- Later: secrets, with an age key per user, and macOS.
+
 ## Questions
 
 - The name of the "the user manages this home" setting.

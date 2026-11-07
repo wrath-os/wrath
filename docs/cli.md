@@ -22,7 +22,7 @@ A command acts on one configuration, its context, found in this order:
 
 1. `-C DIR`, a configuration directory.
 2. The nearest directory upwards with a `distro.toml`, a project.
-3. `--user`, your own configuration in `~/.config/distro`.
+3. Your own configuration in `~/.config/distro`, when you aren't root and it exists.
 4. The system's configuration in `/etc/distro`.
 
 ```console
@@ -178,9 +178,9 @@ Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `t
 `--role` for configurations with `roles/`, which defaults to the machine's role from install or
 `machines.toml`. `apply` and `try` check `[machine.requires]` first.
 
-Not yet: finding a project's `distro.toml`, `--user`, versions (`jq@1.7`), `search`, `info`,
-`--json` elsewhere, `--host`, and `--verbose`. `clean` lists the generations it removes rather than
-estimating the space first, and says what it freed afterwards.
+Not yet: projects, user configurations on their own, versions (`jq@1.7`), `search`, `info`,
+`--json` elsewhere, `--host`, and `--verbose`. `clean` lists the generations it removes rather
+than estimating the space first, and says what it freed afterwards.
 
 ## For people coming from Nix
 
@@ -200,8 +200,6 @@ estimating the space first, and says what it freed afterwards.
 
 - Where the version index comes from: built by our factory from nixpkgs history and Hydra, or
   reusing an existing index.
-- Whether `distro.toml` is the project file, and what a project can set beyond packages and
-  environment variables.
 - Whether `update PKG` moving one package without its source is worth what it costs: that
   package then comes from a different nixpkgs than the rest.
 - How long `try` waits by default, and whether it rolls back when the machine loses the network.

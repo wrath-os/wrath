@@ -50,8 +50,9 @@ A **package** is software to install, named `[source#]name[@version]`: `jq`, `st
 `jq@1.7` (planned), or `github:jqlang/jq#jq`. It's written the same way in TOML and on the
 command line.
 
-A **source** is where packages come from: a name and the URL it follows. `nixpkgs` is the
-default, and the base system comes from it too.
+A **source** is where packages, or files to include, come from: a name and the URL it follows,
+pinned in the lock. `nixpkgs` is the default, and the base system comes from it too. A file from a
+source is included as `{ source = "acme", path = "rust-service.toml" }`.
 
 A **file** is a file the configuration writes, on the system or in a home. A file whose text
 includes secrets is filled in on the machine, so the secret never reaches the build.
