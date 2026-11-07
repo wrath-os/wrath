@@ -295,6 +295,7 @@ fn main() -> ExitCode {
         } => generations::parse_duration(&duration).and_then(|seconds| {
             switch(root, system, Switch::Try(seconds), yes, &machine, &modules)
         }),
+        Command::Keep if home::is_context() => home::keep(),
         Command::Keep => generations::keep(),
         Command::Build { target } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => {
@@ -890,7 +891,7 @@ fn switch(
 ) -> Result<ExitCode, String> {
     if let Some(system) = system {
         if system.join("activate").exists() && system.join("distro/model.json").exists() {
-            return home::switch_to(&system);
+            return home::switch_to(&system, how);
         }
         return generations::switch_to(&system, how);
     }
@@ -899,10 +900,7 @@ fn switch(
         let Some(model) = model(&config, modules) else {
             return Ok(ExitCode::FAILURE);
         };
-        return match how {
-            Switch::Apply => home::apply(root, &config, model, yes),
-            Switch::Try(_) => Err("trying a home isn't built yet; apply it, and roll back".into()),
-        };
+        return home::apply(root, &config, model, how, yes);
     }
     let role = role(&config);
     let Some(evaluation) = evaluate(&config, modules) else {

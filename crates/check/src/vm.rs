@@ -56,7 +56,11 @@ pub enum Step {
     },
     /// Builds a user's own configuration on the host, copies it into the VM, and applies it there
     /// as `user`, without root.
-    ApplyHome { config: String, user: String },
+    ApplyHome {
+        config: String,
+        user: String,
+        try_for: Option<String>,
+    },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -147,7 +151,11 @@ impl TryFrom<RawStep> for Step {
             let user = raw
                 .as_user
                 .ok_or("`apply_home` needs `as_user`, the user it belongs to")?;
-            return Ok(Self::ApplyHome { config, user });
+            return Ok(Self::ApplyHome {
+                config,
+                user,
+                try_for: raw.try_for,
+            });
         }
         let run_fields = raw.exit != 0 || raw.stdout_contains.is_some();
         let apply_fields = !raw.expect_plan.is_empty() || raw.try_for.is_some();
@@ -660,9 +668,11 @@ impl VmRun<'_> {
                     self.apply_config(agent, current, config, expect_plan, try_for, deadline)?;
                     current = config;
                 }
-                Step::ApplyHome { config, user } => {
-                    self.apply_home(agent, config, user, deadline)?
-                }
+                Step::ApplyHome {
+                    config,
+                    user,
+                    try_for,
+                } => self.apply_home(agent, config, user, try_for.as_deref(), deadline)?,
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
@@ -718,12 +728,16 @@ impl VmRun<'_> {
         agent: &mut Client<VsockStream>,
         config: &str,
         user: &str,
+        try_for: Option<&str>,
         deadline: Instant,
     ) -> Result<(), String> {
         let home = self.host.distro(&["build", "--config", config])?;
         let home = home.trim();
         self.copy_in(agent, home, deadline)?;
-        let apply = format!("distro apply {home}");
+        let apply = match try_for {
+            Some(duration) => format!("distro try --for {duration} {home}"),
+            None => format!("distro apply {home}"),
+        };
         let (code, _, stderr) = run_shell(
             agent,
             argv(&["runuser", "-l", user, "-c", &apply]),
