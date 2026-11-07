@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 distro-agent.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 vsock.workspace = true

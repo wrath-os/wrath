@@ -61,6 +61,10 @@ pub enum Step {
         user: String,
         try_for: Option<String>,
     },
+    /// Lets the guest build `config` itself: the host builds it, and the guest gets what that
+    /// used, the factory at `/run/distro-share/root` and the configuration at
+    /// `/run/distro-share/configs/<name>`.
+    PrepareBuild(String),
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -115,8 +119,9 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 9] = [
+pub const STEP_FIELDS: [&str; 10] = [
     "apply_config",
+    "prepare_build",
     "apply_home",
     "as_user",
     "expect_plan",
@@ -131,6 +136,7 @@ pub const STEP_FIELDS: [&str; 9] = [
 #[serde(deny_unknown_fields)]
 struct RawStep {
     apply_config: Option<String>,
+    prepare_build: Option<String>,
     apply_home: Option<String>,
     as_user: Option<String>,
     #[serde(default)]
@@ -147,6 +153,9 @@ impl TryFrom<RawStep> for Step {
     type Error = String;
 
     fn try_from(raw: RawStep) -> Result<Self, Self::Error> {
+        if let Some(config) = raw.prepare_build {
+            return Ok(Self::PrepareBuild(config));
+        }
         if let Some(config) = raw.apply_home {
             let user = raw
                 .as_user
@@ -673,6 +682,7 @@ impl VmRun<'_> {
                     user,
                     try_for,
                 } => self.apply_home(agent, config, user, try_for.as_deref(), deadline)?,
+                Step::PrepareBuild(config) => self.prepare_build(agent, config, deadline)?,
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
@@ -752,6 +762,50 @@ impl VmRun<'_> {
         Ok(())
     }
 
+    fn prepare_build(
+        &self,
+        agent: &mut Client<VsockStream>,
+        config: &str,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let built = self.host.distro(&["build", "--config", config])?;
+        let derivation =
+            host_command(Command::new("nix-store").args(["--query", "--deriver", built.trim()]))?;
+        let used = host_command(Command::new("nix-store").args([
+            "--query",
+            "--requisites",
+            "--include-outputs",
+            derivation.trim(),
+        ]))?;
+        // The factory as the host evaluates it, with the inputs it pins, such as nixpkgs.
+        let workdir = self.host.workdir;
+        let repo = (workdir.canonicalize()).map_err(|e| format!("{}: {e}", workdir.display()))?;
+        let flake = format!("git+file://{}?dir=factory/nix", repo.display());
+        let archive =
+            host_command(Command::new("nix").args(["flake", "archive", "--json", &flake]))?;
+        let archive: serde_json::Value =
+            serde_json::from_str(&archive).map_err(|e| format!("the factory's archive: {e}"))?;
+        let mut paths: Vec<String> = used.lines().map(str::to_owned).collect();
+        archived_paths(&archive, &mut paths);
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        self.copy_paths_in(agent, &paths, deadline)?;
+        let share = self.dir.join(SHARE);
+        let source = archive["path"]
+            .as_str()
+            .ok_or("the factory's archive has no path")?;
+        let root = share.join("root");
+        if !root.exists() {
+            std::os::unix::fs::symlink(source, &root).map_err(io_err("the factory link"))?;
+        }
+        let name = Path::new(config)
+            .file_name()
+            .ok_or("a configuration needs a name")?;
+        copy_dir(
+            &self.host.workdir.join(config),
+            &share.join("configs").join(name),
+        )
+    }
+
     /// Copies the store paths of `system` that the guest lacks into the guest's store, as an
     /// export in the share. The guest already has everything else they refer to.
     fn copy_in(
@@ -760,9 +814,23 @@ impl VmRun<'_> {
         system: &str,
         deadline: Instant,
     ) -> Result<(), String> {
+        self.copy_paths_in(agent, &[system], deadline)
+    }
+
+    /// Copies `paths` and everything they refer to into the guest's store, as [`Self::copy_in`]
+    /// does.
+    fn copy_paths_in(
+        &self,
+        agent: &mut Client<VsockStream>,
+        paths: &[&str],
+        deadline: Instant,
+    ) -> Result<(), String> {
         // Dependencies come before the paths that refer to them, as importing needs.
-        let closure =
-            host_command(Command::new("nix-store").args(["--query", "--requisites", system]))?;
+        let closure = host_command(
+            Command::new("nix-store")
+                .args(["--query", "--requisites"])
+                .args(paths),
+        )?;
         let mut check = argv(&["nix-store", "--check-validity", "--print-invalid"]);
         check.extend(closure.lines().map(str::to_owned));
         let (_, missing, _) = run_shell(agent, check, deadline)?;
@@ -785,10 +853,7 @@ impl VmRun<'_> {
         let import = format!("nix-store {import} < {GUEST_SHARE}/{EXPORT}");
         let (code, _, stderr) = run_shell(agent, argv(&["/bin/sh", "-c", &import]), deadline)?;
         if code != Some(0) {
-            return Err(format!(
-                "copying {system} into the VM failed: {}",
-                stderr.trim()
-            ));
+            return Err(format!("copying into the VM failed: {}", stderr.trim()));
         }
         Ok(())
     }
@@ -803,6 +868,34 @@ impl Host<'_> {
                 .current_dir(self.workdir),
         )
     }
+}
+
+/// The store paths in `archive`, what `nix flake archive --json` prints, into `paths`.
+fn archived_paths(archive: &serde_json::Value, paths: &mut Vec<String>) {
+    if let Some(path) = archive["path"].as_str() {
+        paths.push(path.to_owned());
+    }
+    if let Some(inputs) = archive["inputs"].as_object() {
+        for input in inputs.values() {
+            archived_paths(input, paths);
+        }
+    }
+}
+
+/// Copies the directory `from` to `to`, files and subdirectories.
+fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    for entry in fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))? {
+        let entry = entry.map_err(|e| format!("{}: {e}", from.display()))?;
+        let source = entry.path();
+        let target = to.join(entry.file_name());
+        if source.is_dir() {
+            copy_dir(&source, &target)?;
+        } else {
+            fs::copy(&source, &target).map_err(|e| format!("{}: {e}", target.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs a host command to completion and returns its stdout, or its stderr on failure.

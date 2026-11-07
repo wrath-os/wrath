@@ -276,6 +276,12 @@ in
   networking.hostName = mkDefault base.system.hostname;
   time.timeZone = mkDefault base.system.timezone;
 
+  # distro builds with Nix on the machine itself, which needs these.
+  nix.settings.experimental-features = [
+    "nix-command"
+    "flakes"
+  ];
+
   users.mutableUsers = mkDefault false;
   users.users = lib.mapAttrs (
     name: user:
