@@ -141,6 +141,9 @@ pub fn home_path(user: &str, path: &str) -> String {
 /// Where decrypted secrets are on the machine, one file per secret.
 pub const SECRETS_DIR: &str = "/run/secrets";
 
+/// Where a home of its own decrypts its secrets, which the user can do without root.
+pub const HOME_SECRETS_DIR: &str = "~/.local/state/distro/secrets";
+
 /// A secret kept encrypted in the configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Secret {
@@ -152,13 +155,6 @@ pub struct Secret {
     pub mode: u32,
     /// Another path linked to the decrypted file.
     pub link: Option<String>,
-}
-
-impl Secret {
-    /// Where the secret named `name` is decrypted to.
-    pub fn path(name: &str) -> String {
-        format!("{SECRETS_DIR}/{name}")
-    }
 }
 
 /// What a service does when a file it reads changes.

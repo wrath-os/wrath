@@ -305,14 +305,83 @@
               executable = false;
             };
           };
+          templates = lib.attrValues (ours.templates or { });
           links = import ./home-links.nix { inherit lib pkgs; } name (
             ours // { files = ours.files // onPath; }
-          ) (_: throw "distro: a home of its own can't have files with secrets in them yet");
+          ) (file: "~/.local/state/distro/templates/${file.name}");
+          # Decrypts the home's secrets and fills in its files with secrets in them, as the user,
+          # into new directories under ~/.local/state/distro that replace the old ones at once.
+          secrets =
+            let
+              decrypt =
+                name: secret:
+                lib.escapeShellArgs [
+                  "decrypt"
+                  name
+                  (builtins.path {
+                    path = /. + secret.source;
+                    name = "${name}.age";
+                  })
+                  secret.mode
+                  secret.link
+                ];
+              spec = pkgs.writeText "distro-templates.json" (
+                builtins.toJSON (
+                  lib.listToAttrs (map (file: lib.nameValuePair file.name file.parts) templates)
+                )
+              );
+              own = file: lib.escapeShellArgs [ "own" file.name file.mode ];
+            in
+            ''
+              umask 0077
+              state="$HOME/.local/state/distro"
+              mkdir -p "$state/secrets.d" "$state/templates.d"
+              generation="$state/secrets.d/$(date +%s%N)"
+              mkdir "$generation"
+              # Points $state/$1 at the new directory $2 at once and removes the older ones.
+              swap() {
+                ln -sfn "$2" "$state/$1.next"
+                mv -T "$state/$1.next" "$state/$1"
+                for old in "$state/$1.d"/*; do
+                  [ "$old" = "$2" ] || rm -rf "$old"
+                done
+              }
+              identities=()
+              for identity in ${lib.escapeShellArgs (json.base.secrets.identities or [ ])}; do
+                identity=''${identity/#\~\//$HOME/}
+                [ -e "$identity" ] && identities+=(-i "$identity")
+              done
+              decrypt() {
+                local name=$1 source=$2 mode=$3 link=$4 file="$generation/$1"
+                if ${pkgs.age}/bin/age -d "''${identities[@]}" -o "$file" "$source"; then
+                  chmod "$mode" "$file"
+                else
+                  echo "cannot decrypt secret $name" >&2
+                fi
+                if [ -n "$link" ]; then
+                  link=''${link/#\~\//$HOME/}
+                  mkdir -p "$(dirname "$link")"
+                  ln -sfn "$state/secrets/$name" "$link"
+                fi
+              }
+              ${lib.concatStringsSep "\n" (lib.mapAttrsToList decrypt (json.secrets or { }))}
+              swap secrets "$generation"
+              filled="$state/templates.d/$(date +%s%N)"
+              mkdir "$filled"
+              ${distro}/bin/distro fill-templates ${spec} "$state/secrets" "$filled" || true
+              own() {
+                [ -e "$filled/$1" ] && chmod "$2" "$filled/$1"
+              }
+              ${lib.concatStringsSep "\n" (map own templates)}
+              swap templates "$filled"
+            '';
           profile = pkgs.buildEnv {
             name = "distro-home-profile";
             paths = map package ours.packages;
           };
+          hasSecrets = (json.secrets or { }) != { } || templates != [ ];
           activate = pkgs.writeShellScript "activate" ''
+            ${lib.optionalString hasSecrets secrets}
             PATH=${pkgs.systemd}/bin:$PATH exec ${pkgs.bash}/bin/bash ${./link-home.sh} \
               "$(id -un)" "$(id -gn)" "$HOME" ${links}
           '';

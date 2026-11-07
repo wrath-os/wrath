@@ -64,12 +64,14 @@ unit_of() {
 
 wanted=$(cut -f1 "$links")
 stopped=()
+filled=$home/.local/state/distro/templates
 if [ -f "$manifest" ]; then
     while IFS= read -r path; do
         grep -qxF -- "$path" <<<"$wanted" && continue
         dest=$home/${path#\~/}
         linked=$(readlink "$dest")
-        if [ -L "$dest" ] && [[ $linked == /nix/store/* || $linked == /run/distro/templates/* ]]
+        if [ -L "$dest" ] && [[ $linked == /nix/store/* || $linked == /run/distro/templates/* ||
+            $linked == "$filled"/* ]]
         then
             unit=$(unit_of "$dest") && stopped+=("$unit")
             rm "$dest"
@@ -80,6 +82,8 @@ fi
 made=() changed=()
 while IFS=$'\t' read -r path target; do
     dest=$home/${path#\~/}
+    # A home of its own fills in its files with secrets under the home.
+    target=${target/#\~\//$home/}
     if ! may_link "$path" "$dest" "$target"; then
         echo "leaving $dest alone: it is there and distro didn't link it" >&2
         continue

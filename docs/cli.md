@@ -182,9 +182,9 @@ current directory, with `shell`, `up`, `run`, `add`, `remove`, `check`, `lock`, 
 `why`, and `distro.local.lock` for what only `distro.local.toml` adds. Your own home in
 `~/.config/distro`, with `apply`, `try`, `keep`, `plan`, `status`, `history` and `rollback`.
 
-Not yet: secrets for a home of its own, versions (`jq@1.7`), `search`, `info`, `--json`
-elsewhere, `--host`, and `--verbose`. `clean` lists the generations it removes rather than
-estimating the space first, and says what it freed afterwards.
+Not yet: versions (`jq@1.7`), `search`, `info`, `--json` elsewhere, `--host`, and `--verbose`.
+`clean` lists the generations it removes rather than estimating the space first, and says what it
+freed afterwards.
 
 ## For people coming from Nix
 

@@ -66,9 +66,6 @@ pub fn apply(
     yes: bool,
 ) -> Result<ExitCode, String> {
     refuse_system_home()?;
-    if model.homes.values().any(|home| !home.templates.is_empty()) {
-        return Err("a home of its own can't have files with secrets in them yet".into());
-    }
     let model = generations::locked(root, config, model)?;
     let profile = profile()?;
     let hash = model.hash();

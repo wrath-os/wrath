@@ -68,7 +68,12 @@ impl Secrets {
     fn load(dir: &Path, modules: &Path) -> Result<Self, String> {
         let config = Editing(Sourced::dir(dir));
         let evaluation = system::evaluate(&config, modules, crate::role(dir))?;
-        let recipients = match evaluation.get("system.secret_recipients") {
+        // A home of its own lists its recipients under its user.
+        let option = match std::env::var("USER") {
+            Ok(user) if crate::is_home(dir) => format!("users.{user}.secret_recipients"),
+            _ => "system.secret_recipients".to_string(),
+        };
+        let recipients = match evaluation.get(&option) {
             Some(Value::List(items)) => items
                 .iter()
                 .filter_map(|item| match item {

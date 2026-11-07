@@ -10,10 +10,7 @@ mod read;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{
-    Evaluation, RuntimePart, Secret as Declared, Section, Template, Unit, UnitAction, Value,
-    formats,
-};
+use distro_eval::{Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, formats};
 
 pub use lock::{DEFAULT_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
@@ -331,7 +328,7 @@ impl Model {
     pub fn secrets_of(&self, unit: &Unit) -> BTreeSet<&str> {
         let text = unit.text();
         let mentioned = self.secrets.keys().filter(|name| {
-            let path = Declared::path(name);
+            let path = format!("{}/{name}", distro_eval::SECRETS_DIR);
             text.match_indices(&path).any(|(at, _)| {
                 !text[at + path.len()..]
                     .starts_with(|c: char| c.is_alphanumeric() || "-_.".contains(c))

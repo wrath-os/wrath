@@ -71,7 +71,10 @@ Added 2026-11-07, with what's needed to build it.
   switch the system and its homes together, never one without the other. The step that puts a
   home in place should be the same code in both cases. That comes after the standalone case
   works.
-- Later: secrets, with an age key per user, and macOS.
+- Secrets are decrypted by the user when the home switches, with their own key (`~/.ssh/id_ed25519`
+  unless `secret_identities` says otherwise), to `~/.local/state/distro/secrets`, readable only
+  by them. A path option holding a secret gets `~/.local/state/distro/secrets/<name>`.
+- Later: macOS.
 
 ## Questions
 

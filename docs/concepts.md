@@ -58,7 +58,8 @@ A **file** is a file the configuration writes, on the system or in a home. A fil
 includes secrets is filled in on the machine, so the secret never reaches the build.
 
 A **secret** is a value encrypted with age next to the configuration, decrypted only on the
-machine, and referenced as `{ secret = "name" }` or `${secret.name}`.
+machine (for a home of its own, by its user), and referenced as `{ secret = "name" }` or
+`${secret.name}`.
 
 A **service** is a program that's kept running, or a task run once. A machine's services are its
 platform's own: on Linux, systemd **units**. A home's or a project's services are written the same

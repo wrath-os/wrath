@@ -444,7 +444,7 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
     Ok(config.to_path_buf())
 }
 
-fn is_home(config: &Path) -> bool {
+pub(crate) fn is_home(config: &Path) -> bool {
     distro_eval::kind_of(&distro_eval::DirFs::new(config)) == distro_eval::ConfigKind::Home
 }
 

@@ -14,8 +14,8 @@ use crate::fs::ConfigFs;
 use crate::load::{self, ConfigKind, DeclaredSource};
 use crate::machines::{self, Machine};
 use crate::module::{
-    ConfigReader, DEFAULT_SOURCE, Module, ModuleId, Output, ReadError, RenderError, Secret,
-    Setting, home_path, package_source,
+    ConfigReader, DEFAULT_SOURCE, HOME_SECRETS_DIR, Module, ModuleId, Output, ReadError,
+    RenderError, SECRETS_DIR, Setting, home_path, package_source,
 };
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
@@ -276,6 +276,10 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         options: BTreeMap::new(),
         machine_values: BTreeSet::new(),
         declared: walked.machine_values,
+        secrets_dir: match kind {
+            ConfigKind::Home => HOME_SECRETS_DIR,
+            ConfigKind::System | ConfigKind::Project => SECRETS_DIR,
+        },
         diagnostics: Vec::new(),
     };
     for id in 0..modules.len() {
@@ -352,23 +356,23 @@ fn undeclared_secrets(
     diagnostics
 }
 
-/// The value a module reads: a secret in a path option is the path it's decrypted to.
-fn secret_paths(ty: &Type, value: Value) -> Value {
+/// The value a module reads: a secret in a path option is the path it's decrypted to, in `dir`.
+fn secret_paths(dir: &str, ty: &Type, value: Value) -> Value {
     match (ty, value) {
         (Type::Path, Value::Runtime(parts)) => match parts.as_slice() {
-            [RuntimePart::Secret(name)] => Value::Str(Secret::path(name)),
+            [RuntimePart::Secret(name)] => Value::Str(format!("{dir}/{name}")),
             _ => Value::Runtime(parts),
         },
         (Type::List { item, .. }, Value::List(items)) => Value::List(
             items
                 .into_iter()
-                .map(|value| secret_paths(item, value))
+                .map(|value| secret_paths(dir, item, value))
                 .collect(),
         ),
         (Type::Map(spec), Value::Table(entries)) => Value::Table(
             entries
                 .into_iter()
-                .map(|(key, value)| (key, secret_paths(&spec.ty, value)))
+                .map(|(key, value)| (key, secret_paths(dir, &spec.ty, value)))
                 .collect(),
         ),
         (Type::Record(record), Value::Table(entries)) => Value::Table(
@@ -376,7 +380,7 @@ fn secret_paths(ty: &Type, value: Value) -> Value {
                 .into_iter()
                 .map(|(key, value)| {
                     let value = match record.fields.get(&key) {
-                        Some(spec) => secret_paths(&spec.ty, value),
+                        Some(spec) => secret_paths(dir, &spec.ty, value),
                         None => value,
                     };
                     (key, value)
@@ -626,6 +630,8 @@ struct Resolver<'a> {
     machine_values: BTreeSet<OptionPath>,
     /// The values each machine is given, declared in `[machine.values]`.
     declared: BTreeMap<String, Span>,
+    /// Where secrets are decrypted to: the system's, or a home's own.
+    secrets_dir: &'static str,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -934,7 +940,7 @@ impl<'a> Resolver<'a> {
         match self.known(path) {
             Known::Leaf(spec) => self
                 .resolve(path, &spec, at)
-                .map(|value| value.map(|value| secret_paths(&spec.ty, value)))
+                .map(|value| value.map(|value| secret_paths(self.secrets_dir, &spec.ty, value)))
                 .map_err(|Failed| ReadError::Failed),
             Known::Table(spec) => {
                 let mut table = self.skeleton(&spec, path);
@@ -944,7 +950,7 @@ impl<'a> Resolver<'a> {
                         Ok(Some(value)) => insert_nested(
                             &mut table,
                             &leaf.segments()[path.len()..],
-                            secret_paths(&spec.ty, value),
+                            secret_paths(self.secrets_dir, &spec.ty, value),
                         ),
                         Ok(None) => {}
                         Err(Failed) => failed = true,
