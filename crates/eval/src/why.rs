@@ -78,10 +78,13 @@ fn origin(evaluation: &Evaluation, contribution: &Contribution) -> String {
             "forced at {} ({reason})",
             evaluation.sources().location(span)
         ),
+        (Site::Config(span), Level::Default, _) => {
+            format!("default at {}", evaluation.sources().location(span))
+        }
         (Site::Config(span), _, _) => format!("set at {}", evaluation.sources().location(span)),
         (Site::Module { module, at }, level, _) => {
             let how = match level {
-                Level::Default => "default from",
+                Level::Declared | Level::ModuleDefault | Level::Default => "default from",
                 Level::Normal | Level::Force => "set by",
             };
             let name = evaluation.module_name(module);

@@ -41,9 +41,16 @@ pub enum Action {
 }
 
 /// How strongly a definition holds. A higher level replaces lower ones, and two different values
-/// at the same level conflict.
+/// at the same level conflict. Set and ordered lists merge everything from `ModuleDefault` to
+/// `Normal`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
+    /// An option's declared default, used only when nothing else sets the option.
+    Declared,
+    /// Set with `ctx.default` in a module.
+    ModuleDefault,
+    /// Written `{ default = ... }` in a configuration file. Between two of these, the file that
+    /// includes the other wins.
     Default,
     Normal,
     Force,
@@ -197,7 +204,8 @@ impl Walker<'_> {
             DeValue::Table(table)
                 if matches!(spec.ty, Type::Freeform)
                     && !table.contains_key("secret")
-                    && !table.contains_key("force") =>
+                    && !table.contains_key("force")
+                    && !table.contains_key("default") =>
             {
                 self.table(spec, &path, table, file, false);
             }
@@ -215,14 +223,22 @@ impl Walker<'_> {
                 }
             }
             _ => match self.leaf(value, file) {
-                Ok((raw, reason)) => self.out.definitions.push(Definition {
+                Ok((_, Level::Default, _)) if spec.ty.merges_items() => {
+                    self.out.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "`{path}` merges with other files, so it has no default"
+                        ))
+                        .label(span, "written as a default")
+                        .note(
+                            "help: write the list itself; others add to it, and take items out \
+                             with `{ remove = [...] }`",
+                        ),
+                    );
+                }
+                Ok((raw, level, reason)) => self.out.definitions.push(Definition {
                     path,
                     value: raw,
-                    level: if reason.is_some() {
-                        Level::Force
-                    } else {
-                        Level::Normal
-                    },
+                    level,
                     site: Site::Config(span),
                     reason,
                     action: Action::Set,
@@ -240,50 +256,38 @@ impl Walker<'_> {
         table: &DeTable<'_>,
         file: FileId,
     ) -> Result<Raw, Diagnostic> {
-        if !spec.ty.supports_removal() {
+        if !spec.ty.merges_items() {
             return Err(
                 Diagnostic::error("only set and ordered lists support `remove`")
                     .label(span, format!("this option is {}", spec.ty.describe())),
             );
         }
-        if let Some((key, _)) = table.iter().find(|(key, _)| key.get_ref() != REMOVE) {
-            return Err(
-                Diagnostic::error(format!("unexpected `{}` in a removal", key.get_ref()))
-                    .label(Span::new(file, key.span()), "only `remove` belongs here"),
-            );
-        }
+        only_keys(table, &[REMOVE], "a removal", file)?;
         let items = table
             .get(REMOVE)
             .expect("only tables with `remove` are removals");
         self.raw(items, file)
     }
 
-    /// A value, or a forced one written `{ value = ..., force = "reason" }`.
+    /// A value, a default written `{ default = ... }`, or a forced value written
+    /// `{ value = ..., force = "reason" }`, with its level and the reason for forcing it.
     fn leaf(
         &self,
         value: &Spanned<DeValue<'_>>,
         file: FileId,
-    ) -> Result<(Raw, Option<String>), Diagnostic> {
+    ) -> Result<(Raw, Level, Option<String>), Diagnostic> {
         let DeValue::Table(table) = value.get_ref() else {
-            return Ok((self.raw(value, file)?, None));
+            return Ok((self.raw(value, file)?, Level::Normal, None));
         };
+        if let Some(default) = table.get("default") {
+            only_keys(table, &["default"], "a default", file)?;
+            return Ok((self.raw(default, file)?, Level::Default, None));
+        }
         let Some(force) = table.get("force") else {
-            return Ok((self.raw(value, file)?, None));
+            return Ok((self.raw(value, file)?, Level::Normal, None));
         };
         let span = Span::new(file, value.span());
-        if let Some((key, _)) = table
-            .iter()
-            .find(|(key, _)| !matches!(key.get_ref().as_ref(), "force" | "value"))
-        {
-            return Err(Diagnostic::error(format!(
-                "unexpected `{}` in a forced value",
-                key.get_ref()
-            ))
-            .label(
-                Span::new(file, key.span()),
-                "only `value` and `force` belong here",
-            ));
-        }
+        only_keys(table, &["value", "force"], "a forced value", file)?;
         let reason = match force.get_ref() {
             DeValue::String(reason) if !reason.trim().is_empty() => reason.to_string(),
             _ => {
@@ -297,7 +301,7 @@ impl Walker<'_> {
                 Diagnostic::error("a forced value needs `value`").label(span, "add `value = ...`")
             );
         };
-        Ok((self.raw(inner, file)?, Some(reason)))
+        Ok((self.raw(inner, file)?, Level::Force, Some(reason)))
     }
 
     fn raw(&self, value: &Spanned<DeValue<'_>>, file: FileId) -> Result<Raw, Diagnostic> {
@@ -372,4 +376,32 @@ pub(crate) fn mark_instances(
             Child::Freeform | Child::None => return,
         };
     }
+}
+
+/// Refuses keys other than `allowed` in a table such as `{ default = ... }`. `what` names the
+/// table in the error.
+fn only_keys(
+    table: &DeTable<'_>,
+    allowed: &[&str],
+    what: &str,
+    file: FileId,
+) -> Result<(), Diagnostic> {
+    let Some((key, _)) = table
+        .iter()
+        .find(|(key, _)| !allowed.contains(&key.get_ref().as_ref()))
+    else {
+        return Ok(());
+    };
+    let names: Vec<String> = allowed.iter().map(|name| format!("`{name}`")).collect();
+    let verb = if names.len() == 1 {
+        "belongs"
+    } else {
+        "belong"
+    };
+    Err(
+        Diagnostic::error(format!("unexpected `{}` in {what}", key.get_ref())).label(
+            Span::new(file, key.span()),
+            format!("only {} {verb} here", names.join(" and ")),
+        ),
+    )
 }

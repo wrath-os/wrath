@@ -5,7 +5,7 @@
 //! place. A cycle between options and modules is an error naming each step.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -19,7 +19,7 @@ use crate::module::{
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
 use crate::schema::{Child, EVERY, ListMerge, OptionSpec, Schema, Type};
-use crate::source::{Sources, Span};
+use crate::source::{FileId, Sources, Span};
 use crate::suggest::did_you_mean;
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
@@ -196,6 +196,10 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         // missing options are only reported when everything loaded.
         report_missing: diagnostics.is_empty(),
         definitions,
+        included_by: files
+            .iter()
+            .map(|loaded| (loaded.file, loaded.included_by.clone()))
+            .collect(),
         instances: walked.instances,
         state: HashMap::new(),
         modules_state: vec![ModuleState::NotRun; modules.len()],
@@ -534,6 +538,8 @@ struct Resolver<'a> {
     facts: &'a Value,
     report_missing: bool,
     definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>>,
+    /// The files that include each file.
+    included_by: HashMap<FileId, Vec<FileId>>,
     instances: BTreeSet<OptionPath>,
     state: HashMap<OptionPath, State>,
     modules_state: Vec<ModuleState>,
@@ -707,7 +713,7 @@ impl<'a> Resolver<'a> {
             ) => {
                 // A module removes items the same way config does, with `{ remove = [...] }`.
                 let removal = match value {
-                    Value::Table(entries) if entries.len() == 1 && spec.ty.supports_removal() => {
+                    Value::Table(entries) if entries.len() == 1 && spec.ty.merges_items() => {
                         entries.get(REMOVE)
                     }
                     _ => None,
@@ -949,7 +955,7 @@ impl<'a> Resolver<'a> {
             definitions.push(Rc::new(Definition {
                 path: path.clone(),
                 value: Raw::Literal(default.clone()),
-                level: Level::Default,
+                level: Level::Declared,
                 site: Site::Default,
                 reason: None,
                 action: Action::Set,
@@ -968,21 +974,13 @@ impl<'a> Resolver<'a> {
             return Err(Failed);
         }
 
-        // A declared default only applies when nothing else sets the option. Removals apply
-        // whatever level added the items, so they don't compete.
-        let rank =
-            |definition: &Definition| (definition.level, !matches!(definition.site, Site::Default));
-        let top = definitions
-            .iter()
-            .filter(|definition| definition.action == Action::Set)
-            .map(|definition| rank(definition))
-            .max();
+        let wins = self.winners(spec, &definitions);
         let mut set_by = Vec::new();
         let mut overridden = Vec::new();
         let mut removed_by = Vec::new();
         let mut uses = Vec::new();
         let mut failed = false;
-        for definition in &definitions {
+        for (definition, wins) in definitions.iter().zip(wins) {
             let mut definition_uses = Vec::new();
             let Some(value) = self.eval(&definition.value, &mut definition_uses) else {
                 failed = true;
@@ -1011,7 +1009,7 @@ impl<'a> Resolver<'a> {
                     uses.extend(definition_uses);
                     removed_by.push(contribution);
                 }
-                Action::Set if Some(rank(definition)) == top => {
+                Action::Set if wins => {
                     uses.extend(definition_uses);
                     set_by.push(contribution);
                 }
@@ -1033,6 +1031,64 @@ impl<'a> Resolver<'a> {
             },
         );
         Ok(Some(value))
+    }
+
+    /// Which definitions make up the value. The strongest level wins, except that set and
+    /// ordered lists merge everything from module defaults to set values. Between defaults in
+    /// configuration files, a file's default beats those of the files it includes. A declared
+    /// default only applies when nothing else sets the option. Removals apply whatever level
+    /// added the items, so they don't compete.
+    fn winners(&self, spec: &OptionSpec, definitions: &[Rc<Definition>]) -> Vec<bool> {
+        let level = |definition: &Definition| {
+            (definition.action == Action::Set).then_some(definition.level)
+        };
+        let Some(top) = definitions.iter().filter_map(|d| level(d)).max() else {
+            return vec![false; definitions.len()];
+        };
+        let merged = Level::ModuleDefault..=Level::Normal;
+        if spec.ty.merges_items() && merged.contains(&top) {
+            return definitions
+                .iter()
+                .map(|d| level(d).is_some_and(|level| merged.contains(&level)))
+                .collect();
+        }
+        let file = |definition: &Definition| match definition.site {
+            Site::Config(span) if definition.level == Level::Default => Some(span.file),
+            Site::Config(_) | Site::Default | Site::Module { .. } => None,
+        };
+        let top_files: Vec<FileId> = definitions
+            .iter()
+            .filter(|d| level(d) == Some(top))
+            .filter_map(|d| file(d))
+            .collect();
+        definitions
+            .iter()
+            .map(|d| {
+                level(d) == Some(top)
+                    && file(d).is_none_or(|own| {
+                        !top_files
+                            .iter()
+                            .any(|&other| other != own && self.includes(other, own))
+                    })
+            })
+            .collect()
+    }
+
+    /// Whether `ancestor` includes `file`, directly or through other files.
+    fn includes(&self, ancestor: FileId, file: FileId) -> bool {
+        let mut seen = HashSet::new();
+        let mut pending = vec![file];
+        while let Some(file) = pending.pop() {
+            for &parent in self.included_by.get(&file).into_iter().flatten() {
+                if parent == ancestor {
+                    return true;
+                }
+                if seen.insert(parent) {
+                    pending.push(parent);
+                }
+            }
+        }
+        false
     }
 
     /// Points a diagnostic at a definition's site: its span when there is one, otherwise a note
@@ -1097,17 +1153,36 @@ impl<'a> Resolver<'a> {
         {
             return Some(first.clone());
         }
-        let mut diagnostic = Diagnostic::error(format!("conflicting values for `{path}`"));
+        // Every contribution is at the same level, so the first one says which.
+        let defaults = set_by[0].level == Level::Default;
+        let (what, help) = if defaults {
+            (
+                "defaults",
+                "help: neither file includes the other, so neither default wins; remove one, or \
+                 set the value",
+            )
+        } else if set_by
+            .iter()
+            .any(|contribution| matches!(contribution.site, Site::Config(_)))
+        {
+            (
+                "values",
+                "help: remove all but one, make one a default others may change with \
+                 `{ default = ... }`, or force one with `{ value = ..., force = \"reason\" }`",
+            )
+        } else {
+            (
+                "values",
+                "help: remove all but one, or force one with `{ value = ..., force = \"reason\" }`",
+            )
+        };
+        let mut diagnostic = Diagnostic::error(format!("conflicting {what} for `{path}`"));
+        let verb = if defaults { "default" } else { "set to" };
         for contribution in set_by {
-            diagnostic = self.locate(
-                diagnostic,
-                contribution.site,
-                format!("set to {} here", contribution.value),
-            );
+            let label = format!("{verb} {} here", contribution.value);
+            diagnostic = self.locate(diagnostic, contribution.site, label);
         }
-        self.diagnostics.push(diagnostic.note(
-            "help: remove all but one, or force one with `{ value = ..., force = \"reason\" }`",
-        ));
+        self.diagnostics.push(diagnostic.note(help));
         None
     }
 

@@ -142,8 +142,9 @@ impl Type {
         })
     }
 
-    /// Whether `{ remove = [...] }` can take items out of the option.
-    pub fn supports_removal(&self) -> bool {
+    /// Whether values from several places merge item by item, as set and ordered lists do. Only
+    /// these take `{ remove = [...] }`.
+    pub fn merges_items(&self) -> bool {
         matches!(
             self,
             Self::List {

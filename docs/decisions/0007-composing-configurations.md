@@ -54,7 +54,10 @@ Rules:
 - A set value beats any default.
 - When defaults disagree, the file doing the including wins over the file it includes, however
   deep. Defaults from two files where neither includes the other must agree, or it's an error.
-- Lists merge across strengths, as today. `remove` removes items whatever strength added them.
+- Set and ordered lists merge everything from module defaults to set values. A forced list
+  replaces them, and a declared default only applies when nothing else sets the list. `remove`
+  removes items whatever strength added them. `{ default = [...] }` on such a list is an error,
+  since it would mean the same as the list itself.
 - References (`${services.postgres.port}`) see the final value. They stay references: no
   arithmetic, functions or conditionals in TOML. Logic goes in modules.
 

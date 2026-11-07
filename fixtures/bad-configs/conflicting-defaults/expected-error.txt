@@ -1,0 +1,10 @@
+error: conflicting defaults for `services.nginx.main.port`
+ --> fixtures/bad-configs/conflicting-defaults/services/a.toml:2:8
+  |
+2 | port = { default = 8080 }
+  |        ^^^^^^^^^^^^^^^^^^ default 8080 here
+ --> fixtures/bad-configs/conflicting-defaults/services/b.toml:2:8
+  |
+2 | port = { default = 8081 }
+  |        ^^^^^^^^^^^^^^^^^^ default 8081 here
+  = help: neither file includes the other, so neither default wins; remove one, or set the value

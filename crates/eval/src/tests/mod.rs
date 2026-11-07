@@ -495,7 +495,7 @@ fn error_conflicting_values() {
       |
     2 | port = 8081
       |        ^^^^ set to 8081 here
-      = help: remove all but one, or force one with `{ value = ..., force = "reason" }`
+      = help: remove all but one, make one a default others may change with `{ default = ... }`, or force one with `{ value = ..., force = "reason" }`
     "#);
 }
 
@@ -645,5 +645,6 @@ fn error_required_option_not_set() {
     ");
 }
 
+mod defaults;
 mod lists;
 mod modules;

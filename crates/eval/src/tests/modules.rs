@@ -122,7 +122,7 @@ fn syncthing() -> Box<dyn Module> {
                 output.settings.push(set(
                     "users.syncthing.packages",
                     strings(&["syncthing"]),
-                    Level::Default,
+                    Level::ModuleDefault,
                 ));
             }
             Ok(output)
@@ -170,15 +170,16 @@ fn a_module_renders_from_config_and_creates_entries_elsewhere() {
 }
 
 #[test]
-fn config_overrides_a_module_default() {
+fn a_module_default_list_merges_with_config_and_can_be_removed_from() {
     let evaluation = eval_with(
         &[
             SYSTEM,
             ("services/sync.toml", "[services.syncthing.main]\n"),
             (
                 "users/syncthing.toml",
-                "packages = [\"syncthing-custom\"]\n",
+                "include = [\"custom.toml\"]\npackages = { remove = [\"syncthing\"] }\n",
             ),
+            ("custom.toml", "packages = [\"syncthing-custom\"]\n"),
         ],
         &[syncthing()],
     )
@@ -186,9 +187,10 @@ fn config_overrides_a_module_default() {
 
     insta::assert_snapshot!(explain(&evaluation, Some(&path("users"))).unwrap(), @r#"
     users.syncthing.packages = ["syncthing-custom"]
-      set at users/syncthing.toml:1:12
-      overrides ["syncthing"], default from module `syncthing`
+      set at custom.toml:1:12: ["syncthing-custom"]
+      default from module `syncthing`: ["syncthing"]
       overrides [], default
+      removes ["syncthing"], set at users/syncthing.toml:2:12
     "#);
 }
 
@@ -263,7 +265,7 @@ fn settings_outside_declared_writes_are_errors() {
             settings: vec![set(
                 "system.timezone",
                 Value::Str("UTC".into()),
-                Level::Default,
+                Level::ModuleDefault,
             )],
             ..Output::default()
         })
@@ -276,7 +278,11 @@ fn settings_outside_declared_writes_are_errors() {
 fn conflicting_module_defaults_name_both_modules() {
     let first = module("first", vec![], &["users"], |_| {
         Ok(Output {
-            settings: vec![set("users.app.packages", strings(&["a"]), Level::Default)],
+            settings: vec![set(
+                "users.app.packages",
+                strings(&["a"]),
+                Level::ModuleDefault,
+            )],
             ..Output::default()
         })
     });
@@ -285,7 +291,7 @@ fn conflicting_module_defaults_name_both_modules() {
             settings: vec![set(
                 "system.timezone",
                 Value::Str("UTC".into()),
-                Level::Default,
+                Level::ModuleDefault,
             )],
             ..Output::default()
         })
@@ -295,7 +301,7 @@ fn conflicting_module_defaults_name_both_modules() {
             settings: vec![set(
                 "system.timezone",
                 Value::Str("CET".into()),
-                Level::Default,
+                Level::ModuleDefault,
             )],
             ..Output::default()
         })
@@ -361,7 +367,7 @@ fn a_module_removes_items_like_config_does() {
                 .collect(),
         );
         Ok(Output {
-            settings: vec![set("users.john.packages", removal, Level::Default)],
+            settings: vec![set("users.john.packages", removal, Level::ModuleDefault)],
             ..Output::default()
         })
     });
@@ -727,4 +733,33 @@ fn modules_declare_options_every_user_has() {
       overrides false, default
     "
     );
+}
+
+#[test]
+fn a_default_in_a_file_beats_a_module_default() {
+    let zone = module("zone", vec![], &["system.timezone"], |_| {
+        Ok(Output {
+            settings: vec![set(
+                "system.timezone",
+                Value::Str("CET".into()),
+                Level::ModuleDefault,
+            )],
+            ..Output::default()
+        })
+    });
+    let evaluation = eval_with(
+        &[(
+            "system.toml",
+            "[system]\nhostname = \"box\"\ntimezone = { default = \"Europe/London\" }\n",
+        )],
+        &[zone],
+    )
+    .unwrap();
+
+    insta::assert_snapshot!(explain(&evaluation, Some(&path("system.timezone"))).unwrap(), @r#"
+    system.timezone = "Europe/London"
+      default at system.toml:3:12
+      overrides "CET", default from module `zone`
+      overrides "UTC", default
+    "#);
 }

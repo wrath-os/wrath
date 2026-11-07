@@ -5,7 +5,7 @@
 //! `include = ["profiles/laptop.toml"]`; paths are relative to the configuration root and an
 //! included file configures the same scope as the file that includes it.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::io;
 
 use toml::de::{DeTable, DeValue};
@@ -23,6 +23,8 @@ pub(crate) struct LoadedFile {
     pub file: FileId,
     /// The option the file's top-level keys belong to.
     pub root: OptionPath,
+    /// The files that include this one.
+    pub included_by: Vec<FileId>,
 }
 
 pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources) -> (Vec<LoadedFile>, Vec<Diagnostic>) {
@@ -30,7 +32,7 @@ pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources) -> (Vec<LoadedFile>
         fs,
         sources,
         files: Vec::new(),
-        seen: HashSet::new(),
+        seen: HashMap::new(),
         diagnostics: Vec::new(),
     };
     loader.add("system.toml", &OptionPath::root(), None);
@@ -46,7 +48,8 @@ struct Loader<'a> {
     fs: &'a dyn ConfigFs,
     sources: &'a mut Sources,
     files: Vec<LoadedFile>,
-    seen: HashSet<String>,
+    /// Each path read or being read, with its index in `files` once it has one.
+    seen: HashMap<String, Option<usize>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -79,9 +82,14 @@ impl Loader<'_> {
 
     /// Reads a file and the files it includes. `included_at` is the include entry naming it.
     fn add(&mut self, path: &str, root: &OptionPath, included_at: Option<Span>) {
-        if !self.seen.insert(path.to_owned()) {
+        let includer = included_at.map(|span| span.file);
+        if let Some(&index) = self.seen.get(path) {
+            if let (Some(index), Some(includer)) = (index, includer) {
+                self.files[index].included_by.push(includer);
+            }
             return;
         }
+        self.seen.insert(path.to_owned(), None);
         let text = match self.fs.read(path) {
             Ok(text) => text,
             Err(e) if e.kind() == io::ErrorKind::NotFound && included_at.is_none() => {
@@ -100,9 +108,11 @@ impl Loader<'_> {
             }
         };
         let file = self.sources.add(self.fs.display(path), text);
+        self.seen.insert(path.to_owned(), Some(self.files.len()));
         self.files.push(LoadedFile {
             file,
             root: root.clone(),
+            included_by: includer.into_iter().collect(),
         });
         let includes = match DeTable::parse(self.sources.text(file)) {
             Ok(table) => includes(table.get_ref(), file),

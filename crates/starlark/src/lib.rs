@@ -628,7 +628,7 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] value: StarValue<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
-        set_option(eval, path, value, Level::Default, false)
+        set_option(eval, path, value, Level::ModuleDefault, false)
     }
 
     /// Removes items from a set or ordered list.

@@ -7,4 +7,4 @@ error: conflicting values for `services.nginx.main.port`
   |
 2 | port = 8081
   |        ^^^^ set to 8081 here
-  = help: remove all but one, or force one with `{ value = ..., force = "reason" }`
+  = help: remove all but one, make one a default others may change with `{ default = ... }`, or force one with `{ value = ..., force = "reason" }`
