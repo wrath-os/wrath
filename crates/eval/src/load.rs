@@ -16,6 +16,7 @@ use crate::diag::Diagnostic;
 use crate::fs::ConfigFs;
 use crate::path::OptionPath;
 use crate::source::{FileId, Sources, Span};
+use crate::suggest::did_you_mean;
 use crate::walk::only_keys;
 
 /// The key that includes other files. It's only recognised at the top of a file.
@@ -44,7 +45,11 @@ pub(crate) struct Inclusion {
     pub as_defaults: bool,
 }
 
-pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources) -> (Vec<LoadedFile>, Vec<Diagnostic>) {
+pub(crate) fn load(
+    fs: &dyn ConfigFs,
+    sources: &mut Sources,
+    role: Option<&str>,
+) -> (Vec<LoadedFile>, Vec<Diagnostic>) {
     let mut loader = Loader {
         fs,
         sources,
@@ -52,7 +57,10 @@ pub(crate) fn load(fs: &dyn ConfigFs, sources: &mut Sources) -> (Vec<LoadedFile>
         seen: HashMap::new(),
         diagnostics: Vec::new(),
     };
-    loader.add("system.toml", &OptionPath::root(), None);
+    match starting_file(fs, role) {
+        Ok(path) => loader.add(&path, &OptionPath::root(), None),
+        Err(diagnostic) => loader.diagnostics.push(diagnostic),
+    }
     loader.add_listed("services", |_| Some(OptionPath::root()));
     loader.add_listed("users", |path| {
         let name = path.strip_prefix("users/")?.strip_suffix(".toml")?;
@@ -297,4 +305,61 @@ fn mark_defaults(files: &mut [LoadedFile], sources: &Sources) -> Vec<Diagnostic>
         );
     }
     diagnostics
+}
+
+/// The roles a configuration has: the names of the files directly in `roles/`, sorted. None when
+/// it describes one machine in `system.toml`.
+pub fn roles(fs: &dyn ConfigFs) -> io::Result<Vec<String>> {
+    Ok(fs
+        .toml_files(ROLES)?
+        .iter()
+        .filter_map(|path| {
+            let name = path.strip_prefix("roles/")?.strip_suffix(".toml")?;
+            (!name.contains('/')).then(|| name.to_owned())
+        })
+        .collect())
+}
+
+const ROLES: &str = "roles";
+const SYSTEM: &str = "system.toml";
+
+/// The file the configuration starts from: `system.toml`, or `roles/<role>.toml` when it has
+/// roles.
+fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagnostic> {
+    let roles = roles(fs)
+        .map_err(|e| Diagnostic::error(format!("cannot list `{}`: {e}", fs.display(ROLES))))?;
+    if roles.is_empty() {
+        return match role {
+            None => Ok(SYSTEM.to_owned()),
+            Some(role) => Err(Diagnostic::error(format!(
+                "there's no role `{role}`: this configuration describes one machine"
+            ))
+            .note("help: roles are files in `roles/`, used instead of `system.toml`")),
+        };
+    }
+    if fs.read(SYSTEM).is_ok() {
+        return Err(Diagnostic::error(
+            "this configuration has both `system.toml` and `roles/`",
+        )
+        .note(
+            "help: a configuration describes one machine in `system.toml`, or kinds of machines \
+             in `roles/`",
+        ));
+    }
+    let list = roles.join(", ");
+    match role {
+        None => Err(Diagnostic::error(format!(
+            "this configuration has roles, so it needs one: {list}"
+        ))
+        .note("help: pick one with `--role NAME`")),
+        Some(role) if roles.iter().any(|name| name == role) => Ok(format!("roles/{role}.toml")),
+        Some(role) => {
+            let mut diagnostic = Diagnostic::error(format!("there's no role `{role}`"))
+                .note(format!("the roles are {list}"));
+            if let Some(note) = did_you_mean(role, &roles) {
+                diagnostic = diagnostic.note(note);
+            }
+            Err(diagnostic)
+        }
+    }
 }

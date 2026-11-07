@@ -1,0 +1,5 @@
+# Two kinds of machine sharing common.toml.
+include = ["common.toml"]
+
+[system]
+hostname = "laptop"

@@ -34,6 +34,8 @@ pub struct Input<'a> {
     /// Sources so far, normally the modules' own files, so module spans resolve.
     pub sources: Sources,
     pub config: &'a dyn ConfigFs,
+    /// The role to evaluate, for a configuration with `roles/`.
+    pub role: Option<&'a str>,
     /// Options declared outside modules. Module options are added to it.
     pub schema: Schema,
     pub modules: &'a [Box<dyn Module>],
@@ -159,6 +161,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     let Input {
         mut sources,
         config,
+        role,
         mut schema,
         modules,
         facts,
@@ -183,7 +186,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             )));
         }
     }
-    let (files, load_diagnostics) = load::load(config, &mut sources);
+    let (files, load_diagnostics) = load::load(config, &mut sources, role);
     diagnostics.extend(load_diagnostics);
     let walked = walk::walk(&schema, &sources, &files);
     let starting_files = files

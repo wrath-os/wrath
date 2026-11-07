@@ -174,7 +174,8 @@ activation runs it, and people don't.
 Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `try`, `keep`,
 `history`, `diff`, `rollback`, `clean`, `build`, `apply PATH`, `run`, `shell`, `add`, `remove`,
 `lock`, `update`, `sources`, `check`, `why` for options, files and packages, `options`,
-`secret`, the `dev` commands, and `--json` for `plan`, `status`, `history` and `sources`.
+`secret`, the `dev` commands, `--json` for `plan`, `status`, `history` and `sources`, and
+`--role` for configurations with `roles/`.
 
 Not yet: finding a project's `distro.toml`, `--user`, versions (`jq@1.7`), `search`, `info`,
 `--json` elsewhere, `--host`, and `--verbose`. `clean` lists the generations it removes rather than

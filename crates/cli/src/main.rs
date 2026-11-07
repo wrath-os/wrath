@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
 use distro_backend_nixos as backend;
@@ -31,6 +32,9 @@ struct Cli {
     /// The configuration to act on [default: the system's, in /etc/distro]
     #[arg(short = 'C', long = "config", global = true, value_name = "DIR")]
     config: Option<PathBuf>,
+    /// The role to act as, for a configuration with kinds of machines in `roles/`
+    #[arg(long, global = true, value_name = "NAME")]
+    role: Option<String>,
     /// Print data as JSON instead of text, where a command supports it
     #[arg(long, global = true)]
     json: bool,
@@ -233,6 +237,7 @@ struct TestOptions {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    ROLE.set(cli.role.clone()).expect("the role is set once");
     let json = cli.json;
     if json
         && !matches!(
@@ -334,6 +339,13 @@ fn main() -> ExitCode {
     }
 }
 
+/// The role given with `--role`, set once when the command line is read.
+static ROLE: OnceLock<Option<String>> = OnceLock::new();
+
+fn role() -> Option<&'static str> {
+    ROLE.get().and_then(Option::as_deref)
+}
+
 /// The configuration a command acts on: the one given, or the system's. The context goes to
 /// stderr first, so output always says which configuration it's about.
 fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
@@ -347,7 +359,10 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
         });
     }
     let kind = if given.is_some() { "config" } else { "system" };
-    eprintln!("{kind} {}", config.display());
+    match role() {
+        Some(role) => eprintln!("{kind} {}, role {role}", config.display()),
+        None => eprintln!("{kind} {}", config.display()),
+    }
     Ok(config.to_path_buf())
 }
 
@@ -361,10 +376,29 @@ fn package_model(given: Option<&Path>, modules: &Path) -> Result<Model, String> 
     model(&config, modules).ok_or_else(|| "the configuration has errors".to_owned())
 }
 
-/// Evaluates the configuration and says whether it has errors, without building anything.
+/// Evaluates the configuration and says whether it has errors, without building anything: for
+/// the role given, or every role when none is.
 fn check_config(config: &Path, modules: &Path) -> Result<ExitCode, String> {
-    let Some(model) = model(config, modules) else {
-        return Ok(ExitCode::FAILURE);
+    if let Some(role) = role() {
+        return Ok(check_role(config, modules, Some(role)));
+    }
+    let mut failed = false;
+    for role in all_roles(config)? {
+        if let Some(role) = &role {
+            eprintln!("role {role}");
+        }
+        failed |= check_role(config, modules, role.as_deref()) == ExitCode::FAILURE;
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> ExitCode {
+    let Some(model) = model_as(config, modules, role) else {
+        return ExitCode::FAILURE;
     };
     let packages = model.all_packages().count();
     let locked = if model.is_locked() {
@@ -377,7 +411,7 @@ fn check_config(config: &Path, modules: &Path) -> Result<ExitCode, String> {
         model.options.len(),
         &model.hash()[..16]
     );
-    Ok(ExitCode::SUCCESS)
+    ExitCode::SUCCESS
 }
 
 fn dev_test(
@@ -525,17 +559,37 @@ fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
     modules.unwrap_or_else(|| under_root(root, Path::new("modules")))
 }
 
-/// Evaluates a configuration, or prints why it can't and returns `None`.
+/// Evaluates a configuration for the role given with `--role`, or prints why it can't and returns
+/// `None`.
 fn evaluate(config: &Path, modules: &Path) -> Option<Evaluation> {
-    system::evaluate_dir(config, modules, system::ModuleOrder::Sorted)
+    evaluate_as(config, modules, role())
+}
+
+fn evaluate_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Evaluation> {
+    system::evaluate_dir(config, modules, system::ModuleOrder::Sorted, role)
         .inspect_err(|errors| eprint!("{errors}"))
         .ok()
+}
+
+/// Every role of a configuration, or `[None]` for one that describes one machine.
+pub(crate) fn all_roles(config: &Path) -> Result<Vec<Option<String>>, String> {
+    let roles = distro_eval::roles(&distro_eval::DirFs::new(config))
+        .map_err(|e| format!("cannot list the roles in {}: {e}", config.display()))?;
+    Ok(if roles.is_empty() {
+        vec![None]
+    } else {
+        roles.into_iter().map(Some).collect()
+    })
 }
 
 /// The configuration's model, with its lock when it has one, or prints why it can't and
 /// returns `None`.
 fn model(config: &Path, modules: &Path) -> Option<Model> {
-    let model = Model::from_evaluation(&evaluate(config, modules)?);
+    model_as(config, modules, role())
+}
+
+fn model_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
+    let model = Model::from_evaluation(&evaluate_as(config, modules, role)?);
     match read_lock(config) {
         Ok(Some(lock)) => Some(model.with_lock(&lock)),
         Ok(None) => Some(model),
@@ -564,10 +618,15 @@ fn lock(
     modules: &Path,
     update: Option<&[String]>,
 ) -> Result<ExitCode, String> {
-    match model(config, modules) {
-        Some(model) => generations::lock(root, config, &model, update),
-        None => Ok(ExitCode::FAILURE),
+    // One lock serves every role, so every role is locked, whichever `--role` says.
+    let mut models = Vec::new();
+    for role in all_roles(config)? {
+        let Some(model) = model_as(config, modules, role.as_deref()) else {
+            return Ok(ExitCode::FAILURE);
+        };
+        models.push((role, model));
     }
+    generations::lock(root, config, &models, update)
 }
 
 /// What a plan compares a configuration against.

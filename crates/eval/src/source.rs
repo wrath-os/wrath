@@ -59,6 +59,12 @@ impl Sources {
         id
     }
 
+    /// Every file, in the order they were added.
+    pub fn files(&self) -> impl Iterator<Item = FileId> + use<> {
+        (0..self.files.len())
+            .map(|index| FileId(u32::try_from(index).expect("fewer than 2^32 source files")))
+    }
+
     pub fn name(&self, file: FileId) -> &str {
         &self.file(file).name
     }

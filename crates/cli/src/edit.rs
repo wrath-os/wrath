@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use distro_eval::{Evaluation, OptionPath, Site, Value};
-use distro_model::{Model, package_source};
+use distro_model::package_source;
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table};
 
-use crate::{evaluate, generations, read_lock, run};
+use crate::{evaluate, run};
 
 /// Adds `packages` to the system's packages, or to `home`'s, and locks them. Nothing is kept
 /// when they can't be locked, such as a package that doesn't exist.
@@ -162,9 +162,13 @@ fn config_sites<'a>(
 }
 
 /// The starting file that holds the packages, and the key in it: the user's own file when there
-/// is one, or `system.toml`. Packages go here when no starting file lists any yet, and so do
-/// removals of what shared files add.
+/// is one, or the role's file or `system.toml`. Packages go here when no starting file lists any
+/// yet, and so do removals of what shared files add.
 fn starting_file(config: &Path, home: Option<&str>) -> (PathBuf, Vec<String>) {
+    let start = match crate::role() {
+        Some(role) => config.join("roles").join(format!("{role}.toml")),
+        None => config.join("system.toml"),
+    };
     match home {
         Some(user) => {
             let own = config.join("users").join(format!("{user}.toml"));
@@ -172,10 +176,10 @@ fn starting_file(config: &Path, home: Option<&str>) -> (PathBuf, Vec<String>) {
                 (own, vec!["packages".into()])
             } else {
                 let keys = vec!["users".into(), user.to_owned(), "packages".into()];
-                (config.join("system.toml"), keys)
+                (start, keys)
             }
         }
-        None => (config.join("system.toml"), vec!["packages".into()]),
+        None => (start, vec!["packages".into()]),
     }
 }
 
@@ -321,16 +325,13 @@ impl Edits {
         for (file, (_, edited)) in &texts {
             std::fs::write(file, edited).map_err(|e| format!("{}: {e}", file.display()))?;
         }
-        let locked = evaluate(config, modules)
-            .ok_or_else(|| "the edited configuration has errors".to_owned())
-            .and_then(|evaluation| {
-                let model = Model::from_evaluation(&evaluation);
-                let model = match read_lock(config)? {
-                    Some(lock) => model.with_lock(&lock),
-                    None => model,
-                };
-                generations::lock(root, config, &model, None)
-            });
+        let locked = crate::lock(root, config, modules, None).and_then(|code| {
+            if code == ExitCode::FAILURE {
+                Err("the edited configuration has errors".to_owned())
+            } else {
+                Ok(code)
+            }
+        });
         locked.map_err(|message| {
             for (file, (original, _)) in &texts {
                 let _ = std::fs::write(file, original);

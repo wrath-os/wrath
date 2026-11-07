@@ -1,5 +1,6 @@
 //! Building systems and moving between generations through the NixOS backend.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -380,52 +381,87 @@ pub fn rollback() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Resolves `model`'s packages and writes the lock next to `config`, then prints how the
-/// packages changed. With `update`, those sources move to their newest version first, or every
-/// source when it names none.
+/// Resolves the packages of every role in `models` and writes the one lock next to `config`,
+/// then prints how each role's packages changed. The first role pins the sources and the others
+/// keep those pins, so every role runs the same software. With `update`, those sources move to
+/// their newest version first, or every source when it names none. A configuration of one
+/// machine has a single role, `None`.
 pub fn lock(
     root: &Path,
     config: &Path,
-    model: &Model,
+    models: &[(Option<String>, Model)],
     update: Option<&[String]>,
 ) -> Result<ExitCode, String> {
-    let wanted = match update {
-        Some(names) => follow_newest(model.clone(), names)?,
-        None => model.clone(),
+    let models = match update {
+        Some(names) => follow_newest(models, names)?,
+        None => models.to_vec(),
     };
-    let lock = resolve(root, &wanted)?;
+    let mut lock: Option<Lock> = None;
+    for (_, model) in &models {
+        let wanted = match &lock {
+            Some(lock) => model.clone().with_lock(lock),
+            None => model.clone(),
+        };
+        let resolved = resolve(root, &wanted)?;
+        match &mut lock {
+            Some(lock) => {
+                lock.sources.extend(resolved.sources);
+                lock.packages.extend(resolved.packages);
+            }
+            None => lock = Some(resolved),
+        }
+    }
+    let lock = lock.ok_or("there's nothing to lock")?;
     write_lock(config, &lock)?;
-    let plan = distro_model::plan(model, &model.clone().with_lock(&lock));
     let count = lock.packages.len();
     let noun = if count == 1 { "package" } else { "packages" };
     let sources: Vec<&str> = lock.sources.keys().map(String::as_str).collect();
     println!("locked {count} {noun} from {}", sources.join(", "));
-    if !plan.is_empty() {
+    for (role, model) in &models {
+        let plan = distro_model::plan(model, &model.clone().with_lock(&lock));
+        if plan.is_empty() {
+            continue;
+        }
+        if let Some(role) = role {
+            println!("role {role}");
+        }
         print!("{plan}");
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// `model` with the sources `names` unpinned, or all of them when it names none, so resolving
-/// takes their newest versions.
-fn follow_newest(mut model: Model, names: &[String]) -> Result<Model, String> {
-    model
-        .sources
-        .entry(DEFAULT_SOURCE.to_owned())
-        .or_insert_with(|| Source::follow(DEFAULT_URL));
-    if let Some(unknown) = names.iter().find(|name| !model.sources.contains_key(*name)) {
-        let known: Vec<&str> = model.sources.keys().map(String::as_str).collect();
+/// The models with the sources `names` unpinned, or all of them when it names none, so resolving
+/// takes their newest versions. A name has to be a source of at least one of them.
+fn follow_newest(
+    models: &[(Option<String>, Model)],
+    names: &[String],
+) -> Result<Vec<(Option<String>, Model)>, String> {
+    let mut models = models.to_vec();
+    for (_, model) in &mut models {
+        model
+            .sources
+            .entry(DEFAULT_SOURCE.to_owned())
+            .or_insert_with(|| Source::follow(DEFAULT_URL));
+    }
+    let known: BTreeSet<&str> = models
+        .iter()
+        .flat_map(|(_, model)| model.sources.keys().map(String::as_str))
+        .collect();
+    if let Some(unknown) = names.iter().find(|name| !known.contains(name.as_str())) {
+        let known: Vec<&str> = known.into_iter().collect();
         return Err(format!(
             "there's no source `{unknown}`; the configuration has {}",
             known.join(", ")
         ));
     }
-    for (name, source) in &mut model.sources {
-        if names.is_empty() || names.contains(name) {
-            *source = Source::follow(&source.url);
+    for (_, model) in &mut models {
+        for (name, source) in &mut model.sources {
+            if names.is_empty() || names.contains(name) {
+                *source = Source::follow(&source.url);
+            }
         }
     }
-    Ok(model)
+    Ok(models)
 }
 
 /// What the default source follows when nothing says otherwise. The factory pins it.
@@ -667,20 +703,30 @@ mod tests {
         model.sources.insert("nixpkgs".into(), pinned("github:a/b"));
         model.sources.insert("stable".into(), pinned("github:c/d"));
 
-        let one = follow_newest(model.clone(), &["stable".into()]).unwrap();
-        assert!(one.sources["nixpkgs"].is_locked());
-        assert_eq!(one.sources["stable"], Source::follow("github:c/d"));
+        let mut other = Model::default();
+        other.sources.insert("edge".into(), pinned("github:e/f"));
+        let models = [(None, model), (Some("other".to_owned()), other)];
+        let follow = |names: &[String]| follow_newest(&models, names);
 
-        let all = follow_newest(model.clone(), &[]).unwrap();
-        assert!(!all.sources.values().any(Source::is_locked));
+        let one = follow(&["stable".into()]).unwrap();
+        assert!(one[0].1.sources["nixpkgs"].is_locked());
+        assert_eq!(one[0].1.sources["stable"], Source::follow("github:c/d"));
+        assert!(one[1].1.sources["edge"].is_locked());
 
-        let unknown = follow_newest(model, &["stabel".into()]).unwrap_err();
+        let edge = follow(&["edge".into()]).unwrap();
+        assert_eq!(edge[1].1.sources["edge"], Source::follow("github:e/f"));
+
+        let all = follow(&[]).unwrap();
+        assert!(!all[0].1.sources.values().any(Source::is_locked));
+        assert!(!all[1].1.sources.values().any(Source::is_locked));
+
+        let unknown = follow(&["stabel".into()]).unwrap_err();
         assert_eq!(
             unknown,
-            "there's no source `stabel`; the configuration has nixpkgs, stable"
+            "there's no source `stabel`; the configuration has edge, nixpkgs, stable"
         );
 
-        let fresh = follow_newest(Model::default(), &[]).unwrap();
-        assert_eq!(fresh.sources["nixpkgs"], Source::follow(DEFAULT_URL));
+        let fresh = follow_newest(&[(None, Model::default())], &[]).unwrap();
+        assert_eq!(fresh[0].1.sources["nixpkgs"], Source::follow(DEFAULT_URL));
     }
 }

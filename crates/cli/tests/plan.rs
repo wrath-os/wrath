@@ -378,3 +378,28 @@ fn json_is_the_plan_as_data_and_refused_where_it_isnt_supported() {
     let unsupported = distro(&["why", "--json", "-C", "fixtures/configs/basic", "--all"]);
     assert!(!unsupported.status.success());
 }
+
+#[test]
+fn check_covers_every_role_unless_one_is_given() {
+    let all = distro(&["check", "-C", "fixtures/configs/roles"]);
+    assert!(all.status.success());
+    let stderr = String::from_utf8_lossy(&all.stderr);
+    assert_eq!(
+        stderr,
+        "config fixtures/configs/roles\nrole laptop\nrole worker\n"
+    );
+    assert_eq!(stdout(&all).matches("no errors: ").count(), 2);
+
+    let one = distro(&["check", "-C", "fixtures/configs/roles", "--role", "worker"]);
+    assert!(one.status.success());
+    let stderr = String::from_utf8_lossy(&one.stderr);
+    assert_eq!(stderr, "config fixtures/configs/roles, role worker\n");
+
+    let none = distro(&["plan", "-C", "fixtures/configs/roles"]);
+    assert!(!none.status.success());
+    let stderr = String::from_utf8_lossy(&none.stderr);
+    assert!(
+        stderr.contains("so it needs one: laptop, worker"),
+        "{stderr}"
+    );
+}

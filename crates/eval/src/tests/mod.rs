@@ -101,9 +101,18 @@ pub(crate) fn eval_with(
     files: &[(&str, &str)],
     modules: &[Box<dyn Module>],
 ) -> Result<crate::Evaluation, String> {
+    eval_role(files, modules, None)
+}
+
+pub(crate) fn eval_role(
+    files: &[(&str, &str)],
+    modules: &[Box<dyn Module>],
+    role: Option<&str>,
+) -> Result<crate::Evaluation, String> {
     evaluate(Input {
         sources: Sources::default(),
         config: &MemFs::new(files.iter().copied()),
+        role,
         schema: schema(),
         modules,
         facts: &facts(),
@@ -654,3 +663,4 @@ fn error_required_option_not_set() {
 mod defaults;
 mod lists;
 mod modules;
+mod roles;

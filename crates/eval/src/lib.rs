@@ -23,6 +23,7 @@ mod why;
 pub use diag::{Diagnostic, Label, render};
 pub use eval::{Contribution, EvalError, Evaluation, Input, Rendered, Resolved, Use, evaluate};
 pub use fs::{ConfigFs, DirFs, MemFs};
+pub use load::roles;
 pub use module::{
     ConfigReader, DEFAULT_SOURCE, File, Home, Module, ModuleId, Output, ReadError, RenderError,
     SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, home_path, package_source,

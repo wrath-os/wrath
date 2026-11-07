@@ -53,6 +53,7 @@ fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, St
     evaluate(Input {
         sources,
         config,
+        role: None,
         schema: Schema::default(),
         modules: &modules,
         facts: &Value::Table(BTreeMap::new()),
@@ -72,6 +73,7 @@ fn run(source: &str) -> Result<Evaluation, String> {
     evaluate(Input {
         sources,
         config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
+        role: None,
         schema: base_schema(),
         modules: &[module],
         facts: &Value::Table(BTreeMap::new()),
@@ -441,6 +443,7 @@ module(
     let evaluation = evaluate(Input {
         sources,
         config: &config,
+        role: None,
         schema: base_schema(),
         modules: &modules,
         facts: &Value::Table(BTreeMap::new()),
@@ -739,6 +742,7 @@ fn load_from(files: &[(&str, &str)], module: &str) -> Result<Evaluation, String>
     evaluate(Input {
         sources,
         config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
+        role: None,
         schema: base_schema(),
         modules: &[module],
         facts: &Value::Table(BTreeMap::new()),

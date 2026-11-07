@@ -20,25 +20,32 @@ pub fn evaluate_dir(
     config: &Path,
     modules: &Path,
     order: ModuleOrder,
+    role: Option<&str>,
 ) -> Result<Evaluation, String> {
-    evaluate_with(&DirFs::new(config), modules, order)
+    evaluate_with(&DirFs::new(config), modules, order, role)
 }
 
 /// Like [`evaluate_dir`], for a configuration from anywhere, with modules in sorted order.
-pub fn evaluate(config: &dyn ConfigFs, modules: &Path) -> Result<Evaluation, String> {
-    evaluate_with(config, modules, ModuleOrder::Sorted)
+pub fn evaluate(
+    config: &dyn ConfigFs,
+    modules: &Path,
+    role: Option<&str>,
+) -> Result<Evaluation, String> {
+    evaluate_with(config, modules, ModuleOrder::Sorted, role)
 }
 
 fn evaluate_with(
     config: &dyn ConfigFs,
     modules: &Path,
     order: ModuleOrder,
+    role: Option<&str>,
 ) -> Result<Evaluation, String> {
     let mut sources = Sources::default();
     let modules = load_modules(modules, &mut sources, order)?;
     distro_eval::evaluate(Input {
         sources,
         config,
+        role,
         schema: Schema::default(),
         modules: &modules,
         facts: &host_facts(),

@@ -38,7 +38,7 @@ pub fn plan_time(options: &Options<'_>) -> Result<bool, String> {
     }
     write(&modules.join("inventory.star"), INVENTORY_MODULE)?;
 
-    let before = system::evaluate_dir(&configs.join("before"), &modules, ModuleOrder::Sorted)
+    let before = system::evaluate_dir(&configs.join("before"), &modules, ModuleOrder::Sorted, None)
         .map(|evaluation| Model::from_evaluation(&evaluation))?;
     let mut times = Vec::with_capacity(options.runs);
     let mut changes = 0;
@@ -46,7 +46,7 @@ pub fn plan_time(options: &Options<'_>) -> Result<bool, String> {
     for _ in 0..options.runs {
         let start = Instant::now();
         let evaluation =
-            system::evaluate_dir(&configs.join("after"), &modules, ModuleOrder::Sorted)?;
+            system::evaluate_dir(&configs.join("after"), &modules, ModuleOrder::Sorted, None)?;
         let after = Model::from_evaluation(&evaluation);
         let diff = plan(&before, &after);
         times.push(start.elapsed());

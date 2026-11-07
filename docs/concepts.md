@@ -24,6 +24,10 @@ lock and commands:
 The configuration a command acts on is its **context**: `-C DIR`, or the nearest project, or
 the system. Output always says which one it is.
 
+A **role** is a kind of machine: a system configuration with `roles/worker.toml` and
+`roles/laptop.toml` instead of `system.toml` describes two. Every machine with a role runs the
+same system; commands pick one with `--role`, and `check` and `lock` cover every role.
+
 ## Describing what you want
 
 An **option** is one typed setting with a dotted name, such as `services.nginx.main.port`. It
@@ -34,9 +38,9 @@ A **default** is a value others may change, written `{ default = "Europe/Stockho
 value in a file included with `{ path = "common.toml", as = "defaults" }` is a default too. A set
 value beats a default, and when two defaults disagree, the file that includes the other wins.
 
-The **starting file** (planned) is the file a configuration starts from, such as `system.toml` or
-a project's `distro.toml`. It owns the configuration: included files can't change it, and `add`
-writes to it.
+The **starting file** is the file a configuration starts from, such as `system.toml`, a role's
+file, or (planned) a project's `distro.toml`. It owns the configuration: included files can't
+change it, and `add` writes to it.
 
 A **module** declares options and turns their values into packages, files, services and settings.
 Modules are written in Starlark and can share code through **libraries**. Users write TOML, and

@@ -1,0 +1,7 @@
+include = ["common.toml"]
+
+[system]
+hostname = "worker"
+
+[services.nginx.main]
+enable = true

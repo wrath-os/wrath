@@ -17,7 +17,7 @@ pub fn bad_configs(dir: &Path, modules: &Path, bless: bool) -> Result<bool, Stri
     let mut all_passed = true;
     for case in subdirectories(dir)? {
         let name = file_name(&case);
-        let actual = match system::evaluate_dir(&case, modules, ModuleOrder::Sorted) {
+        let actual = match system::evaluate_dir(&case, modules, ModuleOrder::Sorted, None) {
             Ok(_) => "(no error)\n".to_owned(),
             Err(errors) => errors,
         };
@@ -59,19 +59,23 @@ fn print_indented(text: &str) {
 pub fn determinism(modules: &Path, configs: &Path, runs: u64) -> Result<bool, String> {
     let mut all_passed = true;
     for config in subdirectories(configs)? {
-        let canonical = (0..runs)
-            .map(|seed| {
-                system::evaluate_dir(&config, modules, ModuleOrder::Shuffled(seed))
-                    .map(|evaluation| Model::from_evaluation(&evaluation).canonical())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let stable = canonical.windows(2).all(|pair| pair[0] == pair[1]);
-        all_passed &= stable;
-        println!(
-            "{}  {:<16} {runs} runs",
-            if stable { "PASS" } else { "FAIL" },
-            file_name(&config)
-        );
+        for role in crate::all_roles(&config)? {
+            let canonical = (0..runs)
+                .map(|seed| {
+                    let order = ModuleOrder::Shuffled(seed);
+                    system::evaluate_dir(&config, modules, order, role.as_deref())
+                        .map(|evaluation| Model::from_evaluation(&evaluation).canonical())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let stable = canonical.windows(2).all(|pair| pair[0] == pair[1]);
+            all_passed &= stable;
+            let name = match &role {
+                Some(role) => format!("{}:{role}", file_name(&config)),
+                None => file_name(&config),
+            };
+            let status = if stable { "PASS" } else { "FAIL" };
+            println!("{status}  {name:<16} {runs} runs");
+        }
     }
     Ok(all_passed)
 }
