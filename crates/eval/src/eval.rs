@@ -12,6 +12,7 @@ use std::rc::Rc;
 use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
 use crate::load;
+use crate::machines::{self, Machine};
 use crate::module::{
     ConfigReader, DEFAULT_SOURCE, Module, ModuleId, Output, ReadError, RenderError, Secret,
     Setting, home_path, package_source,
@@ -58,6 +59,7 @@ pub struct Evaluation {
     options: BTreeMap<OptionPath, Resolved>,
     machine_values: BTreeSet<OptionPath>,
     declared: BTreeMap<String, Span>,
+    machines: BTreeMap<String, Machine>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
 }
@@ -133,6 +135,11 @@ impl Evaluation {
         &self.machine_values
     }
 
+    /// The machines `machines.toml` names, with their roles and values.
+    pub fn machines(&self) -> &BTreeMap<String, Machine> {
+        &self.machines
+    }
+
     /// The values each machine is given, declared in `[machine.values]`, and where.
     pub fn machine_values_declared(&self) -> &BTreeMap<String, Span> {
         &self.declared
@@ -195,7 +202,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             )));
         }
     }
-    let (files, load_diagnostics) = load::load(config, &mut sources, role);
+    let (files, load_diagnostics, role) = load::load(config, &mut sources, role);
     diagnostics.extend(load_diagnostics);
     let walked = walk::walk(&schema, &sources, &files);
     let starting_files = files
@@ -204,6 +211,15 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         .map(|loaded| loaded.file)
         .collect();
     diagnostics.extend(walked.diagnostics);
+    let roles = load::roles(config).unwrap_or_default();
+    let (machines, machine_diagnostics) = machines::machines(
+        config,
+        &mut sources,
+        &roles,
+        role.as_deref(),
+        &walked.machine_values,
+    );
+    diagnostics.extend(machine_diagnostics);
 
     let mut definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>> = BTreeMap::new();
     for definition in walked.definitions {
@@ -269,6 +285,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         options: resolver.options,
         machine_values: resolver.machine_values,
         declared: resolver.declared,
+        machines,
         modules: resolver
             .rendered
             .into_iter()

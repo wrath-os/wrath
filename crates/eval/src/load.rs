@@ -45,11 +45,13 @@ pub(crate) struct Inclusion {
     pub as_defaults: bool,
 }
 
+/// Loads the files of a configuration, starting from `role_given`, or else its only role or
+/// `system.toml`, and returns the role it started from.
 pub(crate) fn load(
     fs: &dyn ConfigFs,
     sources: &mut Sources,
-    role: Option<&str>,
-) -> (Vec<LoadedFile>, Vec<Diagnostic>) {
+    role_given: Option<&str>,
+) -> (Vec<LoadedFile>, Vec<Diagnostic>, Option<String>) {
     let mut loader = Loader {
         fs,
         sources,
@@ -57,10 +59,18 @@ pub(crate) fn load(
         seen: HashMap::new(),
         diagnostics: Vec::new(),
     };
-    match starting_file(fs, role) {
-        Ok(path) => loader.add(&path, &OptionPath::root(), None),
-        Err(diagnostic) => loader.diagnostics.push(diagnostic),
-    }
+    let role = match starting_file(fs, role_given) {
+        Ok(path) => {
+            loader.add(&path, &OptionPath::root(), None);
+            path.strip_prefix("roles/")
+                .and_then(|name| name.strip_suffix(".toml"))
+                .map(str::to_owned)
+        }
+        Err(diagnostic) => {
+            loader.diagnostics.push(diagnostic);
+            None
+        }
+    };
     loader.add_listed("services", |_| Some(OptionPath::root()));
     loader.add_listed("users", |path| {
         let name = path.strip_prefix("users/")?.strip_suffix(".toml")?;
@@ -68,7 +78,7 @@ pub(crate) fn load(
     });
     let mut diagnostics = loader.diagnostics;
     diagnostics.extend(mark_defaults(&mut loader.files, loader.sources));
-    (loader.files, diagnostics)
+    (loader.files, diagnostics, role)
 }
 
 struct Loader<'a> {
@@ -324,10 +334,14 @@ const ROLES: &str = "roles";
 const SYSTEM: &str = "system.toml";
 
 /// The file the configuration starts from: `system.toml`, or `roles/<role>.toml` when it has
-/// roles.
+/// roles. A configuration with one role starts from it without being given its name.
 fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagnostic> {
     let roles = roles(fs)
         .map_err(|e| Diagnostic::error(format!("cannot list `{}`: {e}", fs.display(ROLES))))?;
+    let role = match (role, roles.as_slice()) {
+        (None, [only]) => Some(only.as_str()),
+        _ => role,
+    };
     if roles.is_empty() {
         return match role {
             None => Ok(SYSTEM.to_owned()),

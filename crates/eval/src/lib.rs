@@ -9,6 +9,7 @@ mod eval;
 pub mod formats;
 mod fs;
 mod load;
+mod machines;
 mod module;
 mod ordered;
 mod path;
@@ -26,6 +27,7 @@ pub use eval::{
 };
 pub use fs::{ConfigFs, DirFs, MemFs};
 pub use load::roles;
+pub use machines::Machine;
 pub use module::{
     ConfigReader, DEFAULT_SOURCE, File, Home, Module, ModuleId, Output, ReadError, RenderError,
     SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, home_path, package_source,

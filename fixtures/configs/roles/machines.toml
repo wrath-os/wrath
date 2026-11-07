@@ -1,0 +1,2 @@
+laptop = { role = "laptop" }
+w-01 = { role = "worker", zone = "eu-north-1a" }

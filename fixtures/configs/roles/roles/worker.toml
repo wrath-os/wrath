@@ -1,7 +1,8 @@
+# Workers are named per machine, at install or in machines.toml.
 include = ["common.toml"]
 
-[system]
-hostname = "worker"
+[machine.values]
+zone = { type = "string" }
 
 [services.nginx.main]
 enable = true

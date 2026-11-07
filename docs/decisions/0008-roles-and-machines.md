@@ -75,7 +75,8 @@ zone = { type = "string" }
 
 In order: `--role NAME`; the role recorded on the machine at install; the machine's entry in
 `machines.toml`. `distro install --role worker --set zone=eu-north-1b` records the role and
-values in `/var/lib/distro/machine.toml`.
+values in `/var/lib/distro/machine.toml`. A configuration with a single role uses it without
+asking, so moving from `system.toml` to `roles/` starts as a rename.
 
 That file is state outside the configuration, an exception to intent living only in TOML. It
 holds the machine's identity, which the machine owns, and nothing about what should run on it.
@@ -89,6 +90,12 @@ w-gpu-03 = { role = "gpu-worker", zone = "eu-north-1b" }
 
 Machines that aren't listed get their role and values at install, which is the usual case for
 machines that are interchangeable.
+
+A machine is found in `machines.toml` by its recorded name, or else its hostname. The role it was
+installed as and its entry must agree. Its entry's values are written to
+`/var/lib/distro/machine.toml` when it switches, so the repo decides them. `check` makes sure each
+machine has a role and exactly the values its role declares. A configuration in `system.toml` has
+no `machines.toml`: it has one machine, and what differs goes in the configuration itself.
 
 ### Requirements
 
