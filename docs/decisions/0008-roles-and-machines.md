@@ -105,13 +105,19 @@ A role can state what a machine needs to run it. Each machine checks this before
 ```toml
 [machine.requires]
 gpu = "nvidia"
-memory_gb = { at_least = 64 }
+memory_gb = { at_least = 62 }
+arch = { within = ["x86_64", "aarch64"] }
 ```
+
+The facts are `arch`, `cpu.count`, `gpu` (the vendor of each display controller) and
+`memory_gb` (what the kernel sees, a little under what's installed). A name is required as it is
+or `within` a list, a number as it is or `at_least` an amount. A machine with several GPUs meets
+`gpu = "nvidia"` when one of them is.
 
 ```console
 $ distro install --role gpu-worker
 error: this machine doesn't fit the role gpu-worker
-  gpu: the role requires nvidia, this machine has amd (roles/gpu-worker.toml:5)
+  gpu: the role gpu-worker requires nvidia, this machine has amd (roles/gpu-worker.toml:5:1)
 ```
 
 Requirements don't change the build. They're the same kind of check as machine policy (in the

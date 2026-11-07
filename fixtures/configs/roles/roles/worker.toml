@@ -6,3 +6,6 @@ zone = { type = "string" }
 
 [services.nginx.main]
 enable = true
+
+[machine.requires]
+arch = { within = ["x86_64", "aarch64"] }

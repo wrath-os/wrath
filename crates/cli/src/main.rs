@@ -13,6 +13,7 @@ use generations::Switch;
 mod bench;
 mod checks;
 mod edit;
+mod facts;
 mod generations;
 mod machine;
 mod options;
@@ -616,7 +617,15 @@ fn model(config: &Path, modules: &Path) -> Option<Model> {
 }
 
 fn model_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
-    let model = Model::from_evaluation(&evaluate_as(config, modules, role)?);
+    with_lock(
+        config,
+        Model::from_evaluation(&evaluate_as(config, modules, role)?),
+    )
+}
+
+/// `model` with the lock next to `config`, when it has one, or prints why it can't be read and
+/// returns `None`.
+fn with_lock(config: &Path, model: Model) -> Option<Model> {
     match read_lock(config) {
         Ok(Some(lock)) => Some(model.with_lock(&lock)),
         Ok(None) => Some(model),
@@ -773,13 +782,26 @@ fn switch(
         return generations::switch_to(&system, how);
     }
     let config = config()?;
-    let Some(model) = model(&config, modules) else {
+    let role = role(&config);
+    let Some(evaluation) = evaluate(&config, modules) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    let what = role.map_or("the configuration".to_owned(), |role| {
+        format!("the role {role}")
+    });
+    facts::check(
+        evaluation.requirements(),
+        evaluation.sources(),
+        &facts::detect(),
+        &what,
+    )?;
+    let Some(model) = with_lock(&config, Model::from_evaluation(&evaluation)) else {
         return Ok(ExitCode::FAILURE);
     };
     let record = machine::prepare(
         &config,
         Path::new(machine::MACHINE_FILE),
-        role(&config),
+        role,
         &model.machine,
         templates::facts(),
     )?;

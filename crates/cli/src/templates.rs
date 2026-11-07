@@ -108,8 +108,10 @@ pub fn machine_values() -> Result<BTreeMap<String, String>, String> {
 
 /// What this machine detects about itself.
 pub(crate) fn facts() -> impl Iterator<Item = (String, String)> {
-    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
-    std::iter::once(("facts.cpu.count".to_owned(), cpus.to_string()))
+    std::iter::once((
+        "facts.cpu.count".to_owned(),
+        crate::facts::cpu_count().to_string(),
+    ))
 }
 
 #[cfg(test)]

@@ -136,7 +136,7 @@ fn error_bad_machine_value_declarations() {
      --> system.toml:5:1
       |
     5 | value = {}
-      | ^^^^^ only `values` belongs here
+      | ^^^^^ only `values` and `requires` belong here
 
     error: a machine value is declared with its type
      --> system.toml:9:8
@@ -155,5 +155,92 @@ fn error_bad_machine_value_declarations() {
       |
     8 | zone = { type = "int" }
       |                 ^^^^^ expected `"string"`
+    "#);
+}
+
+#[test]
+fn a_configuration_states_what_a_machine_needs() {
+    let evaluation = ok(&[(
+        "system.toml",
+        "[system]\nhostname = \"box\"\n\n[machine.requires]\ngpu = \"nvidia\"\n\
+         arch = { within = [\"x86_64\", \"aarch64\"] }\nmemory_gb = { at_least = 64 }\n\
+         cpu.count = { at_least = 8 }\n",
+    )]);
+
+    let requirements: Vec<String> = evaluation
+        .requirements()
+        .iter()
+        .map(|requirement| {
+            format!(
+                "{}: {} ({})",
+                requirement.fact,
+                requirement.check,
+                evaluation.sources().location(requirement.at)
+            )
+        })
+        .collect();
+    assert_eq!(
+        requirements,
+        [
+            "arch: one of x86_64, aarch64 (system.toml:6:1)",
+            "cpu.count: at least 8 (system.toml:8:5)",
+            "gpu: nvidia (system.toml:5:1)",
+            "memory_gb: at least 64 (system.toml:7:1)",
+        ]
+    );
+}
+
+#[test]
+fn error_bad_requirements() {
+    insta::assert_snapshot!(err(&[(
+        "system.toml",
+        "[system]\nhostname = \"box\"\n\n[machine.requires]\ngpu = { at_least = 1 }\n\
+         memory_gb = \"lots\"\ncpu.cuont = 4\ndisk = 1\nmem = { at_least = 1 }\narch = { within = [1] }\n\
+         \"cpu.count\" = { at_least = 1, most = 2 }\n",
+    )]), @r#"
+    error: `arch` is a name
+      --> system.toml:10:20
+       |
+    10 | arch = { within = [1] }
+       |                    ^ expected a string
+
+    error: unknown fact `cpu.cuont`
+     --> system.toml:7:5
+      |
+    7 | cpu.cuont = 4
+      |     ^^^^^ required here
+      = help: did you mean `cpu.count`?
+
+    error: unexpected `most` in a requirement on `cpu.count`
+      --> system.toml:11:31
+       |
+    11 | "cpu.count" = { at_least = 1, most = 2 }
+       |                               ^^^^ only `at_least` belongs here
+
+    error: unknown fact `disk`
+     --> system.toml:8:1
+      |
+    8 | disk = 1
+      | ^^^^ required here
+      = a machine can be required to have arch, cpu.count, gpu, memory_gb
+
+    error: unexpected `at_least` in a requirement on `gpu`
+     --> system.toml:5:9
+      |
+    5 | gpu = { at_least = 1 }
+      |         ^^^^^^^^ only `within` belongs here
+
+    error: unknown fact `mem`
+     --> system.toml:9:1
+      |
+    9 | mem = { at_least = 1 }
+      | ^^^ required here
+      = a machine can be required to have arch, cpu.count, gpu, memory_gb
+
+    error: `memory_gb` is required as a number, or `{ at_least = N }`
+     --> system.toml:6:13
+      |
+    6 | memory_gb = "lots"
+      |             ^^^^^^ expected a number, or `{ at_least = N }`
     "#);
 }

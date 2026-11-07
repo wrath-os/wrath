@@ -10,6 +10,7 @@ use crate::diag::Diagnostic;
 use crate::load::{INCLUDE, LoadedFile};
 use crate::module::ModuleId;
 use crate::path::OptionPath;
+use crate::requires::{self, Requirement};
 use crate::schema::{Child, OptionSpec, Schema, Type};
 use crate::source::{FileId, Sources, Span};
 use crate::suggest::did_you_mean;
@@ -20,9 +21,10 @@ use crate::value::Value;
 pub(crate) const ADD: &str = "add";
 pub(crate) const REMOVE: &str = "remove";
 
-/// `[machine.values]`, where a configuration declares what each machine is given.
+/// `[machine]`, where a configuration declares what each machine is given and what it needs.
 pub(crate) const MACHINE: &str = "machine";
 const VALUES: &str = "values";
+const REQUIRES: &str = "requires";
 
 /// One place that sets an option.
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +102,8 @@ pub(crate) struct Walked {
     pub instances: BTreeSet<OptionPath>,
     /// Values each machine is given, declared in `[machine.values]`, and where.
     pub machine_values: BTreeMap<String, Span>,
+    /// What a machine needs, from `[machine.requires]`.
+    pub requirements: Vec<Requirement>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -149,7 +153,7 @@ impl Walker<'_> {
         self.table(spec, &loaded.root, table.get_ref(), loaded.file, true);
     }
 
-    /// `[machine.values]`: the values each machine is given, such as its zone.
+    /// `[machine]`: the values each machine is given, such as its zone, and what it needs.
     fn machine(&mut self, value: &Spanned<DeValue<'_>>, file: FileId) {
         let DeValue::Table(machine) = value.get_ref() else {
             return self.out.diagnostics.push(
@@ -160,8 +164,24 @@ impl Walker<'_> {
                 .label(Span::new(file, value.span()), "expected `[machine.values]`"),
             );
         };
-        if let Err(diagnostic) = only_keys(machine, &[VALUES], "`[machine]`", file) {
+        if let Err(diagnostic) = only_keys(machine, &[VALUES, REQUIRES], "`[machine]`", file) {
             self.out.diagnostics.push(diagnostic);
+        }
+        if let Some(requires) = machine.get(REQUIRES) {
+            match requires.get_ref() {
+                DeValue::Table(table) => requires::read(
+                    table,
+                    file,
+                    &mut self.out.requirements,
+                    &mut self.out.diagnostics,
+                ),
+                _ => self.out.diagnostics.push(
+                    Diagnostic::error("`machine.requires` is a table of requirements").label(
+                        Span::new(file, requires.span()),
+                        "expected a table, such as `gpu = \"nvidia\"`",
+                    ),
+                ),
+            }
         }
         let Some(declarations) = machine.get(VALUES) else {
             return;

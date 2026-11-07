@@ -13,6 +13,7 @@ mod machines;
 mod module;
 mod ordered;
 mod path;
+mod requires;
 mod schema;
 mod source;
 mod suggest;
@@ -33,6 +34,7 @@ pub use module::{
     SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, home_path, package_source,
 };
 pub use path::OptionPath;
+pub use requires::{Check, FACTS, Kind, Requirement};
 pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};
 pub use template::Part;

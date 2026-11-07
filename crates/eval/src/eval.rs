@@ -19,6 +19,7 @@ use crate::module::{
 };
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
+use crate::requires::Requirement;
 use crate::schema::{Child, EVERY, ListMerge, OptionSpec, Schema, Type};
 use crate::source::{FileId, Sources, Span};
 use crate::suggest::{closest, did_you_mean};
@@ -60,6 +61,7 @@ pub struct Evaluation {
     machine_values: BTreeSet<OptionPath>,
     declared: BTreeMap<String, Span>,
     machines: BTreeMap<String, Machine>,
+    requirements: Vec<Requirement>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
 }
@@ -133,6 +135,11 @@ impl Evaluation {
     /// The machine values the configuration refers to, such as `facts.cpu.count`.
     pub fn machine_values_used(&self) -> &BTreeSet<OptionPath> {
         &self.machine_values
+    }
+
+    /// What a machine needs to run the configuration, from `[machine.requires]`.
+    pub fn requirements(&self) -> &[Requirement] {
+        &self.requirements
     }
 
     /// The machines `machines.toml` names, with their roles and values.
@@ -286,6 +293,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         machine_values: resolver.machine_values,
         declared: resolver.declared,
         machines,
+        requirements: walked.requirements,
         modules: resolver
             .rendered
             .into_iter()
