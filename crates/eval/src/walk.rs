@@ -99,6 +99,7 @@ pub(crate) struct Walked {
 pub(crate) fn walk(schema: &Schema, sources: &Sources, files: &[LoadedFile]) -> Walked {
     let mut walker = Walker {
         sources,
+        defaults: false,
         out: Walked::default(),
     };
     for file in files {
@@ -109,11 +110,14 @@ pub(crate) fn walk(schema: &Schema, sources: &Sources, files: &[LoadedFile]) -> 
 
 struct Walker<'a> {
     sources: &'a Sources,
+    /// Whether the file being walked gives defaults.
+    defaults: bool,
     out: Walked,
 }
 
 impl Walker<'_> {
     fn file(&mut self, schema: &Schema, loaded: &LoadedFile) {
+        self.defaults = loaded.defaults;
         // Files that don't parse were reported while loading.
         let Ok(table) = DeTable::parse(self.sources.text(loaded.file)) else {
             return;
@@ -235,10 +239,15 @@ impl Walker<'_> {
                         ),
                     );
                 }
+                Ok((_, Level::Force, _)) if self.defaults => self.out.diagnostics.push(
+                    Diagnostic::error("a file included as defaults can't force a value")
+                        .label(span, "forced here")
+                        .note("help: force it in the file that includes this one"),
+                ),
                 Ok((raw, level, reason)) => self.out.definitions.push(Definition {
                     path,
                     value: raw,
-                    level,
+                    level: if self.defaults { Level::Default } else { level },
                     site: Site::Config(span),
                     reason,
                     action: Action::Set,
@@ -380,7 +389,7 @@ pub(crate) fn mark_instances(
 
 /// Refuses keys other than `allowed` in a table such as `{ default = ... }`. `what` names the
 /// table in the error.
-fn only_keys(
+pub(crate) fn only_keys(
     table: &DeTable<'_>,
     allowed: &[&str],
     what: &str,

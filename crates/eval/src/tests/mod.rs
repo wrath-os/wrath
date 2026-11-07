@@ -597,8 +597,14 @@ fn error_bad_force_and_include() {
      --> system.toml:1:28
       |
     1 | include = ["missing.toml", 3]
-      |                            ^ expected a list of strings
+      |                            ^ expected a path, or `{ path = "...", as = "defaults" }`
       = help: for example `include = ["profiles/laptop.toml"]`
+
+    error: cannot read `missing.toml`: entity not found
+     --> system.toml:1:12
+      |
+    1 | include = ["missing.toml", 3]
+      |            ^^^^^^^^^^^^^^ included here
 
     error: `force` needs a reason
      --> system.toml:3:35

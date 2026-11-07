@@ -198,7 +198,10 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         definitions,
         included_by: files
             .iter()
-            .map(|loaded| (loaded.file, loaded.included_by.clone()))
+            .map(|loaded| {
+                let includers = loaded.inclusions.iter().map(|inclusion| inclusion.at.file);
+                (loaded.file, includers.collect())
+            })
             .collect(),
         instances: walked.instances,
         state: HashMap::new(),
