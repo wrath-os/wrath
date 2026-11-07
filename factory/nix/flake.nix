@@ -120,10 +120,17 @@
       diskHarness = [
         ./test-harness.nix
         ./test-disk.nix
+        (import ./test-share.nix 10)
       ];
       hostStoreHarness = [
         ./test-harness.nix
         ./test-host-store.nix
+        (import ./test-share.nix 10)
+      ];
+      installedHarness = [
+        ./test-harness.nix
+        ./test-installed.nix
+        (import ./test-share.nix 100)
       ];
 
       # A system from the shim's input, the JSON `distro` writes, plus extra NixOS modules, and
@@ -407,6 +414,9 @@
         testToplevel = input: (fromInput input diskHarness).config.system.build.toplevel;
         testImage = input: image "distro-test" (fromInput input diskHarness);
         testVmToplevel = input: (fromInput input hostStoreHarness).config.system.build.toplevel;
+        testInstalledToplevel =
+          input:
+          (fromInput input installedHarness).config.system.build.toplevel;
         testVm = input: hostStoreVm "distro-test-vm" (fromInput input hostStoreHarness);
       };
     };

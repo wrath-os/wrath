@@ -19,6 +19,8 @@ pub enum BuildTarget {
     TestVmSystem,
     /// A VM that boots the test system from the host's store, without a disk image
     TestVm,
+    /// The test system as `distro install` puts it on a VM's disk
+    TestInstalledSystem,
 }
 
 impl From<BuildTarget> for Target {
@@ -29,6 +31,7 @@ impl From<BuildTarget> for Target {
             BuildTarget::TestImage => Self::TestImage,
             BuildTarget::TestVmSystem => Self::TestVmSystem,
             BuildTarget::TestVm => Self::TestVm,
+            BuildTarget::TestInstalledSystem => Self::TestInstalledSystem,
         }
     }
 }

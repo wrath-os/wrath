@@ -31,6 +31,8 @@ pub struct VmSpec {
     pub steps: Vec<Step>,
     /// Where the guest's store comes from.
     pub store: Store,
+    /// Sizes of empty disks attached to the VM, such as `8G`, for `distro install` to lay out.
+    pub blank_disks: Vec<String>,
     /// Limit for booting and checking. Building the image and systems is not counted.
     pub timeout_secs: u64,
 }
@@ -64,7 +66,14 @@ pub enum Step {
     /// Lets the guest build `config` itself: the host builds it, and the guest gets what that
     /// used, the factory at `/run/distro-share/root` and the configuration at
     /// `/run/distro-share/configs/<name>`.
-    PrepareBuild(String),
+    PrepareBuild {
+        config: String,
+        /// What to build, as `distro build --target` takes it.
+        target: Option<String>,
+    },
+    /// Stops the VM and boots what was installed on its blank disks, with UEFI, typing
+    /// `passphrase` on the console when the disks ask for one.
+    BootInstalled { passphrase: Option<String> },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -88,6 +97,8 @@ struct RawVmSpec {
     steps: Vec<RawStep>,
     #[serde(default)]
     store: Store,
+    #[serde(default)]
+    blank_disks: Vec<String>,
     #[serde(default = "default_timeout_secs")]
     timeout_secs: u64,
 }
@@ -113,15 +124,19 @@ impl TryFrom<RawVmSpec> for VmSpec {
                 .map(Step::try_from)
                 .collect::<Result<_, _>>()?,
             store: raw.store,
+            blank_disks: raw.blank_disks,
             timeout_secs: raw.timeout_secs,
         })
     }
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 10] = [
+pub const STEP_FIELDS: [&str; 13] = [
     "apply_config",
     "prepare_build",
+    "target",
+    "boot_installed",
+    "passphrase",
     "apply_home",
     "as_user",
     "expect_plan",
@@ -137,6 +152,9 @@ pub const STEP_FIELDS: [&str; 10] = [
 struct RawStep {
     apply_config: Option<String>,
     prepare_build: Option<String>,
+    target: Option<String>,
+    boot_installed: Option<bool>,
+    passphrase: Option<String>,
     apply_home: Option<String>,
     as_user: Option<String>,
     #[serde(default)]
@@ -154,7 +172,15 @@ impl TryFrom<RawStep> for Step {
 
     fn try_from(raw: RawStep) -> Result<Self, Self::Error> {
         if let Some(config) = raw.prepare_build {
-            return Ok(Self::PrepareBuild(config));
+            return Ok(Self::PrepareBuild {
+                config,
+                target: raw.target,
+            });
+        }
+        if raw.boot_installed == Some(true) {
+            return Ok(Self::BootInstalled {
+                passphrase: raw.passphrase,
+            });
         }
         if let Some(config) = raw.apply_home {
             let user = raw
@@ -229,6 +255,8 @@ pub enum Boot {
     Disk,
     /// `kernel`, `initrd` and `kernel-params`, for a system in the host's store.
     Kernel,
+    /// What `distro install` put on the VM's blank disks, with UEFI.
+    Installed,
 }
 
 impl Boot {
@@ -382,22 +410,13 @@ impl VmRun<'_> {
         let args = self.qemu_args(boot, &firmware, pick_cid())?;
         self.write_interactive_script(&args)?;
 
-        let log = fs::File::create(self.dir.join("qemu.log")).map_err(io_err("qemu.log"))?;
-        let qemu = Command::new("qemu-system-x86_64")
-            .args(&args.argv)
-            .current_dir(self.dir)
-            .stdin(Stdio::null())
-            .stdout(log.try_clone().map_err(io_err("qemu.log"))?)
-            .stderr(log)
-            .spawn()
-            .map_err(|e| format!("could not start qemu-system-x86_64: {e}"))?;
-        let mut qemu = KillOnDrop(qemu);
+        let mut qemu = self.spawn(&args)?;
 
         let deadline = Instant::now() + Duration::from_secs(self.spec.timeout_secs);
         let result = self
             .connect(args.cid, &mut qemu.0, deadline)
             .and_then(|mut agent| {
-                let result = self.check(&mut agent, deadline);
+                let result = self.check(&mut qemu, &mut agent, &firmware, deadline);
                 if result.is_err() {
                     self.save_journal(&mut agent);
                 }
@@ -410,28 +429,58 @@ impl VmRun<'_> {
         result
     }
 
+    fn spawn(&self, args: &QemuArgs) -> Result<KillOnDrop, String> {
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.join("qemu.log"))
+            .map_err(io_err("qemu.log"))?;
+        let qemu = Command::new("qemu-system-x86_64")
+            .args(&args.argv)
+            .current_dir(self.dir)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().map_err(io_err("qemu.log"))?)
+            .stderr(log)
+            .spawn()
+            .map_err(|e| format!("could not start qemu-system-x86_64: {e}"))?;
+        Ok(KillOnDrop(qemu))
+    }
+
     fn prepare_dir(&self, boot: Boot, firmware: &FirmwarePaths) -> Result<(), String> {
         if self.dir.exists() {
             fs::remove_dir_all(self.dir).map_err(io_err("the old run directory"))?;
         }
         fs::create_dir_all(self.dir).map_err(io_err("the run directory"))?;
         fs::create_dir(self.dir.join(SHARE)).map_err(io_err("the share directory"))?;
-        if boot == Boot::Kernel {
-            return Ok(());
+        for (n, size) in self.spec.blank_disks.iter().enumerate() {
+            let status = Command::new("qemu-img")
+                .args(["create", "-q", "-f", "qcow2"])
+                .arg(self.dir.join(format!("blank{n}.qcow2")))
+                .arg(size)
+                .status()
+                .map_err(|e| format!("could not run qemu-img: {e}"))?;
+            if !status.success() {
+                return Err(format!("qemu-img could not create a {size} disk"));
+            }
         }
-
-        let backing = self.image.join("disk.qcow2");
-        let status = Command::new("qemu-img")
-            .args(["create", "-q", "-f", "qcow2", "-F", "qcow2", "-b"])
-            .arg(&backing)
-            .arg(self.dir.join("disk.qcow2"))
-            .status()
-            .map_err(|e| format!("could not run qemu-img: {e}"))?;
-        if !status.success() {
-            return Err(format!(
-                "qemu-img could not create an overlay for {}",
-                backing.display()
-            ));
+        if boot != Boot::Kernel {
+            let backing = self.image.join("disk.qcow2");
+            let status = Command::new("qemu-img")
+                .args(["create", "-q", "-f", "qcow2", "-F", "qcow2", "-b"])
+                .arg(&backing)
+                .arg(self.dir.join("disk.qcow2"))
+                .status()
+                .map_err(|e| format!("could not run qemu-img: {e}"))?;
+            if !status.success() {
+                return Err(format!(
+                    "qemu-img could not create an overlay for {}",
+                    backing.display()
+                ));
+            }
+        }
+        // What's installed on blank disks boots with UEFI, even when the VM starts without it.
+        if boot == Boot::Kernel && self.spec.blank_disks.is_empty() {
+            return Ok(());
         }
 
         let vars = self.dir.join("ovmf-vars.fd");
@@ -490,19 +539,34 @@ impl VmRun<'_> {
         .map(str::to_owned)
         .into();
         match boot {
-            Boot::Disk => argv.extend([
-                "-m".into(),
-                "2048".into(),
-                "-drive".into(),
-                "if=virtio,format=qcow2,file=disk.qcow2".into(),
-                "-drive".into(),
-                "if=pflash,format=raw,unit=1,file=ovmf-vars.fd".into(),
-                "-drive".into(),
-                format!(
-                    "if=pflash,format=raw,unit=0,readonly=on,file={}",
-                    firmware.code.display()
-                ),
-            ]),
+            Boot::Disk => {
+                argv.extend([
+                    "-m".into(),
+                    "2048".into(),
+                    "-drive".into(),
+                    "if=virtio,format=qcow2,file=disk.qcow2".into(),
+                ]);
+                argv.extend(uefi_drives(firmware));
+            }
+            Boot::Installed => {
+                // The console takes input, so a passphrase can be typed at it.
+                let serial = argv.iter().position(|arg| arg == "file:console.log");
+                if let Some(at) = serial {
+                    argv.splice(
+                        at - 1..=at,
+                        [
+                            "-chardev".into(),
+                            "socket,id=serial0,path=serial.sock,server=on,wait=off,\
+                             logfile=console.log"
+                                .into(),
+                            "-serial".into(),
+                            "chardev:serial0".into(),
+                        ],
+                    );
+                }
+                argv.extend(["-m".into(), "2048".into()]);
+                argv.extend(uefi_drives(firmware));
+            }
             Boot::Kernel => {
                 let params = fs::read_to_string(self.image.join("kernel-params"))
                     .map_err(io_err("kernel-params"))?;
@@ -521,6 +585,12 @@ impl VmRun<'_> {
                         .into(),
                 ]);
             }
+        }
+        for n in 0..self.spec.blank_disks.len() {
+            argv.extend([
+                "-drive".into(),
+                format!("if=virtio,format=qcow2,file=blank{n}.qcow2"),
+            ]);
         }
         argv.extend(["-device".into(), format!("vhost-vsock-pci,guest-cid={cid}")]);
         if self.spec.tpm {
@@ -606,7 +676,13 @@ impl VmRun<'_> {
         }
     }
 
-    fn check(&self, agent: &mut Client<VsockStream>, deadline: Instant) -> Result<(), String> {
+    fn check(
+        &self,
+        qemu: &mut KillOnDrop,
+        agent: &mut Client<VsockStream>,
+        firmware: &FirmwarePaths,
+        deadline: Instant,
+    ) -> Result<(), String> {
         for condition in &self.spec.wait_for {
             match condition {
                 WaitFor::Agent => {}
@@ -633,7 +709,7 @@ impl VmRun<'_> {
             check_expect(agent, expect, deadline)?;
         }
         if !self.spec.steps.is_empty() {
-            self.run_steps(agent, deadline)?;
+            self.run_steps(qemu, agent, firmware, deadline)?;
         }
         Ok(())
     }
@@ -660,8 +736,14 @@ const GUEST_SHARE: &str = "/run/distro-share";
 const EXPORT: &str = "paths.nar";
 
 impl VmRun<'_> {
-    fn run_steps(&self, agent: &mut Client<VsockStream>, deadline: Instant) -> Result<(), String> {
-        let booted = boot_id(agent, deadline)?;
+    fn run_steps(
+        &self,
+        qemu: &mut KillOnDrop,
+        agent: &mut Client<VsockStream>,
+        firmware: &FirmwarePaths,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let mut booted = boot_id(agent, deadline)?;
         let System::Config(initial) = &self.spec.system else {
             return Err("steps need a scenario with `config`".into());
         };
@@ -682,7 +764,13 @@ impl VmRun<'_> {
                     user,
                     try_for,
                 } => self.apply_home(agent, config, user, try_for.as_deref(), deadline)?,
-                Step::PrepareBuild(config) => self.prepare_build(agent, config, deadline)?,
+                Step::PrepareBuild { config, target } => {
+                    self.prepare_build(agent, config, target.as_deref(), deadline)?;
+                }
+                Step::BootInstalled { passphrase } => {
+                    self.boot_installed(qemu, agent, firmware, passphrase.as_deref(), deadline)?;
+                    booted = boot_id(agent, deadline)?;
+                }
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
@@ -762,13 +850,68 @@ impl VmRun<'_> {
         Ok(())
     }
 
+    /// Stops the VM and boots its blank disks, onto which `distro install` put a system, typing
+    /// `passphrase` on the console when the disks ask for it.
+    fn boot_installed(
+        &self,
+        qemu: &mut KillOnDrop,
+        agent: &mut Client<VsockStream>,
+        firmware: &FirmwarePaths,
+        passphrase: Option<&str>,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let _ = qemu.0.kill();
+        let _ = qemu.0.wait();
+        // The live system's console stays, beside the installed one's.
+        let _ = fs::rename(
+            self.dir.join("console.log"),
+            self.dir.join("console-live.log"),
+        );
+        let args = self.qemu_args(Boot::Installed, firmware, pick_cid())?;
+        *qemu = self.spawn(&args)?;
+        if let Some(passphrase) = passphrase {
+            self.type_at_prompt(passphrase, deadline)?;
+        }
+        *agent = self.connect(args.cid, &mut qemu.0, deadline)?;
+        Ok(())
+    }
+
+    /// Waits for the console to ask for a passphrase, then types `passphrase` at it.
+    fn type_at_prompt(&self, passphrase: &str, deadline: Instant) -> Result<(), String> {
+        let console = self.dir.join("console.log");
+        loop {
+            let text = fs::read_to_string(&console).unwrap_or_default();
+            if text.contains("passphrase") {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("the installed system never asked for its passphrase".into());
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+        let mut serial =
+            UnixStream::connect(self.dir.join("serial.sock")).map_err(io_err("the console"))?;
+        // A key at a time, as someone types, then Enter, which a serial console sends as `\r`.
+        thread::sleep(Duration::from_secs(1));
+        for key in passphrase.bytes().chain(*b"\r") {
+            serial.write_all(&[key]).map_err(io_err("the console"))?;
+            thread::sleep(Duration::from_millis(50));
+        }
+        Ok(())
+    }
+
     fn prepare_build(
         &self,
         agent: &mut Client<VsockStream>,
         config: &str,
+        target: Option<&str>,
         deadline: Instant,
     ) -> Result<(), String> {
-        let built = self.host.distro(&["build", "--config", config])?;
+        let mut build = vec!["build", "--config", config];
+        if let Some(target) = target {
+            build.extend(["--target", target]);
+        }
+        let built = self.host.distro(&build)?;
         let derivation =
             host_command(Command::new("nix-store").args(["--query", "--deriver", built.trim()]))?;
         let used = host_command(Command::new("nix-store").args([
@@ -972,6 +1115,19 @@ impl Drop for KillOnDrop {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+/// The UEFI firmware and the run's copy of its variables.
+fn uefi_drives(firmware: &FirmwarePaths) -> [String; 4] {
+    [
+        "-drive".into(),
+        "if=pflash,format=raw,unit=1,file=ovmf-vars.fd".into(),
+        "-drive".into(),
+        format!(
+            "if=pflash,format=raw,unit=0,readonly=on,file={}",
+            firmware.code.display()
+        ),
+    ]
 }
 
 fn swtpm_args() -> [&'static str; 8] {

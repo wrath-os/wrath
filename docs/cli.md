@@ -152,9 +152,11 @@ Understanding the configuration:
 
 Secrets: `distro secret edit NAME`, `distro secret list`, `distro secret rekey`.
 
-Setting up a machine: `distro install --config DIR --role NAME --identity FILE`, from any Linux
-with Nix, lays out the disks the configuration describes, encrypts them, builds the system into
-them, and decrypts the machine's keys into it (planned).
+Setting up a machine: `distro install -C DIR --disk /dev/... [--role NAME] [--name NAME]`, from
+any Linux with Nix and the disk tools, lays out the disks the configuration describes with
+systemd-repart, encrypts them with a passphrase it asks for, builds the system onto them and
+records the machine's role and name. It refuses disks that have partitions unless given `--wipe`.
+Decrypting the machine's keys into it (`--identity`) and matching a role's disks are planned.
 
 ## Output and the API
 

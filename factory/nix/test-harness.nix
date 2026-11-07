@@ -1,29 +1,10 @@
 # What test systems add so the harness can drive them: the guest agent on vsock, a share from
 # the host for copying in new systems, and a root shell on the serial console. The disk layout
-# comes from `test-disk.nix` or `test-host-store.nix`.
-{
-  agent,
-  lib,
-  ...
-}:
+# comes from `test-disk.nix`, `test-host-store.nix` or the installed configuration, and the share
+# from `test-share.nix`.
+{ agent, ... }:
 
 {
-  # The run directory's `share` on the host, when the harness passes one. Overrides like the
-  # disk layout's, so it's merged with them.
-  fileSystems = lib.mkOverride 10 {
-    "/run/distro-share" = {
-      device = "distro-share";
-      fsType = "9p";
-      options = [
-        "trans=virtio"
-        "version=9p2000.L"
-        "msize=1048576"
-        "ro"
-        "nofail"
-      ];
-    };
-  };
-
   boot.kernelParams = [ "console=ttyS0" ];
   boot.kernelModules = [ "vmw_vsock_virtio_transport" ];
 

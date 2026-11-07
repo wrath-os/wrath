@@ -37,6 +37,9 @@ pub enum Target {
     TestImage,
     /// The test system for VMs that mount the host's store.
     TestVmSystem,
+    /// The test system as `distro install` puts it on a VM's disk, with the configuration's own
+    /// disk layout.
+    TestInstalledSystem,
     /// A VM that boots the test system from the host's store, as a directory containing
     /// `kernel`, `initrd` and `kernel-params`.
     TestVm,
@@ -53,6 +56,7 @@ impl Target {
         match self {
             Self::System => "toplevel",
             Self::Home => "home",
+            Self::TestInstalledSystem => "testInstalledToplevel",
             Self::TestSystem => "testToplevel",
             Self::TestImage => "testImage",
             Self::TestVmSystem => "testVmToplevel",
@@ -191,7 +195,15 @@ fn flake_ref(factory: &Path) -> String {
             let dir = factory.strip_prefix(repo).unwrap_or(Path::new(""));
             format!("git+file://{}?dir={}", repo.display(), dir.display())
         }
-        None => format!("path:{}", factory.display()),
+        // A copy of the repository, such as in the store, is read whole, since packages the
+        // factory builds from the repository's crates refer outside `factory/nix`.
+        None => match factory.ancestors().nth(2) {
+            Some(root) if root.join("Cargo.lock").is_file() => {
+                let dir = factory.strip_prefix(root).unwrap_or(Path::new(""));
+                format!("path:{}?dir={}", root.display(), dir.display())
+            }
+            _ => format!("path:{}", factory.display()),
+        },
     }
 }
 
@@ -390,6 +402,20 @@ fn factory_message(stderr: &str) -> Option<String> {
     Some(message.trim_end_matches('\'').to_owned())
 }
 
+/// Installs `system`, already built, onto the filesystems mounted at `root`: copies it into their
+/// store, makes it the first generation and installs the boot loader. Needs root.
+pub fn install(system: &Path, root: &Path) -> Result<(), String> {
+    command(
+        Command::new("nixos-install")
+            .arg("--system")
+            .arg(system)
+            .arg("--root")
+            .arg(root)
+            .args(["--no-root-passwd", "--no-channel-copy"]),
+    )
+    .map(drop)
+}
+
 /// A source as a tree of files, so a configuration can include files from it: the tree pinned by
 /// `source`'s hash, from the store when it's there already.
 pub fn fetch_source(source: &Source) -> Result<PathBuf, String> {
@@ -578,5 +604,25 @@ mod tests {
         assert_eq!(source.rev.as_deref(), Some("abc"));
         assert_eq!(source.date.as_deref(), Some("2026-10-30"));
         assert!(source.is_locked());
+    }
+
+    #[test]
+    fn the_factory_is_read_with_the_repository_it_builds_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let factory = dir.path().join("factory/nix");
+        std::fs::create_dir_all(&factory).unwrap();
+        assert_eq!(flake_ref(&factory), format!("path:{}", factory.display()));
+
+        std::fs::write(dir.path().join("Cargo.lock"), "").unwrap();
+        assert_eq!(
+            flake_ref(&factory),
+            format!("path:{}?dir=factory/nix", dir.path().display())
+        );
+
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        assert_eq!(
+            flake_ref(&factory),
+            format!("git+file://{}?dir=factory/nix", dir.path().display())
+        );
     }
 }

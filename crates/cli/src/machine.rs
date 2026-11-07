@@ -72,6 +72,15 @@ impl Given {
     }
 }
 
+/// Writes `given` to `file`, as what a machine was given at install.
+pub(crate) fn record(file: &Path, given: &Given) -> Result<(), String> {
+    Record {
+        file: file.to_path_buf(),
+        given: given.clone(),
+    }
+    .write()
+}
+
 /// A machine's entry in `machines.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Listed {

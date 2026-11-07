@@ -3,6 +3,7 @@
   imports = [
     ./test-harness.nix
     ./test-disk.nix
+    (import ./test-share.nix 10)
   ];
 
   system.stateVersion = "26.05";

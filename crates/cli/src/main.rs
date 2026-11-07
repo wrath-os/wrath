@@ -17,6 +17,7 @@ mod facts;
 mod fetch;
 mod generations;
 mod home;
+mod install;
 mod machine;
 mod options;
 mod project;
@@ -145,6 +146,31 @@ enum Command {
         /// Remove them from this user's packages instead of the system's
         #[arg(long, value_name = "USER")]
         home: Option<String>,
+    },
+    /// Lay out a machine's disks and install the configuration on them, from a live system
+    Install {
+        /// A disk to install on, as `NAME=/dev/...` for the configuration's disk NAME, or just
+        /// the device when it has one disk. Repeat it for a disk with several devices
+        #[arg(long = "disk", required = true, value_name = "DEVICE")]
+        disks: Vec<String>,
+        /// The machine's name, recorded on it
+        #[arg(long)]
+        name: Option<String>,
+        /// A file with the disks' passphrase, instead of asking for it
+        #[arg(long, value_name = "FILE")]
+        passphrase_file: Option<PathBuf>,
+        /// Where the new system is mounted while it's installed
+        #[arg(long, default_value = "/mnt")]
+        target: PathBuf,
+        /// Erase disks that have partitions already
+        #[arg(long)]
+        wipe: bool,
+        /// What to install, for the test harness
+        #[arg(long, value_enum, default_value = "system", hide = true)]
+        system_target: generations::BuildTarget,
+        /// Go ahead without asking
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Lock what isn't locked yet, moving nothing that is
     Lock,
@@ -333,6 +359,35 @@ fn main() -> ExitCode {
             .and_then(|config| edit::add(root, &config, &modules, home.as_deref(), &packages)),
         Command::Remove { packages, home } => config()
             .and_then(|config| edit::remove(root, &config, &modules, home.as_deref(), &packages)),
+        Command::Install {
+            disks,
+            name,
+            passphrase_file,
+            target,
+            wipe,
+            yes,
+            system_target,
+        } => machine().and_then(|config| {
+            let Some(model) = model(&config, &modules) else {
+                return Ok(ExitCode::FAILURE);
+            };
+            let model = generations::locked(root, &config, model)?;
+            install::install(
+                root,
+                model,
+                &install::Install {
+                    config: &config,
+                    disks: install::disks(&disks),
+                    name: name.as_deref(),
+                    role: given_role(),
+                    passphrase: passphrase_file.as_deref(),
+                    target: &target,
+                    wipe,
+                    yes,
+                    system: system_target.into(),
+                },
+            )
+        }),
         Command::Lock => config().and_then(|config| lock(root, &config, &modules, None)),
         Command::Update { sources } => {
             config().and_then(|config| lock(root, &config, &modules, Some(&sources)))
