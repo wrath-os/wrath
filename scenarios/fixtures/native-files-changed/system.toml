@@ -1,0 +1,18 @@
+[system]
+hostname = "native"
+
+[users.john]
+extra_groups = ["wheel"]
+
+[files."/etc/app.toml"]
+format = "toml"
+settings.port = 2
+restart = ["app.service"]
+
+[files."/etc/udev/rules.d/90-distro.rules"]
+text = 'KERNEL=="null", SYMLINK+="distro-null"'
+restart = ["systemd-udevd.service"]
+
+[units."app.service"]
+Service.ExecStart = "sleep infinity"
+Install.WantedBy = "multi-user.target"

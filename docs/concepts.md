@@ -59,8 +59,9 @@ A **source** is where packages, or files to include, come from: a name and the U
 pinned in the lock. `nixpkgs` is the default, and the base system comes from it too. A file from a
 source is included as `{ source = "acme", path = "rust-service.toml" }`.
 
-A **file** is a file the configuration writes, on the system or in a home. A file whose text
-includes secrets is filled in on the machine, so the secret never reaches the build.
+A **file** is a file the configuration writes, on the system or in a home. It is text, or settings
+written out as JSON, TOML or systemd's format, and a system file can restart what reads it. A file
+whose text includes secrets is filled in on the machine, so the secret never reaches the build.
 
 A **secret** is a value encrypted with age next to the configuration, decrypted only on the
 machine (for a home of its own, by its user), and referenced as `{ secret = "name" }` or

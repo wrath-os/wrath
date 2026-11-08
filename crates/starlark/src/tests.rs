@@ -1331,3 +1331,64 @@ microcode = "amd"
     let base = &output_of(&evaluation, "kernel").base["kernel"];
     insta::assert_snapshot!(base.to_string(), @r#"{ firmware = ["linux-firmware"], initrd_modules = ["nvme"], microcode = { image = "amd-ucode.img", package = "microcode-amd" }, modprobe = "blacklist pcspkr\noptions nbd nbds_max=2\n", package = "linuxPackages_latest" }"#);
 }
+
+#[test]
+fn files_are_text_or_settings_in_a_format_and_restart_what_reads_them() {
+    let config = MemFs::new([
+        (
+            "system.toml",
+            r#"
+[files."/etc/systemd/logind.conf.d/idle.conf"]
+format = "systemd"
+settings.Login.IdleAction = "suspend"
+restart = ["systemd-logind.service"]
+
+[users.john]
+"#,
+        ),
+        (
+            "users/john.toml",
+            r#"
+[files."~/.config/helix/config.toml"]
+format = "toml"
+settings.theme = "base16"
+settings.editor.mouse = false
+"#,
+        ),
+    ]);
+
+    let evaluation = evaluate_with(&config, &["users", "files"]).unwrap();
+    insta::assert_snapshot!(rendered_by(&evaluation, "files"), @r#"
+    /etc/systemd/logind.conf.d/idle.conf
+    [Login]
+    IdleAction=suspend
+
+    restart systemd-logind.service on {"/etc/systemd/logind.conf.d/idle.conf"}
+    "#);
+    insta::assert_snapshot!(homes_of(&evaluation, "files"), @r#"
+    john ~/.config/helix/config.toml
+    theme = "base16"
+
+    [editor]
+    mouse = false
+    "#);
+}
+
+#[test]
+fn a_file_is_text_or_settings_and_settings_have_a_format() {
+    let error_of = |file: &str| {
+        let toml = format!("[files.\"/etc/x\"]\n{file}\n");
+        evaluate_with(
+            &MemFs::new([("system.toml", toml.as_str())]),
+            &["users", "files"],
+        )
+        .unwrap_err()
+    };
+
+    let both = error_of("text = \"a\"\nformat = \"toml\"\nsettings.a = 1");
+    assert!(both.contains("`text` or `settings`, not both"), "{both}");
+    let neither = error_of("mode = 420");
+    assert!(neither.contains("needs `text`"), "{neither}");
+    let no_format = error_of("settings.a = 1");
+    assert!(no_format.contains("need a `format`"), "{no_format}");
+}

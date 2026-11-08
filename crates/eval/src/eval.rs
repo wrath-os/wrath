@@ -15,7 +15,7 @@ use crate::load::{self, ConfigKind, DeclaredSource};
 use crate::machines::{self, Machine};
 use crate::module::{
     ConfigReader, DEFAULT_SOURCE, HOME_SECRETS_DIR, Module, ModuleId, Output, ReadError,
-    RenderError, SECRETS_DIR, Setting, home_path, package_source,
+    RenderError, SECRETS_DIR, Setting, UnitAction, home_path, package_source,
 };
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
@@ -590,15 +590,18 @@ fn bad_triggers(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
                 module.name
             )));
         }
-        for (unit, _) in output.triggers.keys() {
+        for (unit, action) in output.triggers.keys() {
             if units.contains(unit) {
-                diagnostics.push(
-                    Diagnostic::error(format!(
-                        "module `{}` triggers unit `{unit}`, which a module renders",
-                        module.name
-                    ))
-                    .note("a rendered unit restarts on files with `restart_on`"),
-                );
+                // The model makes a restart part of the unit, like its own `restart_on`.
+                if *action != UnitAction::Restart {
+                    diagnostics.push(
+                        Diagnostic::error(format!(
+                            "module `{}` triggers unit `{unit}`, which a module renders",
+                            module.name
+                        ))
+                        .note("a rendered unit can only restart when a file changes"),
+                    );
+                }
             } else if !unit.ends_with(".service") {
                 diagnostics.push(Diagnostic::error(format!(
                     "module `{}` triggers `{unit}`; only services reload or restart",

@@ -577,13 +577,7 @@ fn a_trigger_needs_rendered_files_and_a_unit_no_module_renders() {
         eval_with(&[SYSTEM], &[app("other.service", "/etc/ap.conf")]).unwrap_err(),
         @"error: unit `other.service` from module `app` restarts on `/etc/ap.conf`, which no module renders"
     );
-    insta::assert_snapshot!(
-        eval_with(&[SYSTEM], &[app("app.service", "/etc/app.conf")]).unwrap_err(),
-        @"
-    error: module `app` triggers unit `app.service`, which a module renders
-     = a rendered unit restarts on files with `restart_on`
-    "
-    );
+    assert!(eval_with(&[SYSTEM], &[app("app.service", "/etc/app.conf")]).is_ok());
     insta::assert_snapshot!(
         eval_with(&[SYSTEM], &[app("other.socket", "/etc/app.conf")]).unwrap_err(),
         @"error: module `app` triggers `other.socket`; only services reload or restart"

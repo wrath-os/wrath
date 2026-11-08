@@ -224,6 +224,18 @@ impl Model {
                     .extend(paths.iter().cloned());
             }
         }
+        // A file that restarts a unit the configuration renders is one more file the unit reads.
+        model.triggers.retain(|(unit, action), paths| {
+            let restarted = model
+                .units
+                .get_mut(unit)
+                .filter(|_| *action == UnitAction::Restart);
+            let Some(unit) = restarted else {
+                return true;
+            };
+            unit.restart_on.append(paths);
+            false
+        });
         let templates = model.templates.values().chain(
             model
                 .homes

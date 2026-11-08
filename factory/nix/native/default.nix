@@ -254,7 +254,9 @@ let
     mkdir -p $out/systemd $out/udev $out/dbus-1
     ln -s ${systemUnits} $out/systemd/system
     ln -s ${userUnits} $out/systemd/user
-    ln -s ${merged "udev-rules" (shipped [ "lib" ] "udev/rules.d")} $out/udev/rules.d
+    # A directory of its own, so rules from the configuration can join what packages ship.
+    mkdir $out/udev/rules.d
+    ln -s ${merged "udev-rules" (shipped [ "lib" ] "udev/rules.d")}/* $out/udev/rules.d/
     ln -s ${hwdb}/hwdb.bin $out/udev/hwdb.bin
     ln -s ${merged "dbus-system" (shipped [ "share" "etc" ] "dbus-1/system.d")} $out/dbus-1/system.d
     ln -s ${dbusConfig} $out/dbus-1/system.conf
