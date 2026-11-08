@@ -697,6 +697,9 @@ impl VmRun<'_> {
                     return Ok(client);
                 }
             }
+            if let Some(stuck) = stuck(&self.dir.join("console.log")) {
+                return Err(format!("the guest won't come up: {stuck}"));
+            }
             if Instant::now() >= deadline {
                 return Err(format!(
                     "the guest agent did not answer within {}s",
@@ -1413,6 +1416,21 @@ fn shell_quote(arg: &str) -> String {
 
 fn io_err(what: &'static str) -> impl Fn(io::Error) -> String {
     move |e| format!("could not write {what}: {e}")
+}
+
+/// What the console says when a guest won't come up by itself, so waiting longer is pointless:
+/// the kernel panicked, or systemd gave up and waits in emergency mode for someone at the
+/// console.
+fn stuck(console: &Path) -> Option<&'static str> {
+    let text = fs::read(console).ok()?;
+    let text = String::from_utf8_lossy(&text);
+    if text.contains("Kernel panic") {
+        Some("the kernel panicked; see the console log")
+    } else if text.contains("You are in emergency mode") {
+        Some("it stopped in emergency mode; see the console log")
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

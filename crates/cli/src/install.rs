@@ -6,6 +6,7 @@ use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::time::Duration;
 
 use distro_backend_nixos::{self as backend, Target};
 use distro_eval::Value;
@@ -621,18 +622,12 @@ fn close(partitions: &[Partition], target: &Path) -> Result<(), String> {
     unmounted
 }
 
+/// The longest a disk tool may take. One waiting for something that never comes, such as a device
+/// udev never announces, fails the install instead of hanging it.
+const TOOL_TIMEOUT: Duration = Duration::from_secs(300);
+
 fn run(command: &mut Command) -> Result<(), String> {
-    let program = command.get_program().to_string_lossy().into_owned();
-    let output = command
-        .output()
-        .map_err(|e| format!("cannot run {program}: {e}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(format!(
-        "{program} failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    ))
+    backend::run_within(command, TOOL_TIMEOUT)
 }
 
 fn list<'v>(value: &'v Value, key: &str) -> &'v [Value] {
@@ -673,6 +668,26 @@ fn strings(value: &Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tool_that_hangs_is_stopped_and_one_that_fails_says_why() {
+        let started = std::time::Instant::now();
+        let err = backend::run_within(Command::new("sleep").arg("30"), Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "`sleep 30` didn't finish within 1 seconds, so distro stopped it"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+        // A process the tool leaves running doesn't hold up the install.
+        let script = "sleep 30 & echo nope >&2; exit 3";
+        let err = backend::run_within(
+            Command::new("sh").args(["-c", script]),
+            Duration::from_secs(5),
+        );
+        assert_eq!(err.unwrap_err(), "sh failed: nope");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
 
     fn partition(label: &str, device: i64, size: &str, format: &str, encrypt: bool) -> Partition {
         Partition {

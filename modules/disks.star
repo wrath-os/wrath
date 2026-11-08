@@ -214,6 +214,14 @@ def render(ctx):
         seen[path] = True
     if "/" not in paths:
         ctx.error(["disks"], "nothing is mounted at `/`")
+    # The tools for what's laid out, to look after it once installed.
+    formats_used = [p["format"] for p in partitions] + [fs["format"] for fs in spanning]
+    if any([p["encrypt"] for p in partitions]):
+        ctx.package("cryptsetup")
+    if "btrfs" in formats_used:
+        ctx.package("btrfs-progs")
+    if "vfat" in formats_used:
+        ctx.package("dosfstools")
     ctx.base("storage", {
         "unlock": ctx.read("unlock"),
         "disks": {

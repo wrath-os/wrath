@@ -6,8 +6,10 @@ mod generations;
 mod lower;
 
 use std::collections::BTreeMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use distro_model::{Lock, Locked, Model, Source};
 use serde::Deserialize;
@@ -69,10 +71,11 @@ impl Target {
     fn function_in(self, native: bool) -> Result<String, String> {
         match (native, self) {
             (false, _) | (true, Self::Home | Self::Environment) => Ok(self.function().to_owned()),
-            (true, Self::System | Self::TestVmSystem | Self::TestVm) => {
-                Ok(format!("native.{}", self.function()))
-            }
-            (true, Self::TestSystem | Self::TestImage | Self::TestInstalledSystem) => Err(format!(
+            (
+                true,
+                Self::System | Self::TestVmSystem | Self::TestVm | Self::TestInstalledSystem,
+            ) => Ok(format!("native.{}", self.function())),
+            (true, Self::TestSystem | Self::TestImage) => Err(format!(
                 "the native lowering doesn't build `{}` yet",
                 self.function()
             )),
@@ -438,7 +441,17 @@ fn first_error(stderr: &str) -> String {
         .position(|line| line.starts_with("error:"))
         .unwrap_or(lines.len().saturating_sub(LINES));
     let end = (start + LINES).min(lines.len());
-    lines[start..end].join("\n")
+    let mut excerpt = lines[start..end].to_vec();
+    // After a trace, Nix says what went wrong at its innermost frame, last.
+    if let Some(last) = lines
+        .iter()
+        .rposition(|line| line.trim_start().starts_with("error:"))
+        && last >= end
+    {
+        excerpt.push("       …");
+        excerpt.extend(&lines[last..(last + 5).min(lines.len())]);
+    }
+    excerpt.join("\n")
 }
 
 /// A message the factory meant for the user, thrown as `distro: ...`, in what Nix printed.
@@ -452,6 +465,9 @@ fn factory_message(stderr: &str) -> Option<String> {
 /// Installs `system`, already built, onto the filesystems mounted at `root`: copies it into their
 /// store, makes it the first generation and installs the boot loader. Needs root.
 pub fn install(system: &Path, root: &Path) -> Result<(), String> {
+    if native() {
+        return install_native(system, root);
+    }
     command(
         Command::new("nixos-install")
             .arg("--system")
@@ -461,6 +477,36 @@ pub fn install(system: &Path, root: &Path) -> Result<(), String> {
             .args(["--no-root-passwd", "--no-channel-copy"]),
     )
     .map(drop)
+}
+
+/// Installs a system built without NixOS: copies it into the target's store, makes it the first
+/// generation, and has its own distro install the boot loader.
+fn install_native(system: &Path, root: &Path) -> Result<(), String> {
+    // Copying a whole system can take a while on a slow disk; the other steps are quick.
+    const COPY: Duration = Duration::from_secs(60 * 60);
+    const STEP: Duration = Duration::from_secs(10 * 60);
+    let store = format!("local?root={}", root.display());
+    run_within(
+        Command::new("nix")
+            .args(["copy", "--no-check-sigs", "--to", &store])
+            .arg(system),
+        COPY,
+    )?;
+    run_within(
+        Command::new("nix-env")
+            .args(["--store", &store, "--profile"])
+            .arg(root.join(PROFILE.trim_start_matches('/')))
+            .arg("--set")
+            .arg(system),
+        STEP,
+    )?;
+    run_within(
+        Command::new(system.join("sw/bin/distro"))
+            .args(["activate", "--mode", "install", "--root"])
+            .arg(root)
+            .arg(system),
+        STEP,
+    )
 }
 
 /// A source as a tree of files, so a configuration can include files from it: the tree pinned by
@@ -558,6 +604,48 @@ fn nix_string(text: &str) -> String {
     format!("\"{escaped}\"")
 }
 
+/// Runs `command` to completion within `timeout`, stopping it after that, so a program waiting for
+/// something that never comes fails instead of hanging. What it prints goes to a file rather than
+/// a pipe, so a process it leaves running can't hold things up either.
+pub fn run_within(command: &mut Command, timeout: Duration) -> Result<(), String> {
+    let shown = std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|part| part.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let program = command.get_program().to_string_lossy().into_owned();
+    let cannot_run = |e: std::io::Error| format!("cannot run {program}: {e}");
+    let mut errors = tempfile::tempfile().map_err(cannot_run)?;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(errors.try_clone().map_err(cannot_run)?)
+        .spawn()
+        .map_err(cannot_run)?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| format!("{program}: {e}"))? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "`{shown}` didn't finish within {} seconds, so distro stopped it",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    if status.success() {
+        return Ok(());
+    }
+    let mut message = String::new();
+    let _ = errors.seek(SeekFrom::Start(0));
+    let _ = errors.read_to_string(&mut message);
+    Err(format!("{program} failed: {}", message.trim()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,6 +662,11 @@ mod tests {
         );
         let lines: String = (0..40).map(|n| format!("line {n}\n")).collect();
         assert!(first_error(&lines).starts_with("line 15\n"));
+        let traced: String = std::iter::once("error:\n".to_owned())
+            .chain((0..40).map(|n| format!("       … frame {n}\n")))
+            .chain(["       error: unable to download x\n".to_owned()])
+            .collect();
+        assert!(first_error(&traced).ends_with("       …\n       error: unable to download x"));
     }
 
     #[test]

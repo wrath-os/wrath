@@ -32,6 +32,8 @@ def getty(ctx, unit, args):
 def render(ctx):
     for package in PACKAGES:
         ctx.package(package)
+    # device-mapper's udev rules, which tools such as cryptsetup wait on.
+    ctx.service_package("lvm2")
 
     # Services find the system's programs, as a login shell does.
     path = "PATH=/run/wrappers/bin:%s/bin" % SW

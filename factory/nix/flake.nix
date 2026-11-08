@@ -117,10 +117,13 @@
             builtins.parseFlakeRef source.url
         );
 
-      # The nixpkgs a lock's source names, pinned by its hash, or the latest without one.
+      # The nixpkgs a lock's source names, pinned by its hash, or the latest without one. The factory's
+      # own nixpkgs, when it's the one pinned, is used as it is, without fetching it again.
       pinned =
         source:
-        if source ? hash then
+        if source.hash or null == nixpkgs.narHash then
+          nixpkgs
+        else if source ? hash then
           builtins.getFlake (
             builtins.flakeRefToString (
               removeAttrs (builtins.parseFlakeRef source.url) [ "ref" ]
@@ -188,7 +191,7 @@
           named = lib.mapAttrs (_: pinned) (removeAttrs sources [ "nixpkgs" ]);
         in
         import ./native {
-          inherit lib distro;
+          inherit lib distro factoryInputs;
           pkgs = nativePkgs;
           input = json;
           package = import ./package.nix lib nativePkgs named;
@@ -503,6 +506,14 @@
         native = {
           toplevel = input: nativeFrom input [ ];
           testVmToplevel = input: nativeFrom input nativeHostStoreHarness;
+          testInstalledToplevel =
+            input:
+            nativeFrom input [
+              (layerPkgs: import ./native/test-harness.nix {
+                inherit agent;
+                pkgs = layerPkgs;
+              })
+            ];
           testVm = input: nativeVm "distro-test-vm" (nativeFrom input nativeHostStoreHarness);
         };
       };

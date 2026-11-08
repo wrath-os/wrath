@@ -19,21 +19,31 @@
   input,
   package,
   distro,
+  # What distro builds from, which the system keeps so it can build itself offline.
+  factoryInputs ? [ ],
   layers ? [ ],
 }:
 
 let
   base = input.base;
   inherit (pkgs) systemd;
-  allLayers = [ (import ./base.nix { inherit pkgs; }) ] ++ layers;
+  allLayers = [
+    (import ./base.nix { inherit pkgs; })
+  ]
+  ++ lib.optional (base ? storage) (
+    import ./storage.nix {
+      inherit lib pkgs;
+      inherit (base) storage;
+    }
+  )
+  ++ layers;
 
   unsupported =
     lib.optional (input.secrets != { }) "secrets"
     ++ lib.optional (input.templates != { }) "files with secrets"
     ++ lib.optional (input.homes != { }) "homes"
     ++ lib.optional (input.triggers != { }) "reload and restart triggers"
-    ++ lib.optional (input.nixos != { }) "building on NixOS"
-    ++ lib.optional (base ? storage) "disks";
+    ++ lib.optional (input.nixos != { }) "building on NixOS";
 
   # What the layers give at a dotted `path`, such as `initrd.fstab`: lists concatenated, attribute
   # sets merged with later layers winning.
@@ -243,6 +253,9 @@ let
     fstab = sum "initrd.fstab";
     kernelModules = sum "initrd.kernelModules";
     storePaths = sum "initrd.storePaths";
+    disks = lib.any (layer: layer.initrd.disks or false) allLayers;
+    crypttab = sum "initrd.crypttab";
+    udevRules = lib.concatMapStrings (layer: layer.initrd.udevRules or "") allLayers;
   };
 
   kernelParams = base.boot.kernel_params ++ sum "kernelParams";
@@ -255,6 +268,7 @@ let
     ln -s ${etc} $out/etc
     ln -s ${sw} $out/sw
     ln -s ${systemd} $out/systemd
+    echo ${lib.escapeShellArgs factoryInputs} > $out/factory-inputs
     echo "init=$out/init ${lib.concatStringsSep " " kernelParams}" > $out/kernel-params
     # The booted system's first program: distro puts the system in place and starts systemd.
     cat > $out/init <<EOF

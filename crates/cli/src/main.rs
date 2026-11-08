@@ -219,6 +219,9 @@ enum Command {
         system: PathBuf,
         #[arg(long, value_enum, default_value = "switch")]
         mode: activate::Mode,
+        /// The machine's root, such as a disk being installed
+        #[arg(long, default_value = "/")]
+        root: PathBuf,
     },
     /// Fill in files with secrets during activation
     #[command(hide = true)]
@@ -451,8 +454,8 @@ fn main() -> ExitCode {
             })
             .map(exit_code),
         },
-        Command::Activate { system, mode } => {
-            activate::activate(&system, mode).map(|()| ExitCode::SUCCESS)
+        Command::Activate { system, mode, root } => {
+            activate::activate(&system, mode, &root).map(|()| ExitCode::SUCCESS)
         }
         Command::FillTemplates { spec, secrets, out } => templates::machine_values()
             .and_then(|machine| templates::fill(&spec, &secrets, &machine, &out)),

@@ -25,20 +25,142 @@ pub enum Mode {
     Boot,
     /// Put it in place as the booted system's first program, then start systemd.
     Init,
+    /// Install the boot loader on a machine being installed, with this as its first generation.
+    Install,
 }
 
 /// Accounts are copied into /etc rather than linked, so systemd-sysusers can add the system's
 /// own users to them.
 const ACCOUNTS: [&str; 3] = ["passwd", "group", "shadow"];
 
-/// Switches the machine to `system`. Needs root.
-pub fn activate(system: &Path, mode: Mode) -> Result<(), String> {
+/// Switches the machine at `root`, normally `/`, to `system`. Needs root.
+pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
     match mode {
-        // There's no boot loader for these systems yet; the harness boots them directly.
-        Mode::Boot => Ok(()),
-        Mode::Switch | Mode::Test => switch(Path::new("/"), system),
+        Mode::Boot => boot_entries(root),
+        Mode::Switch => switch(root, system).and_then(|()| boot_entries(root)),
+        Mode::Test => switch(root, system),
         Mode::Init => init(system),
+        Mode::Install => {
+            let esp = root.join("boot");
+            run(Command::new("bootctl")
+                .arg(format!("--esp-path={}", esp.display()))
+                .args(["--graceful", "install"]))?;
+            boot_entries(root)
+        }
     }
+}
+
+/// Where the system's generations are, under the root.
+const PROFILES: &str = "nix/var/nix/profiles";
+
+/// Writes a boot loader entry for each generation of the system at `root`, with its kernel and
+/// initrd copied to the ESP at `/boot`, and makes the current generation the default. Kernels
+/// and entries no generation has any more are removed. A machine without an ESP, such as a test
+/// VM booted directly, has nothing to write.
+fn boot_entries(root: &Path) -> Result<(), String> {
+    let esp = root.join("boot");
+    if !esp.join("loader").is_dir() {
+        return Ok(());
+    }
+    let profiles = root.join(PROFILES);
+    let profile = profiles.join("system");
+    let current = fs::read_link(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+    let kernels = esp.join("EFI/distro");
+    let entries = esp.join("loader/entries");
+    for dir in [&kernels, &entries] {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let mut kept = BTreeSet::new();
+    let mut written = BTreeSet::new();
+    for (number, link) in generations(&profiles)? {
+        let system = inside(root, &profiles.join(&link));
+        let mut files = Vec::new();
+        for part in ["kernel", "initrd"] {
+            let path = fs::read_link(system.join(part))
+                .map_err(|e| format!("{}: {e}", system.join(part).display()))?;
+            // Named after the store path, so a kernel shared by generations is copied once.
+            let name = path
+                .strip_prefix("/nix/store")
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('/', "-");
+            let copy = kernels.join(&name);
+            if !copy.exists() {
+                copy_replacing(&inside(root, &system.join(part)), &copy)?;
+            }
+            kept.insert(name.clone());
+            files.push(name);
+        }
+        let params = fs::read_to_string(system.join("kernel-params"))
+            .map_err(|e| format!("{}: {e}", system.display()))?;
+        let entry = format!("distro-{number}.conf");
+        let text = format!(
+            "title distro\nversion generation {number}\nsort-key distro\nlinux /EFI/distro/{}\n\
+             initrd /EFI/distro/{}\noptions {}\n",
+            files[0],
+            files[1],
+            params.trim()
+        );
+        write_replacing(&entries.join(&entry), &text, 0o644)?;
+        written.insert(entry.clone());
+        if current == Path::new(&link) {
+            let loader = format!("default {entry}\ntimeout 3\neditor no\n");
+            write_replacing(&esp.join("loader/loader.conf"), &loader, 0o644)?;
+        }
+    }
+    remove_others(&entries, |name| {
+        name.starts_with("distro-") && !written.contains(name)
+    })?;
+    remove_others(&kernels, |name| !kept.contains(name))
+}
+
+/// The generations in `profiles`, by number, with the name of each one's link.
+fn generations(profiles: &Path) -> Result<Vec<(u32, String)>, String> {
+    let mut generations: Vec<(u32, String)> = fs::read_dir(profiles)
+        .map_err(|e| format!("{}: {e}", profiles.display()))?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let number = name
+                .strip_prefix("system-")?
+                .strip_suffix("-link")?
+                .parse()
+                .ok()?;
+            Some((number, name))
+        })
+        .collect();
+    generations.sort();
+    Ok(generations)
+}
+
+/// Where `link` points, within `root`: absolute targets are under it.
+fn inside(root: &Path, link: &Path) -> PathBuf {
+    let mut path = link.to_path_buf();
+    while let Ok(target) = fs::read_link(&path) {
+        path = match target.strip_prefix("/") {
+            Ok(relative) => root.join(relative),
+            Err(_) => path.parent().unwrap_or(Path::new("/")).join(target),
+        };
+    }
+    path
+}
+
+fn copy_replacing(from: &Path, to: &Path) -> Result<(), String> {
+    let temporary = to.with_extension("distro-new");
+    fs::copy(from, &temporary).map_err(|e| format!("{}: {e}", from.display()))?;
+    fs::rename(&temporary, to).map_err(|e| format!("{}: {e}", to.display()))
+}
+
+/// Removes the files in `dir` whose names `unwanted` says.
+fn remove_others(dir: &Path, unwanted: impl Fn(&str) -> bool) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
+        if unwanted(&entry.file_name().to_string_lossy()) {
+            fs::remove_file(entry.path())
+                .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs as the booted system's init: puts `system` in place and hands over to systemd, which
@@ -72,7 +194,11 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     }
     replace_link(system, &root.join("run/current-system"))?;
     replace_link(system, &root.join("run/booted-system"))?;
-    switch_etc(root, None, system)?;
+    // A root on disk still has /etc from the system it last ran, whose files may have gone since.
+    let old = fs::read_link(root.join("etc/static"))
+        .ok()
+        .and_then(|etc| etc.parent().map(Path::to_path_buf));
+    switch_etc(root, old.as_deref(), system)?;
     replace_link(&system.join("sw/bin/bash"), &root.join("bin/sh"))?;
     replace_link(&system.join("sw/bin/env"), &root.join("usr/bin/env"))?;
     // /run doesn't allow setuid programs, so the wrappers get a filesystem of their own.
@@ -325,6 +451,73 @@ fn run(command: &mut Command) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_generation_gets_a_boot_entry_and_the_current_one_is_the_default() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        let store = root.join("nix/store");
+        let system = |name: &str, kernel: &str| {
+            let dir = store.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            for (file, text) in [("bzImage", "kernel"), ("initrd", "initrd")] {
+                let part = store.join(format!("{kernel}-{file}"));
+                fs::create_dir_all(&part).unwrap();
+                fs::write(part.join(file), text).unwrap();
+            }
+            symlink(
+                format!("/nix/store/{kernel}-bzImage/bzImage"),
+                dir.join("kernel"),
+            )
+            .unwrap();
+            symlink(
+                format!("/nix/store/{kernel}-initrd/initrd"),
+                dir.join("initrd"),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("kernel-params"),
+                format!("init=/nix/store/{name}/init\n"),
+            )
+            .unwrap();
+        };
+        system("aaa-distro-system", "k1");
+        system("bbb-distro-system", "k1");
+        system("ccc-distro-system", "k2");
+        let profiles = root.join(PROFILES);
+        fs::create_dir_all(&profiles).unwrap();
+        for (number, name) in [(1, "aaa"), (2, "bbb"), (3, "ccc")] {
+            let link = profiles.join(format!("system-{number}-link"));
+            symlink(format!("/nix/store/{name}-distro-system"), link).unwrap();
+        }
+        symlink("system-2-link", profiles.join("system")).unwrap();
+        fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
+        fs::write(root.join("boot/loader/entries/distro-9.conf"), "old").unwrap();
+
+        boot_entries(root).unwrap();
+
+        let esp = root.join("boot");
+        assert_eq!(
+            fs::read_to_string(esp.join("loader/loader.conf")).unwrap(),
+            "default distro-2.conf\ntimeout 3\neditor no\n"
+        );
+        let entry = fs::read_to_string(esp.join("loader/entries/distro-3.conf")).unwrap();
+        assert!(
+            entry.contains("linux /EFI/distro/k2-bzImage-bzImage\n"),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("options init=/nix/store/ccc-distro-system/init\n"),
+            "{entry}"
+        );
+        assert!(!esp.join("loader/entries/distro-9.conf").exists());
+        let kernels = fs::read_dir(esp.join("EFI/distro")).unwrap().count();
+        assert_eq!(kernels, 4, "two kernels and two initrds, each copied once");
+        assert_eq!(
+            fs::read_to_string(esp.join("EFI/distro/k1-initrd-initrd")).unwrap(),
+            "initrd"
+        );
+    }
 
     #[test]
     fn accounts_are_the_systems_plus_the_machines_own() {

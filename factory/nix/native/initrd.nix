@@ -1,6 +1,7 @@
 # The initrd: systemd, which mounts the root under /sysroot and switches to it. What the root is
 # and how it's mounted come from `fstab` and `units`; everything under /sysroot in `fstab` is
-# mounted before switching.
+# mounted before switching. With `disks`, it finds disks with udev and unlocks those in
+# `crypttab`, asking for a passphrase on the console, or with the TPM.
 {
   lib,
   pkgs,
@@ -12,6 +13,9 @@
   fstab,
   kernelModules,
   storePaths,
+  disks,
+  crypttab,
+  udevRules,
 }:
 
 let
@@ -60,7 +64,30 @@ let
     "systemd-tmpfiles-setup-dev.service"
     "timers.target"
     "umount.target"
+  ]
+  ++ lib.optionals disks [
+    "cryptsetup-pre.target"
+    "cryptsetup.target"
+    "initrd-udevadm-cleanup-db.service"
+    "systemd-ask-password-console.path"
+    "systemd-ask-password-console.service"
+    "systemd-udev-trigger.service"
+    "systemd-udevd-control.socket"
+    "systemd-udevd-kernel.socket"
+    "systemd-udevd.service"
   ];
+
+  # The rules that name disks and partitions, and device-mapper's for unlocked containers.
+  udev = pkgs.runCommand "initrd-udev-rules" { } ''
+    mkdir $out
+    for rule in 50-udev-default 60-block 60-persistent-storage 64-btrfs 80-drivers 99-systemd; do
+      ln -s ${systemd}/lib/udev/rules.d/$rule.rules $out/
+    done
+    for rule in 10-dm 13-dm-disk 95-dm-notify; do
+      ln -s ${pkgs.lvm2.out}/lib/udev/rules.d/$rule.rules $out/
+    done
+    cp ${pkgs.writeText "distro.rules" udevRules} $out/90-distro.rules
+  '';
   example = "${systemd}/example/systemd/system";
 
   # systemd only switches to a root that says what it is, so the system's os-release goes in
@@ -140,7 +167,8 @@ let
     kernel = moduleTree;
     firmware = pkgs.emptyDirectory;
     rootModules = kernelModules;
-    allowMissing = false;
+    # Drivers built into the kernel aren't modules to copy.
+    allowMissing = true;
   };
 
   release = pkgs.writeText "initrd-release" ''
@@ -183,6 +211,31 @@ let
       target = "/etc/shadow";
     }
     {
+      # The groups udev's rules give devices to.
+      source = pkgs.writeText "group" (
+        lib.concatLines (
+          lib.imap1 (n: group: "${group}:x:${toString n}:") [
+            "tty"
+            "disk"
+            "kmem"
+            "input"
+            "video"
+            "audio"
+            "lp"
+            "dialout"
+            "cdrom"
+            "tape"
+            "floppy"
+            "render"
+            "sgx"
+            "clock"
+            "kvm"
+          ]
+        )
+      );
+      target = "/etc/group";
+    }
+    {
       source = pkgs.writeText "modules.conf" (lib.concatLines kernelModules);
       target = "/etc/modules-load.d/distro.conf";
     }
@@ -197,6 +250,16 @@ let
     {
       source = "${bin}/sbin";
       target = "/sbin";
+    }
+  ]
+  ++ lib.optionals disks [
+    {
+      source = udev;
+      target = "/etc/udev/rules.d";
+    }
+    {
+      source = pkgs.writeText "crypttab" (lib.concatLines crypttab);
+      target = "/etc/crypttab";
     }
   ]
   ++ lib.optional (hostname != "") {
@@ -220,6 +283,14 @@ let
       # Scripts such as `rootScript` run with it.
       pkgs.runtimeShell
       "${pkgs.gnused}/bin/sed"
+    ]
+    ++ lib.optionals disks [
+      "${systemd}/lib/systemd/systemd-udevd"
+      "${systemd}/lib/systemd/systemd-cryptsetup"
+      "${systemd}/lib/systemd/system-generators/systemd-cryptsetup-generator"
+      "${systemd}/lib/udev/ata_id"
+      "${systemd}/lib/udev/scsi_id"
+      "${pkgs.lvm2.bin}/bin/dmsetup"
     ]
     ++ storePaths
   );
