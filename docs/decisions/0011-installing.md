@@ -69,9 +69,18 @@ subvolume.
 
 ### Unlocking
 
-A passphrase is set at install. TPM2 and FIDO2 are enrolled afterwards with `systemd-cryptenroll`,
-on every container of the machine. Unlocking over SSH in the initrd is an option for machines
-without someone at the keyboard.
+A passphrase is set at install, and always works. `[unlock]` adds the rest:
+
+```toml
+[unlock]
+tpm2 = true          # enrolled at install, bound to `pcrs`, by default [7], Secure Boot's state
+ssh = { port = 2222, authorized_keys = ["ssh-ed25519 ..."] }
+```
+
+With `tpm2`, install enrolls every container with `systemd-cryptenroll`, and the machine unlocks
+without a passphrase while the measurements stay the same. With SSH keys, the initrd runs SSH with
+the machine's initrd key (made ahead, like its host key), and someone logs in there to type the
+passphrase. FIDO2 is enrolled afterwards with `systemd-cryptenroll`, by hand for now.
 
 A root across several disks needs all of them unlocked before it mounts, in any order. With one
 missing, a filesystem's `degraded` setting decides: `"boot"`, the default, waits a while for the

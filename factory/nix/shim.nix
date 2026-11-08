@@ -24,7 +24,12 @@ let
     partitions = [ ];
     mounts = [ ];
     spanning = [ ];
+    unlock = {
+      tpm2 = false;
+      ssh.authorized_keys = [ ];
+    };
   };
+  inherit (storage) unlock;
   # Filesystems across disks that boot with a member missing, and the members that may be.
   degraded = lib.filter (fs: fs.degraded == "boot") storage.spanning;
   mapperName = lib.removePrefix "/dev/mapper/";
@@ -291,9 +296,11 @@ in
     map (
       partition:
       lib.nameValuePair partition.label (
-        { device = "/dev/disk/by-partlabel/${partition.label}"; }
-        // lib.optionalAttrs (lib.elem partition.label optional) {
-          crypttabExtraOpts = [ "nofail" ];
+        {
+          device = "/dev/disk/by-partlabel/${partition.label}";
+          crypttabExtraOpts =
+            lib.optional (lib.elem partition.label optional) "nofail"
+            ++ lib.optional unlock.tpm2 "tpm2-device=auto";
         }
       )
     ) (lib.filter (partition: partition.encrypt) storage.partitions)
@@ -313,6 +320,18 @@ in
   swapDevices = map (mount: { inherit (mount) device; }) (
     lib.filter (mount: mount.format == "swap") storage.mounts
   );
+  # Unlocking over SSH in the initrd, with the key install placed for it, for machines without
+  # someone at the keyboard.
+  boot.initrd.network = lib.mkIf (unlock.ssh.authorized_keys != [ ]) {
+    enable = true;
+    ssh = {
+      enable = true;
+      inherit (unlock.ssh) port;
+      authorizedKeys = unlock.ssh.authorized_keys;
+      hostKeys = [ "/etc/ssh/initrd_ed25519_key" ];
+    };
+  };
+
   # btrfs holds back a filesystem's devices until every member is there, so one with a member
   # missing would never mount. Instead the initrd waits for the members a while, then mounts with
   # what's there, and leaves a note for `distro status`.

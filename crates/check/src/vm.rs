@@ -77,6 +77,11 @@ pub enum Step {
     BootInstalled {
         passphrase: Option<String>,
         missing: Vec<usize>,
+        /// A private key, relative to the repository, that logs in to the initrd over SSH, where
+        /// the passphrase is typed instead of at the console.
+        ssh_key: Option<String>,
+        /// The public key the initrd must present, relative to the repository.
+        ssh_host_key: Option<String>,
     },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
@@ -135,13 +140,15 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 14] = [
+pub const STEP_FIELDS: [&str; 16] = [
     "apply_config",
     "prepare_build",
     "target",
     "boot_installed",
     "passphrase",
     "missing",
+    "ssh_key",
+    "ssh_host_key",
     "apply_home",
     "as_user",
     "expect_plan",
@@ -162,6 +169,8 @@ struct RawStep {
     passphrase: Option<String>,
     #[serde(default)]
     missing: Vec<usize>,
+    ssh_key: Option<String>,
+    ssh_host_key: Option<String>,
     apply_home: Option<String>,
     as_user: Option<String>,
     #[serde(default)]
@@ -188,6 +197,8 @@ impl TryFrom<RawStep> for Step {
             return Ok(Self::BootInstalled {
                 passphrase: raw.passphrase,
                 missing: raw.missing,
+                ssh_key: raw.ssh_key,
+                ssh_host_key: raw.ssh_host_key,
             });
         }
         if let Some(config) = raw.apply_home {
@@ -735,6 +746,16 @@ impl VmRun<'_> {
     }
 }
 
+/// How the installed system's disks are unlocked when it boots.
+struct Unlock<'a> {
+    passphrase: Option<&'a str>,
+    ssh_key: Option<&'a str>,
+    ssh_host_key: Option<&'a str>,
+}
+
+/// The port the initrd's SSH listens on, as `unlock.ssh.port` defaults to.
+const INITRD_SSH: u16 = 2222;
+
 /// The directory in a run that the guest mounts read-only at [`GUEST_SHARE`].
 const SHARE: &str = "share";
 
@@ -779,9 +800,15 @@ impl VmRun<'_> {
                 Step::BootInstalled {
                     passphrase,
                     missing,
+                    ssh_key,
+                    ssh_host_key,
                 } => {
-                    let passphrase = passphrase.as_deref();
-                    self.boot_installed(qemu, agent, firmware, passphrase, missing, deadline)?;
+                    let unlock = Unlock {
+                        passphrase: passphrase.as_deref(),
+                        ssh_key: ssh_key.as_deref(),
+                        ssh_host_key: ssh_host_key.as_deref(),
+                    };
+                    self.boot_installed(qemu, agent, firmware, &unlock, missing, deadline)?;
                     booted = boot_id(agent, deadline)?;
                 }
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
@@ -870,7 +897,7 @@ impl VmRun<'_> {
         qemu: &mut KillOnDrop,
         agent: &mut Client<VsockStream>,
         firmware: &FirmwarePaths,
-        passphrase: Option<&str>,
+        unlock: &Unlock,
         missing: &[usize],
         deadline: Instant,
     ) -> Result<(), String> {
@@ -881,13 +908,81 @@ impl VmRun<'_> {
             self.dir.join("console.log"),
             self.dir.join("console-live.log"),
         );
-        let args = self.qemu_args(Boot::Installed, firmware, pick_cid(), missing)?;
+        let mut args = self.qemu_args(Boot::Installed, firmware, pick_cid(), missing)?;
+        let port = 20000 + (args.cid % 20000) as u16;
+        if unlock.ssh_key.is_some() {
+            args.argv.extend([
+                "-nic".into(),
+                format!("user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:{port}-:{INITRD_SSH}"),
+            ]);
+        }
         *qemu = self.spawn(&args)?;
-        if let Some(passphrase) = passphrase {
-            self.type_at_prompt(passphrase, deadline)?;
+        match (unlock.passphrase, unlock.ssh_key) {
+            (Some(passphrase), Some(key)) => {
+                self.unlock_over_ssh(port, key, unlock.ssh_host_key, passphrase, deadline)?
+            }
+            (Some(passphrase), None) => self.type_at_prompt(passphrase, deadline)?,
+            (None, _) => {}
         }
         *agent = self.connect(args.cid, &mut qemu.0, deadline)?;
         Ok(())
+    }
+
+    /// Logs in to the initrd over SSH on `port` with `key` until it answers, and types
+    /// `passphrase` at the disks' prompt there.
+    fn unlock_over_ssh(
+        &self,
+        port: u16,
+        key: &str,
+        host_key: Option<&str>,
+        passphrase: &str,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        // Only the initrd presenting `host_key` is trusted, when there is one.
+        let known = self.dir.join("known_hosts");
+        let checking = match host_key {
+            Some(host_key) => {
+                let key = fs::read_to_string(self.host.workdir.join(host_key))
+                    .map_err(io_err("the initrd's host key"))?;
+                let mut parts = key.split_whitespace();
+                let (kind, key) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+                fs::write(&known, format!("[127.0.0.1]:{port} {kind} {key}\n"))
+                    .map_err(io_err("known_hosts"))?;
+                "StrictHostKeyChecking=yes"
+            }
+            None => "StrictHostKeyChecking=no",
+        };
+        // ssh refuses a private key others can read.
+        let copy = self.dir.join("ssh-key");
+        fs::copy(self.host.workdir.join(key), &copy).map_err(io_err("the SSH key"))?;
+        fs::set_permissions(&copy, fs::Permissions::from_mode(0o600))
+            .map_err(io_err("the SSH key"))?;
+        loop {
+            let mut ssh = Command::new("ssh")
+                .args(["-tt", "-o", checking, "-o"])
+                .arg(format!("UserKnownHostsFile={}", known.display()))
+                .args(["-o", "ConnectTimeout=3", "-i"])
+                .arg(&copy)
+                .args(["-p", &port.to_string(), "root@127.0.0.1"])
+                .arg("systemd-tty-ask-password-agent --query")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| format!("could not run ssh: {e}"))?;
+            thread::sleep(Duration::from_secs(3));
+            if let Some(mut stdin) = ssh.stdin.take() {
+                // The agent over SSH ends the answer at a newline; a serial console sends `\r`.
+                let _ = stdin.write_all(format!("{passphrase}\n").as_bytes());
+            }
+            if ssh.wait().is_ok_and(|status| status.success()) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("the installed system's initrd never let SSH unlock it".into());
+            }
+            thread::sleep(Duration::from_secs(2));
+        }
     }
 
     /// Waits for the console to ask for a passphrase, then types `passphrase` at it.

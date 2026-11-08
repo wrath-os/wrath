@@ -1004,7 +1004,17 @@ fn disks_are_laid_out_and_mounted_by_name() {
             "@root"
           ]
         }
-      ]
+      ],
+      "unlock": {
+        "pcrs": [
+          7
+        ],
+        "ssh": {
+          "authorized_keys": [],
+          "port": 2222
+        },
+        "tpm2": false
+      }
     }
     "#);
 
@@ -1073,7 +1083,17 @@ fn disks_are_laid_out_and_mounted_by_name() {
           "size": "rest"
         }
       ],
-      "spanning": []
+      "spanning": [],
+      "unlock": {
+        "pcrs": [
+          7
+        ],
+        "ssh": {
+          "authorized_keys": [],
+          "port": 2222
+        },
+        "tpm2": false
+      }
     }
     "#);
 }

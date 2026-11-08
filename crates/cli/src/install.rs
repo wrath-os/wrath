@@ -183,8 +183,9 @@ pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, Str
         .map_err(|e| format!("cannot keep the passphrase: {e}"))?;
     let system = generations::build(root, &model, how.system)?;
     let result = lay_out(&partitions, storage, how, &key, work.path())
-        .and_then(|()| backend::install(&system, how.target))
+        // Before the boot loader: it copies the initrd's SSH key into the initrd.
         .and_then(|()| place_keys(how))
+        .and_then(|()| backend::install(&system, how.target))
         .and_then(|()| record(how));
     let closed = close(&partitions, how.target);
     result?;
@@ -452,6 +453,20 @@ fn lay_out(
             .arg(key)
             .arg(format!("/dev/disk/by-partlabel/{}", partition.label))
             .arg(&partition.label))?;
+    }
+    let unlock = field(storage, "unlock");
+    if matches!(field(unlock, "tpm2"), Value::Bool(true)) {
+        let pcrs: Vec<String> = match field(unlock, "pcrs") {
+            Value::List(items) => items.iter().map(ToString::to_string).collect(),
+            _ => Vec::new(),
+        };
+        for partition in partitions.iter().filter(|p| p.encrypt) {
+            run(Command::new("systemd-cryptenroll")
+                .arg(format!("--unlock-key-file={}", key.display()))
+                .arg("--tpm2-device=auto")
+                .arg(format!("--tpm2-pcrs={}", pcrs.join("+")))
+                .arg(format!("/dev/disk/by-partlabel/{}", partition.label)))?;
+        }
     }
     for spanning in list(storage, "spanning") {
         let members = strings(field(spanning, "members"));

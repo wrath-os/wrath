@@ -64,6 +64,35 @@ filesystem = types.record(
     ),
 )
 
+ssh = types.record(
+    port = option(types.int, default = 2222),
+    authorized_keys = option(
+        types.list(types.str),
+        default = [],
+        doc = "Public keys allowed to log in to the initrd and unlock the disks. Without any, " +
+              "the initrd has no SSH.",
+    ),
+)
+
+unlock = types.record(
+    tpm2 = option(
+        types.bool,
+        default = False,
+        doc = "Enroll the machine's TPM at install, so its disks unlock without a passphrase " +
+              "while the PCRs in `pcrs` stay the same.",
+    ),
+    pcrs = option(
+        types.list(types.int),
+        default = [7],
+        doc = "The TPM measurements unlocking depends on; 7 is the Secure Boot state.",
+    ),
+    ssh = option(
+        ssh,
+        default = {},
+        doc = "Unlock over SSH in the initrd, with the machine's initrd key.",
+    ),
+)
+
 UNITS = {"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024, "T": 1024 * 1024 * 1024 * 1024}
 
 def size_of(text):
@@ -186,6 +215,7 @@ def render(ctx):
     if "/" not in paths:
         ctx.error(["disks"], "nothing is mounted at `/`")
     ctx.base("storage", {
+        "unlock": ctx.read("unlock"),
         "disks": {
             name: {
                 "count": count_of(d["devices"]),
@@ -205,6 +235,7 @@ module(
     options = {
         "disks": types.map(disk),
         "filesystems": types.map(filesystem),
+        "unlock": option(unlock, default = {}),
     },
     writes = [],
     render = render,

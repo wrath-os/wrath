@@ -160,6 +160,7 @@ The machine's SSH host key and initrd key, kept encrypted in `secrets/machines/N
 decrypted into it with `--identity FILE`, which stays where install runs. Without `--disk`, it finds
 the disks the configuration describes by kind and size, refusing to guess when more than enough
 fit, and records them on the machine.
+With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SSH.
 
 ## Output and the API
 
