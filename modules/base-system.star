@@ -2,6 +2,7 @@
 # them, and consoles to log in on.
 
 SW = "/run/current-system/sw"
+LOCALES = "system-locales"
 
 PACKAGES = [
     "bashInteractive",
@@ -30,6 +31,21 @@ def getty(ctx, unit, args):
         },
     })
 
+def locale_environment(ctx):
+    """The variables that select the machine's language, with its locale built when it's needed."""
+    locale = ctx.read("system.locale")
+    environment = [("LANG", locale)]
+    if locale != "C.UTF-8":
+        charset = locale.partition(".")[2] or "ISO-8859-1"
+        ctx.build(
+            LOCALES,
+            package = "glibcLocales",
+            options = {"allLocales": False, "locales": ["%s/%s" % (locale, charset)]},
+        )
+        ctx.package(LOCALES)
+        environment.append(("LOCALE_ARCHIVE", SW + "/lib/locale/locale-archive"))
+    return environment
+
 def render(ctx):
     for package in PACKAGES:
         ctx.package(package)
@@ -38,9 +54,18 @@ def render(ctx):
 
     # Services find the system's programs, as a login shell does.
     path = "PATH=/run/wrappers/bin:%s/bin" % SW
+    locale_variables = locale_environment(ctx)
     ctx.file("/etc/systemd/system.conf.d/distro.conf", formats.systemd({
-        "Manager": {"ManagerEnvironment": path, "DefaultEnvironment": path},
+        "Manager": {
+            "ManagerEnvironment": path,
+            "DefaultEnvironment": [path] + ["%s=%s" % item for item in locale_variables],
+        },
     }))
+    ctx.file("/etc/locale.conf", "LANG=%s\n" % ctx.read("system.locale"))
+    keymap = ctx.read("system.keymap")
+    if keymap:
+        ctx.file("/etc/vconsole.conf", "KEYMAP=%s\n" % keymap)
+        ctx.restart("systemd-vconsole-setup.service", on = ["/etc/vconsole.conf"])
     # Nothing is enabled behind the configuration's back, on a first boot or any other.
     ctx.file("/etc/systemd/system-preset/00-distro.preset", "ignore *\n")
     # The kernel loads the modules it needs with this.
@@ -72,7 +97,7 @@ def render(ctx):
         ("PATH", "/run/wrappers/bin:/etc/profiles/per-user/${USER}/bin:%s/bin" % SW),
         ("XDG_DATA_DIRS", SW + "/share"),
         ("XDG_CONFIG_DIRS", "/etc/xdg"),
-    ]
+    ] + locale_variables
     ctx.file(
         "/etc/profile",
         "".join(["export %s=%s\n" % (name, value) for name, value in environment]) +
@@ -101,7 +126,18 @@ def render(ctx):
 
 module(
     name = "base-system",
-    options = {},
+    options = {
+        "system.locale": option(
+            types.str,
+            default = "C.UTF-8",
+            doc = "The machine's language and formats, such as `en_US.UTF-8`.",
+        ),
+        "system.keymap": option(
+            types.str,
+            optional = True,
+            doc = "The keyboard layout on the console, such as `sv-latin1`.",
+        ),
+    },
     writes = [],
     render = render,
     base = True,

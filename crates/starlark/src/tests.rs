@@ -1392,3 +1392,21 @@ fn a_file_is_text_or_settings_and_settings_have_a_format() {
     let no_format = error_of("settings.a = 1");
     assert!(no_format.contains("need a `format`"), "{no_format}");
 }
+
+#[test]
+fn caches_join_the_defaults_and_restart_the_builder() {
+    let config = MemFs::new([(
+        "system.toml",
+        "[caches.\"https://b.example\"]\nkey = \"b:1\"\n\
+         [caches.\"https://a.example\"]\nkey = \"a:1\"\n",
+    )]);
+
+    let evaluation = evaluate_with(&config, &["caches"]).unwrap();
+    insta::assert_snapshot!(rendered_by(&evaluation, "caches"), @r#"
+    /etc/nix/settings.conf
+    extra-substituters = https://a.example https://b.example
+    extra-trusted-public-keys = a:1 b:1
+
+    restart nix-daemon.service on {"/etc/nix/settings.conf"}
+    "#);
+}

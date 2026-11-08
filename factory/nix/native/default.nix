@@ -101,6 +101,13 @@ let
       done
     '';
 
+  # What packages other than systemd generate units with. systemd finds its own.
+  generators = merged "system-generators" (
+    lib.filter (dir: !lib.hasPrefix "${systemd}/" dir) (
+      shipped [ "lib" ] "systemd/system-generators"
+    )
+  );
+
   # Units systemd and the service packages ship, with their links that make targets want them,
   # overlaid by the model's. Upstream units in `enabled` are wanted by the targets given for them,
   # or with none, enabled as `systemctl enable` does, by their [Install] sections. `kind` is
@@ -253,6 +260,7 @@ let
   etc = pkgs.runCommand "etc" { } ''
     mkdir -p $out/systemd $out/udev $out/dbus-1
     ln -s ${systemUnits} $out/systemd/system
+    ln -s ${generators} $out/systemd/system-generators
     ln -s ${userUnits} $out/systemd/user
     # A directory of its own, so rules from the configuration can join what packages ship.
     mkdir $out/udev/rules.d
@@ -324,7 +332,9 @@ let
     ln -s ${pkgs.writeText "model-hash" input.model_hash} $out/distro/model-hash
     echo native > $out/distro/lowering
     mkdir -p $out/nix
-    ln -s ${pkgs.writeText "nix.conf" (lib.concatLines (sum "nixSettings"))} $out/nix/nix.conf
+    ln -s ${pkgs.writeText "nix.conf" (
+      lib.concatLines (sum "nixSettings" ++ [ "!include settings.conf" ])
+    )} $out/nix/nix.conf
   '';
 
   initrd = import ./initrd.nix {

@@ -1,0 +1,15 @@
+packages = ["glibc.bin"]
+
+[system]
+hostname = "native"
+locale = "en_US.UTF-8"
+keymap = "sv-latin1"
+
+[users.john]
+extra_groups = ["wheel"]
+
+[zram]
+enable = true
+
+[caches."https://cache.example.org"]
+key = "cache.example.org:AAAA"
