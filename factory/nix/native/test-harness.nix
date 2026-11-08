@@ -50,7 +50,8 @@
     text = ''
       [Service]
       ExecStart=
-      ExecStart=-${pkgs.util-linux}/bin/agetty --login-program ${pkgs.shadow}/bin/login --autologin root --keep-baud 115200,57600,38400,9600 %I $TERM
+      ExecStart=-${pkgs.util-linux}/bin/agetty --login-program ${pkgs.shadow}/bin/login \
+        --autologin root --keep-baud 115200,57600,38400,9600 %I $TERM
     '';
   };
 }

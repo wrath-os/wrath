@@ -34,7 +34,8 @@ in
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        ExecStart=${pkgs.coreutils}/bin/mkdir -p /sysroot/nix/.rw-store/store /sysroot/nix/.rw-store/work
+        ExecStart=${pkgs.coreutils}/bin/mkdir -p \
+          /sysroot/nix/.rw-store/store /sysroot/nix/.rw-store/work
       '';
     };
     storePaths = [ "${pkgs.coreutils}/bin/mkdir" ];

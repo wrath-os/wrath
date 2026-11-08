@@ -65,8 +65,9 @@ let
       name:
       let
         user = users.${name};
+        ids = "${toString (uidOf name)}:${toString gids.${user.group}}";
       in
-      "${name}:x:${toString (uidOf name)}:${toString gids.${user.group}}:${user.description}:${user.home}:${shellOf name}"
+      "${name}:x:${ids}:${user.description}:${user.home}:${shellOf name}"
     ) names
   );
   group = lib.concatLines (
@@ -79,6 +80,10 @@ let
   homes = lib.concatLines (
     map (name: "d ${users.${name}.home} 0700 ${name} ${users.${name}.group} -") (
       lib.filter (name: !users.${name}.system) names
+    )
+    # Users who linger have their service manager started at boot.
+    ++ map (name: "f /var/lib/systemd/linger/${name}") (
+      lib.filter (name: users.${name}.linger) names
     )
   );
 in

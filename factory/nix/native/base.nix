@@ -9,6 +9,10 @@
     pkgs.nix
   ];
 
+  # Users build and fetch through the daemon, since only root writes to the store directly.
+  services = [ pkgs.nix ];
+  enabled."nix-daemon.socket" = [ ];
+
   nixSettings = [
     "experimental-features = nix-command flakes"
     "build-users-group ="

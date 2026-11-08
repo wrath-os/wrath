@@ -10,6 +10,7 @@
 #   kernelModules   modules loaded once booted
 #   kernelParams    the kernel's command line
 #   services        packages whose units, udev rules and D-Bus policy join the system
+#   enabled         upstream units to enable, each with the targets that want it, or none
 #   initrd          { units, fstab, kernelModules, storePaths }, for the initrd
 #
 # Parts of the model this doesn't build yet are refused, so nothing is silently left out.
@@ -38,12 +39,7 @@ let
   )
   ++ layers;
 
-  unsupported =
-    lib.optional (input.secrets != { }) "secrets"
-    ++ lib.optional (input.templates != { }) "files with secrets"
-    ++ lib.optional (input.homes != { }) "homes"
-    ++ lib.optional (input.triggers != { }) "reload and restart triggers"
-    ++ lib.optional (input.nixos != { }) "building on NixOS";
+  unsupported = lib.optional (input.nixos != { }) "building on NixOS";
 
   # What the layers give at a dotted `path`, such as `initrd.fstab`: lists concatenated, attribute
   # sets merged with later layers winning.
@@ -146,7 +142,7 @@ let
     "etc"
     "share"
   ];
-  systemUnits = unitDir "system" units input.enabled;
+  systemUnits = unitDir "system" units (input.enabled // union "enabled");
   userUnits = unitDir "user" { } input.enabled_user;
 
   # udev's hardware database, built from the service packages' sources.
@@ -182,12 +178,64 @@ let
   '';
 
   users = import ./users.nix { inherit lib pkgs; } base.users;
+
+  # Where the machine fills in a file with secrets or machine values in it.
+  filled = file: "/run/distro/templates/${file.name}";
+  etcTemplates = lib.filterAttrs (path: _: lib.hasPrefix "/etc/" path) input.templates;
+  otherTemplates = lib.filterAttrs (path: _: !(lib.hasPrefix "/etc/" path)) input.templates;
+  templates =
+    lib.attrValues input.templates
+    ++ lib.concatMap (home: lib.attrValues (home.templates or { })) (lib.attrValues input.homes);
+
+  homeLinks = import ../home-links.nix { inherit lib pkgs; };
+
+  # What the machine does itself at every boot and switch, since it needs the machine's keys or
+  # accounts: decrypting secrets, filling in files and linking homes.
+  activation = pkgs.writeText "activation.json" (
+    builtins.toJSON {
+      age = "${pkgs.age}/bin/age";
+      identities = base.secrets.identities or [ ];
+      secrets = lib.mapAttrs (name: secret: {
+        source = builtins.path {
+          path = /. + secret.source;
+          name = "${name}.age";
+        };
+        inherit (secret) owner mode link;
+      }) input.secrets;
+      templates_spec = pkgs.writeText "distro-templates.json" (
+        builtins.toJSON (
+          lib.listToAttrs (map (file: lib.nameValuePair file.name file.parts) templates)
+        )
+      );
+      templates = map (file: { inherit (file) name owner mode; }) templates;
+      hostname_filled = base.system.hostname == "";
+      etc_modes = lib.mapAttrs (_: file: file.mode) (
+        lib.filterAttrs (_: file: file.mode != "symlink") input.etc
+      );
+      bash = "${pkgs.bash}/bin/bash";
+      link_home = "${../link-home.sh}";
+      homes = lib.mapAttrsToList (name: user: {
+        inherit name;
+        inherit (user) group home;
+        links = homeLinks name (input.homes.${name} or { }) filled;
+      }) (lib.filterAttrs (_: user: !user.system) base.users);
+    }
+  );
+
+  # Each user's own packages, where their programs are found.
+  userProfiles = lib.filterAttrs (_: home: (home.packages or [ ]) != [ ]) input.homes;
+
   writeUnits = import ./units.nix { inherit lib pkgs; };
 
   osRelease = ''
     NAME=distro
     ID=distro
     PRETTY_NAME=distro
+  '';
+
+  linkInEtc = path: target: ''
+    mkdir -p "$(dirname "$out/${path}")"
+    ln -sfn ${target} "$out/${path}"
   '';
 
   etc = pkgs.runCommand "etc" { } ''
@@ -224,6 +272,9 @@ let
           path: file: "L+ ${path} - - - - ${pkgs.writeText (baseNameOf path) file.text}\n"
         ) input.files
       )
+      + lib.concatStrings (
+        lib.mapAttrsToList (path: file: "L+ ${path} - - - - ${filled file}\n") otherTemplates
+      )
     )} $out/tmpfiles.d/distro.conf
     ${lib.optionalString (base.system.hostname != "") ''
       echo ${lib.escapeShellArg base.system.hostname} > $out/hostname
@@ -233,10 +284,26 @@ let
     cp ${users.shadow} $out/shadow
     ln -s ${users.homes} $out/tmpfiles.d/distro-homes.conf
     ${lib.concatStrings (
-      lib.mapAttrsToList (path: file: ''
-        mkdir -p "$(dirname "$out/${path}")"
-        ln -sfn ${pkgs.writeText (baseNameOf path) file.text} "$out/${path}"
-      '') etcFiles
+      lib.mapAttrsToList (
+        path: file: linkInEtc path (pkgs.writeText (baseNameOf path) file.text)
+      ) etcFiles
+    )}
+    ${lib.concatStrings (
+      lib.mapAttrsToList (
+        path: file: linkInEtc (lib.removePrefix "/etc/" path) (filled file)
+      ) etcTemplates
+    )}
+    ${lib.concatStrings (
+      lib.mapAttrsToList (name: home: ''
+        mkdir -p $out/profiles/per-user
+        ln -s ${
+          pkgs.buildEnv {
+            name = "user-${name}";
+            paths = map package home.packages;
+            ignoreCollisions = true;
+          }
+        } $out/profiles/per-user/${name}
+      '') userProfiles
     )}
     mkdir -p $out/distro
     ln -s ${pkgs.writeText "model.json" input.model} $out/distro/model.json
@@ -268,6 +335,7 @@ let
     ln -s ${moduleTree} $out/kernel-modules
     ln -s ${initrd}/initrd $out/initrd
     ln -s ${etc} $out/etc
+    ln -s ${activation} $out/activation.json
     ln -s ${sw} $out/sw
     ln -s ${systemd} $out/systemd
     echo ${lib.escapeShellArgs factoryInputs} > $out/factory-inputs

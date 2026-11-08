@@ -20,6 +20,7 @@ mod generations;
 mod home;
 mod install;
 mod machine;
+mod on_machine;
 mod options;
 mod pinned;
 mod project;

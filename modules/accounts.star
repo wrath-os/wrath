@@ -11,7 +11,11 @@ def render(ctx):
     # unix_chkpwd lets PAM check a password for someone who isn't root.
     for name in ["sudo", "su", "passwd", "unix_chkpwd"]:
         ctx.wrapper(name, source = SW + name)
-    ctx.file("/etc/sudoers", "root ALL=(ALL:ALL) SETENV: ALL\n%wheel ALL=(ALL:ALL) SETENV: ALL\n", 0o440)
+    ctx.file(
+        "/etc/sudoers",
+        "root ALL=(ALL:ALL) SETENV: ALL\n%wheel ALL=(ALL:ALL) SETENV: ALL\n",
+        0o440,
+    )
 
     su = unix_stacks()
     su["auth"] = [{"name": "rootok", "control": "sufficient", "module": "pam_rootok.so"}] + [

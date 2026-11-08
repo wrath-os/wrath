@@ -272,7 +272,9 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         "wrappers",
         "/run/wrappers",
     ]))?;
-    make_wrappers(root, system, &model_of(system)?)
+    run(&mut Command::new(system.join("sw/bin/systemd-sysusers")))?;
+    make_wrappers(root, system, &model_of(system)?)?;
+    crate::on_machine::apply(system)
 }
 
 fn switch(root: &Path, system: &Path) -> Result<(), String> {
@@ -289,6 +291,7 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     switch_etc(root, old.as_deref(), system)?;
     run(&mut Command::new("systemd-sysusers"))?;
     make_wrappers(root, system, &after)?;
+    crate::on_machine::apply(system)?;
     run(Command::new("systemd-tmpfiles").arg("--create"))?;
     run(Command::new("systemctl").arg("daemon-reload"))?;
     systemctl("try-restart", &activation.restart)?;
@@ -332,6 +335,8 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
         Some(old) => files_in(&old.join("etc")).unwrap_or_default(),
         None => BTreeSet::new(),
     };
+    let new_modes = etc_modes(system);
+    let old_modes = old.map(etc_modes).unwrap_or_default();
     replace_link(&new_etc, &etc.join("static"))?;
     let in_static = |path: &Path| Path::new("/etc/static").join(path);
     for path in &new_files {
@@ -340,17 +345,26 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
         }
         let target = in_static(path);
         let link = etc.join(path);
-        if fs::read_link(&link).is_ok_and(|current| current == target) {
-            continue;
-        }
         if let Some(parent) = link.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        // A file with its own mode is a copy, since a link into the store can't have one.
+        if let Some(mode) = new_modes.get(path) {
+            let text =
+                fs::read(new_etc.join(path)).map_err(|e| format!("{}: {e}", path.display()))?;
+            write_replacing(&link, text, *mode)?;
+            continue;
+        }
+        if fs::read_link(&link).is_ok_and(|current| current == target) {
+            continue;
         }
         replace_link(&target, &link)?;
     }
     for path in old_files.difference(&new_files) {
         let link = etc.join(path);
-        if fs::read_link(&link).is_ok_and(|current| current == in_static(path)) {
+        if old_modes.contains_key(path)
+            || fs::read_link(&link).is_ok_and(|current| current == in_static(path))
+        {
             fs::remove_file(&link).map_err(|e| format!("{}: {e}", link.display()))?;
         }
     }
@@ -367,6 +381,21 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
         write_replacing(&path, &merged, mode)?;
     }
     Ok(())
+}
+
+/// The files in `system`'s /etc that have their own mode, by path under /etc.
+fn etc_modes(system: &Path) -> BTreeMap<PathBuf, u32> {
+    let text = fs::read_to_string(system.join("activation.json")).unwrap_or_default();
+    let activation: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    activation["etc_modes"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(path, mode)| {
+            let mode = u32::from_str_radix(mode.as_str()?, 8).ok()?;
+            Some((PathBuf::from(path), mode))
+        })
+        .collect()
 }
 
 /// Makes `/run/wrappers/bin` hold `model`'s wrappers, copied from `system`, each with its owner and
@@ -473,14 +502,14 @@ fn merge_accounts(current: &str, old: &str, new: &str, keep_passwords: bool) -> 
 }
 
 /// Makes `link` point at `target`, replacing what's there in one step.
-fn replace_link(target: &Path, link: &Path) -> Result<(), String> {
+pub(crate) fn replace_link(target: &Path, link: &Path) -> Result<(), String> {
     let temporary = link.with_extension("distro-new");
     let _ = fs::remove_file(&temporary);
     symlink(target, &temporary).map_err(|e| format!("{}: {e}", temporary.display()))?;
     fs::rename(&temporary, link).map_err(|e| format!("{}: {e}", link.display()))
 }
 
-fn write_replacing(path: &Path, text: &str, mode: u32) -> Result<(), String> {
+fn write_replacing(path: &Path, text: impl AsRef<[u8]>, mode: u32) -> Result<(), String> {
     let temporary = path.with_extension("distro-new");
     fs::write(&temporary, text).map_err(|e| format!("{}: {e}", temporary.display()))?;
     fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))
@@ -637,6 +666,37 @@ mod tests {
             merge_accounts("john:$y$hash:1::::::\n", "", "john:!:1::::::\n", true),
             "john:$y$hash:1::::::\n"
         );
+    }
+
+    #[test]
+    fn a_file_with_its_own_mode_is_a_copy_and_goes_when_the_system_drops_it() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path().join("root");
+        let system = |name: &str, modes: &str, files: &[&str]| {
+            let dir = work.path().join(name);
+            fs::create_dir_all(dir.join("etc")).unwrap();
+            for file in files {
+                fs::write(dir.join("etc").join(file), *file).unwrap();
+            }
+            fs::write(
+                dir.join("activation.json"),
+                format!("{{\"etc_modes\": {{{modes}}}}}"),
+            )
+            .unwrap();
+            dir
+        };
+        let old = system("old", "\"private.conf\": \"0640\"", &["private.conf"]);
+        let new = system("new", "", &["plain.conf"]);
+        fs::create_dir_all(root.join("etc")).unwrap();
+
+        switch_etc(&root, None, &old).unwrap();
+        let private = root.join("etc/private.conf");
+        let metadata = fs::symlink_metadata(&private).unwrap();
+        assert!(!metadata.is_symlink());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
+
+        switch_etc(&root, Some(&old), &new).unwrap();
+        assert!(fs::symlink_metadata(&private).is_err());
     }
 
     #[test]

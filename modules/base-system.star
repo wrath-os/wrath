@@ -14,6 +14,7 @@ PACKAGES = [
     "iputils",
     "kmod",
     "less",
+    "openssh",
     "procps",
     "shadow",
     "util-linux",
@@ -67,13 +68,17 @@ def render(ctx):
     # Login shells, and the service managers of users' sessions, find the system's programs and
     # what they ship, such as D-Bus services and desktop files.
     environment = [
-        ("PATH", "/run/wrappers/bin:%s/bin" % SW),
+        ("PATH", "/run/wrappers/bin:/etc/profiles/per-user/${USER}/bin:%s/bin" % SW),
         ("XDG_DATA_DIRS", SW + "/share"),
         ("XDG_CONFIG_DIRS", "/etc/xdg"),
     ]
     ctx.file(
         "/etc/profile",
-        "".join(["export %s=%s\n" % (name, value) for name, value in environment]),
+        "".join(["export %s=%s\n" % (name, value) for name, value in environment]) +
+        # What a user's `environment` sets, for login shells; systemd reads environment.d itself.
+        "if [ -r \"$HOME/.config/distro/session.sh\" ]; then\n" +
+        "  . \"$HOME/.config/distro/session.sh\"\n" +
+        "fi\n",
         next_login = True,
     )
     ctx.file(
