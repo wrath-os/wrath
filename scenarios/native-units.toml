@@ -1,0 +1,14 @@
+title = "units written in the configuration run, and a timer's service waits for its timer"
+
+[vm]
+config = "fixtures/configs/native"
+store = "host"
+lowering = "native"
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { apply_config = "scenarios/fixtures/native-units", expect_plan = ["+ backup.service", "+ backup.timer", "+ report.timer"] },
+  { run = "for i in $(seq 90); do test -e /run/report-ran && break; sleep 1; done; test -e /run/report-ran && echo fired; systemctl is-active backup.timer; test -e /run/backup-ran || echo waiting", stdout_contains = "fired\nactive\nwaiting" },
+  { apply_config = "scenarios/fixtures/native-units-changed", expect_plan = ["~ backup.service"] },
+  { run = "test -e /run/backup-changed || echo waiting; systemctl start backup; test -e /run/backup-changed && echo ran", stdout_contains = "waiting\nran" },
+]
+timeout_secs = 300

@@ -1177,3 +1177,77 @@ module(name = "bad", options = {}, writes = [], render = render)
     .unwrap_err();
     assert!(message.contains("absolute path"), "{message}");
 }
+
+const UNIT_MODULES: [&str; 1] = ["units"];
+
+fn with_units(toml: &str) -> MemFs {
+    MemFs::new([("system.toml", toml)])
+}
+
+#[test]
+fn units_are_written_in_toml_and_timers_start_on_their_own() {
+    let config = with_units(
+        r#"
+[units."backup.service"]
+Unit.Description = "Nightly backup"
+Service = { Type = "oneshot", ExecStart = "restic backup /home" }
+
+[units."backup.timer"]
+Timer.OnCalendar = "daily"
+
+[units."manual.timer"]
+Timer.OnCalendar = "weekly"
+Install.WantedBy = "custom.target"
+
+[units."nginx.service.d/limits.conf"]
+Service.LimitNOFILE = 4096
+"#,
+    );
+
+    let evaluation = evaluate_with(&config, &UNIT_MODULES).unwrap();
+    insta::assert_snapshot!(rendered_by(&evaluation, "units"), @"
+    backup.service
+    [Unit]
+    Description=Nightly backup
+
+    [Service]
+    ExecStart=restic backup /home
+    Type=oneshot
+
+    backup.timer
+    [Timer]
+    OnCalendar=daily
+
+    [Install]
+    WantedBy=timers.target
+
+    manual.timer
+    [Timer]
+    OnCalendar=weekly
+
+    [Install]
+    WantedBy=custom.target
+
+    nginx.service.d/limits.conf
+    [Service]
+    LimitNOFILE=4096
+    ");
+}
+
+#[test]
+fn a_unit_needs_a_name_systemd_knows_and_sections() {
+    for (toml, expected) in [
+        (
+            "[units.backup]\nService.ExecStart = \"x\"\n",
+            "`backup` isn't a unit name",
+        ),
+        (
+            "[units.\"backup.service\"]\nExecStart = \"x\"\n",
+            "`ExecStart` isn't a section",
+        ),
+    ] {
+        let error = evaluate_with(&with_units(toml), &UNIT_MODULES).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+        assert!(error.contains("system.toml"), "{error}");
+    }
+}

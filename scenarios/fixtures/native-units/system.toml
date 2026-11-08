@@ -1,0 +1,17 @@
+[system]
+hostname = "native"
+
+[users.john]
+extra_groups = ["wheel"]
+
+[units."backup.service"]
+Service = { Type = "oneshot", ExecStart = "touch /run/backup-ran" }
+
+[units."backup.timer"]
+Timer.OnCalendar = "daily"
+
+[units."report.service"]
+Service = { Type = "oneshot", ExecStart = "touch /run/report-ran" }
+
+[units."report.timer"]
+Timer.OnActiveSec = "1s"
