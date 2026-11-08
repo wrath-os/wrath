@@ -9,6 +9,7 @@
 
 let
   inherit (storage) unlock;
+  ssh = unlock.ssh.authorized_keys != [ ];
   encrypted = lib.filter (partition: partition.encrypt) storage.partitions;
   # Filesystems across disks that boot with a member missing, and the members that may be.
   degraded = lib.filter (fs: fs.degraded == "boot") storage.spanning;
@@ -24,8 +25,9 @@ let
       ]
       ++ lib.optional (lib.elem partition.label optional) "nofail"
       ++ lib.optional unlock.tpm2 "tpm2-device=auto";
+      device = "/dev/disk/by-partlabel/${partition.label}";
     in
-    "${partition.label} /dev/disk/by-partlabel/${partition.label} none ${lib.concatStringsSep "," options}"
+    "${partition.label} ${device} none ${lib.concatStringsSep "," options}"
   ) encrypted;
 
   filesystems = lib.filter (mount: mount.format != "swap") storage.mounts;
@@ -37,8 +39,9 @@ let
     prefix: mount:
     let
       options = if mount.options == [ ] then "defaults" else lib.concatStringsSep "," mount.options;
+      where = if mount.path == "/" && prefix != "" then prefix else prefix + mount.path;
     in
-    "${mount.device} ${if mount.path == "/" && prefix != "" then prefix else prefix + mount.path} ${mount.format} ${options} 0 0";
+    "${mount.device} ${where} ${mount.format} ${options} 0 0";
   swaps = map (mount: "${mount.device} none swap defaults 0 0") (
     lib.filter (mount: mount.format == "swap") storage.mounts
   );
@@ -64,6 +67,10 @@ let
     '';
 in
 lib.optionalAttrs (storage.partitions != [ ]) {
+  # Secret files from the machine's disk the initrd needs, added to it on the machine when its
+  # boot entries are written, so they never go in the store.
+  initrdSecrets = lib.optional ssh "/etc/ssh/initrd_ed25519_key";
+
   etc = {
     "fstab".text = lib.concatLines (map (line "") filesystems ++ swaps);
   }
@@ -101,6 +108,11 @@ lib.optionalAttrs (storage.partitions != [ ]) {
         }
       ) degraded
     );
+    # Unlocking over SSH: the initrd brings up the network and runs sshd with the keys allowed.
+    ssh = lib.optionalAttrs ssh {
+      inherit (unlock.ssh) port;
+      authorizedKeys = unlock.ssh.authorized_keys;
+    };
     # systemd loads the TPM's libraries only when asked to, and they load the device driver.
     dlopenFeatures = lib.optional unlock.tpm2 "tpm";
     storePaths = map wait degraded ++ [
@@ -138,6 +150,19 @@ lib.optionalAttrs (storage.partitions != [ ]) {
         "virtio_pci"
         "virtio_blk"
         "virtio_scsi"
+      ]
+      # Packet sockets, which DHCP uses, and network drivers, for unlocking over SSH.
+      ++ lib.optionals ssh [
+        "af_packet"
+        "virtio_net"
+        "e1000e"
+        "igb"
+        "igc"
+        "ixgbe"
+        "r8169"
+        "tg3"
+        "bnxt_en"
+        "mlx5_core"
       ]
       ++ lib.unique (map (mount: mount.format) early)
       # btrfs checksums with crc32c, which it loads by name.

@@ -17,6 +17,7 @@
   crypttab,
   udevRules,
   dlopenFeatures,
+  ssh,
 }:
 
 let
@@ -24,6 +25,42 @@ let
   # The util-linux systemd runs, such as for mount units.
   utilLinux = lib.getBin systemd.util-linux;
   tpm = lib.elem "tpm" dlopenFeatures;
+  # Unlocking over SSH: networkd brings up wired interfaces with DHCP, and sshd lets in the keys
+  # given, as root, to answer the passphrase prompt. Its host key comes from the machine's disk.
+  withSsh = ssh != { };
+  sshd = {
+    text = ''
+      [Unit]
+      Description=SSH, to unlock the disks
+      DefaultDependencies=no
+      After=network.target
+      Before=shutdown.target
+      Conflicts=shutdown.target
+
+      [Service]
+      ExecStart=${pkgs.openssh}/bin/sshd -D -f /etc/ssh/sshd_config
+      KillMode=process
+      Restart=on-failure
+    '';
+    wanted_by = [ "initrd.target" ];
+  };
+  sshdConfig = ''
+    Port ${toString ssh.port}
+    HostKey /etc/ssh/initrd_ed25519_key
+    AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
+    UsePAM no
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitRootLogin prohibit-password
+  '';
+  dhcp = ''
+    [Match]
+    Type=ether
+    Kind=!*
+
+    [Network]
+    DHCP=yes
+  '';
 
   # systemd's own units the initrd runs, from those it ships for every system.
   upstream = [
@@ -72,6 +109,13 @@ let
     "systemd-pcrextend@.service"
     "systemd-tpm2-setup-early.service"
     "tpm2.target"
+  ]
+  ++ lib.optionals withSsh [
+    "network-pre.target"
+    "network.target"
+    "systemd-networkd.service"
+    "systemd-networkd.socket"
+    "systemd-networkd-varlink.socket"
   ]
   ++ lib.optionals disks [
     "cryptsetup-pre.target"
@@ -157,7 +201,15 @@ let
       fi
     done
     ln -s initrd.target $out/default.target
-    ${writeUnits (units // { "distro-root.service" = rootService; })}
+    ${lib.optionalString withSsh ''
+      mkdir -p $out/initrd.target.wants
+      ln -s ../systemd-networkd.service $out/initrd.target.wants/
+    ''}
+    ${writeUnits (
+      units
+      // { "distro-root.service" = rootService; }
+      // lib.optionalAttrs withSsh { "sshd.service" = sshd; }
+    )}
   '';
 
   bin = pkgs.buildEnv {
@@ -223,6 +275,15 @@ let
       target = "/etc/shadow";
     }
     {
+      # sshd runs its sessions apart as `sshd`, and networkd runs as its own user.
+      source = pkgs.writeText "passwd" ''
+        root:x:0:0:root:/root:/bin/sh
+        sshd:x:74:74:sshd:/var/empty:/bin/false
+        systemd-network:x:152:152:networkd:/:/bin/false
+      '';
+      target = "/etc/passwd";
+    }
+    {
       # The groups udev's rules give devices to.
       source = pkgs.writeText "group" (
         lib.concatLines (
@@ -244,6 +305,7 @@ let
             "kvm"
           ]
         )
+        + "root:x:0:\nsshd:x:74:\nsystemd-network:x:152:\n"
       );
       target = "/etc/group";
     }
@@ -274,6 +336,20 @@ let
       target = "/etc/crypttab";
     }
   ]
+  ++ lib.optionals withSsh [
+    {
+      source = pkgs.writeText "sshd_config" sshdConfig;
+      target = "/etc/ssh/sshd_config";
+    }
+    {
+      source = pkgs.writeText "authorized_keys" (lib.concatLines ssh.authorizedKeys);
+      target = "/etc/ssh/authorized_keys.d/root";
+    }
+    {
+      source = pkgs.writeText "99-dhcp.network" dhcp;
+      target = "/etc/systemd/network/99-dhcp.network";
+    }
+  ]
   # libcryptsetup unlocks with the TPM through systemd's plugin, which it looks for among its own.
   ++ lib.optional tpm {
     source = "${systemd}/lib/cryptsetup/libcryptsetup-token-systemd-tpm2.so";
@@ -300,6 +376,13 @@ let
       # Scripts such as `rootScript` run with it.
       pkgs.runtimeShell
       "${pkgs.gnused}/bin/sed"
+    ]
+    ++ lib.optionals withSsh [
+      "${pkgs.openssh}/bin/sshd"
+      "${pkgs.openssh}/libexec/sshd-session"
+      "${pkgs.openssh}/libexec/sshd-auth"
+      "${systemd}/lib/systemd/systemd-networkd"
+      "${systemd}/lib/systemd/systemd-sysctl"
     ]
     ++ lib.optionals tpm [
       pkgs.tpm2-tss

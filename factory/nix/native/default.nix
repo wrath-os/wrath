@@ -257,6 +257,7 @@ let
     crypttab = sum "initrd.crypttab";
     udevRules = lib.concatMapStrings (layer: layer.initrd.udevRules or "") allLayers;
     dlopenFeatures = sum "initrd.dlopenFeatures";
+    ssh = union "initrd.ssh";
   };
 
   kernelParams = base.boot.kernel_params ++ sum "kernelParams";
@@ -270,6 +271,7 @@ let
     ln -s ${sw} $out/sw
     ln -s ${systemd} $out/systemd
     echo ${lib.escapeShellArgs factoryInputs} > $out/factory-inputs
+    echo -n ${lib.escapeShellArg (lib.concatLines (sum "initrdSecrets"))} > $out/initrd-secrets
     echo "init=$out/init ${lib.concatStringsSep " " kernelParams}" > $out/kernel-params
     # The booted system's first program: distro puts the system in place and starts systemd.
     cat > $out/init <<EOF

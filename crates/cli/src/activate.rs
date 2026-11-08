@@ -91,14 +91,40 @@ fn boot_entries(root: &Path) -> Result<(), String> {
             kept.insert(name.clone());
             files.push(name);
         }
+        // Secrets the initrd needs from the disk, such as its SSH host key, go in an initrd of
+        // their own made here, so they never go in the store.
+        let listed = fs::read_to_string(system.join("initrd-secrets")).unwrap_or_default();
+        let secrets = listed
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|path| {
+                let file = root.join(path.trim_start_matches('/'));
+                fs::read(&file)
+                    .map(|bytes| (path, bytes))
+                    .map_err(|e| format!("{}: {e}", file.display()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if !secrets.is_empty() {
+            let name = format!("secrets-{number}.cpio");
+            let archive = kernels.join(&name);
+            let temporary = archive.with_extension("distro-new");
+            fs::write(&temporary, cpio(&secrets))
+                .and_then(|()| fs::rename(&temporary, &archive))
+                .map_err(|e| format!("{}: {e}", archive.display()))?;
+            kept.insert(name.clone());
+            files.push(name);
+        }
         let params = fs::read_to_string(system.join("kernel-params"))
             .map_err(|e| format!("{}: {e}", system.display()))?;
         let entry = format!("distro-{number}.conf");
+        let initrds: String = files[1..]
+            .iter()
+            .map(|file| format!("initrd /EFI/distro/{file}\n"))
+            .collect();
         let text = format!(
             "title distro\nversion generation {number}\nsort-key distro\nlinux /EFI/distro/{}\n\
-             initrd /EFI/distro/{}\noptions {}\n",
+             {initrds}options {}\n",
             files[0],
-            files[1],
             params.trim()
         );
         write_replacing(&entries.join(&entry), &text, 0o644)?;
@@ -112,6 +138,42 @@ fn boot_entries(root: &Path) -> Result<(), String> {
         name.starts_with("distro-") && !written.contains(name)
     })?;
     remove_others(&kernels, |name| !kept.contains(name))
+}
+
+/// An uncompressed cpio archive, in the `newc` format the kernel unpacks an initrd from, holding
+/// `files` by absolute path, readable only by root, with the directories they're in.
+fn cpio(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    fn entry(out: &mut Vec<u8>, name: &str, mode: u32, data: &[u8]) {
+        let (size, name_size) = (data.len() as u32, name.len() as u32 + 1);
+        let fields = [0, mode, 0, 0, 1, 0, size, 0, 0, 0, 0, name_size, 0];
+        out.extend_from_slice(b"070701");
+        for field in fields {
+            out.extend_from_slice(format!("{field:08x}").as_bytes());
+        }
+        out.extend_from_slice(name.as_bytes());
+        out.push(0);
+        out.resize(out.len().next_multiple_of(4), 0);
+        out.extend_from_slice(data);
+        out.resize(out.len().next_multiple_of(4), 0);
+    }
+    let mut out = Vec::new();
+    let mut directories = BTreeSet::new();
+    for (path, data) in files {
+        let path = path.trim_start_matches('/');
+        let parents: Vec<&Path> = Path::new(path)
+            .ancestors()
+            .skip(1)
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .collect();
+        for dir in parents.into_iter().rev() {
+            if directories.insert(dir) {
+                entry(&mut out, &dir.to_string_lossy(), 0o040_755, &[]);
+            }
+        }
+        entry(&mut out, path, 0o100_600, data);
+    }
+    entry(&mut out, "TRAILER!!!", 0, &[]);
+    out
 }
 
 /// The generations in `profiles`, by number, with the name of each one's link.
@@ -484,6 +546,13 @@ mod tests {
         system("aaa-distro-system", "k1");
         system("bbb-distro-system", "k1");
         system("ccc-distro-system", "k2");
+        fs::write(
+            store.join("ccc-distro-system/initrd-secrets"),
+            "/etc/ssh/initrd_ed25519_key\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("etc/ssh")).unwrap();
+        fs::write(root.join("etc/ssh/initrd_ed25519_key"), "key\n").unwrap();
         let profiles = root.join(PROFILES);
         fs::create_dir_all(&profiles).unwrap();
         for (number, name) in [(1, "aaa"), (2, "bbb"), (3, "ccc")] {
@@ -512,11 +581,44 @@ mod tests {
         );
         assert!(!esp.join("loader/entries/distro-9.conf").exists());
         let kernels = fs::read_dir(esp.join("EFI/distro")).unwrap().count();
-        assert_eq!(kernels, 4, "two kernels and two initrds, each copied once");
+        assert_eq!(
+            kernels, 5,
+            "two kernels and two initrds, each copied once, and the secrets"
+        );
         assert_eq!(
             fs::read_to_string(esp.join("EFI/distro/k1-initrd-initrd")).unwrap(),
             "initrd"
         );
+    }
+
+    #[test]
+    fn the_secrets_initrd_is_a_cpio_archive_of_the_files_readable_by_root() {
+        let archive = cpio(&[("/etc/ssh/initrd_ed25519_key", b"secret\n".to_vec())]);
+        assert!(archive.starts_with(b"070701"));
+        assert_eq!(archive.len() % 4, 0);
+        let text = String::from_utf8_lossy(&archive);
+        let names: Vec<&str> = [
+            "etc\0",
+            "etc/ssh\0",
+            "etc/ssh/initrd_ed25519_key\0",
+            "TRAILER!!!\0",
+        ]
+        .into_iter()
+        .filter(|name| text.contains(name))
+        .collect();
+        assert_eq!(names.len(), 4, "{text:?}");
+        assert!(text.contains(&format!("{:08x}", 0o100_600)));
+        let work = tempfile::tempdir().unwrap();
+        fs::write(work.path().join("a.cpio"), &archive).unwrap();
+        if let Ok(output) = Command::new("cpio")
+            .args(["-itv", "-F"])
+            .arg(work.path().join("a.cpio"))
+            .output()
+        {
+            let listing = String::from_utf8_lossy(&output.stdout);
+            assert!(listing.contains("-rw-------"), "{listing}");
+            assert!(listing.contains("etc/ssh/initrd_ed25519_key"), "{listing}");
+        }
     }
 
     #[test]
