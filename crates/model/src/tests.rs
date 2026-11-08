@@ -1,6 +1,8 @@
 use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value};
 
-use crate::{Change, ChangeKind, File, Lock, Locked, Model, Plan, Secret, Source, plan};
+use crate::{
+    Change, ChangeKind, DISTRO_SOURCE, File, Lock, Locked, Model, Plan, Secret, Source, plan,
+};
 
 fn model(port: i64) -> Model {
     let mut model = Model::default();
@@ -794,4 +796,26 @@ fn a_plan_in_one_line_names_what_people_change_first() {
     };
     assert_eq!(only_files.summary(5), "~ /etc/web.conf");
     assert_eq!(Plan::default().summary(5), "no changes");
+}
+
+#[test]
+fn the_distro_a_lock_pins_is_part_of_the_model_and_its_plan() {
+    let pinned = |rev: &str| {
+        let mut lock = lock(
+            "aaaaaaa1",
+            &[("ripgrep", locked("14.1.0", "/nix/store/r1"))],
+        );
+        lock.sources
+            .insert(DISTRO_SOURCE.into(), source("git+https://x/distro", rev));
+        lock
+    };
+    let before = with_packages(&pinned("1111111"));
+    assert!(before.sources[DISTRO_SOURCE].is_locked());
+    let after = with_packages(&pinned("2222222"));
+    insta::assert_snapshot!(plan(&before, &after).to_string(), @"
+    packages
+      ~ source distro (tier: live)
+          git+https://x/distro: 1111111 -> 2222222
+    1 change, tier: live
+    ");
 }

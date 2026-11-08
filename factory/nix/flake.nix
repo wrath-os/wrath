@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -32,7 +32,8 @@
       };
       # distro as installed on a machine: the binary, and under `share/distro` what it builds from,
       # this factory, the modules and the crates the factory compiles, so the machine can evaluate
-      # and build its own configuration.
+      # and build its own configuration. Built from a committed revision, `share/distro/source.toml`
+      # says which, so a lock can pin it and an older checkout builds with it again.
       distro =
         let
           root = ../..;
@@ -46,14 +47,28 @@
               (root + "/modules")
             ];
           };
+          identity = pkgs.writeText "source.toml" ''
+            url = "${upstream}"
+            rev = "${self.rev or ""}"
+            hash = "${self.narHash}"
+          '';
         in
-        pkgs.runCommand "distro" { meta.mainProgram = "distro"; } ''
+        pkgs.runCommand "distro" { meta.mainProgram = "distro"; } (
+          ''
           mkdir -p $out/bin $out/share
           cp ${cli}/bin/distro $out/bin/distro
           cp -r ${source} $out/share/distro
-        '';
+        ''
+        + lib.optionalString (self ? rev) ''
+          chmod u+w $out/share/distro
+          cp ${identity} $out/share/distro/source.toml
+        ''
+        );
 
       inherit (nixpkgs) lib;
+      # Where distro lives, which a lock pinning a distro fetches it from. Empty until it has a home;
+      # a configuration can say with `[sources.distro]`.
+      upstream = "";
       # The factory's pinned inputs, which machines keep so they can evaluate offline.
       factoryInputs = [ nixpkgs.outPath ];
 

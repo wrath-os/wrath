@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, formats};
 
-pub use lock::{DEFAULT_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
+pub use lock::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
 pub use plan::{Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
@@ -175,7 +175,7 @@ impl Model {
         for (name, locked) in &lock.sources {
             match self.sources.get_mut(name) {
                 Some(source) if source.url == locked.url => *source = locked.clone(),
-                None if name == DEFAULT_SOURCE => {
+                None if name == DEFAULT_SOURCE || name == DISTRO_SOURCE => {
                     self.sources.insert(name.clone(), locked.clone());
                 }
                 _ => {}

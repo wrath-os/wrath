@@ -142,6 +142,19 @@ The lock:
 | `distro update [SOURCE or PKG...]` | Moves sources, or single packages, to their newest versions |
 | `distro sources` | Each source with what it follows, where it's pinned and how old that is |
 
+The lock pins distro too, as the source `distro`, so a configuration is always built by the
+distro it was locked with: its modules, its evaluator and how it builds. Another distro runs that
+one instead, and says so. A checkout of a configuration from years ago builds what it described
+then. `distro update` pins the distro you're running; `[sources.distro]` says where distro is
+fetched from.
+
+```console
+$ distro plan
+using distro 266fc86 as the lock pins it
+system /etc/distro (neptune)
+...
+```
+
 Understanding the configuration:
 
 | Command | Does |

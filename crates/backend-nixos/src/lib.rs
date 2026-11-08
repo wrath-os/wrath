@@ -419,17 +419,7 @@ pub fn install(system: &Path, root: &Path) -> Result<(), String> {
 /// A source as a tree of files, so a configuration can include files from it: the tree pinned by
 /// `source`'s hash, from the store when it's there already.
 pub fn fetch_source(source: &Source) -> Result<PathBuf, String> {
-    let pinned = format!(
-        "removeAttrs (builtins.parseFlakeRef {url}) [ \"ref\" ] // {{ narHash = {hash}; }}{rev}",
-        url = nix_string(&source.url),
-        hash = nix_string(&source.hash),
-        rev = source
-            .rev
-            .as_deref()
-            .map(|rev| format!(" // {{ rev = {}; }}", nix_string(rev)))
-            .unwrap_or_default(),
-    );
-    let expression = format!("(builtins.fetchTree ({pinned})).outPath");
+    let expression = format!("(builtins.fetchTree ({})).outPath", pinned_ref(source));
     let (stdout, _) = run(Command::new("nix").args(["eval", "--raw", "--expr", &expression]))
         .map_err(|message| {
             if message.contains("hash mismatch") {
@@ -439,6 +429,38 @@ pub fn fetch_source(source: &Source) -> Result<PathBuf, String> {
             }
         })?;
     Ok(PathBuf::from(stdout.trim()))
+}
+
+/// The `distro` program `source` pins, built from its own factory, or from the store when it's
+/// there already.
+pub fn distro_at(source: &Source) -> Result<PathBuf, String> {
+    let expression = format!(
+        "(builtins.getFlake (builtins.flakeRefToString ({} // {{ dir = \"factory/nix\"; }})))\
+         .packages.x86_64-linux.distro",
+        pinned_ref(source)
+    );
+    let (stdout, _) = run(Command::new("nix").args([
+        "build",
+        "--no-link",
+        "--print-out-paths",
+        "--expr",
+        &expression,
+    ]))?;
+    Ok(PathBuf::from(stdout.trim()).join("bin/distro"))
+}
+
+/// `source` as a flake reference attribute set, pinned by its hash and revision.
+fn pinned_ref(source: &Source) -> String {
+    format!(
+        "removeAttrs (builtins.parseFlakeRef {url}) [ \"ref\" ] // {{ narHash = {hash}; }}{rev}",
+        url = nix_string(&source.url),
+        hash = nix_string(&source.hash),
+        rev = source
+            .rev
+            .as_deref()
+            .map(|rev| format!(" // {{ rev = {}; }}", nix_string(rev)))
+            .unwrap_or_default(),
+    )
 }
 
 /// The newest version of the source at `url`, pinned, and its tree of files.

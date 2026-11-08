@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use distro_eval::{ConfigFs, DirFs, Value};
-use distro_model::{DEFAULT_SOURCE, Lock, Model};
+use distro_model::{DEFAULT_SOURCE, DISTRO_SOURCE, Lock, Model};
 
 const PROJECT: &str = "distro.toml";
 const PROJECT_LOCAL: &str = "distro.local.toml";
@@ -183,10 +183,9 @@ pub fn split_lock(lock: Lock, shared: &Model) -> (Lock, Lock) {
         .packages
         .into_iter()
         .partition(|(name, _)| packages.contains(name.as_str()));
-    let (sources, local_sources) = lock
-        .sources
-        .into_iter()
-        .partition(|(name, _)| shared.sources.contains_key(name) || name == DEFAULT_SOURCE);
+    let (sources, local_sources) = lock.sources.into_iter().partition(|(name, _)| {
+        shared.sources.contains_key(name) || name == DEFAULT_SOURCE || name == DISTRO_SOURCE
+    });
     (
         Lock {
             sources,

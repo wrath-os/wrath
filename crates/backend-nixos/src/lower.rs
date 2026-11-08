@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{Section, Template, Unit, Value, formats, home_path};
-use distro_model::{Model, Source, spell_out_parts};
+use distro_model::{DISTRO_SOURCE, Model, Source, spell_out_parts};
 
 /// Where packages' programs are on NixOS. Units run programs by name, so they search here.
 const PROGRAMS: &str = "/run/current-system/sw/bin";
@@ -151,11 +151,13 @@ fn homes(model: &Model) -> Value {
 
 /// Where packages come from, by source name, each pinned by its revision and hash. A source
 /// without a hash isn't pinned, and the shim takes its latest version; without a `nixpkgs`
-/// source, the factory's nixpkgs.
+/// source, the factory's nixpkgs. distro itself isn't one: the distro the lock pins is the one
+/// building this.
 fn sources_value(model: &Model) -> Value {
     let sources = model
         .sources
         .iter()
+        .filter(|(name, _)| name.as_str() != DISTRO_SOURCE)
         .map(|(name, Source { url, rev, hash, .. })| {
             let mut source = BTreeMap::from([("url".to_owned(), Value::Str(url.clone()))]);
             if !hash.is_empty() {
@@ -333,6 +335,24 @@ mod tests {
     use distro_model::{File, Secret};
 
     use super::*;
+
+    #[test]
+    fn the_distro_a_lock_pins_isnt_a_source_to_build_from() {
+        let mut model = Model::default();
+        for (name, url) in [
+            ("nixpkgs", "github:NixOS/nixpkgs/nixos-unstable"),
+            (DISTRO_SOURCE, "git+https://x/distro"),
+        ] {
+            model.sources.insert(name.into(), Source::follow(url));
+        }
+        insta::assert_snapshot!(formats::json(&sources_value(&model)).unwrap(), @r#"
+        {
+          "nixpkgs": {
+            "url": "github:NixOS/nixpkgs/nixos-unstable"
+          }
+        }
+        "#);
+    }
 
     #[test]
     fn units_get_text_and_install_targets_and_files_split_by_owner() {

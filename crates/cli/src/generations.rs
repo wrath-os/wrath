@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use distro_backend_nixos::{self as backend, Generation, Target};
-use distro_model::{DEFAULT_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
+use distro_model::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum BuildTarget {
@@ -448,6 +448,13 @@ pub fn lock(
     update: Option<&[String]>,
     shared: Option<&Model>,
 ) -> Result<ExitCode, String> {
+    let distro = crate::pinned::for_lock(
+        crate::pinned::running(root),
+        models
+            .first()
+            .and_then(|(_, model)| model.sources.get(DISTRO_SOURCE)),
+        update.is_some_and(|names| names.is_empty() || names.iter().any(|n| n == DISTRO_SOURCE)),
+    );
     let models = match update {
         Some(names) => follow_newest(models, names)?,
         None => models.to_vec(),
@@ -470,6 +477,9 @@ pub fn lock(
     let mut lock = lock.ok_or("there's nothing to lock")?;
     // Files were read from these versions, whatever resolving found since.
     lock.sources.extend(crate::fetch::fetched());
+    if let Some(distro) = distro {
+        lock.sources.insert(DISTRO_SOURCE.to_owned(), distro);
+    }
     match shared {
         Some(shared) => {
             let (ours, local) = crate::project::split_lock(lock.clone(), shared);
@@ -511,6 +521,7 @@ fn follow_newest(
     let known: BTreeSet<&str> = models
         .iter()
         .flat_map(|(_, model)| model.sources.keys().map(String::as_str))
+        .chain([DISTRO_SOURCE])
         .collect();
     if let Some(unknown) = names.iter().find(|name| !known.contains(name.as_str())) {
         let known: Vec<&str> = known.into_iter().collect();
@@ -791,7 +802,7 @@ mod tests {
         let unknown = follow(&["stabel".into()]).unwrap_err();
         assert_eq!(
             unknown,
-            "there's no source `stabel`; the configuration has edge, nixpkgs, stable"
+            "there's no source `stabel`; the configuration has distro, edge, nixpkgs, stable"
         );
 
         let fresh = follow_newest(&[(None, Model::default())], &[]).unwrap();

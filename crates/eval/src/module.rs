@@ -75,6 +75,9 @@ pub enum RenderError {
 /// built from.
 pub const DEFAULT_SOURCE: &str = "nixpkgs";
 
+/// The source distro itself comes from, pinned in the lock like the others.
+pub const DISTRO_SOURCE: &str = "distro";
+
 /// The source a package comes from and its name there: `stable#git` is `git` from `stable`, and
 /// a name without a source comes from [`DEFAULT_SOURCE`].
 pub fn package_source(name: &str) -> (&str, &str) {

@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use distro_backend_nixos as backend;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath, Value};
-use distro_model::{LOCK_FILE, Lock, Model};
+use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};
 use generations::Switch;
 
 mod bench;
@@ -20,6 +20,7 @@ mod home;
 mod install;
 mod machine;
 mod options;
+mod pinned;
 mod project;
 mod run;
 mod secret;
@@ -294,7 +295,19 @@ fn main() -> ExitCode {
         eprintln!("error: --json works with plan, status, history and sources so far");
         return ExitCode::FAILURE;
     }
+    // A distro told where its files are is being developed, and runs as it is.
+    let developing = cli.root.is_some() || cli.modules.is_some();
     let root = find_root(cli.root, std::env::var_os("DISTRO_ROOT").map(PathBuf::from));
+    if !developing
+        && runs_pinned(&cli.command)
+        && let Ok(config) = find_config(cli.config.as_deref())
+    {
+        let deferred = read_lock(&config).and_then(|lock| pinned::defer(&root, lock.as_ref()));
+        if let Err(message) = deferred {
+            eprintln!("error: {message}");
+            return ExitCode::FAILURE;
+        }
+    }
     let modules = modules_dir(&root, cli.modules);
     let root = root.as_path();
     let config = || config_dir(cli.config.as_deref());
@@ -473,10 +486,61 @@ fn machine_role(config: &Path) -> Option<String> {
     Some(role)
 }
 
-/// The configuration a command acts on: the one given, the project it runs in, your own when you
-/// aren't root and have one, or the system's.
+/// Whether `command` reads the configuration, so the distro its lock pins runs it. Commands on
+/// built generations, and updates that move distro's own pin, run as they are.
+fn runs_pinned(command: &Command) -> bool {
+    match command {
+        Command::Update { sources } => {
+            !sources.is_empty() && !sources.iter().any(|name| name == DISTRO_SOURCE)
+        }
+        Command::Status
+        | Command::Plan { .. }
+        | Command::Apply { .. }
+        | Command::Try { .. }
+        | Command::Build { .. }
+        | Command::Run { .. }
+        | Command::Up
+        | Command::Shell { .. }
+        | Command::Add { .. }
+        | Command::Remove { .. }
+        | Command::Install { .. }
+        | Command::Lock
+        | Command::Sources
+        | Command::Check
+        | Command::Options { .. }
+        | Command::Why { .. }
+        | Command::Secret { .. } => true,
+        Command::Keep
+        | Command::History
+        | Command::Clean { .. }
+        | Command::Diff { .. }
+        | Command::Rollback
+        | Command::Dev { .. }
+        | Command::FillTemplates { .. } => false,
+    }
+}
+
+/// The configuration a command acts on, as [`find_config`] finds it.
 /// The context goes to stderr first, so output always says which configuration it's about.
 fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
+    let config = find_config(given)?;
+    if is_project(&config) {
+        eprintln!("{}", project::header(&config));
+    } else if is_home(&config) {
+        eprintln!("home {}", config.display());
+    } else {
+        let kind = if given.is_some() { "config" } else { "system" };
+        match given_role() {
+            Some(role) => eprintln!("{kind} {}, role {role}", config.display()),
+            None => eprintln!("{kind} {}", config.display()),
+        }
+    }
+    Ok(config)
+}
+
+/// The configuration a command acts on: the one given, the project it runs in, your own when you
+/// aren't root and have one, or the system's.
+fn find_config(given: Option<&Path>) -> Result<PathBuf, String> {
     let found = match given {
         Some(_) => None,
         None => current_project().or_else(home::dir),
@@ -491,19 +555,6 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
                 format!("there's no system configuration in {SYSTEM_CONFIG}; give one with -C DIR")
             }
         });
-    }
-    if is_project(config) {
-        eprintln!("{}", project::header(config));
-        return Ok(config.to_path_buf());
-    }
-    if is_home(config) {
-        eprintln!("home {}", config.display());
-        return Ok(config.to_path_buf());
-    }
-    let kind = if given.is_some() { "config" } else { "system" };
-    match given_role() {
-        Some(role) => eprintln!("{kind} {}, role {role}", config.display()),
-        None => eprintln!("{kind} {}", config.display()),
     }
     Ok(config.to_path_buf())
 }

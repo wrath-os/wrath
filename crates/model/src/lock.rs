@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use serde::Deserialize;
 
-pub use distro_eval::{DEFAULT_SOURCE, package_source};
+pub use distro_eval::{DEFAULT_SOURCE, DISTRO_SOURCE, package_source};
 
 /// The lock file's name in a configuration directory.
 pub const LOCK_FILE: &str = "distro.lock";
