@@ -153,6 +153,10 @@ A second lowering, the native one, sits next to the NixOS one and builds from th
 is chosen with a flag while it grows, and scenarios run on both. When it passes every scenario it
 becomes the only one, and the NixOS lowering and the `nixos` module are deleted.
 
+The NixOS lowering gets no new work. The base system is written once, as distro modules marked as
+part of the base: the native lowering builds them, and the NixOS lowering leaves them out and
+keeps NixOS's own. Scenarios move to the native lowering as it covers what they need.
+
 The steps:
 
 1. The lock pins distro, and a distro that isn't the locked one runs it.
