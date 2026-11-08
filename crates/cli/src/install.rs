@@ -484,6 +484,12 @@ fn lay_out(
                 &raid,
             ])
             .args(&members))?;
+        // The kernel only mounts a filesystem across disks once it knows every member; udev would
+        // tell it in time, but install doesn't wait for udev.
+        run(Command::new("modprobe").arg("btrfs"))?;
+        run(Command::new("btrfs")
+            .args(["device", "scan"])
+            .args(&members))?;
         let scratch = work.join(format!("fs-{name}"));
         std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
         run(Command::new("mount").arg(&members[0]).arg(&scratch))?;
@@ -584,8 +590,12 @@ fn record(how: &Install) -> Result<(), String> {
         .target
         .join(machine::MACHINE_FILE.trim_start_matches('/'));
     machine::record(&file, &given)?;
-    let config = how.target.join("etc/distro");
-    run(Command::new("cp").arg("-rT").arg(how.config).arg(&config))
+    let etc = how.target.join("etc");
+    std::fs::create_dir_all(&etc).map_err(|e| format!("{}: {e}", etc.display()))?;
+    run(Command::new("cp")
+        .arg("-rT")
+        .arg(how.config)
+        .arg(etc.join("distro")))
 }
 
 /// A disk's name in `/dev/disk/by-id`, which stays the same across boots and other disks coming

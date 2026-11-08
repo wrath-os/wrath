@@ -256,6 +256,7 @@ let
     disks = lib.any (layer: layer.initrd.disks or false) allLayers;
     crypttab = sum "initrd.crypttab";
     udevRules = lib.concatMapStrings (layer: layer.initrd.udevRules or "") allLayers;
+    dlopenFeatures = sum "initrd.dlopenFeatures";
   };
 
   kernelParams = base.boot.kernel_params ++ sum "kernelParams";

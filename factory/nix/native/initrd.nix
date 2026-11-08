@@ -16,12 +16,14 @@
   disks,
   crypttab,
   udevRules,
+  dlopenFeatures,
 }:
 
 let
   inherit (pkgs) systemd;
   # The util-linux systemd runs, such as for mount units.
   utilLinux = lib.getBin systemd.util-linux;
+  tpm = lib.elem "tpm" dlopenFeatures;
 
   # systemd's own units the initrd runs, from those it ships for every system.
   upstream = [
@@ -64,6 +66,12 @@ let
     "systemd-tmpfiles-setup-dev.service"
     "timers.target"
     "umount.target"
+  ]
+  ++ lib.optionals tpm [
+    "systemd-pcrextend.socket"
+    "systemd-pcrextend@.service"
+    "systemd-tpm2-setup-early.service"
+    "tpm2.target"
   ]
   ++ lib.optionals disks [
     "cryptsetup-pre.target"
@@ -113,8 +121,12 @@ let
       echo "$out"
     }
     init=$(sed -n 's/.*\binit=\([^ ]*\).*/\1/p' /proc/cmdline)
-    mkdir -p /sysroot/etc
-    cp "$(resolve "''${init%/init}/etc/os-release")" /sysroot/etc/os-release
+    # A root on disk has it already, as a link into the store, from the last boot.
+    if [ ! -e "$(resolve /etc/os-release)" ]; then
+      mkdir -p /sysroot/etc
+      rm -f /sysroot/etc/os-release
+      cp "$(resolve "''${init%/init}/etc/os-release")" /sysroot/etc/os-release
+    fi
   '';
   rootService = {
     text = ''
@@ -262,6 +274,11 @@ let
       target = "/etc/crypttab";
     }
   ]
+  # libcryptsetup unlocks with the TPM through systemd's plugin, which it looks for among its own.
+  ++ lib.optional tpm {
+    source = "${systemd}/lib/cryptsetup/libcryptsetup-token-systemd-tpm2.so";
+    target = "${lib.getLib pkgs.cryptsetup}/lib/cryptsetup/libcryptsetup-token-systemd-tpm2.so";
+  }
   ++ lib.optional (hostname != "") {
     source = pkgs.writeText "hostname" "${hostname}\n";
     target = "/etc/hostname";
@@ -284,6 +301,12 @@ let
       pkgs.runtimeShell
       "${pkgs.gnused}/bin/sed"
     ]
+    ++ lib.optionals tpm [
+      pkgs.tpm2-tss
+      "${systemd}/lib/systemd/systemd-tpm2-setup"
+      "${systemd}/lib/systemd/systemd-pcrextend"
+      "${systemd}/lib/systemd/system-generators/systemd-tpm2-generator"
+    ]
     ++ lib.optionals disks [
       "${systemd}/lib/systemd/systemd-udevd"
       "${systemd}/lib/systemd/systemd-cryptsetup"
@@ -305,7 +328,7 @@ pkgs.makeInitrdNG {
     // {
       dlopen = {
         usePriority = "recommended";
-        features = [ ];
+        features = dlopenFeatures;
       };
     }
   ) contents;

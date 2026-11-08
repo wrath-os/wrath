@@ -47,6 +47,16 @@ def render(ctx):
     ctx.unit("modprobe@.service.d/distro.conf", {
         "Service": {"ExecSearchPath": SW + "/bin"},
     })
+    # Device nodes for modules not loaded yet, such as /dev/btrfs-control. The kernel's modules are
+    # where nixpkgs' kmod looks for them, rather than in /lib/modules.
+    ctx.unit("kmod-static-nodes.service.d/distro.conf", {
+        "Unit": {
+            "ConditionFileNotEmpty": [
+                "",
+                "/run/booted-system/kernel-modules/lib/modules/%v/modules.devname",
+            ],
+        },
+    })
 
     ctx.file("/etc/nsswitch.conf", "\n".join([
         "passwd: files systemd",

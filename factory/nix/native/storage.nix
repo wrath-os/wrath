@@ -101,6 +101,8 @@ lib.optionalAttrs (storage.partitions != [ ]) {
         }
       ) degraded
     );
+    # systemd loads the TPM's libraries only when asked to, and they load the device driver.
+    dlopenFeatures = lib.optional unlock.tpm2 "tpm";
     storePaths = map wait degraded ++ [
       "${pkgs.coreutils}/bin/seq"
       "${pkgs.coreutils}/bin/sleep"
