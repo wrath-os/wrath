@@ -60,5 +60,14 @@ in
     '';
   };
 
-  packages = [ systemd ];
+  packages = [
+    systemd
+    pkgs.nix
+  ];
+
+  # distro builds and switches with Nix on the machine.
+  nixSettings = [
+    "experimental-features = nix-command flakes"
+    "build-users-group ="
+  ];
 }

@@ -204,11 +204,15 @@
       # Like `hostStoreVm`, for a native system.
       nativeVm =
         name: toplevel:
+        let
+          registration = pkgs.closureInfo { rootPaths = [ toplevel ]; };
+        in
         pkgs.runCommand name { } ''
           mkdir $out
           ln -s ${toplevel}/kernel $out/kernel
           ln -s ${toplevel}/initrd $out/initrd
-          cp ${toplevel}/kernel-params $out/kernel-params
+          echo "$(cat ${toplevel}/kernel-params) regInfo=${registration}/registration" \
+            > $out/kernel-params
         '';
 
       # A system from the shim's input, the JSON `distro` writes, plus extra NixOS modules, and

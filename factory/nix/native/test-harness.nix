@@ -42,6 +42,9 @@
     wanted_by = [ "local-fs.target" ];
   };
 
+  # Store paths copied in from the host's share carry no signatures.
+  nixSettings = [ "require-sigs = false" ];
+
   # Test systems only: root logs in on the serial console without a password.
   units."serial-getty@ttyS0.service.d/autologin.conf" = {
     text = ''

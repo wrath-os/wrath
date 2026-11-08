@@ -225,6 +225,8 @@ let
     mkdir -p $out/distro
     ln -s ${pkgs.writeText "model.json" input.model} $out/distro/model.json
     ln -s ${pkgs.writeText "model-hash" input.model_hash} $out/distro/model-hash
+    mkdir -p $out/nix
+    ln -s ${pkgs.writeText "nix.conf" (lib.concatLines (sum "nixSettings"))} $out/nix/nix.conf
   '';
 
   initrd = import ./initrd.nix {
@@ -259,6 +261,13 @@ let
       --subst-var-by systemd ${systemd} \
       --subst-var out
     chmod +x $out/init
+    # How distro switches to this system: `switch`, `test` or `boot`.
+    mkdir $out/bin
+    cat > $out/bin/switch-to-configuration <<EOF
+    #!${pkgs.runtimeShell}
+    exec ${distro}/bin/distro activate --mode "\$1" $out
+    EOF
+    chmod +x $out/bin/switch-to-configuration
   '';
 in
 if unsupported != [ ] then

@@ -39,4 +39,28 @@ in
     };
     storePaths = [ "${pkgs.coreutils}/bin/mkdir" ];
   };
+
+  # The store holds the host's paths without knowing them; registering them lets Nix copy and
+  # build on top, and the booted system becomes the first generation.
+  units."distro-register-store.service" = {
+    text = ''
+      [Unit]
+      Description=Register the host's store paths
+      DefaultDependencies=no
+      After=local-fs.target
+      Before=sysinit.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=${pkgs.writeShellScript "distro-register-store" ''
+        set -eu
+        registration=$(${pkgs.gnused}/bin/sed -n 's/.*\bregInfo=\([^ ]*\).*/\1/p' /proc/cmdline)
+        ${pkgs.nix}/bin/nix-store --load-db < "$registration"
+        ${pkgs.nix}/bin/nix-env --profile /nix/var/nix/profiles/system \
+          --set "$(${pkgs.coreutils}/bin/readlink /run/current-system)"
+      ''}
+    '';
+    wanted_by = [ "sysinit.target" ];
+  };
 }

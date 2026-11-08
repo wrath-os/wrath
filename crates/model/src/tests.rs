@@ -819,3 +819,51 @@ fn the_distro_a_lock_pins_is_part_of_the_model_and_its_plan() {
     1 change, tier: live
     ");
 }
+
+#[test]
+fn the_activation_stops_starts_restarts_and_reloads_what_the_plan_shows() {
+    let unit = |exec: &str| Unit {
+        sections: vec![Section {
+            name: "Service".into(),
+            entries: vec![("ExecStart".into(), exec.into())],
+        }],
+        restart_on: ["/etc/web.conf".into()].into(),
+    };
+    let file = |text: &str| File {
+        mode: 0o644,
+        text: text.into(),
+    };
+    let mut before = Model::default();
+    before.units.insert("gone.service".into(), unit("a"));
+    before.units.insert("edited.service".into(), unit("a"));
+    before.units.insert("web.service".into(), unit("a"));
+    before.files.insert("/etc/web.conf".into(), file("1\n"));
+    let home = before.homes.entry("john".into()).or_default();
+    home.units.insert("mine.service".into(), unit("a"));
+    let mut after = before.clone();
+    after.units.remove("gone.service");
+    after.units.insert("edited.service".into(), unit("b"));
+    after.units.insert("new.service".into(), unit("a"));
+    after.files.insert("/etc/web.conf".into(), file("2\n"));
+    for (service, action) in [
+        ("systemd-networkd.service", UnitAction::Reload),
+        ("web.service", UnitAction::Reload),
+    ] {
+        after
+            .triggers
+            .insert((service.into(), action), ["/etc/web.conf".into()].into());
+    }
+    let home = after.homes.get_mut("john").unwrap();
+    home.units.insert("mine.service".into(), unit("b"));
+
+    let activation = plan(&before, &after).activation;
+    let names = |set: &std::collections::BTreeSet<String>| set.iter().cloned().collect::<Vec<_>>();
+    assert_eq!(names(&activation.stop), ["gone.service"]);
+    assert_eq!(names(&activation.start), ["new.service"]);
+    assert_eq!(
+        names(&activation.restart),
+        ["edited.service", "web.service"],
+        "a unit that restarts anyway isn't reloaded too, and users' units are their homes'"
+    );
+    assert_eq!(names(&activation.reload), ["systemd-networkd.service"]);
+}

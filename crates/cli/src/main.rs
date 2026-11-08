@@ -10,6 +10,7 @@ use distro_eval::{Evaluation, OptionPath, Value};
 use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};
 use generations::Switch;
 
+mod activate;
 mod bench;
 mod checks;
 mod edit;
@@ -210,6 +211,14 @@ enum Command {
     Dev {
         #[command(subcommand)]
         command: DevCommand,
+    },
+    /// Switch the machine to a system built without NixOS
+    #[command(hide = true)]
+    Activate {
+        /// The built system
+        system: PathBuf,
+        #[arg(long, value_enum, default_value = "switch")]
+        mode: activate::Mode,
     },
     /// Fill in files with secrets during activation
     #[command(hide = true)]
@@ -442,6 +451,9 @@ fn main() -> ExitCode {
             })
             .map(exit_code),
         },
+        Command::Activate { system, mode } => {
+            activate::activate(&system, mode).map(|()| ExitCode::SUCCESS)
+        }
         Command::FillTemplates { spec, secrets, out } => templates::machine_values()
             .and_then(|machine| templates::fill(&spec, &secrets, &machine, &out)),
     };
@@ -516,6 +528,7 @@ fn runs_pinned(command: &Command) -> bool {
         | Command::Diff { .. }
         | Command::Rollback
         | Command::Dev { .. }
+        | Command::Activate { .. }
         | Command::FillTemplates { .. } => false,
     }
 }
@@ -945,7 +958,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
     Ok(ExitCode::SUCCESS)
 }
 
-fn read_model(path: &Path) -> Result<Model, String> {
+pub(crate) fn read_model(path: &Path) -> Result<Model, String> {
     std::fs::read_to_string(path)
         .map_err(|e| e.to_string())
         .and_then(|json| Model::from_json(&json))

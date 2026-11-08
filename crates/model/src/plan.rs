@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use distro_eval::{Template, Unit, Value, home_path};
+use distro_eval::{Template, Unit, UnitAction, Value, home_path};
 
 use crate::{DEFAULT_SOURCE, File, Locked, Model, Secret, Source};
 
@@ -69,6 +69,50 @@ pub struct Plan {
     pub units: Vec<Change>,
     pub base: Vec<Change>,
     pub backends: Vec<Change>,
+    /// What switching does to the system's units, from the same comparison as `units`.
+    pub activation: Activation,
+}
+
+/// The system's units a switch stops, starts, restarts or reloads, by name. Users' units are
+/// their homes' to switch.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Activation {
+    pub stop: BTreeSet<String>,
+    pub start: BTreeSet<String>,
+    pub restart: BTreeSet<String>,
+    pub reload: BTreeSet<String>,
+}
+
+impl Activation {
+    fn from_changes(units: &[Change], after: &Model, files: &[Change]) -> Self {
+        let mut activation = Self::default();
+        for change in units
+            .iter()
+            .filter(|change| !change.name.contains(" (for "))
+        {
+            let name = change.name.clone();
+            match change.kind {
+                ChangeKind::Added => activation.start.insert(name),
+                ChangeKind::Removed => activation.stop.insert(name),
+                ChangeKind::Changed => activation.restart.insert(name),
+            };
+        }
+        for ((unit, action), paths) in &after.triggers {
+            if files
+                .iter()
+                .any(|change| paths.contains(change.name.as_str()))
+            {
+                match action {
+                    UnitAction::Restart => activation.restart.insert(unit.clone()),
+                    UnitAction::Reload => activation.reload.insert(unit.clone()),
+                };
+            }
+        }
+        activation
+            .reload
+            .retain(|unit| !activation.restart.contains(unit));
+        activation
+    }
 }
 
 impl Plan {
@@ -229,6 +273,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         (secret_details(before, after), Some(Tier::Live))
     });
     units.extend(restarts(before, after, &files, &secrets));
+    let activation = Activation::from_changes(&units, after, &files);
     units.extend(triggered(after, &files));
     units.sort_by(|a, b| a.name.cmp(&b.name));
     let locking = after.sources.values().any(Source::is_locked);
@@ -252,6 +297,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         files,
         secrets,
         units,
+        activation,
         base: diff_with_names(&before.base, &after.base, |name, before, after| {
             // The bootloader and kernel only change on the next boot.
             let tier = if name == "boot" {

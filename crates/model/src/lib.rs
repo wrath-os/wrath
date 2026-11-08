@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use distro_eval::{Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, formats};
 
 pub use lock::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
-pub use plan::{Change, ChangeKind, Plan, Tier, plan};
+pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
 pub const VERSION: i64 = 11;
