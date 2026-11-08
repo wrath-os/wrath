@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use distro_eval::{Template, Unit, UnitAction, Value, home_path};
+use distro_eval::{Template, Unit, UnitAction, Value, Wrapper, home_path};
 
 use crate::{DEFAULT_SOURCE, File, Locked, Model, Secret, Source};
 
@@ -90,6 +90,14 @@ impl Activation {
             .iter()
             .filter(|change| !change.name.contains(" (for "))
         {
+            // A drop-in such as `nginx.service.d/limits.conf` changes the unit it belongs to. One
+            // for a template, such as `getty@.service.d/`, reaches its instances as they start.
+            if let Some((unit, _)) = change.name.split_once(".d/") {
+                if !unit.contains("@.") {
+                    activation.restart.insert(unit.to_owned());
+                }
+                continue;
+            }
             let name = change.name.clone();
             match change.kind {
                 ChangeKind::Added => activation.start.insert(name),
@@ -248,6 +256,20 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         (detail, Some(tier))
     };
     let mut files = diff_with_names(&before.files, &after.files, file_details);
+    files.extend(diff(&wrappers(before), &wrappers(after), |old, new| {
+        let detail = |wrapper: &Wrapper| {
+            format!(
+                "{}:{} mode {:o}, of {}",
+                wrapper.owner, wrapper.group, wrapper.mode, wrapper.source
+            )
+        };
+        let details = match (old, new) {
+            (Some(old), Some(new)) => vec![format!("{} -> {}", detail(old), detail(new))],
+            (None, Some(wrapper)) | (Some(wrapper), None) => vec![detail(wrapper)],
+            (None, None) => Vec::new(),
+        };
+        (details, Some(Tier::Live))
+    }));
     files.extend(diff_with_names(
         &home_files(before),
         &home_files(after),
@@ -269,6 +291,9 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
             Some(Tier::Live),
         )
     });
+    units.extend(diff(&enabled(before), &enabled(after), |_, _| {
+        (vec!["enabled".to_owned()], Some(Tier::Live))
+    }));
     let secrets = diff(&before.secrets, &after.secrets, |before, after| {
         (secret_details(before, after), Some(Tier::Live))
     });
@@ -518,6 +543,24 @@ fn units(model: &Model) -> BTreeMap<String, &Unit> {
         .iter()
         .map(|(name, unit)| (name.clone(), unit))
         .chain(users)
+        .collect()
+}
+
+/// Programs in `/run/wrappers/bin`, by path.
+fn wrappers(model: &Model) -> BTreeMap<String, &Wrapper> {
+    model
+        .wrappers
+        .iter()
+        .map(|(name, wrapper)| (format!("/run/wrappers/bin/{name}"), wrapper))
+        .collect()
+}
+
+/// The units the service packages ship that the system enables.
+fn enabled(model: &Model) -> BTreeMap<String, ()> {
+    model
+        .enabled
+        .iter()
+        .map(|unit| (unit.clone(), ()))
         .collect()
 }
 

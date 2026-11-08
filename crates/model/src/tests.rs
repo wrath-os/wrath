@@ -1,4 +1,6 @@
-use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value};
+use std::collections::BTreeSet;
+
+use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
 
 use crate::{
     Change, ChangeKind, DISTRO_SOURCE, File, Lock, Locked, Model, Plan, Secret, Source, plan,
@@ -55,6 +57,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
     {
       "backends": {},
       "base": {},
+      "enabled": [],
       "files": {},
       "homes": {},
       "locked": {},
@@ -74,11 +77,13 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       },
       "packages": [],
       "secrets": {},
+      "service_packages": [],
       "sources": {},
       "templates": {},
       "triggers": {},
       "units": {},
-      "version": 11
+      "version": 12,
+      "wrappers": {}
     }
     "#);
 }
@@ -866,4 +871,58 @@ fn the_activation_stops_starts_restarts_and_reloads_what_the_plan_shows() {
         "a unit that restarts anyway isn't reloaded too, and users' units are their homes'"
     );
     assert_eq!(names(&activation.reload), ["systemd-networkd.service"]);
+}
+
+#[test]
+fn enabling_a_unit_starts_it_and_wrappers_show_as_files() {
+    let before = Model::default();
+    let mut after = Model::default();
+    after.enabled.insert("polkit.service".into());
+    after.wrappers.insert(
+        "sudo".into(),
+        Wrapper {
+            source: "/run/current-system/sw/bin/sudo".into(),
+            owner: "root".into(),
+            group: "root".into(),
+            mode: 0o4755,
+        },
+    );
+    let plan = plan(&before, &after);
+    insta::assert_snapshot!(plan.to_string(), @"
+    files
+      + /run/wrappers/bin/sudo (tier: live)
+          root:root mode 4755, of /run/current-system/sw/bin/sudo
+    units
+      + polkit.service (tier: live)
+          enabled
+    2 changes, tier: live
+    ");
+    assert!(plan.activation.start.contains("polkit.service"));
+    let read = Model::from_json(&after.canonical()).unwrap();
+    assert_eq!(read.wrappers, after.wrappers);
+    assert_eq!(read.enabled, after.enabled);
+}
+
+#[test]
+fn a_drop_in_restarts_its_unit_but_not_a_template() {
+    let unit = |exec: &str| Unit {
+        sections: vec![Section {
+            name: "Service".into(),
+            entries: vec![("ExecStart".into(), exec.into())],
+        }],
+        restart_on: BTreeSet::new(),
+    };
+    let mut after = Model::default();
+    after
+        .units
+        .insert("nginx.service.d/limits.conf".into(), unit("a"));
+    after
+        .units
+        .insert("getty@.service.d/distro.conf".into(), unit("a"));
+    let activation = plan(&Model::default(), &after).activation;
+    assert_eq!(
+        activation.restart,
+        BTreeSet::from(["nginx.service".to_owned()])
+    );
+    assert!(activation.start.is_empty());
 }

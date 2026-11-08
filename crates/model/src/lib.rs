@@ -10,13 +10,15 @@ mod read;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, formats};
+use distro_eval::{
+    Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper, formats,
+};
 
 pub use lock::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
 pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 11;
+pub const VERSION: i64 = 12;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -46,6 +48,12 @@ pub struct Model {
     pub templates: BTreeMap<String, Template>,
     /// Files only read when a user logs in, by path as plans show them.
     pub next_login: BTreeSet<String>,
+    /// Packages whose units, users, tmpfiles, udev rules and D-Bus services join the system.
+    pub service_packages: BTreeSet<String>,
+    /// Units the service packages ship that the system enables.
+    pub enabled: BTreeSet<String>,
+    /// Programs in `/run/wrappers/bin` with their own owner and mode, by name.
+    pub wrappers: BTreeMap<String, Wrapper>,
 }
 
 /// A user's files, by path as `~/.config/git/config`, packages and user units.
@@ -132,6 +140,11 @@ impl Model {
             model.units.extend(output.units.clone());
             model.templates.extend(output.templates.clone());
             model.next_login.extend(output.next_login.clone());
+            model
+                .service_packages
+                .extend(output.service_packages.clone());
+            model.enabled.extend(output.enabled.clone());
+            model.wrappers.extend(output.wrappers.clone());
             model
                 .secrets
                 .extend(output.secrets.iter().map(|(name, declared)| {
@@ -301,12 +314,22 @@ impl Model {
             })
             .collect();
         let next_login = self.next_login.iter().cloned().map(Value::Str).collect();
+        let service_packages = self
+            .service_packages
+            .iter()
+            .cloned()
+            .map(Value::Str)
+            .collect();
+        let enabled = self.enabled.iter().cloned().map(Value::Str).collect();
         table([
             ("version", Value::Int(VERSION)),
             ("sources", Value::Table(sources)),
             ("locked", Value::Table(locked)),
             ("templates", templates_value(&self.templates)),
             ("next_login", Value::List(next_login)),
+            ("service_packages", Value::List(service_packages)),
+            ("enabled", Value::List(enabled)),
+            ("wrappers", wrappers_value(&self.wrappers)),
             ("secrets", Value::Table(secrets)),
             ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),
@@ -400,6 +423,23 @@ fn units_value(units: &BTreeMap<String, Unit>) -> Value {
                     ("restart_on", Value::List(restart_on)),
                 ]);
                 (name.clone(), unit)
+            })
+            .collect(),
+    )
+}
+
+fn wrappers_value(wrappers: &BTreeMap<String, Wrapper>) -> Value {
+    Value::Table(
+        wrappers
+            .iter()
+            .map(|(name, wrapper)| {
+                let entry = table([
+                    ("source", Value::Str(wrapper.source.clone())),
+                    ("owner", Value::Str(wrapper.owner.clone())),
+                    ("group", Value::Str(wrapper.group.clone())),
+                    ("mode", Value::Int(i64::from(wrapper.mode))),
+                ]);
+                (name.clone(), entry)
             })
             .collect(),
     )

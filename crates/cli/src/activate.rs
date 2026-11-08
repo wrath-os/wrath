@@ -1,10 +1,11 @@
 //! Switching the running machine to a system built without NixOS: /etc, accounts, tmpfiles and
 //! units, as the plan between the two systems' models says. `plan` shows the same activation.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -22,6 +23,8 @@ pub enum Mode {
     Test,
     /// Boot into it next time, without switching now.
     Boot,
+    /// Put it in place as the booted system's first program, then start systemd.
+    Init,
 }
 
 /// Accounts are copied into /etc rather than linked, so systemd-sysusers can add the system's
@@ -34,7 +37,54 @@ pub fn activate(system: &Path, mode: Mode) -> Result<(), String> {
         // There's no boot loader for these systems yet; the harness boots them directly.
         Mode::Boot => Ok(()),
         Mode::Switch | Mode::Test => switch(Path::new("/"), system),
+        Mode::Init => init(system),
     }
+}
+
+/// Runs as the booted system's init: puts `system` in place and hands over to systemd, which
+/// starts even when part of that failed, so the machine still comes up to be fixed.
+fn init(system: &Path) -> Result<(), String> {
+    if let Err(message) = put_in_place(Path::new("/"), system) {
+        eprintln!("distro: {message}; starting systemd anyway");
+    }
+    let systemd = system.join("systemd/lib/systemd/systemd");
+    let error = Command::new(&systemd).exec();
+    Err(format!("cannot start {}: {error}", systemd.display()))
+}
+
+/// Puts `system` in place at boot. The initrd's /dev, /proc, /sys and /run came along when it
+/// switched to this root.
+fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
+    for (dir, mode) in [
+        ("etc", 0o755),
+        ("var", 0o755),
+        ("tmp", 0o1777),
+        ("root", 0o700),
+        ("home", 0o755),
+        ("bin", 0o755),
+        ("usr/bin", 0o755),
+        ("run/wrappers", 0o755),
+    ] {
+        let dir = root.join(dir);
+        fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(mode))
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    replace_link(system, &root.join("run/current-system"))?;
+    replace_link(system, &root.join("run/booted-system"))?;
+    switch_etc(root, None, system)?;
+    replace_link(&system.join("sw/bin/bash"), &root.join("bin/sh"))?;
+    replace_link(&system.join("sw/bin/env"), &root.join("usr/bin/env"))?;
+    // /run doesn't allow setuid programs, so the wrappers get a filesystem of their own.
+    run(Command::new(system.join("sw/bin/mount")).args([
+        "-t",
+        "tmpfs",
+        "-o",
+        "mode=755,nodev",
+        "wrappers",
+        "/run/wrappers",
+    ]))?;
+    make_wrappers(root, system, &model_of(system)?)
 }
 
 fn switch(root: &Path, system: &Path) -> Result<(), String> {
@@ -50,6 +100,7 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     systemctl("stop", &activation.stop)?;
     switch_etc(root, old.as_deref(), system)?;
     run(&mut Command::new("systemd-sysusers"))?;
+    make_wrappers(root, system, &after)?;
     run(Command::new("systemd-tmpfiles").arg("--create"))?;
     run(Command::new("systemctl").arg("daemon-reload"))?;
     systemctl("try-restart", &activation.restart)?;
@@ -68,7 +119,7 @@ fn installed(activation: &Activation, after: &Model) -> BTreeSet<String> {
     activation
         .start
         .iter()
-        .filter(|name| after.units.get(*name).is_some_and(wanted))
+        .filter(|name| after.units.get(*name).is_some_and(wanted) || after.enabled.contains(*name))
         .cloned()
         .collect()
 }
@@ -126,6 +177,65 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
         write_replacing(&path, &merged, mode)?;
     }
     Ok(())
+}
+
+/// Makes `/run/wrappers/bin` hold `model`'s wrappers, copied from `system`, each with its owner and
+/// mode. The new set replaces the old one in one step.
+fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<(), String> {
+    let wrappers = root.join("run/wrappers");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let dir = wrappers.join(format!("set-{nanos}"));
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let users = ids(&root.join("etc/passwd"));
+    let groups = ids(&root.join("etc/group"));
+    let id = |ids: &BTreeMap<String, u32>, wrapper: &str, account: &str, what: &str| {
+        ids.get(account).copied().ok_or(format!(
+            "wrapper `{wrapper}`: there's no {what} `{account}`"
+        ))
+    };
+    for (name, wrapper) in &model.wrappers {
+        // Sources name the running system, which is `system` once this switch is done.
+        let source = match wrapper.source.strip_prefix("/run/current-system/") {
+            Some(inside) => system.join(inside),
+            None => PathBuf::from(&wrapper.source),
+        };
+        let path = dir.join(name);
+        fs::copy(&source, &path).map_err(|e| format!("{}: {e}", source.display()))?;
+        std::os::unix::fs::chown(
+            &path,
+            Some(id(&users, name, &wrapper.owner, "user")?),
+            Some(id(&groups, name, &wrapper.group, "group")?),
+        )
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+        // After the owner, which clears setuid.
+        fs::set_permissions(&path, fs::Permissions::from_mode(wrapper.mode))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    replace_link(&dir, &wrappers.join("bin"))?;
+    for entry in fs::read_dir(&wrappers).map_err(|e| format!("{}: {e}", wrappers.display()))? {
+        let entry = entry.map_err(|e| format!("{}: {e}", wrappers.display()))?;
+        let path = entry.path();
+        if path != dir && entry.file_name().to_string_lossy().starts_with("set-") {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+    Ok(())
+}
+
+/// Names to ids in an accounts file such as `/etc/passwd`.
+fn ids(path: &Path) -> BTreeMap<String, u32> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split(':');
+            let name = fields.next()?;
+            let id = fields.nth(1)?.parse().ok()?;
+            Some((name.to_owned(), id))
+        })
+        .collect()
 }
 
 /// The files under `dir`, relative to it. A link to a directory, such as systemd's units, is one
@@ -230,6 +340,54 @@ mod tests {
             merge_accounts("john:$y$hash:1::::::\n", "", "john:!:1::::::\n", true),
             "john:$y$hash:1::::::\n"
         );
+    }
+
+    #[test]
+    fn wrappers_are_copies_of_the_new_systems_programs_with_their_owner_and_mode() {
+        use std::os::unix::fs::MetadataExt;
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path().join("root");
+        let system = work.path().join("system");
+        fs::create_dir_all(system.join("sw/bin")).unwrap();
+        fs::write(system.join("sw/bin/tool"), "new\n").unwrap();
+        fs::create_dir_all(root.join("etc")).unwrap();
+        let (uid, gid) = own_ids();
+        fs::write(
+            root.join("etc/passwd"),
+            format!("me:x:{uid}:{gid}::/:/bin/sh\n"),
+        )
+        .unwrap();
+        fs::write(root.join("etc/group"), format!("mine:x:{gid}:\n")).unwrap();
+        let mut model = Model::default();
+        model.wrappers.insert(
+            "tool".into(),
+            distro_eval::Wrapper {
+                source: "/run/current-system/sw/bin/tool".into(),
+                owner: "me".into(),
+                group: "mine".into(),
+                mode: 0o4750,
+            },
+        );
+        make_wrappers(&root, &system, &model).unwrap();
+        make_wrappers(&root, &system, &model).unwrap();
+
+        let tool = root.join("run/wrappers/bin/tool");
+        assert_eq!(fs::read_to_string(&tool).unwrap(), "new\n");
+        let metadata = fs::metadata(&tool).unwrap();
+        assert_eq!((metadata.uid(), metadata.mode() & 0o7777), (uid, 0o4750));
+        let sets = fs::read_dir(root.join("run/wrappers")).unwrap().count();
+        assert_eq!(
+            sets, 2,
+            "the link and one set of wrappers; the old set is gone"
+        );
+    }
+
+    /// The user and group this test runs as, which it can give its own files.
+    fn own_ids() -> (u32, u32) {
+        use std::os::unix::fs::MetadataExt;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let metadata = fs::metadata(file.path()).unwrap();
+        (metadata.uid(), metadata.gid())
     }
 
     #[test]

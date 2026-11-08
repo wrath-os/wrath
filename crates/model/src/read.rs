@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value};
+use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
 
 use crate::{File, Home, Locked, Model, Secret, Source, VERSION};
 
@@ -46,6 +46,9 @@ impl Model {
             locked: read_locked(field("locked")?)?,
             templates: read_templates(field("templates")?)?,
             next_login: strings(field("next_login")?)?,
+            service_packages: strings(field("service_packages")?)?,
+            enabled: strings(field("enabled")?)?,
+            wrappers: read_wrappers(field("wrappers")?)?,
         })
     }
 }
@@ -315,6 +318,17 @@ fn read_templates(value: &Value) -> Result<BTreeMap<String, Template>, String> {
             owner: string_at(fields, "owner", path)?,
             group: optional_string(fields, "group", path)?,
             mode: mode(get(fields, "mode", path)?, path)?,
+        })
+    })
+}
+
+fn read_wrappers(value: &Value) -> Result<BTreeMap<String, Wrapper>, String> {
+    read_tables(value, "wrappers", |fields, name| {
+        Ok(Wrapper {
+            source: string_at(fields, "source", name)?,
+            owner: string_at(fields, "owner", name)?,
+            group: string_at(fields, "group", name)?,
+            mode: mode(get(fields, "mode", name)?, name)?,
         })
     })
 }

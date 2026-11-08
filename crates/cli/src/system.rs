@@ -48,7 +48,9 @@ fn evaluate_with(
     let mut sources = Sources::default();
     let kind = distro_eval::kind_of(config);
     let mut modules = load_modules(modules, &mut sources, order)?;
-    modules.retain(|module| module.configurations().contains(&kind));
+    let native = distro_backend_nixos::native();
+    // The base system's modules are for systems built without NixOS, which provides its own.
+    modules.retain(|module| module.configurations().contains(&kind) && (native || !module.base()));
     // A home belongs to whoever runs the command.
     let user = std::env::var("USER").ok();
     distro_eval::evaluate(Input {

@@ -26,7 +26,7 @@
 let
   base = input.base;
   inherit (pkgs) systemd;
-  allLayers = [ (import ./base.nix { inherit lib pkgs base; }) ] ++ layers;
+  allLayers = [ (import ./base.nix { inherit pkgs; }) ] ++ layers;
 
   unsupported =
     lib.optional (input.secrets != { }) "secrets"
@@ -50,24 +50,7 @@ let
   kernel = pkgs.linuxPackages.kernel;
   moduleTree = pkgs.aggregateModules [ (lib.getOutput "modules" kernel) ];
 
-  # The packages everyone expects on a system, then the model's.
-  basePackages = [
-    pkgs.bashInteractive
-    pkgs.coreutils
-    pkgs.findutils
-    pkgs.gawk
-    pkgs.gnugrep
-    pkgs.gnused
-    pkgs.iproute2
-    pkgs.iputils
-    pkgs.kmod
-    pkgs.less
-    pkgs.procps
-    pkgs.shadow
-    pkgs.util-linux
-    systemd
-  ];
-  packages = basePackages ++ [ distro ] ++ map package input.packages ++ sum "packages";
+  packages = [ distro ] ++ map package input.packages ++ sum "packages";
   sw = pkgs.buildEnv {
     name = "system-path";
     paths = packages;
@@ -82,12 +65,14 @@ let
 
   # Packages whose units, users, tmpfiles, udev rules and D-Bus policy join the system, such as
   # dbus. Other packages only add their programs.
-  services = [ systemd ] ++ sum "services";
+  services = [ systemd ] ++ map package input.service_packages ++ sum "services";
   # Where `services` keep `dir`, under any of `prefixes`, with systemd's examples first.
   shipped =
     prefixes: dir:
     [ "${systemd}/example/${dir}" ]
-    ++ lib.concatMap (p: map (prefix: "${p}/${prefix}/${dir}") prefixes) services;
+    ++ lib.concatMap (p: map (prefix: "${p}/${prefix}/${dir}") prefixes) serviceOutputs;
+  # Every output of the service packages, since a package's units can be in any of them.
+  serviceOutputs = lib.concatMap (p: map (output: p.${output}) (p.outputs or [ "out" ])) services;
   # A directory linking every file in `dirs`, later ones replacing earlier ones.
   merged =
     name: dirs:
@@ -139,7 +124,7 @@ let
     "lib"
     "etc"
   ];
-  systemUnits = unitDir (unitDirs "systemd/system") units (sum "enable");
+  systemUnits = unitDir (unitDirs "systemd/system") units (input.enabled ++ sum "enable");
   userUnits = unitDir (unitDirs "systemd/user") { } [ ];
 
   # udev's hardware database, built from the service packages' sources.
@@ -162,7 +147,7 @@ let
       -e 's#</busconfig>#${
         lib.concatMapStrings (
           p: "<servicedir>${p}/share/dbus-1/system-services</servicedir>"
-        ) services
+        ) serviceOutputs
       }</busconfig>#' \
       ${pkgs.dbus}/share/dbus-1/system.conf > $out
   '';
@@ -225,6 +210,7 @@ let
     mkdir -p $out/distro
     ln -s ${pkgs.writeText "model.json" input.model} $out/distro/model.json
     ln -s ${pkgs.writeText "model-hash" input.model_hash} $out/distro/model-hash
+    echo native > $out/distro/lowering
     mkdir -p $out/nix
     ln -s ${pkgs.writeText "nix.conf" (lib.concatLines (sum "nixSettings"))} $out/nix/nix.conf
   '';
@@ -249,17 +235,11 @@ let
     ln -s ${sw} $out/sw
     ln -s ${systemd} $out/systemd
     echo "init=$out/init ${lib.concatStringsSep " " kernelParams}" > $out/kernel-params
-    substitute ${./init.sh} $out/init \
-      --subst-var-by bash ${pkgs.bash} \
-      --subst-var-by path ${
-        lib.makeBinPath [
-          pkgs.coreutils
-          pkgs.findutils
-          pkgs.util-linux
-        ]
-      } \
-      --subst-var-by systemd ${systemd} \
-      --subst-var out
+    # The booted system's first program: distro puts the system in place and starts systemd.
+    cat > $out/init <<EOF
+    #!${pkgs.runtimeShell}
+    exec ${distro}/bin/distro activate --mode init $out
+    EOF
     chmod +x $out/init
     # How distro switches to this system: `switch`, `test` or `boot`.
     mkdir $out/bin

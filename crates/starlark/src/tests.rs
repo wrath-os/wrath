@@ -91,7 +91,7 @@ fn the_built_in_modules_render_the_fixture() {
     insta::assert_snapshot!(why("security.pam.services.sudo.auth"), @r#"
     security.pam.services.sudo.auth = [{ control = "required", module = "pam_env.so", name = "env" }, { control = "sufficient", module = "pam_fprintd.so", name = "fprintd" }, { args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }]
       set by module `fprintd` at modules/fprintd.star:14:9: [{ after = "env", before = "unix", control = "sufficient", module = "pam_fprintd.so", name = "fprintd" }]
-      set by module `pam-base` at modules/pam-base.star:31:9: [{ control = "required", module = "pam_env.so", name = "env" }, { after = "env", args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }, { after = "unix", control = "required", module = "pam_deny.so", name = "deny" }]
+      set by module `pam-base` at modules/pam-base.star:7:9: [{ control = "required", module = "pam_env.so", name = "env" }, { after = "env", args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }, { after = "unix", control = "required", module = "pam_deny.so", name = "deny" }]
       overrides [], default
       removes ["deny"], set at ../../fixtures/configs/s4/system.toml:9:8
     "#);
@@ -1139,4 +1139,36 @@ fn disks_say_what_doesnt_fit() {
     error: raid1 needs at least two partitions
     error: nothing is mounted at `/`
     ");
+}
+
+#[test]
+fn base_modules_add_service_packages_enable_their_units_and_make_wrappers() {
+    let evaluation = run(r#"
+def render(ctx):
+    ctx.service_package("dbus")
+    ctx.enable("systemd-networkd.service")
+    ctx.wrapper("sudo", source = "/run/current-system/sw/bin/sudo")
+    ctx.wrapper("ping", source = "/run/current-system/sw/bin/ping", group = "net", mode = 0o755)
+
+module(name = "base-test", options = {}, writes = [], render = render, base = True)
+"#)
+    .unwrap();
+    let output = output_of(&evaluation, "base-test");
+    assert!(output.service_packages.contains("dbus") && output.packages.contains("dbus"));
+    assert!(output.enabled.contains("systemd-networkd.service"));
+    let sudo = &output.wrappers["sudo"];
+    assert_eq!(
+        (sudo.owner.as_str(), sudo.group.as_str(), sudo.mode),
+        ("root", "root", 0o4755)
+    );
+    assert_eq!(output.wrappers["ping"].mode, 0o755);
+
+    let message = run(r#"
+def render(ctx):
+    ctx.wrapper("bin/sudo", source = "sudo")
+
+module(name = "bad", options = {}, writes = [], render = render)
+"#)
+    .unwrap_err();
+    assert!(message.contains("absolute path"), "{message}");
 }

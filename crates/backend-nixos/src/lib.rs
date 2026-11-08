@@ -80,11 +80,19 @@ impl Target {
     }
 }
 
-/// Set to `native`, systems are built without NixOS, while that lowering grows.
+/// Set to `native` or `nixos`, it says how systems are built, while the native lowering grows.
 const LOWERING: &str = "DISTRO_LOWERING";
 
-fn native() -> bool {
-    std::env::var(LOWERING).is_ok_and(|lowering| lowering == "native")
+/// On a system built without NixOS, says so, so it builds its next system the same way.
+const LOWERING_MARK: &str = "/etc/distro/lowering";
+
+/// Whether systems are built without NixOS: as `DISTRO_LOWERING` says, or else as the running
+/// system was.
+pub fn native() -> bool {
+    match std::env::var(LOWERING) {
+        Ok(lowering) => lowering == "native",
+        Err(_) => std::fs::read_to_string(LOWERING_MARK).is_ok_and(|mark| mark.trim() == "native"),
+    }
 }
 
 /// A built store path and the warnings evaluating it printed.

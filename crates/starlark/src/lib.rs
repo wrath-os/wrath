@@ -28,7 +28,7 @@ use allocative::Allocative;
 use distro_eval::{
     ConfigKind, ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, MACHINE_VALUES,
     Module, OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart, Secret, Setting,
-    Sources, Span, Template, Type, Unit, UnitAction, Value, formats, home_path,
+    Sources, Span, Template, Type, Unit, UnitAction, Value, Wrapper, formats, home_path,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -177,6 +177,7 @@ struct Declared {
     options: Vec<(OptionPath, OptionSpec)>,
     writes: Vec<OptionPath>,
     configurations: Vec<ConfigKind>,
+    base: bool,
 }
 
 /// The evaluator's `extra` while a module file loads.
@@ -332,6 +333,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
 
     /// Declares the module. Every module file calls this once. `user_options` are options every
     /// user has, under `users.<name>`.
+    #[allow(clippy::too_many_arguments)]
     fn module<'v>(
         #[starlark(require = named)] name: &str,
         #[starlark(require = named)] options: SmallMap<String, StarValue<'v>>,
@@ -339,6 +341,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] writes: StarValue<'v>,
         #[starlark(require = named)] render: StarValue<'v>,
         #[starlark(require = named)] configurations: Option<StarValue<'v>>,
+        #[starlark(require = named)] base: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let every_user = OptionPath::root().child("users").child(EVERY);
@@ -399,6 +402,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
                 options: declared_options,
                 writes,
                 configurations,
+                base: base.unwrap_or(false),
             });
         }
         eval.module().set(RENDER, render);
@@ -909,6 +913,67 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         })
     }
 
+    /// Adds a package whose units, users, tmpfiles, udev rules and D-Bus services join the
+    /// system, such as `dbus`. Its programs are added too.
+    fn service_package<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, _) = rendering(eval)?;
+        let mut output = rendering.output.borrow_mut();
+        output.packages.insert(name.to_owned());
+        output.service_packages.insert(name.to_owned());
+        Ok(NoneType)
+    }
+
+    /// Enables a unit a service package ships, as `systemctl enable` does: by its [Install]
+    /// section.
+    fn enable<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] unit: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, _) = rendering(eval)?;
+        rendering
+            .output
+            .borrow_mut()
+            .enabled
+            .insert(unit.to_owned());
+        Ok(NoneType)
+    }
+
+    /// Puts a copy of `source` in `/run/wrappers/bin/<name>` with its own owner and mode, such
+    /// as setuid root, for programs that run with more privilege than their caller.
+    fn wrapper<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] name: &str,
+        #[starlark(require = named)] source: &str,
+        #[starlark(require = named)] owner: Option<&str>,
+        #[starlark(require = named)] group: Option<&str>,
+        #[starlark(require = named)] mode: Option<i32>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, at) = rendering(eval)?;
+        if name.contains('/') || !source.starts_with('/') {
+            return Err(rendering.invalid(
+                at,
+                format!("wrapper `{name}`: a name has no `/`, and the source is an absolute path"),
+            ));
+        }
+        let wrapper = Wrapper {
+            source: source.to_owned(),
+            owner: owner.unwrap_or("root").to_owned(),
+            group: group.unwrap_or("root").to_owned(),
+            mode: mode.map_or(0o4755, |mode| mode as u32),
+        };
+        let mut output = rendering.output.borrow_mut();
+        if output.wrappers.insert(name.to_owned(), wrapper).is_some() {
+            return Err(rendering.invalid(at, format!("wrapper `{name}` is made twice")));
+        }
+        Ok(NoneType)
+    }
+
     /// Adds a package to the system, or with `user`, to that user's packages. `stable#git` is
     /// `git` from the source `stable`.
     fn package<'v>(
@@ -943,6 +1008,10 @@ impl Module for StarlarkModule {
 
     fn configurations(&self) -> &[ConfigKind] {
         &self.declared.configurations
+    }
+
+    fn base(&self) -> bool {
+        self.declared.base
     }
 
     fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError> {

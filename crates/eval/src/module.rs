@@ -43,6 +43,12 @@ pub trait Module {
         &[ConfigKind::System]
     }
 
+    /// Whether the module renders part of the base system, which only the native lowering builds
+    /// from modules; the NixOS lowering provides its own.
+    fn base(&self) -> bool {
+        false
+    }
+
     fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError>;
 }
 
@@ -111,6 +117,23 @@ pub struct Output {
     /// Files read when a user logs in, so changing them takes effect at the next login, by path
     /// as plans show it: absolute, or as `~user/.profile`.
     pub next_login: BTreeSet<String>,
+    /// Packages whose units, users, tmpfiles, udev rules and D-Bus services join the system, such
+    /// as `dbus`. Other packages only add programs.
+    pub service_packages: BTreeSet<String>,
+    /// Units the service packages ship that the system enables, as `systemctl enable` does.
+    pub enabled: BTreeSet<String>,
+    /// Programs that run with more privilege than their caller, in `/run/wrappers/bin`, by name.
+    pub wrappers: BTreeMap<String, Wrapper>,
+}
+
+/// A program copied into `/run/wrappers/bin` with its own owner and mode, such as setuid root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wrapper {
+    /// The program, such as `/run/current-system/sw/bin/sudo`.
+    pub source: String,
+    pub owner: String,
+    pub group: String,
+    pub mode: u32,
 }
 
 /// A file with secrets in it. The text around the secrets is known when the system is built;

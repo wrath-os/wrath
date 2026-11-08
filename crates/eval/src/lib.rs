@@ -32,7 +32,7 @@ pub use machines::Machine;
 pub use module::{
     ConfigReader, DEFAULT_SOURCE, DISTRO_SOURCE, File, HOME_SECRETS_DIR, Home, Module, ModuleId,
     Output, ReadError, RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit,
-    UnitAction, home_path, package_source,
+    UnitAction, Wrapper, home_path, package_source,
 };
 pub use path::OptionPath;
 pub use requires::{Check, FACTS, Kind, Requirement};

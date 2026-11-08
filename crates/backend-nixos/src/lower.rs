@@ -12,16 +12,17 @@ use distro_model::{DISTRO_SOURCE, Model, Source, spell_out_parts};
 /// Where packages' programs are on NixOS. Units run programs by name, so they search here.
 const PROGRAMS: &str = "/run/current-system/sw/bin";
 
-/// Files NixOS keeps for itself in Phase A. PAM is part of the borrowed base system, so the PAM
-/// stacks modules render aren't installed.
+/// Files NixOS keeps for itself. PAM is part of the base system it provides, so the PAM stacks
+/// modules render are only installed on systems built without it.
 const BORROWED: [&str; 1] = ["/etc/pam.d/"];
 
 /// The shim's input, as pretty JSON with sorted keys.
 pub fn lower(model: &Model) -> String {
+    let native = crate::native();
     let mut etc = BTreeMap::new();
     let mut files = BTreeMap::new();
     for (path, file) in &model.files {
-        if BORROWED.iter().any(|prefix| path.starts_with(prefix)) {
+        if !native && BORROWED.iter().any(|prefix| path.starts_with(prefix)) {
             continue;
         }
         let text = Value::Str(file.text.clone());
@@ -76,6 +77,11 @@ pub fn lower(model: &Model) -> String {
         ("model", Value::Str(model.canonical())),
         ("model_hash", Value::Str(model.hash())),
         ("packages", strings(model.packages.iter().cloned())),
+        (
+            "service_packages",
+            strings(model.service_packages.iter().cloned()),
+        ),
+        ("enabled", strings(model.enabled.iter().cloned())),
         ("etc", Value::Table(etc)),
         ("files", Value::Table(files)),
         ("units", Value::Table(units)),
@@ -406,6 +412,7 @@ mod tests {
           "base": {
             "audio": true
           },
+          "enabled": [],
           "etc": {
             "nginx/main.conf": {
               "mode": "symlink",
@@ -427,6 +434,7 @@ mod tests {
             "nginx"
           ],
           "secrets": {},
+          "service_packages": [],
           "sources": {},
           "templates": {},
           "triggers": {
