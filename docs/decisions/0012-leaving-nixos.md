@@ -24,6 +24,16 @@ The common complaints about NixOS come from this layer:
 
 distro already does these better for what it renders itself, and the rest should follow.
 
+distro has to be much better than NixOS, or there is little point to it. What it is measured on:
+
+1. A familiar, simpler language: TOML for configuration, Starlark for modules.
+2. Speed: evaluating a configuration and updating a system.
+3. Introspection: seeing what an update changes, in configuration and packages, before applying it.
+4. A toolkit for custom systems: immutable, possibly with A/B boot, such as appliances and servers
+   managed through an API with no shell. These aren't built yet, but the design has to allow them.
+5. A deterministic and auditable OS, where everything on a machine traces back to its
+   configuration and lock.
+
 There are two targets:
 
 - Desktops and laptops, changed in place and often.
@@ -121,8 +131,15 @@ machine can later have it read-only.
 
 ### Booting
 
-- systemd-boot shows one unified kernel image per generation: the kernel, initrd and command line
-  together. Secure Boot signing and TPM policies tied to the image can be added later.
+- systemd-boot has one entry per generation, with its kernel and initrd copied to the ESP and
+  its command line in the entry. The activator writes them, for every generation, on each switch.
+- Secrets the initrd needs from the disk, such as its SSH host key, go in a small second initrd
+  made on the machine and listed in the entry. They never enter the store, so the main initrd
+  stays reproducible and shareable.
+- Unified kernel images come later, for Secure Boot signing and TPM policies tied to the image.
+  A unified image holds the initrd and the command line, which names the system, so it has to be
+  made after the system, and the initrd's secrets need another way in, such as a credential
+  encrypted to the TPM.
 - The initrd is systemd, built from the model's initrd part the same way as the system: units,
   files and packages. Unlocking and mounting come from the disks module's output, as they do now.
 
@@ -167,8 +184,8 @@ The steps:
 4. Base modules: dbus, polkit, logind, udev, name services, wrappers, journald, time and locale.
 5. Desktop modules: audio, the login manager, the compositor, fonts and graphics. m1 to m3, homes
    and the desktop fixtures pass on it.
-6. Disks and boot: unified kernel images, LUKS and RAID in its initrd, the TPM, initrd SSH, and
-   install without `nixos-install`. The install scenarios pass on it.
+6. Disks and boot: boot entries, LUKS and RAID in its initrd, the TPM, initrd SSH, and install
+   without `nixos-install`. The install scenarios pass on it.
 7. The native lowering becomes the only one.
 8. Server images and fetched updates, after their own decision.
 
