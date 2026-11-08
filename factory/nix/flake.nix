@@ -172,6 +172,45 @@
         (import ./test-share.nix 100)
       ];
 
+      # A system built without NixOS from the same input, plus `layers`, each a function of the
+      # package set giving parts the model doesn't describe, such as the test harness's agent.
+      nativeFrom =
+        input: layers:
+        let
+          json = lib.importJSON input;
+          sources = json.sources or { };
+          packageSet = if sources ? nixpkgs then pinned sources.nixpkgs else nixpkgs;
+          nativePkgs = import packageSet {
+            inherit system;
+            config = { };
+            overlays = [ ];
+          };
+          named = lib.mapAttrs (_: pinned) (removeAttrs sources [ "nixpkgs" ]);
+        in
+        import ./native {
+          inherit lib distro;
+          pkgs = nativePkgs;
+          input = json;
+          package = import ./package.nix lib nativePkgs named;
+          layers = map (layer: layer nativePkgs) layers;
+        };
+      nativeHostStoreHarness = [
+        (layerPkgs: import ./native/test-harness.nix {
+          inherit agent;
+          pkgs = layerPkgs;
+        })
+        (layerPkgs: import ./native/test-host-store.nix { pkgs = layerPkgs; })
+      ];
+      # Like `hostStoreVm`, for a native system.
+      nativeVm =
+        name: toplevel:
+        pkgs.runCommand name { } ''
+          mkdir $out
+          ln -s ${toplevel}/kernel $out/kernel
+          ln -s ${toplevel}/initrd $out/initrd
+          cp ${toplevel}/kernel-params $out/kernel-params
+        '';
+
       # A system from the shim's input, the JSON `distro` writes, plus extra NixOS modules, and
       # where its packages come from as a lock records them. The base system and packages
       # without a source come from the `nixpkgs` source, or this flake's nixpkgs without one;
@@ -457,6 +496,11 @@
           input:
           (fromInput input installedHarness).config.system.build.toplevel;
         testVm = input: hostStoreVm "distro-test-vm" (fromInput input hostStoreHarness);
+        native = {
+          toplevel = input: nativeFrom input [ ];
+          testVmToplevel = input: nativeFrom input nativeHostStoreHarness;
+          testVm = input: nativeVm "distro-test-vm" (nativeFrom input nativeHostStoreHarness);
+        };
       };
     };
 }

@@ -1,0 +1,14 @@
+title = "a system built without NixOS boots, and the agent answers"
+
+[vm]
+config = "fixtures/configs/native"
+store = "host"
+lowering = "native"
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { run = "cat /etc/os-release; uname -n", stdout_contains = "ID=distro\nPRETTY_NAME=distro\nnative" },
+  { run = "id john", stdout_contains = "uid=1000(john) gid=100(users) groups=100(users),1(wheel)" },
+  { run = "systemctl is-system-running --wait; systemctl --failed --no-legend", stdout_contains = "running" },
+  { run = "test ! -e /run/current-system/sw/bin/nixos-rebuild && readlink /run/current-system", stdout_contains = "distro-system" },
+]
+timeout_secs = 120

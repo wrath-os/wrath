@@ -33,6 +33,8 @@ pub struct VmSpec {
     pub store: Store,
     /// Sizes of empty disks attached to the VM, such as `8G`, for `distro install` to lay out.
     pub blank_disks: Vec<String>,
+    /// Whether systems are built without NixOS, with `lowering = "native"`.
+    pub native: bool,
     /// Limit for booting and checking. Building the image and systems is not counted.
     pub timeout_secs: u64,
 }
@@ -108,6 +110,7 @@ struct RawVmSpec {
     store: Store,
     #[serde(default)]
     blank_disks: Vec<String>,
+    lowering: Option<String>,
     #[serde(default = "default_timeout_secs")]
     timeout_secs: u64,
 }
@@ -120,6 +123,11 @@ impl TryFrom<RawVmSpec> for VmSpec {
             (Some(image), None) => System::Image(image),
             (None, Some(config)) => System::Config(config),
             _ => return Err("name exactly one of `image` or `config`".into()),
+        };
+        let native = match raw.lowering.as_deref() {
+            None | Some("nixos") => false,
+            Some("native") => true,
+            Some(other) => return Err(format!("`lowering` is `nixos` or `native`, not `{other}`")),
         };
         Ok(Self {
             system,
@@ -134,6 +142,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
                 .collect::<Result<_, _>>()?,
             store: raw.store,
             blank_disks: raw.blank_disks,
+            native,
             timeout_secs: raw.timeout_secs,
         })
     }
@@ -369,6 +378,8 @@ pub struct Host<'a> {
     pub distro: &'a Path,
     /// The repository root, which configuration paths are relative to.
     pub workdir: &'a Path,
+    /// Whether it builds systems without NixOS.
+    pub native: bool,
 }
 
 /// Builds a test image and returns its output directory.
@@ -1117,6 +1128,10 @@ impl Host<'_> {
         host_command(
             Command::new(self.distro)
                 .args(args)
+                .env(
+                    "DISTRO_LOWERING",
+                    if self.native { "native" } else { "nixos" },
+                )
                 .current_dir(self.workdir),
         )
     }
@@ -1484,6 +1499,23 @@ mod tests {
 
         let err = spec("image = \"x\"\nfirmware = \"bios\"\n").unwrap_err();
         assert!(err.message().contains("unknown variant `bios`"), "{err}");
+    }
+
+    #[test]
+    fn systems_are_built_with_nixos_unless_a_scenario_says_native() {
+        assert!(!spec("config = \"c\"\n").unwrap().native);
+        assert!(
+            !spec("config = \"c\"\nlowering = \"nixos\"\n")
+                .unwrap()
+                .native
+        );
+        assert!(
+            spec("config = \"c\"\nlowering = \"native\"\n")
+                .unwrap()
+                .native
+        );
+        let err = spec("config = \"c\"\nlowering = \"guix\"\n").unwrap_err();
+        assert!(err.message().contains("not `guix`"), "{err}");
     }
 
     #[test]

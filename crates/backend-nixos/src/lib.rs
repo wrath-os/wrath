@@ -64,6 +64,27 @@ impl Target {
             Self::Environment => "environment",
         }
     }
+
+    /// The factory function building `self`, with the native lowering when `native`.
+    fn function_in(self, native: bool) -> Result<String, String> {
+        match (native, self) {
+            (false, _) | (true, Self::Home | Self::Environment) => Ok(self.function().to_owned()),
+            (true, Self::System | Self::TestVmSystem | Self::TestVm) => {
+                Ok(format!("native.{}", self.function()))
+            }
+            (true, Self::TestSystem | Self::TestImage | Self::TestInstalledSystem) => Err(format!(
+                "the native lowering doesn't build `{}` yet",
+                self.function()
+            )),
+        }
+    }
+}
+
+/// Set to `native`, systems are built without NixOS, while that lowering grows.
+const LOWERING: &str = "DISTRO_LOWERING";
+
+fn native() -> bool {
+    std::env::var(LOWERING).is_ok_and(|lowering| lowering == "native")
 }
 
 /// A built store path and the warnings evaluating it printed.
@@ -80,7 +101,7 @@ pub fn build(model: &Model, factory: &Path, target: Target, work: &Path) -> Resu
         &["build", "--no-link", "--print-out-paths"],
         model,
         factory,
-        target.function(),
+        &target.function_in(native())?,
         work,
     )?;
     Ok(Built {
@@ -389,9 +410,27 @@ fn run(command: &mut Command) -> Result<(String, String), String> {
     if let Some(message) = factory_message(&stderr) {
         return Err(message);
     }
-    let lines: Vec<&str> = stderr.lines().collect();
-    let tail = lines[lines.len().saturating_sub(10)..].join("\n");
-    Err(format!("{program} failed ({}):\n{tail}", output.status))
+    Err(format!(
+        "{program} failed ({}):\n{}",
+        output.status,
+        first_error(&stderr)
+    ))
+}
+
+/// The first error in what Nix printed, which is the cause; the ones after it say what couldn't be
+/// built because of it. Without one, the last lines.
+fn first_error(stderr: &str) -> String {
+    const LINES: usize = 25;
+    let lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| !line.starts_with("warning:"))
+        .collect();
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("error:"))
+        .unwrap_or(lines.len().saturating_sub(LINES));
+    let end = (start + LINES).min(lines.len());
+    lines[start..end].join("\n")
 }
 
 /// A message the factory meant for the user, thrown as `distro: ...`, in what Nix printed.
@@ -516,6 +555,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_failed_build_shows_the_first_error_which_is_the_cause() {
+        let stderr = "warning: Git tree is dirty\n\
+                      error: Cannot build 'etc.drv'.\n       Last 1 log lines:\n       > cp: oops\n\
+                      error: Cannot build 'system.drv'.\n       Reason: 1 dependency failed.\n";
+        assert_eq!(
+            first_error(stderr),
+            "error: Cannot build 'etc.drv'.\n       Last 1 log lines:\n       > cp: oops\n\
+             error: Cannot build 'system.drv'.\n       Reason: 1 dependency failed."
+        );
+        let lines: String = (0..40).map(|n| format!("line {n}\n")).collect();
+        assert!(first_error(&lines).starts_with("line 15\n"));
+    }
+
+    #[test]
     fn messages_the_factory_throws_are_shown_as_they_are() {
         let stderr = "error:\n       … while evaluating\n\n       error: distro: there's no package `jqq` in nixpkgs\n";
         assert_eq!(
@@ -557,6 +610,15 @@ mod tests {
                 "the NixOS firewall runs as well"
             ]
         );
+    }
+
+    #[test]
+    fn the_native_lowering_builds_systems_and_refuses_what_it_cant_yet() {
+        assert_eq!(Target::System.function_in(false).unwrap(), "toplevel");
+        assert_eq!(Target::System.function_in(true).unwrap(), "native.toplevel");
+        assert_eq!(Target::TestVm.function_in(true).unwrap(), "native.testVm");
+        assert_eq!(Target::Home.function_in(true).unwrap(), "home");
+        assert!(Target::TestImage.function_in(true).is_err());
     }
 
     #[test]
