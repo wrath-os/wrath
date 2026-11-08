@@ -1,0 +1,9 @@
+[system]
+hostname = "native-ssh"
+
+[services.ssh]
+enable = true
+
+[users.john]
+extra_groups = ["wheel"]
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBN3gbx1PYbeiI87D0yQ7/FkrZnW9CKt2suGVDEzn2YW declared"]

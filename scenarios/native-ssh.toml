@@ -1,0 +1,16 @@
+title = "a system built without NixOS logs people in over SSH with their keys, and refuses passwords"
+
+[vm]
+config = "scenarios/fixtures/native-ssh"
+store = "host"
+lowering = "native"
+wait_for = ["agent", "unit:multi-user.target", "unit:sshd.service"]
+steps = [
+  { run = "cat /etc/ssh/authorized_keys.d/john", stdout_contains = "declared" },
+  { run = "stat -c %a /etc/ssh/ssh_host_ed25519_key", stdout_contains = "600" },
+  { run = "ssh-keygen -q -t ed25519 -N '' -f /root/key && install -d -m 700 -o john -g users /home/john/.ssh && install -m 600 -o john -g users /root/key.pub /home/john/.ssh/authorized_keys && echo ok", stdout_contains = "ok" },
+  { run = "ssh -i /root/key -o StrictHostKeyChecking=accept-new -o BatchMode=yes john@localhost 'id -un; echo $XDG_RUNTIME_DIR'", stdout_contains = "john\n/run/user/1000" },
+  { run = "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o PreferredAuthentications=password john@localhost true 2>&1; true", stdout_contains = "Permission denied" },
+  { run = "test -z \"$(systemctl --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },
+]
+timeout_secs = 180

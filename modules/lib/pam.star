@@ -3,13 +3,21 @@
 # pam_systemd lives with systemd rather than with PAM's own modules.
 SYSTEMD = "/run/current-system/sw/lib/security/pam_systemd.so"
 
+# Every login gets the system's environment, including ones that run a single command.
+ENV = {
+    "name": "env",
+    "control": "required",
+    "module": "pam_env.so",
+    "args": ["conffile=/etc/pam/environment", "readenv=0"],
+}
+
 def unix_stacks():
     return {
         "account": [
             {"name": "unix", "control": "required", "module": "pam_unix.so"},
         ],
         "auth": [
-            {"name": "env", "control": "required", "module": "pam_env.so"},
+            ENV,
             {
                 "name": "unix",
                 "control": "sufficient",
@@ -20,10 +28,15 @@ def unix_stacks():
             {"name": "deny", "control": "required", "module": "pam_deny.so", "after": "unix"},
         ],
         "password": [
-            {"name": "unix", "control": "sufficient", "module": "pam_unix.so", "args": ["nullok", "yescrypt"]},
+            {
+                "name": "unix",
+                "control": "sufficient",
+                "module": "pam_unix.so",
+                "args": ["nullok", "yescrypt"],
+            },
         ],
         "session": [
-            {"name": "env", "control": "required", "module": "pam_env.so"},
+            ENV,
             {"name": "unix", "control": "required", "module": "pam_unix.so", "after": "env"},
             {"name": "systemd", "control": "optional", "module": SYSTEMD, "after": "unix"},
         ],

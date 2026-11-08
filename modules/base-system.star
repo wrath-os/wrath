@@ -59,6 +59,7 @@ def render(ctx):
         },
     })
 
+    ctx.file("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n")
     ctx.file("/etc/nsswitch.conf", "\n".join([
         "passwd: files systemd",
         "group: files systemd",
@@ -79,6 +80,14 @@ def render(ctx):
         "if [ -r \"$HOME/.config/distro/session.sh\" ]; then\n" +
         "  . \"$HOME/.config/distro/session.sh\"\n" +
         "fi\n",
+        next_login = True,
+    )
+    ctx.file(
+        "/etc/pam/environment",
+        "".join([
+            "%s DEFAULT=%s\n" % (name, value.replace("${USER}", "@{PAM_USER}"))
+            for name, value in environment
+        ]),
         next_login = True,
     )
     ctx.file(

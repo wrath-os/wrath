@@ -32,22 +32,22 @@ http {
 
 file /etc/pam.d/login (mode 644, from pam)
 account required pam_unix.so
-auth required pam_env.so
+auth required pam_env.so conffile=/etc/pam/environment readenv=0
 auth sufficient pam_fprintd.so
 auth sufficient pam_unix.so likeauth try_first_pass
 auth required pam_deny.so
 password sufficient pam_unix.so nullok yescrypt
-session required pam_env.so
+session required pam_env.so conffile=/etc/pam/environment readenv=0
 session required pam_unix.so
 session optional /run/current-system/sw/lib/security/pam_systemd.so
 
 file /etc/pam.d/sudo (mode 644, from pam)
 account required pam_unix.so
-auth required pam_env.so
+auth required pam_env.so conffile=/etc/pam/environment readenv=0
 auth sufficient pam_fprintd.so
 auth sufficient pam_unix.so likeauth try_first_pass
 password sufficient pam_unix.so nullok yescrypt
-session required pam_env.so
+session required pam_env.so conffile=/etc/pam/environment readenv=0
 session required pam_unix.so
 session optional /run/current-system/sw/lib/security/pam_systemd.so
 
