@@ -1,6 +1,8 @@
 # Users. The backend creates them and their home directories. Everything but `packages` belongs to
 # the account, which only a system configuration sets.
 
+load("lib/home.star", "home_of")
+
 user = types.record(
     description = option(types.str, optional = True, account = True),
     uid = option(types.int, optional = True, account = True),
@@ -22,13 +24,6 @@ user = types.record(
         doc = "Start the user's services at boot instead of at their first login.",
     ),
 )
-
-def home_of(name, u):
-    if "home" in u:
-        return u["home"]
-    if u["system"]:
-        return "/var/empty"
-    return "/home/" + name
 
 def render(ctx):
     users = {}

@@ -1005,6 +1005,7 @@ fn disks_are_laid_out_and_mounted_by_name() {
           ]
         }
       ],
+      "state": "",
       "unlock": {
         "pcrs": [
           7
@@ -1084,6 +1085,7 @@ fn disks_are_laid_out_and_mounted_by_name() {
         }
       ],
       "spanning": [],
+      "state": "",
       "unlock": {
         "pcrs": [
           7
@@ -1409,4 +1411,65 @@ fn caches_join_the_defaults_and_restart_the_builder() {
 
     restart nix-daemon.service on {"/etc/nix/settings.conf"}
     "#);
+}
+
+const STATE_MODULES: [&str; 4] = ["users", "secrets", "disks", "state"];
+
+fn state_error(toml: &str) -> String {
+    evaluate_with(&MemFs::new([("system.toml", toml)]), &STATE_MODULES).unwrap_err()
+}
+
+const STATE_DISKS: &str = r#"
+[disks.main]
+partitions.esp = { size = "1G", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest" }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@nix" = { mount = "/nix" }
+subvolumes."@keep" = { mount = "/keep" }
+"#;
+
+#[test]
+fn a_state_path_makes_the_root_memory_and_is_mounted_early() {
+    let toml = format!("{STATE_DISKS}\n[state]\npath = \"/keep\"\nroot_size = \"2G\"\n");
+    let evaluation = evaluate_with(
+        &MemFs::new([("system.toml", toml.as_str())]),
+        &STATE_MODULES,
+    )
+    .unwrap();
+
+    let storage = output_of(&evaluation, "disks").base["storage"].to_string();
+    assert!(storage.contains("format = \"tmpfs\""), "{storage}");
+    assert!(storage.contains("size=2G"), "{storage}");
+    assert!(storage.contains("state = \"/keep\""), "{storage}");
+    let state = output_of(&evaluation, "state").base["state"].to_string();
+    assert!(
+        state.contains("/etc/distro") && state.contains("/var/lib/distro"),
+        "{state}"
+    );
+}
+
+#[test]
+fn state_has_to_be_kept_somewhere_mounted_and_stay_inside() {
+    let unmounted = state_error(&format!("{STATE_DISKS}\n[state]\npath = \"/data\"\n"));
+    assert!(
+        unmounted.contains("nothing is mounted at `/data`"),
+        "{unmounted}"
+    );
+
+    let on_disk = STATE_DISKS.replace(
+        "subvolumes.\"@nix\"",
+        "subvolumes.\"@r\" = { mount = \"/\" }\nsubvolumes.\"@nix\"",
+    );
+    let both = state_error(&format!("{on_disk}\n[state]\npath = \"/keep\"\n"));
+    assert!(both.contains("erased at every boot"), "{both}");
+
+    let nowhere = state_error("[state]\ndirectories = [\"/var/log\"]\n");
+    assert!(nowhere.contains("needs a `state.path`"), "{nowhere}");
+
+    let escapes = state_error(&format!(
+        "{STATE_DISKS}\n[state]\npath = \"/keep\"\ndirectories = [\"/var/../etc\"]\n"
+    ));
+    assert!(escapes.contains("goes outside"), "{escapes}");
 }

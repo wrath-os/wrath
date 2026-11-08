@@ -1,0 +1,3 @@
+[state]
+directories = ["My Games", ".config/app"]
+files = [".history"]

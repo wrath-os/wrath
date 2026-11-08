@@ -13,6 +13,7 @@ use distro_eval::Unit;
 use distro_model::{Activation, Model};
 
 use crate::read_model;
+use crate::state::State;
 
 /// What a switch does, as NixOS's `switch-to-configuration` takes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -137,7 +138,28 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     remove_others(&entries, |name| {
         name.starts_with("distro-") && !written.contains(name)
     })?;
-    remove_others(&kernels, |name| !kept.contains(name))
+    remove_others(&kernels, |name| !kept.contains(name))?;
+    sync_tree(&kernels)?;
+    sync_tree(&esp.join("loader"))
+}
+
+/// Writes everything under `dir` to the disk itself. The ESP's filesystem leaves that to whoever
+/// wrote the files, and an entry that was only in the disk's cache is gone after a power cut.
+fn sync_tree(dir: &Path) -> Result<(), String> {
+    let sync = |path: &Path| {
+        fs::File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|e| format!("{}: {e}", path.display()))
+    };
+    for entry in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let path = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
+        if path.is_dir() {
+            sync_tree(&path)?;
+        } else {
+            sync(&path)?;
+        }
+    }
+    sync(dir)
 }
 
 /// An uncompressed cpio archive, in the `newc` format the kernel unpacks an initrd from, holding
@@ -256,6 +278,12 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     }
     replace_link(system, &root.join("run/current-system"))?;
     replace_link(system, &root.join("run/booted-system"))?;
+    let model = model_of(system)?;
+    let state = State::of(&model);
+    if let Some(state) = &state {
+        state.restore_accounts(root);
+        state.keep_system(root, system, None);
+    }
     // A root on disk still has /etc from the system it last ran, whose files may have gone since.
     let old = fs::read_link(root.join("etc/static"))
         .ok()
@@ -273,7 +301,10 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         "/run/wrappers",
     ]))?;
     run(&mut Command::new(system.join("sw/bin/systemd-sysusers")))?;
-    make_wrappers(root, system, &model_of(system)?)?;
+    if let Some(state) = &state {
+        state.save_accounts(root);
+    }
+    make_wrappers(root, system, &model)?;
     crate::on_machine::apply(system)
 }
 
@@ -288,8 +319,15 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     let activation = distro_model::plan(&before, &after).activation;
 
     systemctl("stop", &activation.stop)?;
+    let state = State::of(&after);
+    if let Some(state) = &state {
+        state.keep_system(root, system, State::of(&before).as_ref());
+    }
     switch_etc(root, old.as_deref(), system)?;
     run(&mut Command::new("systemd-sysusers"))?;
+    if let Some(state) = &state {
+        state.save_accounts(root);
+    }
     make_wrappers(root, system, &after)?;
     crate::on_machine::apply(system)?;
     run(Command::new("systemd-tmpfiles").arg("--create"))?;
@@ -300,7 +338,7 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     replace_link(system, &current)
 }
 
-fn model_of(system: &Path) -> Result<Model, String> {
+pub(crate) fn model_of(system: &Path) -> Result<Model, String> {
     read_model(&system.join("etc/distro/model.json"))
 }
 
@@ -444,7 +482,7 @@ fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<(), String
 }
 
 /// Names to ids in an accounts file such as `/etc/passwd`.
-fn ids(path: &Path) -> BTreeMap<String, u32> {
+pub(crate) fn ids(path: &Path) -> BTreeMap<String, u32> {
     fs::read_to_string(path)
         .unwrap_or_default()
         .lines()

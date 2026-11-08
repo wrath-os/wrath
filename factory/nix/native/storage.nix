@@ -31,14 +31,25 @@ let
   ) encrypted;
 
   filesystems = lib.filter (mount: mount.format != "swap") storage.mounts;
-  # The initrd mounts what the system runs from: the root, and the store under it.
+  # The initrd mounts what the system runs from: the root, the store under it, and where a root
+  # erased at every boot keeps things.
   early = lib.filter (
-    mount: mount.path == "/" || mount.path == "/nix" || lib.hasPrefix "/nix/" mount.path
+    mount:
+    mount.path == "/"
+    || mount.path == "/nix"
+    || lib.hasPrefix "/nix/" mount.path
+    || mount.path == storage.state
   ) filesystems;
   line =
     prefix: mount:
     let
-      options = if mount.options == [ ] then "defaults" else lib.concatStringsSep "," mount.options;
+      # A root in memory is ready at once. Holding it back until the disks are unlocked keeps the
+      # initrd from moving on to its next stage while someone types the passphrase.
+      waits = lib.optional (
+        prefix != "" && mount.format == "tmpfs" && encrypted != [ ]
+      ) "x-systemd.after=cryptsetup.target";
+      all = mount.options ++ waits;
+      options = if all == [ ] then "defaults" else lib.concatStringsSep "," all;
       where = if mount.path == "/" && prefix != "" then prefix else prefix + mount.path;
     in
     "${mount.device} ${where} ${mount.format} ${options} 0 0";

@@ -187,7 +187,11 @@ pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, Str
         // Before the boot loader: it copies the initrd's SSH key into the initrd.
         .and_then(|()| place_keys(how))
         .and_then(|()| backend::install(&system, how.target))
-        .and_then(|()| record(how));
+        .and_then(|()| record(how))
+        .and_then(|()| match crate::state::State::of(&model) {
+            Some(state) => state.move_into_keep(how.target),
+            None => Ok(()),
+        });
     let closed = close(&partitions, how.target);
     result?;
     closed?;

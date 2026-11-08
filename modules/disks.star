@@ -206,6 +206,21 @@ def render(ctx):
             "members": members,
             "subvolumes": sorted(fs["subvolumes"].keys()),
         })
+    state = ctx.read("state")
+    state_path = state.get("path", "")
+    if state_path:
+        mounted = [m["path"] for m in mounts]
+        if state_path not in mounted:
+            ctx.error("state.path", "nothing is mounted at `%s` to keep things in" % state_path)
+        if "/" in mounted:
+            ctx.error("state.path", "with `state.path`, `/` is erased at every boot, so it " +
+                      "can't be mounted from a disk")
+        mounts.append({
+            "path": "/",
+            "device": "none",
+            "format": "tmpfs",
+            "options": ["mode=755", "size=" + state["root_size"]],
+        })
     paths = [m["path"] for m in mounts if m["path"]]
     seen = {}
     for path in paths:
@@ -235,6 +250,7 @@ def render(ctx):
         },
         "partitions": partitions,
         "mounts": sorted(mounts, key = lambda m: m["path"]),
+        "state": state_path,
         "spanning": spanning,
     })
 
@@ -244,6 +260,16 @@ module(
         "disks": types.map(disk),
         "filesystems": types.map(filesystem),
         "unlock": option(unlock, default = {}),
+        "state.path": option(
+            types.path,
+            optional = True,
+            doc = "A mount to keep things in. With this, `/` is erased at every boot.",
+        ),
+        "state.root_size": option(
+            types.str,
+            default = "25%",
+            doc = "How much memory `/` can use, as a size or a share of memory.",
+        ),
     },
     writes = [],
     render = render,

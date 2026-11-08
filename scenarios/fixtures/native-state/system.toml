@@ -1,0 +1,23 @@
+# A root erased at every boot, on one encrypted disk.
+[system]
+hostname = "w-01"
+
+[users.john]
+
+[services.ssh]
+enable = true
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest", encrypt = true }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@nix" = { mount = "/nix" }
+subvolumes."@keep" = { mount = "/keep" }
+
+[state]
+path = "/keep"
+root_size = "1G"
+directories = ["/var/lib/app", "/var/log"]
+files = ["/etc/machine-id", "/etc/ssh/ssh_host_ed25519_key"]

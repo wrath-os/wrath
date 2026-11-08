@@ -76,6 +76,10 @@ way everywhere, with a command, environment, restart policy, readiness and the s
 A **home** is what a configuration puts in one user's home directory: files, packages, services
 and environment variables.
 
+A machine's **state** is what survives a reboot when its root is erased at every boot. With
+`state.path` set, `/` is memory, and only the `directories` and `files` listed under `[state]`, or
+under `[state]` in a user's file, are kept, under that path.
+
 A **machine value** is something that differs between machines running the same configuration:
 a **fact** the machine detects, such as `${facts.cpu.count}`, or a value it's given, such as
 `${machine.name}`. Like secrets, machine values are filled in on the machine when it switches,

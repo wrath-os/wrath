@@ -1,0 +1,5 @@
+# A live system that installs others: the tools `distro install` runs.
+packages = ["cryptsetup", "btrfs-progs", "dosfstools", "nixos-install-tools", "age", "openssh"]
+
+[system]
+hostname = "installer"

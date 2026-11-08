@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 
 use crate::activate::replace_link;
+use crate::state::State;
 use crate::templates;
 
 const SECRETS: &str = "/run/secrets";
@@ -49,6 +50,9 @@ pub fn apply(system: &Path) -> Result<(), String> {
             .args(["--create", "/etc/tmpfiles.d/distro-homes.conf"]),
         "home directories",
     );
+    if let Some(state) = State::of(&crate::activate::model_of(system)?) {
+        state.keep_homes(system);
+    }
     link_homes(&sw, &activation);
     Ok(())
 }
