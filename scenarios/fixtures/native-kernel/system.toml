@@ -1,0 +1,18 @@
+[system]
+hostname = "kernel"
+
+[users.john]
+extra_groups = ["wheel"]
+
+[kernel]
+package = "linuxPackages_latest"
+modules = ["dummy"]
+initrd_modules = ["nbd"]
+blacklist = ["pcspkr"]
+module_options.nbd = "nbds_max=2"
+module_options.dummy = "numdummies=3"
+sysctl."vm.swappiness" = 7
+
+[hardware]
+firmware = ["zd1211fw"]
+microcode = "amd"

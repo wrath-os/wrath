@@ -333,7 +333,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         activation,
         base: diff_with_names(&before.base, &after.base, |name, before, after| {
             // The bootloader and kernel only change on the next boot.
-            let tier = if name == "boot" {
+            let tier = if name == "boot" || name == "kernel" {
                 Tier::Reboot
             } else {
                 Tier::Live

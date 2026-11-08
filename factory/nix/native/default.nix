@@ -50,8 +50,20 @@ let
   units = input.units // union "units";
   etcFiles = lib.mapAttrs (_: file: { inherit (file) text; }) input.etc // union "etc";
 
-  kernel = pkgs.linuxPackages.kernel;
-  moduleTree = pkgs.aggregateModules [ (lib.getOutput "modules" kernel) ];
+  inherit (base) kernel;
+  linux = (package kernel.package).kernel;
+  # Where the kernel finds firmware, on its command line since it's asked for before /etc exists.
+  firmware =
+    if kernel.firmware == [ ] then
+      pkgs.emptyDirectory
+    else
+      pkgs.buildEnv {
+        name = "firmware";
+        paths = map package kernel.firmware;
+        pathsToLink = [ "/lib/firmware" ];
+        ignoreCollisions = true;
+      };
+  moduleTree = pkgs.aggregateModules [ (lib.getOutput "modules" linux) ];
 
   packages = [ distro ] ++ map package input.packages ++ sum "packages";
   sw = pkgs.buildEnv {
@@ -314,11 +326,13 @@ let
   '';
 
   initrd = import ./initrd.nix {
-    inherit lib pkgs kernel moduleTree writeUnits;
+    inherit lib pkgs moduleTree writeUnits firmware;
+    kernel = linux;
+    modprobeConfig = kernel.modprobe;
     hostname = base.system.hostname;
     units = union "initrd.units";
     fstab = sum "initrd.fstab";
-    kernelModules = sum "initrd.kernelModules";
+    kernelModules = sum "initrd.kernelModules" ++ kernel.initrd_modules;
     storePaths = sum "initrd.storePaths";
     disks = lib.any (layer: layer.initrd.disks or false) allLayers;
     crypttab = sum "initrd.crypttab";
@@ -327,13 +341,25 @@ let
     ssh = union "initrd.ssh";
   };
 
-  kernelParams = base.boot.kernel_params ++ sum "kernelParams";
+  kernelParams =
+    base.boot.kernel_params
+    ++ sum "kernelParams"
+    ++ lib.optional (kernel.firmware != [ ]) "firmware_class.path=${firmware}/lib/firmware";
+
+  # The CPU reads microcode from an archive at the very start of the initrd.
+  bootInitrd =
+    if kernel ? microcode then
+      pkgs.runCommand "initrd-with-microcode" { } ''
+        cat ${package kernel.microcode.package}/${kernel.microcode.image} ${initrd}/initrd > $out
+      ''
+    else
+      "${initrd}/initrd";
 
   toplevel = pkgs.runCommand "distro-system" { } ''
     mkdir $out
-    ln -s ${kernel}/bzImage $out/kernel
+    ln -s ${linux}/bzImage $out/kernel
     ln -s ${moduleTree} $out/kernel-modules
-    ln -s ${initrd}/initrd $out/initrd
+    ln -s ${bootInitrd} $out/initrd
     ln -s ${etc} $out/etc
     ln -s ${activation} $out/activation.json
     ln -s ${sw} $out/sw

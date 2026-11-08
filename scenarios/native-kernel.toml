@@ -1,0 +1,15 @@
+title = "a system picks its kernel, modules, settings, firmware and microcode"
+
+[vm]
+config = "scenarios/fixtures/native-kernel"
+store = "host"
+lowering = "native"
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { run = "cat /sys/module/nbd/parameters/nbds_max; ip -o link | grep -c dummy; sysctl -n vm.swappiness; modprobe --showconfig | grep -c 'blacklist pcspkr'", stdout_contains = "2\n3\n7\n1" },
+  { run = "test \"$(uname -r)\" = \"$(ls /run/booted-system/kernel-modules/lib/modules)\" && echo matches; ls \"$(tr ' ' '\\n' < /proc/cmdline | sed -n 's/^firmware_class.path=//p')\"", stdout_contains = "matches\nzd1211" },
+  { run = "head -c 2048 /run/booted-system/initrd | grep -a -c 'kernel/x86/microcode/AuthenticAMD.bin'", stdout_contains = "1" },
+  { apply_config = "scenarios/fixtures/native-kernel-changed", expect_plan = ["~ /etc/sysctl.d/60-kernel.conf"] },
+  { run = "sysctl -n vm.swappiness", stdout_contains = "9" },
+]
+timeout_secs = 900

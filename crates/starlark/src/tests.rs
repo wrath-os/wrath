@@ -1293,3 +1293,41 @@ fn a_build_needs_its_patches() {
         "{error}"
     );
 }
+
+#[test]
+fn the_kernel_module_writes_settings_and_leaves_the_boot_to_the_backend() {
+    let config = MemFs::new([(
+        "system.toml",
+        r#"
+[kernel]
+package = "linuxPackages_latest"
+modules = ["kvm-amd"]
+initrd_modules = ["nvme"]
+blacklist = ["pcspkr"]
+module_options.nbd = "nbds_max=2"
+sysctl."vm.swappiness" = 133
+
+[hardware]
+firmware = ["linux-firmware"]
+microcode = "amd"
+"#,
+    )]);
+
+    let evaluation = evaluate_with(&config, &["kernel"]).unwrap();
+    insta::assert_snapshot!(rendered_by(&evaluation, "kernel"), @r#"
+    /etc/modprobe.d/distro.conf
+    blacklist pcspkr
+    options nbd nbds_max=2
+
+    /etc/modules-load.d/kernel.conf
+    kvm-amd
+
+    /etc/sysctl.d/60-kernel.conf
+    vm.swappiness = 133
+
+    restart systemd-modules-load.service on {"/etc/modules-load.d/kernel.conf"}
+    restart systemd-sysctl.service on {"/etc/sysctl.d/60-kernel.conf"}
+    "#);
+    let base = &output_of(&evaluation, "kernel").base["kernel"];
+    insta::assert_snapshot!(base.to_string(), @r#"{ firmware = ["linux-firmware"], initrd_modules = ["nvme"], microcode = { image = "amd-ucode.img", package = "microcode-amd" }, modprobe = "blacklist pcspkr\noptions nbd nbds_max=2\n", package = "linuxPackages_latest" }"#);
+}

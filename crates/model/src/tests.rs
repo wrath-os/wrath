@@ -1006,3 +1006,20 @@ fn plans_say_how_a_build_changed() {
         .unwrap();
     assert_eq!(change.details, ["patches changed"]);
 }
+
+#[test]
+fn a_kernel_change_takes_a_reboot() {
+    let with_kernel = |package: &str| {
+        let mut model = Model::default();
+        model
+            .base
+            .insert("kernel".into(), Value::Str(package.into()));
+        model
+    };
+
+    let plan = plan(
+        &with_kernel("linuxPackages"),
+        &with_kernel("linuxPackages_latest"),
+    );
+    assert_eq!(plan.tier(), Some(crate::Tier::Reboot));
+}

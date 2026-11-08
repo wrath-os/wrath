@@ -12,6 +12,8 @@
   units,
   fstab,
   kernelModules,
+  firmware,
+  modprobeConfig,
   storePaths,
   disks,
   crypttab,
@@ -229,7 +231,7 @@ let
 
   modules = pkgs.makeModulesClosure {
     kernel = moduleTree;
-    firmware = pkgs.emptyDirectory;
+    inherit firmware;
     rootModules = kernelModules;
     # Drivers built into the kernel aren't modules to copy.
     allowMissing = true;
@@ -312,6 +314,10 @@ let
     {
       source = pkgs.writeText "modules.conf" (lib.concatLines kernelModules);
       target = "/etc/modules-load.d/distro.conf";
+    }
+    {
+      source = pkgs.writeText "modprobe.conf" modprobeConfig;
+      target = "/etc/modprobe.d/distro.conf";
     }
     {
       source = "${modules}/lib";
