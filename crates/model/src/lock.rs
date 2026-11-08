@@ -70,6 +70,9 @@ pub struct Locked {
     pub version: String,
     /// What the backend builds, such as a store path. Changes when anything in the build does.
     pub id: String,
+    /// For a package the configuration builds differently, the hash of how it was built then.
+    #[serde(default)]
+    pub build: Option<String>,
 }
 
 impl Lock {
@@ -108,9 +111,13 @@ impl Lock {
         }
         out.push_str("\n[packages]\n");
         for (name, locked) in &self.packages {
+            let build = match &locked.build {
+                Some(build) => format!(", build = {}", quote(build)),
+                None => String::new(),
+            };
             let _ = writeln!(
                 out,
-                "{} = {{ version = {}, id = {} }}",
+                "{} = {{ version = {}, id = {}{build} }}",
                 key(name),
                 quote(&locked.version),
                 quote(&locked.id)
@@ -140,6 +147,7 @@ mod tests {
         Locked {
             version: version.into(),
             id: id.into(),
+            build: None,
         }
     }
 

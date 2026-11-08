@@ -139,7 +139,11 @@ pub fn keep(path: &Path, link: &Path) -> Result<(), String> {
 /// extends a NixOS configuration takes packages from that configuration, so it is the source.
 pub fn resolve(model: &Model, factory: &Path, work: &Path) -> Result<Lock, String> {
     let (stdout, _) = nix(&["eval", "--json"], model, factory, "resolve", work)?;
-    parse_resolved(&stdout)
+    let mut lock = parse_resolved(&stdout)?;
+    for (name, locked) in &mut lock.packages {
+        locked.build = model.builds.get(name).map(distro_model::Build::hash);
+    }
+    Ok(lock)
 }
 
 #[derive(Deserialize)]

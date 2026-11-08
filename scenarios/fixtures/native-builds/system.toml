@@ -1,0 +1,14 @@
+packages = ["hello", "tiny-nano"]
+
+[system]
+hostname = "native"
+
+[users.john]
+extra_groups = ["wheel"]
+
+[builds.hello]
+patches = ["patches/hello.patch"]
+
+[builds.tiny-nano]
+package = "nano"
+options.enableTiny = true

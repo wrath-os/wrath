@@ -194,7 +194,7 @@
           inherit lib distro factoryInputs;
           pkgs = nativePkgs;
           input = json;
-          package = import ./package.nix lib nativePkgs named;
+          package = import ./package.nix lib nativePkgs named json.builds;
           layers = map (layer: layer nativePkgs) layers;
         };
       nativeHostStoreHarness = [
@@ -317,7 +317,7 @@
         let
           evaluated = evalInput input [ ];
           json = lib.importJSON input;
-          package = import ./package.nix lib evaluated.system.pkgs evaluated.named;
+          package = import ./package.nix lib evaluated.system.pkgs evaluated.named json.builds;
           names = lib.unique (
             json.packages ++ lib.concatMap (home: home.packages) (builtins.attrValues json.homes)
           );
@@ -345,7 +345,7 @@
           evaluated = evalInput input [ ];
           json = lib.importJSON input;
           inherit (evaluated.system) pkgs;
-          package = import ./package.nix lib pkgs evaluated.named;
+          package = import ./package.nix lib pkgs evaluated.named json.builds;
           describe =
             name:
             let
@@ -378,7 +378,7 @@
           evaluated = evalInput input [ ];
           json = lib.importJSON input;
           inherit (evaluated.system) pkgs;
-          package = import ./package.nix lib pkgs evaluated.named;
+          package = import ./package.nix lib pkgs evaluated.named json.builds;
           name = builtins.head (builtins.attrNames json.homes);
           ours = json.homes.${name};
           bin = "$HOME/.local/state/distro/profiles/home/profile/bin";

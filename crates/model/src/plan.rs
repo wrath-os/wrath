@@ -319,6 +319,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
                 name: format!("source {}", change.name),
                 ..change
             })
+            .chain(builds(before, after))
             .chain(diff(&packages(before), &packages(after), |old, new| {
                 (
                     package_details(old.copied(), new.copied(), locking),
@@ -503,6 +504,37 @@ fn template_details(before: Option<&Template>, after: Option<&Template>) -> Vec<
         }
         _ => Vec::new(),
     }
+}
+
+/// How the packages built differently changed.
+fn builds(before: &Model, after: &Model) -> Vec<Change> {
+    diff(&before.builds, &after.builds, |old, new| {
+        let details = match (old, new) {
+            (Some(old), Some(new)) => {
+                let parts = [
+                    (
+                        old.package != new.package,
+                        format!("{} -> {}", old.package, new.package),
+                    ),
+                    (old.options != new.options, "options changed".to_owned()),
+                    (old.patches != new.patches, "patches changed".to_owned()),
+                ];
+                parts
+                    .into_iter()
+                    .filter_map(|(changed, part)| changed.then_some(part))
+                    .collect()
+            }
+            (_, Some(build)) | (Some(build), _) => vec![format!("from {}", build.package)],
+            (None, None) => Vec::new(),
+        };
+        (details, Some(Tier::Live))
+    })
+    .into_iter()
+    .map(|change| Change {
+        name: format!("build {}", change.name),
+        ..change
+    })
+    .collect()
 }
 
 /// How a package source changed. The base system comes from the default source too, and a

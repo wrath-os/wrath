@@ -408,6 +408,7 @@ mod tests {
         let locked = |version: &str| distro_model::Locked {
             version: version.into(),
             id: format!("/nix/store/{version}"),
+            build: None,
         };
         let mut lock = Lock::default();
         for name in ["nixpkgs", "acme", "mine"] {

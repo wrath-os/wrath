@@ -1,0 +1,10 @@
+--- a/src/hello.c
++++ b/src/hello.c
+@@ -54,6 +54,7 @@ print_help (FILE *restrict out)
+   fprintf (out, _("Usage: %s [OPTION]...\n"), program_name);
+   /* TRANSLATORS: --help output 2 (brief description)
+      no-wrap */
++  fputs ("Built by distro.\n", out);
+   fputs (_("Print a friendly, customizable greeting.\n"), out);
+   fputs ("\n", out);
+   /* TRANSLATORS: --help output 3: options

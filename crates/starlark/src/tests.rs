@@ -1251,3 +1251,45 @@ fn a_unit_needs_a_name_systemd_knows_and_sections() {
         assert!(error.contains("system.toml"), "{error}");
     }
 }
+
+const BUILD_MODULES: [&str; 1] = ["builds"];
+
+#[test]
+fn builds_say_what_differs_and_hold_their_patches() {
+    let config = MemFs::new([
+        (
+            "system.toml",
+            r#"
+[builds.whisper-vulkan]
+package = "whisper-cpp"
+options.vulkanSupport = true
+patches = ["patches/fix.patch"]
+
+[builds.hello]
+patches = ["patches/fix.patch"]
+"#,
+        ),
+        ("patches/fix.patch", "--- a\n+++ b\n"),
+    ]);
+
+    let evaluation = evaluate_with(&config, &BUILD_MODULES).unwrap();
+    let builds = &output_of(&evaluation, "builds").builds;
+    assert_eq!(builds["whisper-vulkan"].package, "whisper-cpp");
+    assert_eq!(builds["whisper-vulkan"].options.len(), 1);
+    assert_eq!(builds["hello"].package, "hello");
+    assert_eq!(evaluation.patches()["patches/fix.patch"], "--- a\n+++ b\n");
+}
+
+#[test]
+fn a_build_needs_its_patches() {
+    let config = MemFs::new([(
+        "system.toml",
+        "[builds.hello]\npatches = [\"gone.patch\"]\n",
+    )]);
+
+    let error = evaluate_with(&config, &BUILD_MODULES).unwrap_err();
+    assert!(
+        error.contains("cannot read patch `gone.patch` of build `hello`"),
+        "{error}"
+    );
+}

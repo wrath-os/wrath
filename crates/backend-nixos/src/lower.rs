@@ -77,6 +77,7 @@ pub fn lower(model: &Model) -> String {
         ("model", Value::Str(model.canonical())),
         ("model_hash", Value::Str(model.hash())),
         ("packages", strings(model.packages.iter().cloned())),
+        ("builds", distro_model::builds_value(&model.builds)),
         (
             "service_packages",
             strings(model.service_packages.iter().cloned()),
@@ -416,6 +417,7 @@ mod tests {
           "base": {
             "audio": true
           },
+          "builds": {},
           "enabled": {},
           "enabled_user": {},
           "etc": {

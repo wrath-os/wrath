@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
 
-use crate::{File, Home, Locked, Model, Secret, Source, VERSION};
+use crate::{Build, File, Home, Locked, Model, Secret, Source, VERSION};
 
 impl Model {
     /// The model in `json`, written by [`Model::canonical`] by this version of the format.
@@ -39,7 +39,7 @@ impl Model {
             base: unspelled("base")?,
             backends: unspelled("backends")?,
             triggers: read_triggers(field("triggers")?)?,
-            machine: strings(field("machine")?)?.into_iter().collect(),
+            machine: strings(field("machine")?)?,
             secrets: read_secrets(field("secrets")?)?,
             homes,
             sources: read_sources(field("sources")?)?,
@@ -50,6 +50,7 @@ impl Model {
             enabled: read_enabled(field("enabled")?)?,
             enabled_user: read_enabled(field("enabled_user")?)?,
             wrappers: read_wrappers(field("wrappers")?)?,
+            builds: read_builds(field("builds")?)?,
         })
     }
 }
@@ -183,7 +184,7 @@ fn mode(value: &Value, what: &str) -> Result<u32, String> {
     }
 }
 
-fn strings(value: &Value) -> Result<BTreeSet<String>, String> {
+fn strings<C: FromIterator<String>>(value: &Value) -> Result<C, String> {
     match value {
         Value::List(items) => items.iter().map(|item| string(item, "a name")).collect(),
         other => Err(format!("expected a list of strings, found {other}")),
@@ -307,6 +308,7 @@ fn read_locked(value: &Value) -> Result<BTreeMap<String, Locked>, String> {
         Ok(Locked {
             version: string_at(fields, "version", name)?,
             id: string_at(fields, "id", name)?,
+            build: optional_string(fields, "build", name)?,
         })
     })
 }
@@ -319,6 +321,16 @@ fn read_templates(value: &Value) -> Result<BTreeMap<String, Template>, String> {
             owner: string_at(fields, "owner", path)?,
             group: optional_string(fields, "group", path)?,
             mode: mode(get(fields, "mode", path)?, path)?,
+        })
+    })
+}
+
+fn read_builds(value: &Value) -> Result<BTreeMap<String, Build>, String> {
+    read_tables(value, "builds", |fields, name| {
+        Ok(Build {
+            package: string_at(fields, "package", name)?,
+            options: table(get(fields, "options", name)?, name)?.clone(),
+            patches: strings(get(fields, "patches", name)?)?,
         })
     })
 }

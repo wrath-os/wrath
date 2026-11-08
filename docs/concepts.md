@@ -50,6 +50,11 @@ A **package** is software to install, named `[source#]name[@version]`: `jq`, `st
 `jq@1.7` (planned), or `github:jqlang/jq#jq`. It's written the same way in TOML and on the
 command line.
 
+A **build** is a package built differently from how its source builds it, with other values for
+its build options or with patches: `[builds.whisper-vulkan]` with `package = "whisper-cpp"` and
+`options.vulkanSupport = true`. The name goes in `packages` like any other. Only that package
+changes, and the lock records which build it pinned, so a changed build needs locking again.
+
 A **source** is where packages, or files to include, come from: a name and the URL it follows,
 pinned in the lock. `nixpkgs` is the default, and the base system comes from it too. A file from a
 source is included as `{ source = "acme", path = "rust-service.toml" }`.

@@ -35,7 +35,7 @@ let
   mapperName = lib.removePrefix "/dev/mapper/";
   optional = lib.concatMap (fs: map mapperName (lib.tail fs.members)) degraded;
   replaces = input.nixos.replaces or [ ];
-  package = import ./package.nix lib pkgs distroSources;
+  package = import ./package.nix lib pkgs distroSources input.builds;
   inherit (lib) mkDefault;
 
   # Where the machine fills in a file with secrets in it.

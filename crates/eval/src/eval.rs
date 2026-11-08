@@ -68,6 +68,7 @@ pub struct Evaluation {
     declared_sources: BTreeMap<String, DeclaredSource>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
+    patches: BTreeMap<String, String>,
 }
 
 /// The encrypted file of a secret as read when evaluating.
@@ -173,6 +174,11 @@ impl Evaluation {
     /// The encrypted file of each secret, by name.
     pub fn secret_files(&self) -> &BTreeMap<String, SecretFile> {
         &self.secret_files
+    }
+
+    /// The text of each patch builds use, by its path in the configuration.
+    pub fn patches(&self) -> &BTreeMap<String, String> {
+        &self.patches
     }
 }
 
@@ -296,6 +302,11 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         diagnostics.extend(unknown_sources(&resolver.rendered, &declared_sources));
         diagnostics.extend(undeclared_secrets(&resolver.rendered, &resolver.options));
     }
+    let patches = if diagnostics.is_empty() {
+        read_patches(&resolver.rendered, config, &mut diagnostics)
+    } else {
+        BTreeMap::new()
+    };
     let secret_files = if diagnostics.is_empty() {
         read_secrets(&resolver.rendered, config, &mut diagnostics)
     } else {
@@ -323,6 +334,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             .map(|rendered| rendered.expect("every module rendered without errors"))
             .collect(),
         secret_files,
+        patches,
     })
 }
 
@@ -408,6 +420,33 @@ fn secret_names(value: &Value) -> Vec<&String> {
     }
 }
 
+/// Reads the patches builds use, so the model holds what they say.
+fn read_patches(
+    rendered: &[Option<Rendered>],
+    config: &dyn ConfigFs,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> BTreeMap<String, String> {
+    let mut patches = BTreeMap::new();
+    for (name, build) in rendered
+        .iter()
+        .flatten()
+        .flat_map(|rendered| &rendered.output.builds)
+    {
+        for path in &build.patches {
+            match config.read(path) {
+                Ok(text) => {
+                    patches.insert(path.clone(), text);
+                }
+                Err(e) => diagnostics.push(Diagnostic::error(format!(
+                    "cannot read patch `{path}` of build `{name}`: {}: {e}",
+                    config.display(path)
+                ))),
+            }
+        }
+    }
+    patches
+}
+
 /// Reads and hashes each secret's encrypted file.
 fn read_secrets(
     rendered: &[Option<Rendered>],
@@ -455,7 +494,7 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
                     .map(move |name| format!("{name} (for {user})"))
             })
             .collect();
-        let outputs: [(&str, Vec<String>); 8] = [
+        let outputs: [(&str, Vec<String>); 9] = [
             ("file", output.files.keys().cloned().collect()),
             ("file", output.templates.keys().cloned().collect()),
             ("file", home_files),
@@ -464,6 +503,7 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
             ("base setting", output.base.keys().cloned().collect()),
             ("backend setting", output.backends.keys().cloned().collect()),
             ("secret", output.secrets.keys().cloned().collect()),
+            ("build", output.builds.keys().cloned().collect()),
         ];
         for (kind, keys) in outputs {
             for key in keys {

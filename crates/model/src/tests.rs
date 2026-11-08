@@ -57,6 +57,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
     {
       "backends": {},
       "base": {},
+      "builds": {},
       "enabled": {},
       "enabled_user": {},
       "files": {},
@@ -83,7 +84,7 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
       "templates": {},
       "triggers": {},
       "units": {},
-      "version": 12,
+      "version": 13,
       "wrappers": {}
     }
     "#);
@@ -354,6 +355,7 @@ fn locked(version: &str, id: &str) -> Locked {
     Locked {
         version: version.into(),
         id: id.into(),
+        build: None,
     }
 }
 
@@ -934,4 +936,73 @@ fn a_drop_in_restarts_its_unit_but_not_a_template() {
         BTreeSet::from(["nginx.service".to_owned()])
     );
     assert!(activation.start.is_empty());
+}
+
+fn built(patch: &str) -> crate::Build {
+    crate::Build {
+        package: "whisper-cpp".into(),
+        options: Default::default(),
+        patches: vec![patch.into()],
+    }
+}
+
+fn model_with_build(patch: &str) -> Model {
+    let mut model = Model::default();
+    model.packages.insert("whisper".into());
+    model.builds.insert("whisper".into(), built(patch));
+    model.sources.insert(
+        "nixpkgs".into(),
+        Source {
+            url: "u".into(),
+            hash: "sha256-a".into(),
+            ..Source::default()
+        },
+    );
+    model
+}
+
+fn lock_of(build: Option<String>) -> Lock {
+    let mut lock = Lock::default();
+    lock.sources.insert(
+        "nixpkgs".into(),
+        model_with_build("a").sources["nixpkgs"].clone(),
+    );
+    lock.packages.insert(
+        "whisper".into(),
+        Locked {
+            version: "1".into(),
+            id: "/nix/store/x".into(),
+            build,
+        },
+    );
+    lock
+}
+
+#[test]
+fn a_lock_only_holds_for_the_build_it_was_made_from() {
+    let lock = lock_of(Some(built("a").hash()));
+
+    assert!(model_with_build("a").with_lock(&lock).is_locked());
+    assert!(!model_with_build("b").with_lock(&lock).is_locked());
+}
+
+#[test]
+fn a_package_no_longer_built_differently_isnt_locked() {
+    let lock = lock_of(Some(built("a").hash()));
+    let mut model = model_with_build("a");
+    model.builds.clear();
+
+    assert!(!model.with_lock(&lock).is_locked());
+}
+
+#[test]
+fn plans_say_how_a_build_changed() {
+    let plan = plan(&model_with_build("a"), &model_with_build("b"));
+
+    let change = plan
+        .packages
+        .iter()
+        .find(|c| c.name == "build whisper")
+        .unwrap();
+    assert_eq!(change.details, ["patches changed"]);
 }

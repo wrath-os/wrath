@@ -26,9 +26,10 @@ use std::time::{Duration, Instant};
 
 use allocative::Allocative;
 use distro_eval::{
-    ConfigKind, ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge, MACHINE_VALUES,
-    Module, OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart, Secret, Setting,
-    Sources, Span, Template, Type, Unit, UnitAction, Value, Wrapper, formats, home_path,
+    Build, ConfigKind, ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge,
+    MACHINE_VALUES, Module, OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart,
+    Secret, Setting, Sources, Span, Template, Type, Unit, UnitAction, Value, Wrapper, formats,
+    home_path,
 };
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -983,6 +984,43 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         let mut output = rendering.output.borrow_mut();
         if output.wrappers.insert(name.to_owned(), wrapper).is_some() {
             return Err(rendering.invalid(at, format!("wrapper `{name}` is made twice")));
+        }
+        Ok(NoneType)
+    }
+
+    /// Makes `name` a package built from `package`, by default the one called `name`, with other
+    /// values for its build's `options` and the `patches` applied, paths in the configuration.
+    fn build<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        #[starlark(require = pos)] name: &str,
+        #[starlark(require = named, default = NoneOr::None)] package: NoneOr<&str>,
+        #[starlark(require = named)] options: Option<StarValue<'v>>,
+        #[starlark(require = named)] patches: Option<StarValue<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let (rendering, at) = rendering(eval)?;
+        let options = match options.map(convert::from_starlark).transpose() {
+            Ok(None) => std::collections::BTreeMap::new(),
+            Ok(Some(Value::Table(options))) => options,
+            Ok(Some(_)) => {
+                let message = format!("build `{name}`: options must be a dictionary");
+                return Err(rendering.invalid(at, message));
+            }
+            Err(e) => return Err(rendering.invalid(at, format!("build `{name}`: {e}"))),
+        };
+        let patches = patches.map(strings).transpose()?.unwrap_or_default();
+        let build = Build {
+            package: package.into_option().unwrap_or(name).to_owned(),
+            options,
+            patches,
+        };
+        let replaced = rendering
+            .output
+            .borrow_mut()
+            .builds
+            .insert(name.to_owned(), build);
+        if replaced.is_some() {
+            return Err(rendering.invalid(at, format!("build `{name}` is declared twice")));
         }
         Ok(NoneType)
     }

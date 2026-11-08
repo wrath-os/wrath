@@ -127,6 +127,19 @@ pub struct Output {
     pub enabled_user: BTreeMap<String, BTreeSet<String>>,
     /// Programs that run with more privilege than their caller, in `/run/wrappers/bin`, by name.
     pub wrappers: BTreeMap<String, Wrapper>,
+    /// Packages built differently from how their source builds them, by the name they go by.
+    pub builds: BTreeMap<String, Build>,
+}
+
+/// A package built with other options or patches than its source's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Build {
+    /// The package it starts from, such as `whisper-cpp` or `stable#jq`.
+    pub package: String,
+    /// Values for the options the package's build takes, by name.
+    pub options: BTreeMap<String, Value>,
+    /// Patches to apply, as paths inside the configuration.
+    pub patches: Vec<String>,
 }
 
 /// A program copied into `/run/wrappers/bin` with its own owner and mode, such as setuid root.

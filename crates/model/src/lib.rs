@@ -18,7 +18,7 @@ pub use lock::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Locked, Source, p
 pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 12;
+pub const VERSION: i64 = 13;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -57,6 +57,39 @@ pub struct Model {
     pub enabled_user: BTreeMap<String, BTreeSet<String>>,
     /// Programs in `/run/wrappers/bin` with their own owner and mode, by name.
     pub wrappers: BTreeMap<String, Wrapper>,
+    /// Packages built differently from how their source builds them, by the name they go by.
+    pub builds: BTreeMap<String, Build>,
+}
+
+/// A package built with other options or patches than its source's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Build {
+    /// The package it starts from.
+    pub package: String,
+    /// Values for the options the package's build takes, by name.
+    pub options: BTreeMap<String, Value>,
+    /// The text of each patch, in the order they apply.
+    pub patches: Vec<String>,
+}
+
+impl Build {
+    pub(crate) fn to_value(&self) -> Value {
+        table([
+            ("package", Value::Str(self.package.clone())),
+            ("options", Value::Table(self.options.clone())),
+            (
+                "patches",
+                Value::List(self.patches.iter().cloned().map(Value::Str).collect()),
+            ),
+        ])
+    }
+
+    /// What identifies this build in the lock. Changes when the build's description does.
+    pub fn hash(&self) -> String {
+        let canonical = formats::json(&self.to_value())
+            .expect("a build without runtime values renders as JSON");
+        blake3::hash(canonical.as_bytes()).to_hex().to_string()
+    }
 }
 
 /// A user's files, by path as `~/.config/git/config`, packages and user units.
@@ -146,6 +179,18 @@ impl Model {
             model
                 .service_packages
                 .extend(output.service_packages.clone());
+            for (name, build) in &output.builds {
+                let patches = build
+                    .patches
+                    .iter()
+                    .map(|path| evaluation.patches()[path].clone());
+                let build = Build {
+                    package: build.package.clone(),
+                    options: build.options.clone(),
+                    patches: patches.collect(),
+                };
+                model.builds.insert(name.clone(), build);
+            }
             for (ours, theirs) in [
                 (&mut model.enabled, &output.enabled),
                 (&mut model.enabled_user, &output.enabled_user),
@@ -212,7 +257,11 @@ impl Model {
                 let (source, _) = package_source(name);
                 self.sources.get(source).is_some_and(Source::is_locked)
             })
-            .filter_map(|name| Some((name.to_owned(), lock.packages.get(name)?.clone())))
+            .filter_map(|name| {
+                let locked = lock.packages.get(name)?;
+                let current = locked.build == self.builds.get(name).map(Build::hash);
+                current.then(|| (name.to_owned(), locked.clone()))
+            })
             .collect();
         self
     }
@@ -318,11 +367,14 @@ impl Model {
             .locked
             .iter()
             .map(|(name, locked)| {
-                let entry = table([
-                    ("version", Value::Str(locked.version.clone())),
-                    ("id", Value::Str(locked.id.clone())),
+                let mut entry = BTreeMap::from([
+                    ("version".to_owned(), Value::Str(locked.version.clone())),
+                    ("id".to_owned(), Value::Str(locked.id.clone())),
                 ]);
-                (name.clone(), entry)
+                if let Some(build) = &locked.build {
+                    entry.insert("build".to_owned(), Value::Str(build.clone()));
+                }
+                (name.clone(), Value::Table(entry))
             })
             .collect();
         let next_login = self.next_login.iter().cloned().map(Value::Str).collect();
@@ -342,6 +394,7 @@ impl Model {
             ("enabled", enabled_value(&self.enabled)),
             ("enabled_user", enabled_value(&self.enabled_user)),
             ("wrappers", wrappers_value(&self.wrappers)),
+            ("builds", builds_value(&self.builds)),
             ("secrets", Value::Table(secrets)),
             ("triggers", Value::Table(triggers)),
             ("options", spell_out_entries(&self.options)),
@@ -449,6 +502,16 @@ pub fn enabled_value(enabled: &BTreeMap<String, BTreeSet<String>>) -> Value {
                 let targets = targets.iter().cloned().map(Value::Str).collect();
                 (unit.clone(), Value::List(targets))
             })
+            .collect(),
+    )
+}
+
+/// The builds as the model and the backend read them.
+pub fn builds_value(builds: &BTreeMap<String, Build>) -> Value {
+    Value::Table(
+        builds
+            .iter()
+            .map(|(name, build)| (name.clone(), build.to_value()))
             .collect(),
     )
 }
