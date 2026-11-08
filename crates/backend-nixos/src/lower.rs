@@ -81,7 +81,11 @@ pub fn lower(model: &Model) -> String {
             "service_packages",
             strings(model.service_packages.iter().cloned()),
         ),
-        ("enabled", strings(model.enabled.iter().cloned())),
+        ("enabled", distro_model::enabled_value(&model.enabled)),
+        (
+            "enabled_user",
+            distro_model::enabled_value(&model.enabled_user),
+        ),
         ("etc", Value::Table(etc)),
         ("files", Value::Table(files)),
         ("units", Value::Table(units)),
@@ -412,7 +416,8 @@ mod tests {
           "base": {
             "audio": true
           },
-          "enabled": [],
+          "enabled": {},
+          "enabled_user": {},
           "etc": {
             "nginx/main.conf": {
               "mode": "symlink",

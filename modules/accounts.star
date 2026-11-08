@@ -1,5 +1,5 @@
 # Changing who you are on a system built without NixOS: sudo for the `wheel` group, su, and
-# passwd, which run as root through wrappers, and the PAM stacks they use.
+# passwd, which run as root through wrappers, runuser, and the PAM stacks they use.
 
 load("lib/pam.star", "unix_stacks")
 
@@ -22,6 +22,14 @@ def render(ctx):
     ctx.set("security.pam.services.passwd", unix_stacks())
     # systemd starts each user's own service manager through this one.
     ctx.set("security.pam.services.systemd-user", unix_stacks())
+    # root running something as another user, which needs no password.
+    runuser = {
+        "auth": [{"name": "rootok", "control": "sufficient", "module": "pam_rootok.so"}],
+        "account": [{"name": "unix", "control": "required", "module": "pam_unix.so"}],
+        "session": [{"name": "unix", "control": "required", "module": "pam_unix.so"}],
+    }
+    ctx.set("security.pam.services.runuser", runuser)
+    ctx.set("security.pam.services.runuser-l", runuser)
 
 module(
     name = "accounts",
@@ -30,6 +38,8 @@ module(
         "security.pam.services.su",
         "security.pam.services.passwd",
         "security.pam.services.systemd-user",
+        "security.pam.services.runuser",
+        "security.pam.services.runuser-l",
     ],
     render = render,
     base = True,

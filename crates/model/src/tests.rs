@@ -57,7 +57,8 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
     {
       "backends": {},
       "base": {},
-      "enabled": [],
+      "enabled": {},
+      "enabled_user": {},
       "files": {},
       "homes": {},
       "locked": {},
@@ -877,7 +878,13 @@ fn the_activation_stops_starts_restarts_and_reloads_what_the_plan_shows() {
 fn enabling_a_unit_starts_it_and_wrappers_show_as_files() {
     let before = Model::default();
     let mut after = Model::default();
-    after.enabled.insert("polkit.service".into());
+    after
+        .enabled
+        .insert("polkit.service".into(), BTreeSet::new());
+    after.enabled_user.insert(
+        "pipewire.service".into(),
+        BTreeSet::from(["default.target".to_owned()]),
+    );
     after.wrappers.insert(
         "sudo".into(),
         Wrapper {
@@ -893,9 +900,11 @@ fn enabling_a_unit_starts_it_and_wrappers_show_as_files() {
       + /run/wrappers/bin/sudo (tier: live)
           root:root mode 4755, of /run/current-system/sw/bin/sudo
     units
+      + pipewire.service (for every user) (tier: live)
+          wanted by default.target
       + polkit.service (tier: live)
           enabled
-    2 changes, tier: live
+    3 changes, tier: live
     ");
     assert!(plan.activation.start.contains("polkit.service"));
     let read = Model::from_json(&after.canonical()).unwrap();

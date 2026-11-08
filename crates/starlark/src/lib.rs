@@ -928,18 +928,31 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Enables a unit a service package ships, as `systemctl enable` does: by its [Install]
-    /// section.
+    /// section, or wanted by the targets in `wanted_by` instead. With `user`, a user unit, for
+    /// every user.
     fn enable<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] unit: &str,
+        #[starlark(require = named, default = false)] user: bool,
+        #[starlark(require = named)] wanted_by: Option<StarValue<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
-        let (rendering, _) = rendering(eval)?;
-        rendering
-            .output
-            .borrow_mut()
-            .enabled
-            .insert(unit.to_owned());
+        let (rendering, at) = rendering(eval)?;
+        let targets = match wanted_by {
+            None => Vec::new(),
+            Some(value) => match value.unpack_str() {
+                Some(target) => vec![target.to_owned()],
+                None => strings(value)
+                    .map_err(|e| rendering.invalid(at, format!("unit `{unit}`: wanted_by: {e}")))?,
+            },
+        };
+        let mut output = rendering.output.borrow_mut();
+        let enabled = if user {
+            &mut output.enabled_user
+        } else {
+            &mut output.enabled
+        };
+        enabled.entry(unit.to_owned()).or_default().extend(targets);
         Ok(NoneType)
     }
 

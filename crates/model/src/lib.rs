@@ -50,8 +50,11 @@ pub struct Model {
     pub next_login: BTreeSet<String>,
     /// Packages whose units, users, tmpfiles, udev rules and D-Bus services join the system.
     pub service_packages: BTreeSet<String>,
-    /// Units the service packages ship that the system enables.
-    pub enabled: BTreeSet<String>,
+    /// Units the service packages ship that the system enables, with the targets that want each,
+    /// or none to follow its [Install] section.
+    pub enabled: BTreeMap<String, BTreeSet<String>>,
+    /// Likewise for user units, enabled for every user.
+    pub enabled_user: BTreeMap<String, BTreeSet<String>>,
     /// Programs in `/run/wrappers/bin` with their own owner and mode, by name.
     pub wrappers: BTreeMap<String, Wrapper>,
 }
@@ -143,7 +146,16 @@ impl Model {
             model
                 .service_packages
                 .extend(output.service_packages.clone());
-            model.enabled.extend(output.enabled.clone());
+            for (ours, theirs) in [
+                (&mut model.enabled, &output.enabled),
+                (&mut model.enabled_user, &output.enabled_user),
+            ] {
+                for (unit, targets) in theirs {
+                    ours.entry(unit.clone())
+                        .or_default()
+                        .extend(targets.iter().cloned());
+                }
+            }
             model.wrappers.extend(output.wrappers.clone());
             model
                 .secrets
@@ -320,7 +332,6 @@ impl Model {
             .cloned()
             .map(Value::Str)
             .collect();
-        let enabled = self.enabled.iter().cloned().map(Value::Str).collect();
         table([
             ("version", Value::Int(VERSION)),
             ("sources", Value::Table(sources)),
@@ -328,7 +339,8 @@ impl Model {
             ("templates", templates_value(&self.templates)),
             ("next_login", Value::List(next_login)),
             ("service_packages", Value::List(service_packages)),
-            ("enabled", Value::List(enabled)),
+            ("enabled", enabled_value(&self.enabled)),
+            ("enabled_user", enabled_value(&self.enabled_user)),
             ("wrappers", wrappers_value(&self.wrappers)),
             ("secrets", Value::Table(secrets)),
             ("triggers", Value::Table(triggers)),
@@ -423,6 +435,19 @@ fn units_value(units: &BTreeMap<String, Unit>) -> Value {
                     ("restart_on", Value::List(restart_on)),
                 ]);
                 (name.clone(), unit)
+            })
+            .collect(),
+    )
+}
+
+/// Each enabled unit with the targets that want it.
+pub fn enabled_value(enabled: &BTreeMap<String, BTreeSet<String>>) -> Value {
+    Value::Table(
+        enabled
+            .iter()
+            .map(|(unit, targets)| {
+                let targets = targets.iter().cloned().map(Value::Str).collect();
+                (unit.clone(), Value::List(targets))
             })
             .collect(),
     )

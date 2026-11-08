@@ -10,7 +10,6 @@
 #   kernelModules   modules loaded once booted
 #   kernelParams    the kernel's command line
 #   services        packages whose units, udev rules and D-Bus policy join the system
-#   enable          upstream units to enable, as `systemctl enable` does
 #   initrd          { units, fstab, kernelModules, storePaths }, for the initrd
 #
 # Parts of the model this doesn't build yet are refused, so nothing is silently left out.
@@ -34,9 +33,7 @@ let
     ++ lib.optional (input.homes != { }) "homes"
     ++ lib.optional (input.triggers != { }) "reload and restart triggers"
     ++ lib.optional (input.nixos != { }) "building on NixOS"
-    ++ lib.optional (base ? storage) "disks"
-    ++ lib.optional (base ? session) "a graphical session"
-    ++ lib.optional base.audio.enable "audio";
+    ++ lib.optional (base ? storage) "disks";
 
   # What the layers give at a dotted `path`, such as `initrd.fstab`: lists concatenated, attribute
   # sets merged with later layers winning.
@@ -87,13 +84,17 @@ let
     '';
 
   # Units systemd and the service packages ship, with their links that make targets want them,
-  # overlaid by the model's. Upstream units in `enable` are enabled as `systemctl enable` does,
-  # which follows their [Install] sections.
+  # overlaid by the model's. Upstream units in `enabled` are wanted by the targets given for them,
+  # or with none, enabled as `systemctl enable` does, by their [Install] sections. `kind` is
+  # `system` or `user`; user units are enabled for every user.
   unitDir =
-    upstream: own: enable:
+    kind: own: enabled:
+    let
+      byInstall = lib.attrNames (lib.filterAttrs (_: targets: targets == [ ]) enabled);
+    in
     pkgs.runCommand "units" { } ''
       mkdir $out
-      for dir in ${lib.escapeShellArgs upstream}; do
+      for dir in ${lib.escapeShellArgs (unitDirs "systemd/${kind}")}; do
         [ -d "$dir" ] || continue
         for unit in "$dir"/*; do
           name=$(basename "$unit")
@@ -108,12 +109,22 @@ let
         done
       done
       ${writeUnits own}
-      ${lib.optionalString (enable != [ ]) ''
+      ${lib.concatStrings (
+        lib.mapAttrsToList (
+          unit: targets:
+          lib.concatMapStrings (target: ''
+            mkdir -p "$out/${target}.wants"
+            ln -sfn "../${unit}" "$out/${target}.wants/${unit}"
+          '') targets
+        ) enabled
+      )}
+      ${lib.optionalString (byInstall != [ ]) ''
         mkdir -p root/etc/systemd
-        cp -rL $out root/etc/systemd/system
+        cp -rL $out root/etc/systemd/${kind}
         chmod -R u+w root
-        ${systemd}/bin/systemctl --root=root enable ${lib.escapeShellArgs enable}
-        cd root/etc/systemd/system
+        ${systemd}/bin/systemctl --root=root ${lib.optionalString (kind == "user") "--global"} \
+          enable ${lib.escapeShellArgs byInstall}
+        cd root/etc/systemd/${kind}
         find . -type l | while read -r link; do
           mkdir -p "$out/$(dirname "$link")"
           cp -P "$link" "$out/$link"
@@ -123,9 +134,10 @@ let
   unitDirs = shipped [
     "lib"
     "etc"
+    "share"
   ];
-  systemUnits = unitDir (unitDirs "systemd/system") units (input.enabled ++ sum "enable");
-  userUnits = unitDir (unitDirs "systemd/user") { } [ ];
+  systemUnits = unitDir "system" units input.enabled;
+  userUnits = unitDir "user" { } input.enabled_user;
 
   # udev's hardware database, built from the service packages' sources.
   hwdb = pkgs.runCommand "hwdb" { } ''
@@ -151,6 +163,13 @@ let
       }</busconfig>#' \
       ${pkgs.dbus}/share/dbus-1/system.conf > $out
   '';
+  # Users' session buses: dbus's own configuration, which finds services through XDG_DATA_DIRS.
+  dbusSessionConfig = pkgs.runCommand "session.conf" { } ''
+    sed \
+      -e '\#<include ignore_missing="yes">/etc/dbus-1/session.conf</include>#d' \
+      -e 's#<includedir>session.d</includedir>##' \
+      ${pkgs.dbus}/share/dbus-1/session.conf > $out
+  '';
 
   users = import ./users.nix { inherit lib pkgs; } base.users;
   writeUnits = import ./units.nix { inherit lib pkgs; };
@@ -167,8 +186,9 @@ let
     ln -s ${userUnits} $out/systemd/user
     ln -s ${merged "udev-rules" (shipped [ "lib" ] "udev/rules.d")} $out/udev/rules.d
     ln -s ${hwdb}/hwdb.bin $out/udev/hwdb.bin
-    ln -s ${merged "dbus-system" (shipped [ "share" ] "dbus-1/system.d")} $out/dbus-1/system.d
+    ln -s ${merged "dbus-system" (shipped [ "share" "etc" ] "dbus-1/system.d")} $out/dbus-1/system.d
     ln -s ${dbusConfig} $out/dbus-1/system.conf
+    ln -s ${dbusSessionConfig} $out/dbus-1/session.conf
     ${lib.concatMapStrings (dir: ''
       mkdir $out/${dir}
       for file in ${merged dir (shipped [ "lib" ] dir)}/*; do
@@ -201,6 +221,7 @@ let
     cp ${users.passwd} $out/passwd
     cp ${users.group} $out/group
     cp ${users.shadow} $out/shadow
+    ln -s ${users.homes} $out/tmpfiles.d/distro-homes.conf
     ${lib.concatStrings (
       lib.mapAttrsToList (path: file: ''
         mkdir -p "$(dirname "$out/${path}")"

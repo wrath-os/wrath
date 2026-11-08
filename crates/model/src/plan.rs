@@ -291,8 +291,15 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
             Some(Tier::Live),
         )
     });
-    units.extend(diff(&enabled(before), &enabled(after), |_, _| {
-        (vec!["enabled".to_owned()], Some(Tier::Live))
+    units.extend(diff(&enabled(before), &enabled(after), |_, after| {
+        let detail = match after {
+            Some(targets) if !targets.is_empty() => {
+                let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
+                format!("wanted by {}", targets.join(", "))
+            }
+            _ => "enabled".to_owned(),
+        };
+        (vec![detail], Some(Tier::Live))
     }));
     let secrets = diff(&before.secrets, &after.secrets, |before, after| {
         (secret_details(before, after), Some(Tier::Live))
@@ -555,12 +562,18 @@ fn wrappers(model: &Model) -> BTreeMap<String, &Wrapper> {
         .collect()
 }
 
-/// The units the service packages ship that the system enables.
-fn enabled(model: &Model) -> BTreeMap<String, ()> {
+/// The units the service packages ship that the system enables, and the user units every user's
+/// service manager does.
+fn enabled(model: &Model) -> BTreeMap<String, &BTreeSet<String>> {
+    let users = model
+        .enabled_user
+        .iter()
+        .map(|(unit, targets)| (format!("{unit} (for every user)"), targets));
     model
         .enabled
         .iter()
-        .map(|unit| (unit.clone(), ()))
+        .map(|(unit, targets)| (unit.clone(), targets))
+        .chain(users)
         .collect()
 }
 

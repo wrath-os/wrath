@@ -47,7 +47,8 @@ impl Model {
             templates: read_templates(field("templates")?)?,
             next_login: strings(field("next_login")?)?,
             service_packages: strings(field("service_packages")?)?,
-            enabled: strings(field("enabled")?)?,
+            enabled: read_enabled(field("enabled")?)?,
+            enabled_user: read_enabled(field("enabled_user")?)?,
             wrappers: read_wrappers(field("wrappers")?)?,
         })
     }
@@ -331,4 +332,11 @@ fn read_wrappers(value: &Value) -> Result<BTreeMap<String, Wrapper>, String> {
             mode: mode(get(fields, "mode", name)?, name)?,
         })
     })
+}
+
+fn read_enabled(value: &Value) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+    table(value, "enabled units")?
+        .iter()
+        .map(|(unit, targets)| Ok((unit.clone(), strings(targets)?)))
+        .collect()
 }

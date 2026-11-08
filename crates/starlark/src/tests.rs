@@ -1147,6 +1147,7 @@ fn base_modules_add_service_packages_enable_their_units_and_make_wrappers() {
 def render(ctx):
     ctx.service_package("dbus")
     ctx.enable("systemd-networkd.service")
+    ctx.enable("pipewire.service", user = True, wanted_by = "default.target")
     ctx.wrapper("sudo", source = "/run/current-system/sw/bin/sudo")
     ctx.wrapper("ping", source = "/run/current-system/sw/bin/ping", group = "net", mode = 0o755)
 
@@ -1155,7 +1156,11 @@ module(name = "base-test", options = {}, writes = [], render = render, base = Tr
     .unwrap();
     let output = output_of(&evaluation, "base-test");
     assert!(output.service_packages.contains("dbus") && output.packages.contains("dbus"));
-    assert!(output.enabled.contains("systemd-networkd.service"));
+    assert!(output.enabled["systemd-networkd.service"].is_empty());
+    assert_eq!(
+        output.enabled_user["pipewire.service"],
+        ["default.target".to_owned()].into()
+    );
     let sudo = &output.wrappers["sudo"];
     assert_eq!(
         (sudo.owner.as_str(), sudo.group.as_str(), sudo.mode),

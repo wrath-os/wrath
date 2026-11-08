@@ -119,7 +119,9 @@ fn installed(activation: &Activation, after: &Model) -> BTreeSet<String> {
     activation
         .start
         .iter()
-        .filter(|name| after.units.get(*name).is_some_and(wanted) || after.enabled.contains(*name))
+        .filter(|name| {
+            after.units.get(*name).is_some_and(wanted) || after.enabled.contains_key(*name)
+        })
         .cloned()
         .collect()
 }

@@ -52,7 +52,23 @@ def render(ctx):
         "shadow: files",
         "hosts: files myhostname dns",
     ]) + "\n")
-    ctx.file("/etc/profile", "export PATH=/run/wrappers/bin:%s/bin\n" % SW, next_login = True)
+    # Login shells, and the service managers of users' sessions, find the system's programs and
+    # what they ship, such as D-Bus services and desktop files.
+    environment = [
+        ("PATH", "/run/wrappers/bin:%s/bin" % SW),
+        ("XDG_DATA_DIRS", SW + "/share"),
+        ("XDG_CONFIG_DIRS", "/etc/xdg"),
+    ]
+    ctx.file(
+        "/etc/profile",
+        "".join(["export %s=%s\n" % (name, value) for name, value in environment]),
+        next_login = True,
+    )
+    ctx.file(
+        "/etc/environment.d/10-distro.conf",
+        "".join(["%s=%s\n" % (name, value) for name, value in environment]),
+        next_login = True,
+    )
 
     getty(ctx, "getty@.service", "--noreset --noclear")
     getty(ctx, "serial-getty@.service", "--noreset --noclear --keep-baud 115200,57600,38400,9600")

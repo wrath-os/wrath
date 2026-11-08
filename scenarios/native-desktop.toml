@@ -1,0 +1,12 @@
+title = "the sample desktop, built without NixOS, boots to a niri session with audio"
+
+[vm]
+config = "fixtures/configs/desktop"
+store = "host"
+lowering = "native"
+wait_for = ["unit:greetd.service", "user-unit:demo:niri.service", "user-unit:demo:pipewire.service"]
+steps = [
+  { run = "test -z \"$(systemctl --failed --no-legend; systemctl --user -M demo@ --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },
+  { run = "runuser -u demo -- env XDG_RUNTIME_DIR=/run/user/1000 pw-cli info 0 | grep -c core.name", stdout_contains = "1" },
+]
+timeout_secs = 240

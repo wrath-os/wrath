@@ -120,8 +120,11 @@ pub struct Output {
     /// Packages whose units, users, tmpfiles, udev rules and D-Bus services join the system, such
     /// as `dbus`. Other packages only add programs.
     pub service_packages: BTreeSet<String>,
-    /// Units the service packages ship that the system enables, as `systemctl enable` does.
-    pub enabled: BTreeSet<String>,
+    /// Units the service packages ship that the system enables, each with the targets that want
+    /// it, or none to enable it as `systemctl enable` does, by its [Install] section.
+    pub enabled: BTreeMap<String, BTreeSet<String>>,
+    /// Likewise for user units, enabled for every user.
+    pub enabled_user: BTreeMap<String, BTreeSet<String>>,
     /// Programs that run with more privilege than their caller, in `/run/wrappers/bin`, by name.
     pub wrappers: BTreeMap<String, Wrapper>,
 }

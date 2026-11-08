@@ -75,9 +75,16 @@ let
     ) gids
   );
   shadow = lib.concatLines (map (name: "${name}:!:1::::::") ([ "root" ] ++ names));
+  # People's home directories, made when missing, as tmpfiles takes them.
+  homes = lib.concatLines (
+    map (name: "d ${users.${name}.home} 0700 ${name} ${users.${name}.group} -") (
+      lib.filter (name: !users.${name}.system) names
+    )
+  );
 in
 {
   passwd = pkgs.writeText "passwd" passwd;
   group = pkgs.writeText "group" group;
   shadow = pkgs.writeText "shadow" shadow;
+  homes = pkgs.writeText "homes.conf" homes;
 }
