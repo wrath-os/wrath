@@ -253,6 +253,8 @@ enum DevCommand {
         #[arg(long)]
         milestone: Option<String>,
     },
+    /// Print the configuration's model as JSON
+    Model,
     /// Measure how long `plan` takes with many synthetic modules
     Bench {
         /// How many synthetic service modules to add
@@ -444,6 +446,7 @@ fn main() -> ExitCode {
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Status { milestone } => status(root, milestone.as_deref()),
+            DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::Bench {
                 synthetic,
                 runs,
@@ -612,6 +615,15 @@ fn package_context(
     let config = config_dir(given)?;
     let model = model(&config, modules).ok_or("the configuration has errors")?;
     Ok((model, is_project(&config).then_some(config)))
+}
+
+/// Prints the model of `config`, for tools that work from one.
+fn print_model(config: &Path, modules: &Path) -> Result<ExitCode, String> {
+    let Some(model) = model(config, modules) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    println!("{}", model.canonical());
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Evaluates the configuration and says whether it has errors, without building anything: for

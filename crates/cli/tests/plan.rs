@@ -403,3 +403,15 @@ fn check_covers_every_role_unless_one_is_given() {
         "{stderr}"
     );
 }
+
+#[test]
+fn dev_model_prints_the_resolved_model_as_json() {
+    let text = stdout(&distro(&[
+        "dev",
+        "model",
+        "--config",
+        "fixtures/configs/native-web",
+    ]));
+    assert!(text.starts_with('{'), "{text}");
+    assert!(text.contains("\"/etc/nginx/main.conf\""), "{text}");
+}
