@@ -34,6 +34,11 @@ impl OptionPath {
         self.0.starts_with(&prefix.0)
     }
 
+    /// Every path this one starts with, from the root to the path itself.
+    pub(crate) fn prefixes(&self) -> impl Iterator<Item = OptionPath> {
+        (0..=self.0.len()).map(|length| Self(self.0[..length].to_vec()))
+    }
+
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut segments = Vec::new();
         let mut rest = text;

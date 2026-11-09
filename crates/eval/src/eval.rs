@@ -26,6 +26,7 @@ use crate::suggest::{closest, did_you_mean};
 use crate::template::Part;
 use crate::value::{RuntimePart, Value};
 use crate::walk::{self, Action, Definition, Level, MACHINE, REMOVE, Raw, Site, mark_instances};
+use crate::writers::{Entry, Writers};
 
 /// The roots of references to machine values, with [`MACHINE`]: `${facts.cpu.count}`,
 /// `${machine.name}`.
@@ -259,10 +260,14 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             .or_default()
             .push(Rc::new(definition));
     }
+    let writes: Vec<Vec<OptionPath>> = modules.iter().map(|module| module.writes()).collect();
+    let writers = Writers::new(&writes);
     let mut resolver = Resolver {
         schema: &schema,
         modules,
-        writes: modules.iter().map(|module| module.writes()).collect(),
+        settled: vec![None; writers.len()],
+        writers,
+        writes,
         // A definition that failed to load may be the one that sets a required option, so
         // missing options are only reported when everything loaded.
         report_missing: diagnostics.is_empty(),
@@ -660,6 +665,9 @@ struct Resolver<'a> {
     schema: &'a Schema,
     modules: &'a [Box<dyn Module>],
     writes: Vec<Vec<OptionPath>>,
+    writers: Writers,
+    /// Written paths whose modules have all finished, with how that went.
+    settled: Vec<Option<Result<(), Failed>>>,
     report_missing: bool,
     definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>>,
     /// The files that include each file.
@@ -687,13 +695,40 @@ impl<'a> Resolver<'a> {
         &self.writes[module.index()]
     }
 
-    /// Renders every module that may set something under `path`.
+    /// Renders every module that may set something under `path`. A written path whose modules
+    /// have all finished can't change, so thousands of modules writing one parent aren't walked
+    /// again for each option under it.
     fn run_writers(&mut self, path: &OptionPath) -> Result<(), Failed> {
-        let writers: Vec<ModuleId> = (0..self.writes.len())
-            .map(ModuleId::from_index)
-            .filter(|&id| self.writes(id).iter().any(|write| overlaps(write, path)))
-            .collect();
-        all(writers.into_iter().map(|writer| self.run(writer)))
+        let entries = self.writers.entries(path);
+        let mut earlier = Ok(());
+        let mut pending = Vec::new();
+        for entry in &entries {
+            match self.settled[entry.index()] {
+                Some(settled) => earlier = earlier.and(settled),
+                None => pending.extend_from_slice(self.writers.modules(*entry)),
+            }
+        }
+        pending.sort_unstable();
+        pending.dedup();
+        let ran = all(pending.into_iter().map(|id| self.run(id)));
+        for entry in entries {
+            if self.settled[entry.index()].is_none() {
+                self.settled[entry.index()] = self.finished(entry);
+            }
+        }
+        earlier.and(ran)
+    }
+
+    /// How `entry`'s modules went, if they have all finished.
+    fn finished(&self, entry: Entry) -> Option<Result<(), Failed>> {
+        let mut result = Ok(());
+        for id in self.writers.modules(entry) {
+            match self.modules_state[id.index()] {
+                ModuleState::Done(done) => result = result.and(done),
+                ModuleState::NotRun | ModuleState::Running => return None,
+            }
+        }
+        Some(result)
     }
 
     fn run(&mut self, id: ModuleId) -> Result<(), Failed> {

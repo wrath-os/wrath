@@ -21,6 +21,7 @@ mod template;
 mod value;
 mod walk;
 mod why;
+mod writers;
 
 pub use diag::{Diagnostic, Label, render};
 pub use eval::{
