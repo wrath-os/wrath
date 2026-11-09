@@ -42,7 +42,7 @@ pub use source::{FileId, Position, Sources, Span};
 pub use template::Part;
 pub use value::{RuntimePart, Value};
 pub use walk::{Action, Definition, Level, Raw, Site};
-pub use why::{describe_outputs, explain, explain_output};
+pub use why::{describe_outputs, explain, explain_output, origin, outputs_of};
 
 #[cfg(test)]
 mod tests;

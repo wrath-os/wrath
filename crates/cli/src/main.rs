@@ -11,6 +11,7 @@ use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};
 use generations::Switch;
 
 mod activate;
+mod apply_record;
 mod bench;
 mod checks;
 mod edit;
@@ -255,6 +256,8 @@ enum DevCommand {
     },
     /// Print the configuration's model as JSON
     Model,
+    /// Print what an apply keeps of the configuration, as JSON
+    ApplyRecord,
     /// Measure how long `plan` takes with many synthetic modules
     Bench {
         /// How many synthetic service modules to add
@@ -447,6 +450,9 @@ fn main() -> ExitCode {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Status { milestone } => status(root, milestone.as_deref()),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
+            DevCommand::ApplyRecord => {
+                config().and_then(|config| print_apply_record(&config, &modules))
+            }
             DevCommand::Bench {
                 synthetic,
                 runs,
@@ -623,6 +629,15 @@ fn print_model(config: &Path, modules: &Path) -> Result<ExitCode, String> {
         return Ok(ExitCode::FAILURE);
     };
     println!("{}", model.canonical());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Prints what an apply of `config` keeps, for tools that record applies.
+fn print_apply_record(config: &Path, modules: &Path) -> Result<ExitCode, String> {
+    let Some(evaluation) = evaluate_as(config, modules, role(config)) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    println!("{}", apply_record::record(&evaluation, config)?);
     Ok(ExitCode::SUCCESS)
 }
 

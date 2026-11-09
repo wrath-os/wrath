@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::eval::{Contribution, Evaluation};
+use crate::eval::{Contribution, Evaluation, Rendered};
 use crate::module::home_path;
 use crate::path::OptionPath;
 use crate::suggest::closest;
@@ -86,7 +86,8 @@ pub fn explain(evaluation: &Evaluation, prefix: Option<&OptionPath>) -> Result<S
     Ok(out)
 }
 
-fn origin(evaluation: &Evaluation, contribution: &Contribution) -> String {
+/// Where a contribution to an option came from, such as `set at system.toml:3:8`.
+pub fn origin(evaluation: &Evaluation, contribution: &Contribution) -> String {
     match (contribution.site, contribution.level, &contribution.reason) {
         (Site::Default, _, _) => "default".into(),
         (Site::Config(span), Level::Force, Some(reason)) => format!(
@@ -177,7 +178,11 @@ pub fn explain_output(evaluation: &Evaluation, thing: &str) -> Option<String> {
                 );
             }
             Some(shown) => {
-                let _ = writeln!(out, "  from what the configuration sets:");
+                let _ = writeln!(
+                    out,
+                    "  probably from these settings, which the module read (a guess: not traced \
+                     to this output):"
+                );
                 for (path, value, contribution) in shown {
                     let _ = writeln!(
                         out,
@@ -189,6 +194,29 @@ pub fn explain_output(evaluation: &Evaluation, thing: &str) -> Option<String> {
         }
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// What a module produces: files, units and packages, with home files named as plans show them.
+pub fn outputs_of(rendered: &Rendered) -> BTreeSet<String> {
+    let output = &rendered.output;
+    let mut names: BTreeSet<String> = output
+        .files
+        .keys()
+        .chain(output.templates.keys())
+        .chain(output.units.keys())
+        .chain(output.packages.iter())
+        .cloned()
+        .collect();
+    for (user, home) in &output.homes {
+        names.extend(
+            home.files
+                .keys()
+                .chain(home.templates.keys())
+                .map(|path| home_path(user, path)),
+        );
+        names.extend(home.packages.iter().cloned());
+    }
+    names
 }
 
 /// Everything the modules rendered, as text: packages (users' with who they're for), then files,

@@ -339,7 +339,7 @@ fn why_explains_files_and_packages_by_the_module_and_options_behind_them() {
     ]));
     insta::assert_snapshot!(file, @r#"
     /etc/nginx/main.conf is written by module `nginx`
-      from what the configuration sets:
+      probably from these settings, which the module read (a guess: not traced to this output):
         services.nginx.main.enable = true, set at fixtures/configs/basic/services/web.toml:2:10
         services.nginx.main.port = 8080, set at fixtures/configs/basic/services/web.toml:3:8
         services.nginx.main.sites.blog.domains = ["blog.example.com", "box.lan"], set at fixtures/configs/basic/services/web.toml:6:11
@@ -414,4 +414,57 @@ fn dev_model_prints_the_resolved_model_as_json() {
     ]));
     assert!(text.starts_with('{'), "{text}");
     assert!(text.contains("\"/etc/nginx/main.conf\""), "{text}");
+}
+
+fn apply_record(config: &Path) -> serde_json::Value {
+    let config = config.to_str().unwrap();
+    let text = stdout(&distro(&["dev", "apply-record", "--config", config]));
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+fn an_apply_record_keeps_the_configuration_and_where_values_came_from() {
+    let record = apply_record(Path::new("fixtures/configs/native-web"));
+    let web = record["sources"]["fixtures/configs/native-web/services/web.toml"]
+        .as_str()
+        .unwrap();
+    assert!(web.contains("port = 8080"), "{web}");
+    let port = &record["explanation"]["options"]["services.nginx.main.port"];
+    assert_eq!(port["value"], "8080");
+    let origin = port["set_by"][0]["origin"].as_str().unwrap();
+    assert!(origin.contains("services/web.toml:3:8"), "{origin}");
+    let nginx = &record["explanation"]["modules"]["nginx"];
+    let outputs = nginx["outputs"].as_array().unwrap();
+    assert!(
+        outputs.iter().any(|name| name == "/etc/nginx/main.conf"),
+        "{nginx}"
+    );
+    assert!(!nginx["reads"].as_array().unwrap().is_empty(), "{nginx}");
+}
+
+#[test]
+fn moving_a_value_to_another_file_keeps_the_model_and_changes_only_the_record() {
+    let config = tempfile::tempdir().unwrap();
+    let dir = config.path();
+    std::fs::create_dir(dir.join("services")).unwrap();
+    std::fs::write(dir.join("system.toml"), "[system]\nhostname = \"native\"\n").unwrap();
+    let web = "[services.nginx.main]\nenable = true\nport = 8080\n";
+    std::fs::write(dir.join("services/one.toml"), web).unwrap();
+    let path = dir.to_str().unwrap();
+    let before = stdout(&distro(&["dev", "model", "--config", path]));
+    let cited_before = apply_record(dir);
+
+    std::fs::rename(dir.join("services/one.toml"), dir.join("services/two.toml")).unwrap();
+    let after = stdout(&distro(&["dev", "model", "--config", path]));
+    let cited_after = apply_record(dir);
+
+    assert_eq!(before, after);
+    let at = |record: &serde_json::Value| {
+        record["explanation"]["options"]["services.nginx.main.port"]["set_by"][0]["origin"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(at(&cited_before).contains("services/one.toml"));
+    assert!(at(&cited_after).contains("services/two.toml"));
 }
