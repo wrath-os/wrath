@@ -22,5 +22,4 @@ module(
     options = {},
     writes = ["security.pam.services.polkit-1"],
     render = render,
-    base = True,
 )

@@ -1,5 +1,6 @@
 title = "The sample desktop config applies to a VM that boots to a niri session with network and audio"
 
 [vm]
+store = "host"
 config = "fixtures/configs/desktop"
 wait_for = ["unit:greetd.service", "user-unit:demo:niri.service", "unit:network-online.target", "user-unit:demo:pipewire.service"]

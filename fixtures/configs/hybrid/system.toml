@@ -1,9 +1,0 @@
-# A machine built on its existing NixOS configuration, with an extra NixOS module.
-
-[system]
-hostname = "box"
-
-[nixos]
-extend = "/etc/nixos#box"
-modules = ["/etc/nixos/vm-stubs.nix"]
-replaces = ["ollama.service"]

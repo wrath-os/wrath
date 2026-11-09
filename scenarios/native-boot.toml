@@ -1,9 +1,8 @@
-title = "a system built without NixOS boots, and the agent answers"
+title = "a system boots, and the agent answers"
 
 [vm]
 config = "fixtures/configs/native"
 store = "host"
-lowering = "native"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { run = "cat /etc/os-release; uname -n", stdout_contains = "ID=distro\nPRETTY_NAME=distro\nnative" },

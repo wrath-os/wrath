@@ -3,7 +3,6 @@ title = "a root erased at every boot keeps only what the configuration lists"
 [vm]
 config = "scenarios/fixtures/native-state-installer"
 store = "host"
-lowering = "native"
 blank_disks = ["8G"]
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [

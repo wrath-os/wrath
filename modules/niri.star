@@ -1,4 +1,4 @@
-# The niri session on a system built without NixOS: the compositor, run as a user service, the
+# The niri session: the compositor, run as a user service, the
 # desktop portals screen sharing and file pickers go through, and GNOME Keyring for secrets.
 
 PORTALS = """[preferred]
@@ -24,4 +24,4 @@ def render(ctx):
     ctx.package("xwayland-satellite")
     ctx.file("/etc/xdg/xdg-desktop-portal/niri-portals.conf", PORTALS)
 
-module(name = "niri", options = {}, writes = [], render = render, base = True)
+module(name = "niri", options = {}, writes = [], render = render)

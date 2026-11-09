@@ -1,6 +1,7 @@
 title = "A config change shows up in plan and applies to a running VM without a reboot"
 
 [vm]
+store = "host"
 config = "fixtures/configs/basic"
 steps = [
   { apply_config = "fixtures/configs/basic-changed", expect_plan = ["8081", "tier: live"] },

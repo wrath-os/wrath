@@ -1,4 +1,4 @@
-# The SSH server on a system built without NixOS. It logs people in with their keys: those in
+# The SSH server. It logs people in with their keys: those in
 # `authorized_keys`, and any in their own ~/.ssh/authorized_keys.
 
 load("lib/pam.star", "unix_stacks")
@@ -67,5 +67,4 @@ module(
     },
     writes = ["security.pam.services.sshd", "networking.firewall.allowed_tcp_ports"],
     render = render,
-    base = True,
 )

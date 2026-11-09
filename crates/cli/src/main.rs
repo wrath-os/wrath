@@ -215,7 +215,7 @@ enum Command {
         #[command(subcommand)]
         command: DevCommand,
     },
-    /// Switch the machine to a system built without NixOS
+    /// Switch the machine to a built system
     #[command(hide = true)]
     Activate {
         /// The built system

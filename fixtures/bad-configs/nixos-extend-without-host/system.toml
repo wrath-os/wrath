@@ -1,5 +1,0 @@
-[system]
-hostname = "box"
-
-[nixos]
-extend = "/etc/nixos"

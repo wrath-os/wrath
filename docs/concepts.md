@@ -108,13 +108,13 @@ configuration. Each change has a **tier**, saying when it takes full effect:
 A **generation** is a built configuration that can be switched to. `apply` makes a new one,
 `rollback` goes back to an earlier one, and `history` lists them.
 
-A **backend** turns a model into a running system. Today it's NixOS. Nothing above this line
-depends on which backend it is.
+A **backend** turns a model into a running system. Today it assembles the system from packages
+in nixpkgs and builds it with Nix. Nothing above this line depends on how it works.
 
 ## Words we keep out of sight
 
 Derivation, flake, attribute path, closure, overlay, channel, profile and store path are how the
-NixOS backend works. They appear only in `--verbose` output and in `why`, never in TOML or in
+backend works. They appear only in `--verbose` output and in `why`, never in TOML or in
 what commands normally print.
 
 ## The verbs

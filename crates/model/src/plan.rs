@@ -68,7 +68,6 @@ pub struct Plan {
     pub secrets: Vec<Change>,
     pub units: Vec<Change>,
     pub base: Vec<Change>,
-    pub backends: Vec<Change>,
     /// What switching does to the system's units, from the same comparison as `units`.
     pub activation: Activation,
 }
@@ -199,7 +198,6 @@ impl Plan {
             ("secrets", self.secrets.as_slice()),
             ("units", self.units.as_slice()),
             ("base", self.base.as_slice()),
-            ("backends", self.backends.as_slice()),
         ]
         .into_iter()
     }
@@ -339,10 +337,6 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
                 Tier::Live
             };
             (vec![value_change(before, after)], Some(tier))
-        }),
-        // Nothing is known about what a backend-specific setting changes underneath.
-        backends: diff(&before.backends, &after.backends, |before, after| {
-            (vec![value_change(before, after)], Some(Tier::Reboot))
         }),
     }
 }

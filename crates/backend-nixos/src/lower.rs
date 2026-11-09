@@ -1,35 +1,27 @@
-//! Lowering the model to the input of the NixOS shim in `factory/nix`.
+//! Lowering the model to the input of `factory/nix/native`.
 //!
-//! The shim is fixed Nix code that maps each section onto NixOS options, so everything that
+//! The factory is fixed Nix code that assembles a system from each section, so everything that
 //! needs logic happens here: unit files are rendered to text, their `[Install]` targets become
-//! dependencies NixOS creates, and files are split by whether NixOS manages them under `/etc`.
+//! links the factory creates, and files are split by whether they live under `/etc`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{Section, Template, Unit, Value, formats, home_path};
 use distro_model::{DISTRO_SOURCE, Model, Source, spell_out_parts};
 
-/// Where packages' programs are on NixOS. Units run programs by name, so they search here.
+/// Where packages' programs are on a system. Units run programs by name, so they search here.
 const PROGRAMS: &str = "/run/current-system/sw/bin";
 
-/// Files NixOS keeps for itself. PAM is part of the base system it provides, so the PAM stacks
-/// modules render are only installed on systems built without it.
-const BORROWED: [&str; 1] = ["/etc/pam.d/"];
-
-/// The shim's input, as pretty JSON with sorted keys.
+/// The factory's input, as pretty JSON with sorted keys.
 pub fn lower(model: &Model) -> String {
-    let native = crate::native();
     let mut etc = BTreeMap::new();
     let mut files = BTreeMap::new();
     for (path, file) in &model.files {
-        if !native && BORROWED.iter().any(|prefix| path.starts_with(prefix)) {
-            continue;
-        }
         let text = Value::Str(file.text.clone());
         match path.strip_prefix("/etc/") {
             Some(relative) => {
                 let mode = if file.mode == 0o644 {
-                    // NixOS links files with this mode instead of copying them.
+                    // Files with this mode are linked from the store instead of copied.
                     "symlink".to_owned()
                 } else {
                     format!("{:04o}", file.mode)
@@ -58,21 +50,6 @@ pub fn lower(model: &Model) -> String {
             (name.clone(), lowered)
         })
         .collect();
-    // NixOS names services without the suffix and acts when a trigger's value changes.
-    let mut triggers: BTreeMap<String, Value> = BTreeMap::new();
-    for ((unit, action), paths) in &model.triggers {
-        let service = unit.strip_suffix(".service").unwrap_or(unit);
-        let Value::Table(actions) = triggers
-            .entry(service.to_owned())
-            .or_insert_with(|| Value::Table(BTreeMap::new()))
-        else {
-            unreachable!("each service's entry is a table");
-        };
-        actions.insert(
-            action.as_str().to_owned(),
-            Value::Str(files_hash(paths, model)),
-        );
-    }
     let input = table([
         ("model", Value::Str(model.canonical())),
         ("model_hash", Value::Str(model.hash())),
@@ -90,22 +67,13 @@ pub fn lower(model: &Model) -> String {
         ("etc", Value::Table(etc)),
         ("files", Value::Table(files)),
         ("units", Value::Table(units)),
-        ("triggers", Value::Table(triggers)),
         ("secrets", secrets(model)),
         ("homes", homes(model)),
         ("sources", sources_value(model)),
         ("templates", templates(model)),
         ("base", Value::Table(model.base.clone())),
-        (
-            "nixos",
-            model
-                .backends
-                .get("nixos")
-                .cloned()
-                .unwrap_or(Value::Table(BTreeMap::new())),
-        ),
     ]);
-    formats::json(&input).expect("the shim's input has no runtime values")
+    formats::json(&input).expect("the factory's input has no runtime values")
 }
 
 /// Each user's files, linked from the store, packages, and files with secrets in them, which the
@@ -161,7 +129,7 @@ fn homes(model: &Model) -> Value {
 }
 
 /// Where packages come from, by source name, each pinned by its revision and hash. A source
-/// without a hash isn't pinned, and the shim takes its latest version; without a `nixpkgs`
+/// without a hash isn't pinned, and the factory takes its latest version; without a `nixpkgs`
 /// source, the factory's nixpkgs. distro itself isn't one: the distro the lock pins is the one
 /// building this.
 fn sources_value(model: &Model) -> Value {
@@ -281,12 +249,8 @@ fn unit_text(unit: &Unit, model: &Model, programs: &str) -> String {
     .text()
 }
 
-/// A hash of the paths and contents of files, which changes when any of them does.
-fn files_hash(paths: &BTreeSet<String>, model: &Model) -> String {
-    restart_hash(paths, &BTreeSet::new(), model)
-}
-
-/// Like [`files_hash`], covering secrets as well: their contents, owner and mode.
+/// A hash of the contents of files and secrets, with secrets' owner and mode, which changes when
+/// any of them does.
 fn restart_hash(paths: &BTreeSet<String>, secrets: &BTreeSet<&str>, model: &Model) -> String {
     let mut hasher = blake3::Hasher::new();
     for name in secrets {
@@ -342,7 +306,7 @@ fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use distro_eval::{RuntimePart, UnitAction};
+    use distro_eval::RuntimePart;
     use distro_model::{File, Secret};
 
     use super::*;
@@ -401,10 +365,6 @@ mod tests {
             },
         );
         model.base.insert("audio".into(), Value::Bool(true));
-        model.triggers.insert(
-            ("systemd-networkd.service".into(), UnitAction::Reload),
-            ["/etc/nginx/main.conf".into()].into(),
-        );
 
         // The model and its hash have tests of their own.
         let lowered: String = lower(&model)
@@ -425,6 +385,10 @@ mod tests {
               "mode": "symlink",
               "text": "x\n"
             },
+            "pam.d/login": {
+              "mode": "symlink",
+              "text": "x\n"
+            },
             "secret.conf": {
               "mode": "0600",
               "text": "x\n"
@@ -436,7 +400,6 @@ mod tests {
             }
           },
           "homes": {},
-          "nixos": {},
           "packages": [
             "nginx"
           ],
@@ -444,11 +407,6 @@ mod tests {
           "service_packages": [],
           "sources": {},
           "templates": {},
-          "triggers": {
-            "systemd-networkd": {
-              "reload": "515446256c8120cef626f645d64a6b92a29146ecb9f893c916bd06caad318528"
-            }
-          },
           "units": {
             "nginx.service": {
               "required_by": [],

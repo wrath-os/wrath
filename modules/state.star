@@ -95,5 +95,4 @@ module(
     user_options = {"state": option(kept, default = {})},
     writes = [],
     render = render,
-    base = True,
 )

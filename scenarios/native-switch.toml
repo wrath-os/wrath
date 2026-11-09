@@ -1,9 +1,8 @@
-title = "a system built without NixOS switches as the plan said, rolls back, and tries another"
+title = "a system switches as the plan said, rolls back, and tries another"
 
 [vm]
 config = "fixtures/configs/native"
 store = "host"
-lowering = "native"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { apply_config = "fixtures/configs/native-web", expect_plan = ["+ nginx-main.service", "+ /etc/nginx/main.conf"] },

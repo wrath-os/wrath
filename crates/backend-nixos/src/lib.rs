@@ -1,6 +1,5 @@
-//! The NixOS backend (Phase A): the model is lowered to JSON, a fixed shim in `factory/nix` maps
-//! it onto NixOS options, and NixOS builds and switches the system. Generations are NixOS's own
-//! system profile generations.
+//! The backend: the model is lowered to JSON and `factory/nix/native` assembles a system from it
+//! with packages from nixpkgs. Generations are the Nix profile generations of the system profile.
 
 mod generations;
 mod lower;
@@ -33,10 +32,6 @@ pub const CURRENT_MODEL: &str = "/run/current-system/etc/distro/model.json";
 pub enum Target {
     /// The system, to switch to.
     System,
-    /// The system with the test harness's agent and share, for VM scenarios.
-    TestSystem,
-    /// A bootable disk image of the test system, as a directory containing `disk.qcow2`.
-    TestImage,
     /// The test system for VMs that mount the host's store.
     TestVmSystem,
     /// The test system as `distro install` puts it on a VM's disk, with the configuration's own
@@ -59,42 +54,10 @@ impl Target {
             Self::System => "toplevel",
             Self::Home => "home",
             Self::TestInstalledSystem => "testInstalledToplevel",
-            Self::TestSystem => "testToplevel",
-            Self::TestImage => "testImage",
             Self::TestVmSystem => "testVmToplevel",
             Self::TestVm => "testVm",
             Self::Environment => "environment",
         }
-    }
-
-    /// The factory function building `self`, with the native lowering when `native`.
-    fn function_in(self, native: bool) -> Result<String, String> {
-        match (native, self) {
-            (false, _) | (true, Self::Home | Self::Environment) => Ok(self.function().to_owned()),
-            (
-                true,
-                Self::System | Self::TestVmSystem | Self::TestVm | Self::TestInstalledSystem,
-            ) => Ok(format!("native.{}", self.function())),
-            (true, Self::TestSystem | Self::TestImage) => Err(format!(
-                "the native lowering doesn't build `{}` yet",
-                self.function()
-            )),
-        }
-    }
-}
-
-/// Set to `native` or `nixos`, it says how systems are built, while the native lowering grows.
-const LOWERING: &str = "DISTRO_LOWERING";
-
-/// On a system built without NixOS, says so, so it builds its next system the same way.
-const LOWERING_MARK: &str = "/etc/distro/lowering";
-
-/// Whether systems are built without NixOS: as `DISTRO_LOWERING` says, or else as the running
-/// system was.
-pub fn native() -> bool {
-    match std::env::var(LOWERING) {
-        Ok(lowering) => lowering == "native",
-        Err(_) => std::fs::read_to_string(LOWERING_MARK).is_ok_and(|mark| mark.trim() == "native"),
     }
 }
 
@@ -106,13 +69,13 @@ pub struct Built {
 }
 
 /// Builds `target` from `model` with the flake in `factory` (normally `factory/nix`), writing
-/// the shim's input to `work`. Packages come from the model's lock when it has one.
+/// its input to `work`. Packages come from the model's lock when it has one.
 pub fn build(model: &Model, factory: &Path, target: Target, work: &Path) -> Result<Built, String> {
     let (stdout, stderr) = nix(
         &["build", "--no-link", "--print-out-paths"],
         model,
         factory,
-        &target.function_in(native())?,
+        target.function(),
         work,
     )?;
     Ok(Built {
@@ -135,8 +98,7 @@ pub fn keep(path: &Path, link: &Path) -> Result<(), String> {
 }
 
 /// Resolves `model`'s packages to a lock: from each source as its lock pins it, or the latest
-/// of a source the lock doesn't pin. Without a `nixpkgs` source, the factory's own. A system that
-/// extends a NixOS configuration takes packages from that configuration, so it is the source.
+/// of a source the lock doesn't pin. Without a `nixpkgs` source, the factory's own.
 pub fn resolve(model: &Model, factory: &Path, work: &Path) -> Result<Lock, String> {
     let (stdout, _) = nix(&["eval", "--json"], model, factory, "resolve", work)?;
     let mut lock = parse_resolved(&stdout)?;
@@ -169,7 +131,7 @@ fn nix(
     function: &str,
     work: &Path,
 ) -> Result<(String, String), String> {
-    let input = work.join("nixos.json");
+    let input = work.join("input.json");
     std::fs::write(&input, lower(model)).map_err(|e| format!("{}: {e}", input.display()))?;
     let canonical = |path: &Path| {
         path.canonicalize()
@@ -182,7 +144,7 @@ fn nix(
         .arg(expression(&factory, function, &input)))
 }
 
-/// The warnings in what Nix printed, such as those NixOS modules raise. Nix indents the further
+/// The warnings in what Nix printed, such as those nixpkgs raises. Nix indents the further
 /// lines of a warning to line up with its first.
 fn warnings(stderr: &str) -> Vec<String> {
     const PREFIXES: [&str; 2] = ["evaluation warning: ", "trace: warning: "];
@@ -467,25 +429,8 @@ fn factory_message(stderr: &str) -> Option<String> {
 }
 
 /// Installs `system`, already built, onto the filesystems mounted at `root`: copies it into their
-/// store, makes it the first generation and installs the boot loader. Needs root.
+/// store, makes it the first generation and has its own distro install the boot loader. Needs root.
 pub fn install(system: &Path, root: &Path) -> Result<(), String> {
-    if native() {
-        return install_native(system, root);
-    }
-    command(
-        Command::new("nixos-install")
-            .arg("--system")
-            .arg(system)
-            .arg("--root")
-            .arg(root)
-            .args(["--no-root-passwd", "--no-channel-copy"]),
-    )
-    .map(drop)
-}
-
-/// Installs a system built without NixOS: copies it into the target's store, makes it the first
-/// generation, and has its own distro install the boot loader.
-fn install_native(system: &Path, root: &Path) -> Result<(), String> {
     // Copying a whole system can take a while on a slow disk; the other steps are quick.
     const COPY: Duration = Duration::from_secs(60 * 60);
     const STEP: Duration = Duration::from_secs(10 * 60);
@@ -699,10 +644,10 @@ mod tests {
     fn warnings_are_picked_from_what_nix_prints() {
         let stderr = [
             "copying path '/nix/store/abc-x' from 'https://cache.nixos.org'...",
-            "evaluation warning: the TOML sets time zone Europe/Stockholm, NixOS uses UTC",
+            "evaluation warning: the package set is old",
             "evaluation warning: The option `a` is obsolete. Use",
             "                    `b` instead.",
-            "trace: warning: the NixOS firewall runs as well",
+            "trace: warning: a package is unmaintained",
             "building '/nix/store/def-y.drv'...",
         ]
         .join("\n");
@@ -710,33 +655,24 @@ mod tests {
         assert_eq!(
             warnings(&stderr),
             [
-                "the TOML sets time zone Europe/Stockholm, NixOS uses UTC",
+                "the package set is old",
                 "The option `a` is obsolete. Use\n`b` instead.",
-                "the NixOS firewall runs as well"
+                "a package is unmaintained"
             ]
         );
-    }
-
-    #[test]
-    fn the_native_lowering_builds_systems_and_refuses_what_it_cant_yet() {
-        assert_eq!(Target::System.function_in(false).unwrap(), "toplevel");
-        assert_eq!(Target::System.function_in(true).unwrap(), "native.toplevel");
-        assert_eq!(Target::TestVm.function_in(true).unwrap(), "native.testVm");
-        assert_eq!(Target::Home.function_in(true).unwrap(), "home");
-        assert!(Target::TestImage.function_in(true).is_err());
     }
 
     #[test]
     fn the_expression_applies_a_factory_function_to_the_input() {
         let expression = expression(
             Path::new("/nonexistent/factory/nix"),
-            Target::TestImage.function(),
-            Path::new("/tmp/run/nixos.json"),
+            Target::TestVm.function(),
+            Path::new("/tmp/run/input.json"),
         );
 
         assert_eq!(
             expression,
-            r#"(builtins.getFlake "path:/nonexistent/factory/nix").lib.${builtins.currentSystem}.testImage (/. + "/tmp/run/nixos.json")"#
+            r#"(builtins.getFlake "path:/nonexistent/factory/nix").lib.${builtins.currentSystem}.testVm (/. + "/tmp/run/input.json")"#
         );
     }
 

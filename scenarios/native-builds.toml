@@ -3,7 +3,6 @@ title = "packages are built with the options and patches the configuration gives
 [vm]
 config = "fixtures/configs/native"
 store = "host"
-lowering = "native"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { apply_config = "scenarios/fixtures/native-builds", expect_plan = ["+ build hello", "+ build tiny-nano"] },

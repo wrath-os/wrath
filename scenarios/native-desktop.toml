@@ -1,9 +1,8 @@
-title = "the sample desktop, built without NixOS, boots to a niri session with audio"
+title = "the sample desktop boots to a niri session with audio"
 
 [vm]
 config = "fixtures/configs/desktop"
 store = "host"
-lowering = "native"
 wait_for = ["unit:greetd.service", "user-unit:demo:niri.service", "user-unit:demo:pipewire.service"]
 steps = [
   { run = "test -z \"$(systemctl --failed --no-legend; systemctl --user -M demo@ --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },

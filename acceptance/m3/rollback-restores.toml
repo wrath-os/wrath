@@ -1,6 +1,7 @@
 title = "rollback returns the VM to the previous generation"
 
 [vm]
+store = "host"
 config = "fixtures/configs/basic"
 steps = [
   { apply_config = "fixtures/configs/basic-changed" },

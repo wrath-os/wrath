@@ -3,4 +3,4 @@
 def render(ctx):
     ctx.service_package("dbus")
 
-module(name = "dbus", options = {}, writes = [], render = render, base = True)
+module(name = "dbus", options = {}, writes = [], render = render)

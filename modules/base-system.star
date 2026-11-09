@@ -1,4 +1,4 @@
-# The base of a system built without NixOS: the programs every system has, how systemd finds
+# The base of a system: the programs every system has, how systemd finds
 # them, and consoles to log in on.
 
 SW = "/run/current-system/sw"
@@ -140,5 +140,4 @@ module(
     },
     writes = [],
     render = render,
-    base = True,
 )

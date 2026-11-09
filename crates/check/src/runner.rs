@@ -85,7 +85,6 @@ fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
     let host = Host {
         distro: &ctx.distro_exe,
         workdir: &ctx.workdir,
-        native: spec.native,
     };
     let built = match (&ctx.image_override, &spec.system) {
         (Some(image), _) => Ok(image.clone()),

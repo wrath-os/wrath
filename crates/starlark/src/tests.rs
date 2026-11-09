@@ -1153,7 +1153,7 @@ def render(ctx):
     ctx.wrapper("sudo", source = "/run/current-system/sw/bin/sudo")
     ctx.wrapper("ping", source = "/run/current-system/sw/bin/ping", group = "net", mode = 0o755)
 
-module(name = "base-test", options = {}, writes = [], render = render, base = True)
+module(name = "base-test", options = {}, writes = [], render = render)
 "#)
     .unwrap();
     let output = output_of(&evaluation, "base-test");

@@ -1,4 +1,4 @@
-# The login manager for a desktop on a system built without NixOS: greetd on the first virtual
+# The login manager for a desktop: greetd on the first virtual
 # terminal, with tuigreet asking who logs in, or the autologin user's session started directly.
 
 SESSIONS = {"niri": "niri-session"}
@@ -50,5 +50,4 @@ module(
     options = {},
     writes = ["security.pam.services.greetd"],
     render = render,
-    base = True,
 )

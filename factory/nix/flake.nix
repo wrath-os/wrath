@@ -72,24 +72,6 @@
       # The factory's pinned inputs, which machines keep so they can evaluate offline.
       factoryInputs = [ nixpkgs.outPath ];
 
-      # A NixOS system with packages from `packageSet`, a nixpkgs flake.
-      nixosFrom =
-        packageSet: modules:
-        packageSet.lib.nixosSystem {
-          inherit system;
-          specialArgs = { inherit agent distro factoryInputs; };
-          modules = modules ++ [
-            {
-              nixpkgs.pkgs = import packageSet {
-                inherit system;
-                config = { };
-                overlays = [ ];
-              };
-            }
-          ];
-        };
-      nixos = nixosFrom nixpkgs;
-
       # Where packages come from without a lock: this flake's nixpkgs, which follows this URL.
       defaultUrl = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -134,78 +116,73 @@
         else
           builtins.getFlake source.url;
 
-      # Test images follow one contract: the output directory contains `disk.qcow2`, a UEFI
-      # bootable disk whose system runs the guest agent on its default vsock port.
-      image =
-        name: system:
-        pkgs.runCommand name { } ''
-          mkdir $out
-          ln -s ${system.config.system.build.image}/*.qcow2 $out/disk.qcow2
-        '';
-
-      # Test VMs that boot from the host's store: the output directory contains `kernel`,
-      # `initrd` and `kernel-params`, the command line that boots the system. The guest
-      # registers the closure in its database from a list it reads through the mounted store.
-      hostStoreVm =
-        name: system:
-        let
-          toplevel = system.config.system.build.toplevel;
-          registration = pkgs.closureInfo { rootPaths = [ toplevel ]; };
-        in
-        pkgs.runCommand name { } ''
-          mkdir $out
-          ln -s ${toplevel}/kernel $out/kernel
-          ln -s ${toplevel}/initrd $out/initrd
-          echo "$(cat ${toplevel}/kernel-params) init=${toplevel}/init regInfo=/nix/.ro-store/${baseNameOf registration}/registration" > $out/kernel-params
-        '';
-
-      diskHarness = [
-        ./test-harness.nix
-        ./test-disk.nix
-        (import ./test-share.nix 10)
-      ];
-      hostStoreHarness = [
-        ./test-harness.nix
-        ./test-host-store.nix
-        (import ./test-share.nix 10)
-      ];
-      installedHarness = [
-        ./test-harness.nix
-        ./test-installed.nix
-        (import ./test-share.nix 100)
-      ];
-
-      # A system built without NixOS from the same input, plus `layers`, each a function of the
-      # package set giving parts the model doesn't describe, such as the test harness's agent.
-      nativeFrom =
-        input: layers:
+      # The input, the JSON `distro` writes, with where its packages come from as a lock records
+      # them. Packages without a source come from the `nixpkgs` source, or this flake's nixpkgs
+      # without one; other sources are flakes the input names.
+      evalInput =
+        input:
         let
           json = lib.importJSON input;
           sources = json.sources or { };
+          others = removeAttrs sources [ "nixpkgs" ];
           packageSet = if sources ? nixpkgs then pinned sources.nixpkgs else nixpkgs;
-          nativePkgs = import packageSet {
+          pkgs = import packageSet {
             inherit system;
             config = { };
             overlays = [ ];
           };
-          named = lib.mapAttrs (_: pinned) (removeAttrs sources [ "nixpkgs" ]);
+          locked =
+            _: source:
+            let
+              fetched = tree source;
+            in
+            {
+              inherit (source) url;
+              rev = fetched.rev or null;
+              hash = fetched.narHash;
+              date = date fetched;
+            };
+        in
+        {
+          inherit json pkgs;
+          package = import ./package.nix lib pkgs (lib.mapAttrs (_: pinned) others) json.builds;
+          sources = lib.mapAttrs locked others // {
+            nixpkgs = {
+              url = sources.nixpkgs.url or defaultUrl;
+              rev = packageSet.rev or null;
+              hash = packageSet.narHash;
+              date = date packageSet;
+            };
+          };
+        };
+
+      # A system from the input, plus `layers`, each a function of the package set giving parts the
+      # model doesn't describe, such as the test harness's agent.
+      systemFrom =
+        input: layers:
+        let
+          evaluated = evalInput input;
         in
         import ./native {
           inherit lib distro factoryInputs;
-          pkgs = nativePkgs;
-          input = json;
-          package = import ./package.nix lib nativePkgs named json.builds;
-          layers = map (layer: layer nativePkgs) layers;
+          inherit (evaluated) pkgs package;
+          input = evaluated.json;
+          layers = map (layer: layer evaluated.pkgs) layers;
         };
-      nativeHostStoreHarness = [
-        (layerPkgs: import ./native/test-harness.nix {
+
+      harnessLayer =
+        layerPkgs:
+        import ./native/test-harness.nix {
           inherit agent;
           pkgs = layerPkgs;
-        })
+        };
+      hostStoreHarness = [
+        harnessLayer
         (layerPkgs: import ./native/test-host-store.nix { pkgs = layerPkgs; })
       ];
-      # Like `hostStoreVm`, for a native system.
-      nativeVm =
+      # Test VMs that boot from the host's store: the output directory contains `kernel`, `initrd`
+      # and `kernel-params`, the command line that boots the system.
+      hostStoreVm =
         name: toplevel:
         let
           registration = pkgs.closureInfo { rootPaths = [ toplevel ]; };
@@ -218,106 +195,13 @@
             > $out/kernel-params
         '';
 
-      # A system from the shim's input, the JSON `distro` writes, plus extra NixOS modules, and
-      # where its packages come from as a lock records them. The base system and packages
-      # without a source come from the `nixpkgs` source, or this flake's nixpkgs without one;
-      # other sources are flakes the input names. When the model extends an existing NixOS
-      # configuration, the shim is layered onto it and `nixpkgs` is that configuration's.
-      evalInput =
-        input: extra:
-        let
-          json = lib.importJSON input;
-          settings = json.nixos;
-          sources = json.sources or { };
-          named = lib.mapAttrs (_: pinned) (removeAttrs sources [ "nixpkgs" ]);
-          modules = [
-            ./shim.nix
-            {
-              _module.args = {
-                distroInput = input;
-                distroSources = named;
-              };
-            }
-          ]
-          ++ map (path: /. + path) (settings.modules or [ ])
-          ++ extra;
-          # Plain paths are read through git, like this flake, so build outputs are left out.
-          flakeRef =
-            if lib.hasPrefix "/" settings.flake then
-              "git+file://${settings.flake}"
-            else
-              settings.flake;
-          extended = builtins.getFlake flakeRef;
-          packageSet = if sources ? nixpkgs then pinned sources.nixpkgs else nixpkgs;
-          locked =
-            name: source:
-            let
-              fetched = tree source;
-            in
-            {
-              inherit (source) url;
-              rev = fetched.rev or null;
-              hash = fetched.narHash;
-              date = date fetched;
-            };
-          default =
-            if settings ? flake then
-              {
-                system = extended.nixosConfigurations.${settings.host}.extendModules {
-                  inherit modules;
-                  specialArgs = { inherit agent distro factoryInputs; };
-                };
-                source = {
-                  url = flakeRef;
-                  rev = extended.rev or null;
-                  hash = extended.narHash;
-                  date = date extended;
-                };
-              }
-            else
-              {
-                system = nixosFrom packageSet modules;
-                source = {
-                  url = sources.nixpkgs.url or defaultUrl;
-                  rev = packageSet.rev or null;
-                  hash = packageSet.narHash;
-                  date = date packageSet;
-                };
-              };
-        in
-        {
-          inherit (default) system;
-          inherit named;
-          sources = lib.mapAttrs locked (removeAttrs sources [ "nixpkgs" ]) // {
-            nixpkgs = default.source;
-          };
-        };
-
-      # The system to build. A lock pins the configuration a system extends too, so one that
-      # changed since is refused until it's locked again.
-      fromInput =
-        input: extra:
-        let
-          evaluated = evalInput input extra;
-          locked = (lib.importJSON input).sources.nixpkgs or { };
-          current = evaluated.sources.nixpkgs;
-        in
-        if locked ? hash && locked.hash != current.hash then
-          throw (
-            "distro: ${current.url} changed since distro.lock was written; "
-            + "run `distro lock` to use it as it is now"
-          )
-        else
-          evaluated.system;
-
       # What the lock records: each source and, for each package the system and its users have,
       # its version and store path.
       resolve =
         input:
         let
-          evaluated = evalInput input [ ];
-          json = lib.importJSON input;
-          package = import ./package.nix lib evaluated.system.pkgs evaluated.named json.builds;
+          evaluated = evalInput input;
+          inherit (evaluated) json package;
           names = lib.unique (
             json.packages ++ lib.concatMap (home: home.packages) (builtins.attrValues json.homes)
           );
@@ -342,10 +226,8 @@
       environment =
         input:
         let
-          evaluated = evalInput input [ ];
-          json = lib.importJSON input;
-          inherit (evaluated.system) pkgs;
-          package = import ./package.nix lib pkgs evaluated.named json.builds;
+          evaluated = evalInput input;
+          inherit (evaluated) json pkgs package;
           describe =
             name:
             let
@@ -375,10 +257,8 @@
       home =
         input:
         let
-          evaluated = evalInput input [ ];
-          json = lib.importJSON input;
-          inherit (evaluated.system) pkgs;
-          package = import ./package.nix lib pkgs evaluated.named json.builds;
+          evaluated = evalInput input;
+          inherit (evaluated) json pkgs package;
           name = builtins.head (builtins.attrNames json.homes);
           ours = json.homes.${name};
           bin = "$HOME/.local/state/distro/profiles/home/profile/bin";
@@ -489,33 +369,33 @@
     {
       packages.${system} = {
         inherit agent distro;
-        harness-fixture = image "harness-fixture" (nixos [ ./harness-fixture.nix ]);
+        # A plain NixOS image for testing the harness itself: the output directory contains
+        # `disk.qcow2`, a UEFI bootable disk whose system runs the guest agent on its default
+        # vsock port. Nothing else here uses NixOS.
+        harness-fixture =
+          let
+            fixture = nixpkgs.lib.nixosSystem {
+              inherit system;
+              specialArgs = { inherit agent; };
+              modules = [
+                ./harness-fixture.nix
+                { nixpkgs.pkgs = pkgs; }
+              ];
+            };
+          in
+          pkgs.runCommand "harness-fixture" { } ''
+            mkdir $out
+            ln -s ${fixture.config.system.build.image}/*.qcow2 $out/disk.qcow2
+          '';
       };
 
-      # Entry points for `distro`, which passes the path of the shim's input.
+      # Entry points for `distro`, which passes the path of its input.
       lib.${system} = {
         inherit environment home resolve;
-        toplevel = input: (fromInput input [ ]).config.system.build.toplevel;
-        testToplevel = input: (fromInput input diskHarness).config.system.build.toplevel;
-        testImage = input: image "distro-test" (fromInput input diskHarness);
-        testVmToplevel = input: (fromInput input hostStoreHarness).config.system.build.toplevel;
-        testInstalledToplevel =
-          input:
-          (fromInput input installedHarness).config.system.build.toplevel;
-        testVm = input: hostStoreVm "distro-test-vm" (fromInput input hostStoreHarness);
-        native = {
-          toplevel = input: nativeFrom input [ ];
-          testVmToplevel = input: nativeFrom input nativeHostStoreHarness;
-          testInstalledToplevel =
-            input:
-            nativeFrom input [
-              (layerPkgs: import ./native/test-harness.nix {
-                inherit agent;
-                pkgs = layerPkgs;
-              })
-            ];
-          testVm = input: nativeVm "distro-test-vm" (nativeFrom input nativeHostStoreHarness);
-        };
+        toplevel = input: systemFrom input [ ];
+        testVmToplevel = input: systemFrom input hostStoreHarness;
+        testInstalledToplevel = input: systemFrom input [ harnessLayer ];
+        testVm = input: hostStoreVm "distro-test-vm" (systemFrom input hostStoreHarness);
       };
     };
 }

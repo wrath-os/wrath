@@ -43,12 +43,6 @@ pub trait Module {
         &[ConfigKind::System]
     }
 
-    /// Whether the module renders part of the base system, which only the native lowering builds
-    /// from modules; the NixOS lowering provides its own.
-    fn base(&self) -> bool {
-        false
-    }
-
     fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError>;
 }
 
@@ -102,9 +96,6 @@ pub struct Output {
     /// Settings for the base system the backend provides, by top-level key, such as `audio`.
     /// Each key belongs to one module.
     pub base: BTreeMap<String, Value>,
-    /// Settings only one backend understands, by backend name, such as `nixos`. A config that
-    /// has them is tied to that backend until they are gone.
-    pub backends: BTreeMap<String, Value>,
     /// Services the system provides that act when files change, such as networkd reloading
     /// when a `.network` file does. Several modules can trigger the same service.
     pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,

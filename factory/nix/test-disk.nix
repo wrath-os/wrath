@@ -1,9 +1,7 @@
-# The disk layout of test images: a UEFI-bootable disk with the system's whole closure on it.
+# The disk layout of the harness fixture: a UEFI-bootable disk with its whole closure on it.
 { lib, modulesPath, ... }:
 
 let
-  # Above anything a host sets, so a test image of an existing machine gets the image's disk
-  # instead of the machine's disks, encryption and swap.
   vm = lib.mkOverride 10;
 in
 

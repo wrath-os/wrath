@@ -1,4 +1,4 @@
-//! What a system built without NixOS does on the machine at every boot and switch, because it
+//! What a system does on the machine at every boot and switch, because it
 //! needs the machine's keys or accounts: decrypting secrets, filling in files with secrets or
 //! machine values, and linking users' files. The system says what in its `activation.json`.
 //! Secrets and filled-in files live on ramfs and are replaced in one step. One that fails is left

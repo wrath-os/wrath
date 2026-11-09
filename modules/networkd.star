@@ -1,4 +1,4 @@
-# Networking on a system built without NixOS: systemd-networkd, and DHCP on every wired interface
+# Networking: systemd-networkd, and DHCP on every wired interface
 # unless the configuration describes its networks.
 
 def render(ctx):
@@ -16,4 +16,4 @@ def render(ctx):
     if resolved:
         ctx.enable("systemd-resolved.service")
 
-module(name = "networkd", options = {}, writes = [], render = render, base = True)
+module(name = "networkd", options = {}, writes = [], render = render)

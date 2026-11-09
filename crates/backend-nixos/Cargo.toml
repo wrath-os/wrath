@@ -1,6 +1,6 @@
 [package]
 name = "distro-backend-nixos"
-description = "Builds and activates systems from the resolved model through NixOS"
+description = "Builds and activates systems from the resolved model with Nix and nixpkgs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

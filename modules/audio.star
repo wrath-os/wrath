@@ -1,4 +1,4 @@
-# Audio for users on a system built without NixOS: PipeWire, started with each user's session,
+# Audio for users: PipeWire, started with each user's session,
 # with WirePlumber managing it and RealtimeKit giving it realtime priority. Programs that speak
 # PulseAudio talk to PipeWire's PulseAudio server.
 
@@ -12,4 +12,4 @@ def render(ctx):
     ctx.enable("wireplumber.service", user = True)
     ctx.enable("pipewire.service", user = True, wanted_by = "default.target")
 
-module(name = "audio", options = {}, writes = [], render = render, base = True)
+module(name = "audio", options = {}, writes = [], render = render)

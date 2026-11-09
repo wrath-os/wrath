@@ -1,7 +1,8 @@
 //! Running scenarios in QEMU virtual machines.
 //!
-//! A scenario names a test image built from `factory/nix`. The image output contains
-//! `disk.qcow2`, a UEFI-bootable disk whose system runs the guest agent. Each run gets its own
+//! A scenario names a test image from `factory/nix` or a configuration to build. A test image
+//! output contains `disk.qcow2`, a UEFI-bootable disk whose system runs the guest agent; a built
+//! configuration boots its kernel directly from the host's store. Each run gets its own
 //! directory with a copy-on-write overlay of the disk, writable UEFI variables, an optional
 //! software TPM, logs, and a script that boots the same VM interactively.
 
@@ -33,8 +34,6 @@ pub struct VmSpec {
     pub store: Store,
     /// Sizes of empty disks attached to the VM, such as `8G`, for `distro install` to lay out.
     pub blank_disks: Vec<String>,
-    /// Whether systems are built without NixOS, with `lowering = "native"`.
-    pub native: bool,
     /// Limit for booting and checking. Building the image and systems is not counted.
     pub timeout_secs: u64,
 }
@@ -44,7 +43,7 @@ pub struct VmSpec {
 pub enum System {
     /// A flake reference to a test image, relative to the repository root.
     Image(String),
-    /// A configuration directory, built into a test image by `distro build`.
+    /// A configuration directory, built by `distro build` to boot from the host's store.
     Config(String),
 }
 
@@ -110,7 +109,6 @@ struct RawVmSpec {
     store: Store,
     #[serde(default)]
     blank_disks: Vec<String>,
-    lowering: Option<String>,
     #[serde(default = "default_timeout_secs")]
     timeout_secs: u64,
 }
@@ -123,11 +121,6 @@ impl TryFrom<RawVmSpec> for VmSpec {
             (Some(image), None) => System::Image(image),
             (None, Some(config)) => System::Config(config),
             _ => return Err("name exactly one of `image` or `config`".into()),
-        };
-        let native = match raw.lowering.as_deref() {
-            None | Some("nixos") => false,
-            Some("native") => true,
-            Some(other) => return Err(format!("`lowering` is `nixos` or `native`, not `{other}`")),
         };
         Ok(Self {
             system,
@@ -142,7 +135,6 @@ impl TryFrom<RawVmSpec> for VmSpec {
                 .collect::<Result<_, _>>()?,
             store: raw.store,
             blank_disks: raw.blank_disks,
-            native,
             timeout_secs: raw.timeout_secs,
         })
     }
@@ -258,7 +250,8 @@ pub enum Firmware {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Store {
-    /// A disk image holding the system's whole closure, booted with UEFI.
+    /// A prebuilt disk image holding the system's whole closure, booted with UEFI. Configurations
+    /// can't be built into one.
     #[default]
     Image,
     /// The host's store, mounted read-only with the kernel booted directly. For systems too
@@ -267,11 +260,15 @@ pub enum Store {
 }
 
 impl Store {
-    /// The build targets for booting and for switching to a system.
-    fn targets(self) -> (&'static str, &'static str) {
+    /// The build targets for booting and for switching to a system built from a configuration.
+    fn targets(self) -> Result<(&'static str, &'static str), String> {
         match self {
-            Self::Image => ("test-image", "test-system"),
-            Self::Host => ("test-vm", "test-vm-system"),
+            Self::Image => Err(
+                "systems built from a configuration can't be made into disk images; \
+                 add `store = \"host\"` to the scenario's `[vm]` table"
+                    .into(),
+            ),
+            Self::Host => Ok(("test-vm", "test-vm-system")),
         }
     }
 }
@@ -378,8 +375,6 @@ pub struct Host<'a> {
     pub distro: &'a Path,
     /// The repository root, which configuration paths are relative to.
     pub workdir: &'a Path,
-    /// Whether it builds systems without NixOS.
-    pub native: bool,
 }
 
 /// Builds a test image and returns its output directory.
@@ -405,11 +400,11 @@ pub fn build_image(reference: &str, workdir: &Path) -> Result<PathBuf, String> {
     Ok(out)
 }
 
-/// Builds the test image for a configuration with `distro build`.
+/// Builds the VM that boots a configuration, with `distro build`.
 pub fn build_config_image(host: Host<'_>, config: &str, store: Store) -> Result<PathBuf, String> {
-    let (image, _) = store.targets();
+    let (vm, _) = store.targets()?;
     let out = PathBuf::from(
-        host.distro(&["build", "--config", config, "--target", image])?
+        host.distro(&["build", "--config", config, "--target", vm])?
             .trim(),
     );
     Boot::of(&out)?;
@@ -858,7 +853,7 @@ impl VmRun<'_> {
                 "the plan for `{config}` does not contain {missing:?}:\n{plan}"
             ));
         }
-        let (_, target) = self.spec.store.targets();
+        let (_, target) = self.spec.store.targets()?;
         let system = self
             .host
             .distro(&["build", "--config", config, "--target", target])?;
@@ -1131,10 +1126,6 @@ impl Host<'_> {
         host_command(
             Command::new(self.distro)
                 .args(args)
-                .env(
-                    "DISTRO_LOWERING",
-                    if self.native { "native" } else { "nixos" },
-                )
                 .current_dir(self.workdir),
         )
     }
@@ -1520,20 +1511,10 @@ mod tests {
     }
 
     #[test]
-    fn systems_are_built_with_nixos_unless_a_scenario_says_native() {
-        assert!(!spec("config = \"c\"\n").unwrap().native);
-        assert!(
-            !spec("config = \"c\"\nlowering = \"nixos\"\n")
-                .unwrap()
-                .native
-        );
-        assert!(
-            spec("config = \"c\"\nlowering = \"native\"\n")
-                .unwrap()
-                .native
-        );
-        let err = spec("config = \"c\"\nlowering = \"guix\"\n").unwrap_err();
-        assert!(err.message().contains("not `guix`"), "{err}");
+    fn only_the_host_store_builds_a_configuration_and_the_error_says_so() {
+        assert_eq!(Store::Host.targets(), Ok(("test-vm", "test-vm-system")));
+        let err = Store::Image.targets().unwrap_err();
+        assert!(err.contains("store = \"host\""), "{err}");
     }
 
     #[test]

@@ -226,7 +226,6 @@ pub fn describe_outputs(evaluation: &Evaluation) -> String {
     let mut files = BTreeMap::new();
     let mut units = BTreeMap::new();
     let mut base = BTreeMap::new();
-    let mut backends = BTreeMap::new();
     let mut triggers = Vec::new();
     for rendered in evaluation.modules() {
         triggers.extend(
@@ -235,13 +234,6 @@ pub fn describe_outputs(evaluation: &Evaluation) -> String {
                 .triggers
                 .iter()
                 .map(|((unit, action), paths)| (unit, action.as_str(), &rendered.name, paths)),
-        );
-        backends.extend(
-            rendered
-                .output
-                .backends
-                .iter()
-                .map(|(name, value)| (name, (&rendered.name, value))),
         );
         base.extend(
             rendered
@@ -294,9 +286,6 @@ pub fn describe_outputs(evaluation: &Evaluation) -> String {
     }
     for (key, (module, value)) in base {
         let _ = writeln!(out, "\nbase {key} (from {module}): {value}");
-    }
-    for (name, (module, value)) in backends {
-        let _ = writeln!(out, "\nbackend {name} (from {module}): {value}");
     }
     out
 }

@@ -1,4 +1,4 @@
-# A plain NixOS system for testing the harness itself, before there is an OS of our own.
+# A plain NixOS system for testing the harness itself, the one NixOS system in the factory.
 {
   imports = [
     ./test-harness.nix

@@ -29,8 +29,6 @@ pub struct Model {
     pub units: BTreeMap<String, Unit>,
     /// Settings for the base system the backend provides, such as `audio` or `session`.
     pub base: BTreeMap<String, Value>,
-    /// Settings only one backend understands, by backend name.
-    pub backends: BTreeMap<String, Value>,
     /// Files that make services the system provides reload or restart, by service and action.
     pub triggers: BTreeMap<(String, UnitAction), BTreeSet<String>>,
     /// Machine values the configuration refers to, such as `facts.cpu.count`, filled in on the
@@ -172,7 +170,6 @@ impl Model {
                 ours.templates.extend(home.templates.clone());
             }
             model.base.extend(output.base.clone());
-            model.backends.extend(output.backends.clone());
             model.units.extend(output.units.clone());
             model.templates.extend(output.templates.clone());
             model.next_login.extend(output.next_login.clone());
@@ -415,7 +412,6 @@ impl Model {
             ("homes", Value::Table(homes)),
             ("units", units_value(&self.units)),
             ("base", spell_out_entries(&self.base)),
-            ("backends", spell_out_entries(&self.backends)),
             (
                 "machine",
                 Value::List(self.machine.iter().cloned().map(Value::Str).collect()),

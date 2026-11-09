@@ -1,6 +1,5 @@
 # The run directory's `share` on the host, when the harness passes one. `priority` is that of the
-# disk layout it joins: test images override the system's whole layout, and installed systems keep
-# theirs, so the share goes in at the same priority as the rest.
+# disk layout it joins, so the share goes in at the same priority as the rest of it.
 priority:
 { lib, ... }:
 

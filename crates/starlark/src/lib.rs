@@ -178,7 +178,6 @@ struct Declared {
     options: Vec<(OptionPath, OptionSpec)>,
     writes: Vec<OptionPath>,
     configurations: Vec<ConfigKind>,
-    base: bool,
 }
 
 /// The evaluator's `extra` while a module file loads.
@@ -342,7 +341,6 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] writes: StarValue<'v>,
         #[starlark(require = named)] render: StarValue<'v>,
         #[starlark(require = named)] configurations: Option<StarValue<'v>>,
-        #[starlark(require = named)] base: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let every_user = OptionPath::root().child("users").child(EVERY);
@@ -403,7 +401,6 @@ fn std_globals(builder: &mut GlobalsBuilder) {
                 options: declared_options,
                 writes,
                 configurations,
-                base: base.unwrap_or(false),
             });
         }
         eval.module().set(RENDER, render);
@@ -901,19 +898,6 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         insert_setting(eval, "base setting", key, value, |output| &mut output.base)
     }
 
-    /// Sets what only one backend understands, such as `nixos`. A system with it set can't move
-    /// to another backend until it's gone.
-    fn backend<'v>(
-        #[starlark(this)] _this: StarValue<'v>,
-        #[starlark(require = pos)] name: &str,
-        #[starlark(require = pos)] value: StarValue<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<NoneType> {
-        insert_setting(eval, "backend setting", name, value, |output| {
-            &mut output.backends
-        })
-    }
-
     /// Adds a package whose units, users, tmpfiles, udev rules and D-Bus services join the
     /// system, such as `dbus`. Its programs are added too.
     fn service_package<'v>(
@@ -1059,10 +1043,6 @@ impl Module for StarlarkModule {
 
     fn configurations(&self) -> &[ConfigKind] {
         &self.declared.configurations
-    }
-
-    fn base(&self) -> bool {
-        self.declared.base
     }
 
     fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError> {

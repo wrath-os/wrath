@@ -22,5 +22,4 @@ module(
     },
     writes = [],
     render = render,
-    base = True,
 )

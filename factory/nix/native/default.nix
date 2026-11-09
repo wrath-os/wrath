@@ -1,4 +1,4 @@
-# A system built from the lowered model without NixOS: the kernel, an initrd, /etc, units, users
+# A system built from the lowered model: the kernel, an initrd, /etc, units, users
 # and packages, put together from nixpkgs packages.
 #
 # `layers` add what the model doesn't describe yet, such as the test harness's agent or how a test
@@ -12,8 +12,6 @@
 #   services        packages whose units, udev rules and D-Bus policy join the system
 #   enabled         upstream units to enable, each with the targets that want it, or none
 #   initrd          { units, fstab, kernelModules, storePaths }, for the initrd
-#
-# Parts of the model this doesn't build yet are refused, so nothing is silently left out.
 {
   lib,
   pkgs,
@@ -38,8 +36,6 @@ let
     }
   )
   ++ layers;
-
-  unsupported = lib.optional (input.nixos != { }) "building on NixOS";
 
   # What the layers give at a dotted `path`, such as `initrd.fstab`: lists concatenated, attribute
   # sets merged with later layers winning.
@@ -330,7 +326,6 @@ let
     mkdir -p $out/distro
     ln -s ${pkgs.writeText "model.json" input.model} $out/distro/model.json
     ln -s ${pkgs.writeText "model-hash" input.model_hash} $out/distro/model-hash
-    echo native > $out/distro/lowering
     mkdir -p $out/nix
     ln -s ${pkgs.writeText "nix.conf" (
       lib.concatLines (sum "nixSettings" ++ [ "!include settings.conf" ])
@@ -394,7 +389,4 @@ let
     chmod +x $out/bin/switch-to-configuration
   '';
 in
-if unsupported != [ ] then
-  throw "distro: the native lowering doesn't build ${lib.concatStringsSep ", " unsupported} yet"
-else
-  toplevel
+toplevel

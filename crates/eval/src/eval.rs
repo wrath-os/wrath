@@ -499,14 +499,13 @@ fn shared_outputs(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
                     .map(move |name| format!("{name} (for {user})"))
             })
             .collect();
-        let outputs: [(&str, Vec<String>); 9] = [
+        let outputs: [(&str, Vec<String>); 8] = [
             ("file", output.files.keys().cloned().collect()),
             ("file", output.templates.keys().cloned().collect()),
             ("file", home_files),
             ("unit", output.units.keys().cloned().collect()),
             ("unit", user_units),
             ("base setting", output.base.keys().cloned().collect()),
-            ("backend setting", output.backends.keys().cloned().collect()),
             ("secret", output.secrets.keys().cloned().collect()),
             ("build", output.builds.keys().cloned().collect()),
         ];

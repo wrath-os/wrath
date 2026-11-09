@@ -1,4 +1,4 @@
-# Changing who you are on a system built without NixOS: sudo for the `wheel` group, su, and
+# Changing who you are: sudo for the `wheel` group, su, and
 # passwd, which run as root through wrappers, runuser, and the PAM stacks they use.
 
 load("lib/pam.star", "unix_stacks")
@@ -46,5 +46,4 @@ module(
         "security.pam.services.runuser-l",
     ],
     render = render,
-    base = True,
 )

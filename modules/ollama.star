@@ -1,4 +1,4 @@
-# Ollama, a server for local language models, sandboxed like the service NixOS runs. Models
+# Ollama, a server for local language models, sandboxed. Models
 # are state, kept under /var/lib/ollama and pulled with `ollama pull`.
 
 PACKAGES = {

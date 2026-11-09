@@ -37,7 +37,6 @@ impl Model {
             files: read_files(field("files")?)?,
             units: read_units(field("units")?)?,
             base: unspelled("base")?,
-            backends: unspelled("backends")?,
             triggers: read_triggers(field("triggers")?)?,
             machine: strings(field("machine")?)?,
             secrets: read_secrets(field("secrets")?)?,

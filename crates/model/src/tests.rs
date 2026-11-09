@@ -55,7 +55,6 @@ fn runtime_values_are_spelled_out_in_the_canonical_form() {
 
     insta::assert_snapshot!(model.canonical(), @r#"
     {
-      "backends": {},
       "base": {},
       "builds": {},
       "enabled": {},
@@ -179,22 +178,6 @@ fn a_unit_restarts_when_a_file_it_reads_changes() {
           restarts: /etc/nginx/main.conf changed
     2 changes, tier: live
     ");
-}
-
-#[test]
-fn a_change_to_a_backend_setting_may_need_a_reboot() {
-    let before = model(80);
-    let mut after = before.clone();
-    after
-        .backends
-        .insert("nixos".into(), Value::Str("/srv/world#neptune".into()));
-
-    insta::assert_snapshot!(plan(&before, &after).to_string(), @r#"
-    backends
-      + nixos (tier: reboot)
-          "/srv/world#neptune"
-    1 change, tier: reboot
-    "#);
 }
 
 #[test]
@@ -500,10 +483,6 @@ fn full_model() -> Model {
     };
     model.units.insert("app.service".into(), unit.clone());
     model.base.insert("audio".into(), Value::Bool(true));
-    model.backends.insert(
-        "nixos".into(),
-        Value::Table([("x".into(), Value::Int(1))].into()),
-    );
     model.triggers.insert(
         ("systemd-networkd.service".into(), UnitAction::Reload),
         ["/etc/app.conf".into()].into(),

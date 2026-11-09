@@ -186,7 +186,8 @@ The steps:
    and the desktop fixtures pass on it.
 6. Disks and boot: boot entries, LUKS and RAID in its initrd, the TPM, initrd SSH, and install
    without `nixos-install`. The install scenarios pass on it.
-7. The native lowering becomes the only one.
+7. The native lowering becomes the only one. Done: the NixOS lowering and the `nixos` module are
+   deleted, and VM scenarios that build a configuration boot it from the host's store.
 8. Server images and fetched updates, after their own decision.
 
 ## Rejected

@@ -1,4 +1,4 @@
-//! Building systems and moving between generations through the NixOS backend.
+//! Building systems and moving between generations.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -11,10 +11,6 @@ use distro_model::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source
 pub enum BuildTarget {
     /// The system, to switch to
     System,
-    /// The system with the test harness's agent, for VM scenarios
-    TestSystem,
-    /// A bootable disk image of the test system
-    TestImage,
     /// The test system for VMs that boot from the host's store
     TestVmSystem,
     /// A VM that boots the test system from the host's store, without a disk image
@@ -27,8 +23,6 @@ impl From<BuildTarget> for Target {
     fn from(target: BuildTarget) -> Self {
         match target {
             BuildTarget::System => Self::System,
-            BuildTarget::TestSystem => Self::TestSystem,
-            BuildTarget::TestImage => Self::TestImage,
             BuildTarget::TestVmSystem => Self::TestVmSystem,
             BuildTarget::TestVm => Self::TestVm,
             BuildTarget::TestInstalledSystem => Self::TestInstalledSystem,

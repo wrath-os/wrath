@@ -1,6 +1,0 @@
-error: expected `<flake>#<host>`, such as `/etc/nixos#laptop`, got `/etc/nixos`
- --> fixtures/bad-configs/nixos-extend-without-host/system.toml:5:10
-  |
-5 | extend = "/etc/nixos"
-  |          ^^^^^^^^^^^^ `nixos.extend` is set here
-  = reported by modules/nixos.star

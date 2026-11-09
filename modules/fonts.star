@@ -1,4 +1,4 @@
-# Fonts for a desktop on a system built without NixOS: fontconfig finds the system's fonts with
+# Fonts for a desktop: fontconfig finds the system's fonts with
 # its programs.
 
 FONTS_CONF = """<?xml version="1.0"?>
@@ -15,4 +15,4 @@ def render(ctx):
     ctx.package("dejavu_fonts")
     ctx.file("/etc/fonts/fonts.conf", FONTS_CONF)
 
-module(name = "fonts", options = {}, writes = [], render = render, base = True)
+module(name = "fonts", options = {}, writes = [], render = render)

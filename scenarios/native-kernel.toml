@@ -3,7 +3,6 @@ title = "a system picks its kernel, modules, settings, firmware and microcode"
 [vm]
 config = "scenarios/fixtures/native-kernel"
 store = "host"
-lowering = "native"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { run = "cat /sys/module/nbd/parameters/nbds_max; ip -o link | grep -c dummy; sysctl -n vm.swappiness; modprobe --showconfig | grep -c 'blacklist pcspkr'", stdout_contains = "2\n3\n7\n1" },

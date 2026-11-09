@@ -1,4 +1,4 @@
-//! Switching the running machine to a system built without NixOS: /etc, accounts, tmpfiles and
+//! Switching the running machine to a system: /etc, accounts, tmpfiles and
 //! units, as the plan between the two systems' models says. `plan` shows the same activation.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +15,7 @@ use distro_model::{Activation, Model};
 use crate::read_model;
 use crate::state::State;
 
-/// What a switch does, as NixOS's `switch-to-configuration` takes it.
+/// What a switch does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {
     /// Switch now and boot into it.

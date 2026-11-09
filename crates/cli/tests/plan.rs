@@ -57,27 +57,6 @@ fn modules_render_the_same_model_in_any_load_order() {
 }
 
 #[test]
-fn a_hybrid_system_names_its_nixos_configuration_and_modules() {
-    let plan = stdout(&distro(&[
-        "plan",
-        "--config",
-        "fixtures/configs/hybrid",
-        "--fresh",
-    ]));
-    let backends: Vec<_> = plan
-        .lines()
-        .skip_while(|line| *line != "backends")
-        .skip(1)
-        .take_while(|line| line.starts_with(' '))
-        .collect();
-
-    insta::assert_snapshot!(backends.join("\n"), @r#"
-    + nixos (tier: reboot)
-        { flake = "/etc/nixos", host = "box", modules = ["/etc/nixos/vm-stubs.nix"], replaces = ["ollama.service"] }
-    "#);
-}
-
-#[test]
 fn why_names_the_file_and_line() {
     let why = stdout(&distro(&[
         "why",
