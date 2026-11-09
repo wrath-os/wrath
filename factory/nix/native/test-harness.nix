@@ -19,7 +19,7 @@
       Description=distro test harness agent
 
       [Service]
-      Environment=PATH=/run/wrappers/bin:/run/current-system/sw/bin
+      Environment=PATH=/run/wrappers/bin:/run/current-system/sw/bin:${pkgs.curl}/bin
       ExecStart=${agent}/bin/distro-agent
       Restart=always
     '';

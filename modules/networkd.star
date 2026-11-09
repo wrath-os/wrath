@@ -11,6 +11,8 @@ def render(ctx):
         }))
     if dhcp or resolved or ctx.read("networking.networks"):
         ctx.enable("systemd-networkd.service")
+        ctx.enable("systemd-networkd-wait-online.service")
+        ctx.enable("network-online.target", wanted_by = "multi-user.target")
     if resolved:
         ctx.enable("systemd-resolved.service")
 
