@@ -1,0 +1,260 @@
+# A graphical session: the kernel's display and input devices as libraries, Wayland, keymaps,
+# seats, and the GPU drivers.
+
+[[package]]
+id = "libdrm"
+version = "2.4.134"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf"]
+sources = [{ url = "https://dri.freedesktop.org/libdrm/libdrm-{version}.tar.xz" }]
+script = '''
+# The kernel's display interface, with AMD's and Radeon's parts.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D amdgpu=enabled \
+    -D radeon=enabled -D intel=disabled -D nouveau=disabled -D vmwgfx=disabled \
+    -D valgrind=disabled -D man-pages=disabled -D tests=false -D cairo-tests=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["libdrm"]
+
+[[package]]
+id = "wayland"
+version = "1.26.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libffi", "expat", "libxml2"]
+sources = [{ url = "https://gitlab.freedesktop.org/wayland/wayland/-/releases/{version}/downloads/wayland-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D documentation=false \
+    -D tests=false -D dtd_validation=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/wayland-scanner --version"]
+probes = ["wayland-client"]
+
+[[package]]
+id = "wayland-protocols"
+version = "1.50"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "wayland"]
+sources = [{ url = "https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/{version}/downloads/wayland-protocols-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D tests=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+
+[[package]]
+id = "xkeyboard-config"
+version = "2.48"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "gettext", "perl"]
+sources = [{ url = "https://www.x.org/releases/individual/data/xkeyboard-config/xkeyboard-config-{version}.tar.xz" }]
+script = '''
+# Keyboard layouts, which libxkbcommon reads.
+meson setup /build/b --prefix=$PREFIX --buildtype=release
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+
+[[package]]
+id = "libxkbcommon"
+version = "1.13.2"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "bison-final", "xkeyboard-config", "libxml2"]
+sources = [{ url = "https://github.com/xkbcommon/libxkbcommon/archive/xkbcommon-{version}/libxkbcommon-xkbcommon-{version}.tar.gz" }]
+script = '''
+# Keymaps from keyboard layouts, read from xkeyboard-config where it is in the store.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
+    -D xkb-config-root=$LAB_DEP_xkeyboard_config/share/xkeyboard-config-2 \
+    -D x-locale-root=/run/system/share/X11/locale \
+    -D enable-x11=false -D enable-wayland=false -D enable-docs=false -D enable-tools=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["xkbcommon"]
+
+[[package]]
+id = "pixman"
+version = "0.46.4"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf"]
+sources = [{ url = "https://cairographics.org/releases/pixman-{version}.tar.gz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D tests=disabled \
+    -D demos=disabled -D gtk=disabled -D libpng=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["pixman-1"]
+
+[[package]]
+id = "libevdev"
+version = "1.14.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "python3"]
+sources = [{ url = "https://www.freedesktop.org/software/libevdev/libevdev-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D tests=disabled \
+    -D documentation=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["libevdev"]
+
+[[package]]
+id = "mtdev"
+version = "1.1.7"
+scope = "runtime"
+core = true
+sources = [{ url = "http://bitmath.org/code/mtdev/mtdev-{version}.tar.bz2" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+probes = ["mtdev"]
+
+[[package]]
+id = "libinput"
+version = "1.32.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libudev", "libevdev", "mtdev"]
+sources = [{ url = "https://gitlab.freedesktop.org/libinput/libinput/-/archive/{version}/libinput-{version}.tar.gz" }]
+script = '''
+# Keyboards, mice and touchpads, for the compositor.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D libwacom=false \
+    -D debug-gui=false -D tests=false -D documentation=false -D udev-dir=$PREFIX/lib/udev
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["libinput"]
+
+[[package]]
+id = "seatd"
+version = "0.9.1"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libudev", "systemd"]
+sources = [{ url = "https://git.sr.ht/~kennylevinsen/seatd/archive/{version}.tar.gz" }]
+script = '''
+# libseat, which the compositor opens displays and input devices through, with logind.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D libseat-logind=systemd \
+    -D server=disabled -D examples=disabled -D man-pages=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["libseat"]
+
+[[package]]
+id = "hwdata"
+version = "0.413"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/vcrhonek/hwdata/archive/v{version}/hwdata-{version}.tar.gz" }]
+script = '''
+# The names of hardware vendors and devices, which libdisplay-info reads monitors' makers from.
+./configure --prefix=$PREFIX --datadir=$PREFIX/share --disable-blacklist
+make install DESTDIR=$DEST
+'''
+
+[[package]]
+id = "libdisplay-info"
+version = "0.4.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "hwdata", "python3"]
+sources = [{ url = "https://gitlab.freedesktop.org/emersion/libdisplay-info/-/releases/{version}/downloads/libdisplay-info-{version}.tar.xz" }]
+script = '''
+# What a monitor says about itself.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["display-info"]
+
+[[package]]
+id = "mako"
+version = "1.3.10"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/m/mako/mako-{version}.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r mako $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "packaging"
+version = "25.0"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/p/packaging/packaging-{version}.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r src/packaging $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "pyyaml"
+version = "6.0.3"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/p/pyyaml/pyyaml-{version}.tar.gz" }]
+script = '''
+# Only its pure Python part, which is all the build tools that read YAML need.
+mkdir -p $DEST$PREFIX/site
+cp -r lib/yaml $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "glslang"
+version = "16.6.0"
+scope = "runtime"
+core = true
+extra_deps = ["cmake", "ninja", "python3"]
+sources = [{ url = "https://github.com/KhronosGroup/glslang/archive/{version}/glslang-{version}.tar.gz" }]
+script = '''
+# The GLSL compiler, which Mesa compiles its built-in Vulkan shaders with. Without the SPIR-V
+# optimizer, which nothing here uses.
+cmake -S . -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_BUILD_TYPE=Release -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DBUILD_SHARED_LIBS=ON
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/glslangValidator --version"]
+
+[[package]]
+id = "mesa"
+version = "26.3.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "mako", "markupsafe", "pyyaml", "packaging", "libdrm",
+  "wayland",
+  "wayland-protocols", "libffi", "expat", "zlib", "zstd", "elfutils", "libudev", "bison-final",
+  "flex", "m4-final",
+  "glslang",
+]
+sources = [{ url = "https://archive.mesa3d.org/mesa-{version}.tar.xz" }]
+script = '''
+# OpenGL and Vulkan for AMD GPUs: radeonsi and RADV, which compile shaders with ACO, so without
+# LLVM. EGL and GBM for Wayland compositors.
+export PYTHONPATH=$LAB_DEP_mako/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyyaml/site:$LAB_DEP_packaging/site
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
+    -D platforms=wayland -D gallium-drivers=radeonsi -D vulkan-drivers=amd -D llvm=disabled \
+    -D egl=enabled -D gbm=enabled -D gles2=enabled -D glx=disabled -D xlib-lease=disabled \
+    -D valgrind=disabled -D libunwind=disabled -D lmsensors=disabled -D video-codecs=all \
+    -D microsoft-clc=disabled -D amd-use-llvm=false -D build-tests=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["egl", "gbm"]

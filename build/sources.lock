@@ -1,4 +1,5 @@
 c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9  http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz
+91d729aa68bb89e4ec857841300bbe922bcb3e52b1f97566ca83930d3b28343a  https://archive.mesa3d.org/mesa-26.3.0.tar.xz
 c9cc77c7c560c543135edc555af609d5619dbef011997e988ce40a3d75d86088  https://astron.com/pub/file/file-5.46.tar.gz
 120575b756915a11e736f599316a756b6a29a76d6135ad86208868b21c58fb75  https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20250917.tar.xz
 ea43491bc7ace1e414b3b2d957f8cf96e7049155123f0acce798accf8da1acba  https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.1.tar.xz
@@ -16,10 +17,14 @@ cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243  https://distfi
 1b1203ca152ccd63983c3f2112f7fe6fa5afd453218ede5153d1b31e11bb8405  https://download.savannah.gnu.org/releases/libpipeline/libpipeline-1.5.8.tar.gz
 2f5164e64dd7d91eadd1e0e8a77d92c06dd7837bb19f1d9189ce1939b363d2b4  https://downloads.sourceforge.net/project/e2fsprogs/e2fsprogs/v1.47.3/e2fsprogs-1.47.3.tar.gz
 f11d3810d7f72833997f634584a586dcced71a353f965abf81062ec431d02b12  https://downloads.sourceforge.net/project/zd1211/zd1211-firmware/1.5/zd1211-firmware-1.5.tar.bz2
+ac5e74d157830eb8bee44c6a6bf3ad49774ef0dd2a72bdad74a8f20308b52a95  https://dri.freedesktop.org/libdrm/libdrm-2.4.134.tar.xz
 90f8d2fa8b5567c6899830ddef2c03f3c27960b11aca222fa17aa7ac613c2890  https://duktape.org/duktape-2.7.0.tar.xz
 0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d  https://files.pythonhosted.org/packages/source/j/jinja2/jinja2-3.1.6.tar.gz
+99579a6f39583fa7e5630a28c3c1f440e4e97a414b80372649c0ce338da2ea28  https://files.pythonhosted.org/packages/source/m/mako/mako-1.3.10.tar.gz
 ee55d3edf80167e48ea11a923c7386f4669df67d7994554387f84e7d8b0a2bf0  https://files.pythonhosted.org/packages/source/m/markupsafe/markupsafe-3.0.2.tar.gz
+d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f  https://files.pythonhosted.org/packages/source/p/packaging/packaging-25.0.tar.gz
 6de90ee7b8263e740c8715a925382d4099b354f29ac48ea40d840cf7aa14ace5  https://files.pythonhosted.org/packages/source/p/pyelftools/pyelftools-0.32.tar.gz
+d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f  https://files.pythonhosted.org/packages/source/p/pyyaml/pyyaml-6.0.3.tar.gz
 ba885c1319578d6c94d46e9b0dceb4014caafe2490e437a0dbca3f270a223f5a  https://ftp.gnu.org/gnu/autoconf/autoconf-2.72.tar.xz
 168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887  https://ftp.gnu.org/gnu/automake/automake-1.18.1.tar.xz
 0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba  https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
@@ -52,6 +57,7 @@ fe5383204467828cd495ee8d1d3c037a7eba1389c22bc6a041f627976f9061cc  https://ftp.gn
 4dad02a2f9c8c3c8d89434e47337aa654cb0e2aa50e806589132f186bf5c2b66  https://github.com/BurntSushi/ripgrep/archive/14.1.1/ripgrep-14.1.1.tar.gz
 d1f380bc2ebc931aaf663b8bb84fc06269a4d75b9c8c9b9ed8ad4b5417499437  https://github.com/F1bonacc1/process-compose/archive/v1.75.1/process-compose-1.75.1.tar.gz
 93bd89a16c74949ee7c69ef580d8e4cf5ce03e7d9c461b68cf1ace3e4017eef5  https://github.com/FiloSottile/age/archive/v1.2.1/age-1.2.1.tar.gz
+9c09b901149c729df745057dafa815278aaa101b84d2b6e14f16a42de52f97f2  https://github.com/KhronosGroup/glslang/archive/16.6.0/glslang-16.6.0.tar.gz
 1952b2a782ba576279c211ee942e341748fdb44997f704dd53def46cd055470b  https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0.tar.bz2
 21547f3516120c75597e5b30a992e27a592a31950b5140e7b8bfde3f192033c4  https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.45/pcre2-10.45.tar.bz2
 80304b9c306ea799327f01d9a7549bdb28317789182631f1b54f4511b4206dd6  https://github.com/besser82/libxcrypt/releases/download/v4.4.38/libxcrypt-4.4.38.tar.xz
@@ -76,6 +82,8 @@ f280278161446fe3838bedb970c7b3998043ad107f7627735a81483218c6f6f9  https://github
 9b7fe9f915744ca1448efeb88d7333b7a86df375a4623941d2e41880c51c0aec  https://github.com/tailscale/tailscale/archive/v1.86.2/tailscale-1.86.2.tar.gz
 0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e  https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz
 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
+4460c20cfcf68b994a5ee206ed15fc19ad312f16c96075186e83b0e3f4aa48a5  https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.50/downloads/wayland-protocols-1.50.tar.xz
+64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3  https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.26.0/downloads/wayland-1.26.0.tar.xz
 7716a0d940a0f6ae8e1f3b3f4f36299dc53e31b16840dbd171254312c41ca12e  https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
 d89a5e45c7180170e19be828f9e944a768c593758094fc57a358d0e7c4cb1a49  https://mirrors.edge.kernel.org/pub/linux/network/wireless/iwd-3.12.tar.xz
 b22e0901227b820cd1c280abe681a15b773a5103a5e10dc442e94ebb34cbf58d  https://mirrors.edge.kernel.org/pub/software/network/wireless-regdb/wireless-regdb-2026.09.03.tar.xz
