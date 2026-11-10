@@ -53,7 +53,7 @@ impl Fixture {
             log: self.dir.path().join("log"),
             env: BTreeMap::new(),
             limits: Limits {
-                total: Duration::from_secs(60),
+                total: None,
                 silence: Duration::from_secs(60),
             },
             links: Vec::new(),
@@ -232,7 +232,7 @@ fn a_failing_step_is_recorded_with_its_exit_code() {
 fn a_step_past_its_time_limit_is_stopped_with_everything_it_started() {
     let fixture = Fixture::new();
     let mut step = fixture.step("(sleep 3; touch /build/late) & echo running; sleep 100");
-    step.limits.total = Duration::from_secs(1);
+    step.limits.total = Some(Duration::from_secs(1));
     let started = Instant::now();
 
     let (outcome, _) = fixture.run(&step);

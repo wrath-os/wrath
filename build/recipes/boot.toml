@@ -115,7 +115,6 @@ smoke = ["bin/sudo --version"]
 id = "systemd"
 scope = "runtime"
 core = true
-toolchain_limits = true
 extra_deps = [
     "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap", "util-linux",
     "libxcrypt", "acl", "kmod", "xz", "lz4", "zstd", "openssl", "kbd", "gettext", "m4-final", "zlib",

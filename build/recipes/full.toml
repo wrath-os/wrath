@@ -6,7 +6,6 @@
 id = "coreutils"
 scope = "runtime"
 toolset = true
-toolchain_limits = true
 sources = [{ url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz" }]
 script = '''
 FORCE_UNSAFE_CONFIGURE=1 ./configure --prefix=$PREFIX --disable-nls --enable-no-install-program=kill,uptime
@@ -268,7 +267,6 @@ check = "make -j$NPROC check"
 id = "gettext"
 scope = "runtime"
 core = true
-toolchain_limits = true
 extra_deps = ["ncurses", "libxml2", "expat"]
 sources = [{ url = "https://ftp.gnu.org/gnu/gettext/gettext-0.26.tar.xz" }]
 script = '''
@@ -597,7 +595,6 @@ probes = ["kmod"]
 id = "util-linux"
 scope = "runtime"
 core = true
-toolchain_limits = true
 extra_deps = ["pkgconf", "ncurses", "zlib"]
 sources = [{ url = "https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-2.41.1.tar.xz" }]
 script = '''
@@ -698,7 +695,6 @@ check = "make -j$NPROC check"
 id = "glib"
 scope = "runtime"
 core = true
-toolchain_limits = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "zlib", "pcre2", "libffi", "util-linux", "gettext"]
 sources = [{ url = "https://download.gnome.org/sources/glib/2.84/glib-2.84.4.tar.xz" }]
 script = '''

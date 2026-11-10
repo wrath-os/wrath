@@ -213,8 +213,10 @@ pub(crate) struct Package {
     wrap: bool,
     #[serde(default = "yes")]
     fixup: bool,
+    /// How long the build may go without printing anything, such as `3h`, for one that works
+    /// quietly for longer than an hour.
     #[serde(default)]
-    toolchain_limits: bool,
+    silent_for: Option<String>,
     /// Commands to run from the final location, with paths relative to the package.
     #[serde(default)]
     pub(crate) smoke: Vec<String>,
@@ -385,7 +387,7 @@ impl Package {
             script,
             wrap: true,
             fixup: true,
-            toolchain_limits: false,
+            silent_for: None,
             smoke: vec!["bin/probe".to_owned()],
             probes: Vec::new(),
             check_build: None,
@@ -1272,10 +1274,12 @@ pub(crate) fn build_one(
     } else {
         Vec::new()
     };
-    let limits = if package.toolchain_limits {
-        Limits::TOOLCHAIN
-    } else {
-        Limits::DEFAULT
+    let limits = match &package.silent_for {
+        Some(text) => Limits {
+            silence: duration(text).map_err(|e| format!("`{}`: silent_for: {e}", package.id))?,
+            ..Limits::DEFAULT
+        },
+        None => Limits::DEFAULT,
     };
     let log = lab
         .work
@@ -1426,6 +1430,17 @@ pub fn run_alone(
     )?;
     let text = fs::read_to_string(&log).map_err(with_path(&log))?;
     Ok((outcome.status, text))
+}
+
+/// A duration written as a number and a unit: `90s`, `45m` or `3h`.
+fn duration(text: &str) -> Result<std::time::Duration, String> {
+    let invalid = || format!("`{text}` isn't a duration such as `45m` or `3h`");
+    let (number, seconds) = [("s", 1), ("m", 60), ("h", 60 * 60)]
+        .into_iter()
+        .find_map(|(unit, seconds)| Some((text.strip_suffix(unit)?, seconds)))
+        .ok_or_else(invalid)?;
+    let count: u64 = number.parse().map_err(|_| invalid())?;
+    Ok(std::time::Duration::from_secs(count * seconds))
 }
 
 #[cfg(test)]
@@ -1852,5 +1867,20 @@ mod variant_tests {
             .filter(|id| *id == "patch")
             .count();
         assert_eq!(count, 1, "patch is a dependency once");
+    }
+}
+
+#[cfg(test)]
+mod duration_tests {
+    use super::*;
+
+    #[test]
+    fn durations_are_a_number_and_a_unit() {
+        assert_eq!(duration("90s").unwrap().as_secs(), 90);
+        assert_eq!(duration("45m").unwrap().as_secs(), 45 * 60);
+        assert_eq!(duration("3h").unwrap().as_secs(), 3 * 60 * 60);
+        for bad in ["3", "h", "3d", "", "-1h", "3é"] {
+            assert!(duration(bad).is_err(), "{bad}");
+        }
     }
 }

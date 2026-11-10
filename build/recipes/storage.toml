@@ -62,7 +62,6 @@ probes = ["popt"]
 id = "libudev"
 scope = "runtime"
 core = true
-toolchain_limits = true
 extra_deps = [
     "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap", "util-linux",
     "libxcrypt", "m4-final",

@@ -120,7 +120,6 @@ check = "make -j$NPROC check"
 id = "perl"
 scope = "runtime"
 toolset = true
-toolchain_limits = true
 extra_deps = ["zlib", "bzip2"]
 sources = [{ url = "https://www.cpan.org/src/5.0/perl-5.42.0.tar.xz" }]
 script = '''
@@ -153,7 +152,6 @@ diff /build/waived /build/failed
 id = "openssl"
 scope = "runtime"
 toolset = true
-toolchain_limits = true
 extra_deps = ["perl", "zlib"]
 sources = [{ url = "https://github.com/openssl/openssl/releases/download/openssl-3.5.2/openssl-3.5.2.tar.gz" }]
 script = '''
@@ -183,7 +181,6 @@ probes = ["ffi"]
 id = "python3"
 scope = "runtime"
 toolset = true
-toolchain_limits = true
 extra_deps = ["libffi", "zlib", "bzip2", "xz", "expat", "openssl", "ncurses", "readline"]
 sources = [{ url = "https://www.python.org/ftp/python/3.13.7/Python-3.13.7.tar.xz" }]
 script = '''
@@ -218,7 +215,6 @@ check = "make -j$NPROC check"
 id = "cmake"
 scope = "runtime"
 toolset = true
-toolchain_limits = true
 sources = [{ url = "https://cmake.org/files/v4.1/cmake-4.1.0.tar.gz" }]
 script = '''
 ./bootstrap --prefix=$PREFIX --parallel=$NPROC --no-qt-gui -- -DCMAKE_USE_OPENSSL=OFF

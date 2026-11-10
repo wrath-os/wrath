@@ -29,21 +29,19 @@ pub struct View {
     pub mount: Mount,
 }
 
-/// How long a step may take, and how long it may go without printing anything.
+/// How long a step may take, when there's a limit at all, and how long it may go without
+/// printing anything, which is how a step that hangs is told from one that takes a while.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
-    pub total: Duration,
+    pub total: Option<Duration>,
     pub silence: Duration,
 }
 
 impl Limits {
+    /// No limit on time, and an hour without output.
     pub const DEFAULT: Self = Self {
-        total: Duration::from_secs(30 * 60),
-        silence: Duration::from_secs(15 * 60),
-    };
-    pub const TOOLCHAIN: Self = Self {
-        total: Duration::from_secs(3 * 60 * 60),
-        silence: Duration::from_secs(15 * 60),
+        total: None,
+        silence: Duration::from_secs(60 * 60),
     };
 }
 
@@ -308,7 +306,11 @@ pub fn run(lab: &Lab, step: &Step) -> Result<Outcome, String> {
             };
             break (status, exit.code());
         }
-        let stopped = if start.elapsed() > step.limits.total {
+        let stopped = if step
+            .limits
+            .total
+            .is_some_and(|total| start.elapsed() > total)
+        {
             Some(Status::Timeout)
         } else if last_output.lock().unwrap().elapsed() > step.limits.silence {
             Some(Status::Silent)
