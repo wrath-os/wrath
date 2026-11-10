@@ -279,7 +279,12 @@ pub fn run(lab: &Lab, step: &Step) -> Result<Outcome, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("cannot run bwrap: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "cannot run bwrap: {e}; builds run in a sandbox that bubblewrap makes, so it \
+                 needs to be installed"
+            )
+        })?;
     let last_output = Arc::new(Mutex::new(Instant::now()));
     let pumps = [
         pump(

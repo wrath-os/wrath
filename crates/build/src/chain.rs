@@ -1110,13 +1110,11 @@ pub(crate) fn build_one(
     let done = done_dir.join(out.hash());
     if done.exists() {
         if !content_addressed(package, arm) {
-            eprintln!("  have   {}", package.id);
             return Ok(None);
         }
         let address = fs::read_to_string(&done).map_err(with_path(&done))?;
         // An empty record means the build stopped before the package was moved.
         if !address.is_empty() {
-            eprintln!("  have   {}", package.id);
             remember_outputs(built, package, arm, &address);
             return Ok(None);
         }
