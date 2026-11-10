@@ -807,17 +807,23 @@ fn locked_sources(
     };
     let mut locked = Vec::new();
     if let Some(lock) = &package.crates {
-        locked.extend(
-            crate::cargo::crates(&read(lock)?)?
-                .into_iter()
-                .map(|c| Source {
-                    url: c.url(),
-                    into: Some(format!("vendor/{}-{}", c.name, c.version)),
-                    include: Vec::new(),
-                    sha256: Some(c.checksum),
-                    file: false,
-                }),
-        );
+        let text = read(lock)?;
+        locked.extend(crate::cargo::crates(&text)?.into_iter().map(|c| Source {
+            url: c.url(),
+            into: Some(format!("vendor/{}-{}", c.name, c.version)),
+            include: Vec::new(),
+            sha256: Some(c.checksum),
+            file: false,
+        }));
+        for repository in crate::cargo::git_repositories(&text)? {
+            locked.push(Source {
+                url: repository.archive()?,
+                into: Some(repository.dir()),
+                include: Vec::new(),
+                sha256: None,
+                file: false,
+            });
+        }
     }
     if let Some(lock) = &package.go {
         locked.extend(
@@ -1743,6 +1749,29 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
                 false,
             )]
         );
+    }
+
+    #[test]
+    fn a_recipe_takes_each_git_repository_of_the_cargo_lock_under_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = format!(
+            "{LOCK}\n[[package]]\nname = \"smithay\"\nversion = \"0.7.0\"\n\
+             source = \"git+https://github.com/Smithay/smithay.git?rev=ff5f#ff5f\"\n"
+        );
+        let archive = archive(dir.path(), &[("Cargo.lock", &lock)]);
+        let locked = locked_sources(
+            &package("crates = \"Cargo.lock\"\n"),
+            dir.path(),
+            Some(&archive),
+        )
+        .unwrap();
+        let git = &locked[1];
+        assert_eq!(
+            git.url,
+            "https://github.com/Smithay/smithay/archive/ff5f.tar.gz"
+        );
+        assert_eq!(git.into.as_deref(), Some("git/smithay"));
+        assert_eq!(git.sha256, None);
     }
 
     #[test]
