@@ -192,6 +192,8 @@ struct Declared {
     options: Vec<(OptionPath, OptionSpec)>,
     writes: Vec<OptionPath>,
     configurations: Vec<ConfigKind>,
+    /// The `enable` option that turns the module on, when it has one.
+    switch: Option<OptionPath>,
 }
 
 /// The evaluator's `extra` while a module file loads.
@@ -374,6 +376,7 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] writes: StarValue<'v>,
         #[starlark(require = named)] render: StarValue<'v>,
         #[starlark(require = named)] configurations: Option<StarValue<'v>>,
+        #[starlark(require = named)] enable: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let every_user = OptionPath::root().child("users").child(EVERY);
@@ -390,12 +393,13 @@ fn std_globals(builder: &mut GlobalsBuilder) {
                     });
                 Ok((path, spec_of(spec)?))
             });
-        let mut declared_options = options
+        let mut options = options
             .into_iter()
             .map(|(path, spec)| Ok((parse(&path)?, spec_of(spec)?)))
-            .chain(user_options)
             .collect::<anyhow::Result<Vec<_>>>()?;
-        declared_options.sort_by(|a, b| a.0.cmp(&b.0));
+        let switch = enable.map(|on| add_switch(&mut options, on)).transpose()?;
+        options.extend(user_options.collect::<anyhow::Result<Vec<_>>>()?);
+        options.sort_by(|a, b| a.0.cmp(&b.0));
         let writes = strings(writes)?
             .iter()
             .map(|path| OptionPath::parse(path))
@@ -431,15 +435,43 @@ fn std_globals(builder: &mut GlobalsBuilder) {
             }
             *loading.0.borrow_mut() = Some(Declared {
                 name: name.to_owned(),
-                options: declared_options,
+                options,
                 writes,
                 configurations,
+                switch,
             });
         }
         eval.module().set(RENDER, render);
         Ok(NoneType)
     }
 }
+
+/// Adds `enable`, defaulting to `on`, to the module's one table of options, and returns its path.
+fn add_switch(options: &mut [(OptionPath, OptionSpec)], on: bool) -> anyhow::Result<OptionPath> {
+    let [
+        (
+            path,
+            OptionSpec {
+                ty: Type::Record(record),
+                ..
+            },
+        ),
+    ] = options
+    else {
+        anyhow::bail!("`enable` turns on a module with one table of options");
+    };
+    if record.fields.contains_key(ENABLE) {
+        anyhow::bail!("`enable = ...` adds the option, and the module declares `enable` itself");
+    }
+    let switch = OptionSpec::new(Type::Bool)
+        .default(Value::Bool(on))
+        .doc("Whether it's on.");
+    record.fields.insert(ENABLE.to_owned(), switch);
+    Ok(path.child(ENABLE))
+}
+
+/// The option that turns a module on.
+const ENABLE: &str = "enable";
 
 #[starlark_module]
 fn types_functions(builder: &mut GlobalsBuilder) {
@@ -1079,6 +1111,16 @@ impl Module for StarlarkModule {
     }
 
     fn render(&self, config: &mut dyn ConfigReader) -> Result<Output, RenderError> {
+        if let Some(switch) = &self.declared.switch {
+            match config.read(switch, None) {
+                Ok(Some(Value::Bool(false))) => return Ok(Output::default()),
+                Ok(_) => {}
+                Err(ReadError::Failed) => return Err(RenderError::Failed),
+                Err(ReadError::Invalid(message)) => {
+                    return Err(RenderError::Error(Diagnostic::error(message)));
+                }
+            }
+        }
         let rendering = Rendering {
             config: RefCell::new(config),
             output: RefCell::new(Output::default()),

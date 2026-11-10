@@ -1523,3 +1523,99 @@ fn lines_join_with_a_newline_after_each() {
     assert_eq!(text("/etc/a"), "one\ntwo\n");
     assert_eq!(text("/etc/b"), "");
 }
+
+/// Evaluates the module `source` against a system configuration `toml`.
+fn evaluate_module(source: &str, toml: &str) -> Result<Evaluation, String> {
+    let mut sources = Sources::default();
+    let module = load(
+        &mut sources,
+        "m.star",
+        source.to_owned(),
+        &repo().join("modules"),
+    )
+    .map_err(|e| distro_eval::render(&[e], &sources))?;
+    let config = format!("[system]\nhostname = \"box\"\n{toml}");
+    evaluate(Input {
+        sources,
+        config: &MemFs::new([("system.toml", config.as_str())]),
+        kind: ConfigKind::System,
+        user: None,
+        role: None,
+        schema: base_schema(),
+        modules: &[module],
+    })
+    .map_err(|e| e.to_string())
+}
+
+const SWITCHED: &str = "\
+def render(ctx):
+    ctx.file(\"/etc/app\", \"port %d\\n\" % ctx.read(\"services.app.port\"))
+module(
+    name = \"app\",
+    options = {\"services.app\": types.record(port = option(types.port, default = 80))},
+    enable = ENABLED,
+    writes = [],
+    render = render,
+)
+";
+
+#[test]
+fn a_module_that_can_be_turned_off_renders_only_when_it_is_on() {
+    let off_by_default = SWITCHED.replace("ENABLED", "False");
+    let files = |source: &str, toml: &str| {
+        let evaluation = evaluate_module(source, toml).unwrap();
+        output_of(&evaluation, "app")
+            .files
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        files(&off_by_default, "").is_empty(),
+        "off unless turned on"
+    );
+    assert_eq!(
+        files(&off_by_default, "[services.app]\nenable = true\n"),
+        ["/etc/app"]
+    );
+    let on_by_default = SWITCHED.replace("ENABLED", "True");
+    assert_eq!(files(&on_by_default, ""), ["/etc/app"]);
+    assert!(files(&on_by_default, "[services.app]\nenable = false\n").is_empty());
+
+    let declared = declared(&off_by_default);
+    let Type::Record(record) = &declared["services.app"].ty else {
+        panic!("a record")
+    };
+    assert_eq!(
+        record.fields["enable"].default,
+        Some(distro_eval::Value::Bool(false))
+    );
+}
+
+#[test]
+fn a_switch_needs_one_table_of_options_without_its_own() {
+    let two = "module(name = \"m\", options = {\"a\": types.record(), \"b\": types.record()}, \
+               enable = False, writes = [], render = lambda ctx: None)";
+    let mut sources = Sources::default();
+    let error = load(
+        &mut sources,
+        "m.star",
+        two.to_owned(),
+        &repo().join("modules"),
+    )
+    .map(|_| ())
+    .unwrap_err();
+    let text = distro_eval::render(&[error], &sources);
+    assert!(text.contains("one table of options"), "{text}");
+
+    let own = SWITCHED.replace("ENABLED", "False").replace(
+        "port = option",
+        "enable = option(types.bool), port = option",
+    );
+    let mut sources = Sources::default();
+    let error = load(&mut sources, "m.star", own, &repo().join("modules"))
+        .map(|_| ())
+        .unwrap_err();
+    let text = distro_eval::render(&[error], &sources);
+    assert!(text.contains("declares `enable` itself"), "{text}");
+}

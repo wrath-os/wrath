@@ -2,8 +2,6 @@
 
 def render(ctx):
     firewall = ctx.read("networking.firewall")
-    if not firewall["enable"]:
-        return
     rules = [
         "table inet filter {",
         "  chain input {",
@@ -36,7 +34,6 @@ module(
     name = "firewall",
     options = {
         "networking.firewall": types.record(
-            enable = option(types.bool, default = True),
             allowed_tcp_ports = option(types.set(types.port)),
             allowed_udp_ports = option(types.set(types.port)),
             trusted_interfaces = option(
@@ -46,5 +43,6 @@ module(
         ),
     },
     writes = [],
+    enable = True,
     render = render,
 )

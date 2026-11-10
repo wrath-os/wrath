@@ -24,8 +24,6 @@ GPU_DEVICES = [
 
 def render(ctx):
     cfg = ctx.read("services.ollama")
-    if not cfg["enable"]:
-        return
     ctx.package(PACKAGES[cfg["acceleration"]])
 
     environment = {
@@ -86,7 +84,6 @@ module(
     name = "ollama",
     options = {
         "services.ollama": types.record(
-            enable = option(types.bool, default = False),
             acceleration = option(
                 types.one_of(PACKAGES.keys()),
                 default = "auto",
@@ -104,5 +101,6 @@ module(
         ),
     },
     writes = ["networking.firewall.allowed_tcp_ports"],
+    enable = False,
     render = render,
 )

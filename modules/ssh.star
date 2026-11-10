@@ -8,8 +8,6 @@ CONFIG = "/etc/ssh/sshd_config"
 
 def render(ctx):
     cfg = ctx.read("services.ssh")
-    if not cfg["enable"]:
-        return
     for user, u in ctx.read("users").items():
         if u["authorized_keys"]:
             ctx.file("/etc/ssh/authorized_keys.d/" + user, lines(u["authorized_keys"]))
@@ -48,7 +46,6 @@ module(
     name = "ssh",
     options = {
         "services.ssh": types.record(
-            enable = option(types.bool, default = False),
             port = option(types.port, default = 22),
             password_authentication = option(
                 types.bool,
@@ -65,5 +62,6 @@ module(
         ),
     },
     writes = ["security.pam.services.sshd", "networking.firewall.allowed_tcp_ports"],
+    enable = False,
     render = render,
 )

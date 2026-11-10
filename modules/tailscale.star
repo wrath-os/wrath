@@ -3,8 +3,6 @@
 
 def render(ctx):
     cfg = ctx.read("services.tailscale")
-    if not cfg["enable"]:
-        return
     interface = cfg["interface"]
     ctx.package("tailscale")
     # The agent checks kernel modules and lists processes.
@@ -55,7 +53,6 @@ module(
     name = "tailscale",
     options = {
         "services.tailscale": types.record(
-            enable = option(types.bool, default = False),
             interface = option(types.str, default = "tailscale0"),
             port = option(types.port, default = 41641, doc = "UDP port for direct connections."),
             open_firewall = option(types.bool, default = False, doc = "Open the UDP port."),
@@ -68,5 +65,6 @@ module(
         ),
     },
     writes = ["networking.firewall.allowed_udp_ports", "networking.firewall.trusted_interfaces"],
+    enable = False,
     render = render,
 )

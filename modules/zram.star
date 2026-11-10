@@ -2,8 +2,6 @@
 
 def render(ctx):
     zram = ctx.read("zram")
-    if not zram["enable"]:
-        return
     ctx.service_package("zram-generator")
     ctx.file("/etc/modules-load.d/zram.conf", "zram\n")
     ctx.file("/etc/systemd/zram-generator.conf", formats.systemd({
@@ -14,7 +12,6 @@ module(
     name = "zram",
     options = {
         "zram": types.record(
-            enable = option(types.bool, default = False),
             size = option(
                 types.str,
                 default = "ram / 2",
@@ -24,5 +21,6 @@ module(
         ),
     },
     writes = [],
+    enable = False,
     render = render,
 )
