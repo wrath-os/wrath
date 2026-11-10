@@ -9,6 +9,12 @@ user = types.record(
     group = option(types.str, default = "users", account = True),
     extra_groups = option(types.set(types.str), default = [], account = True),
     home = option(types.path, optional = True, account = True),
+    initial_hashed_password = option(
+        types.str,
+        optional = True,
+        account = True,
+        doc = "The password hash a new account starts with. `passwd` on the machine replaces it.",
+    ),
     shell = option(
         types.str,
         optional = True,
@@ -36,7 +42,7 @@ def render(ctx):
             "system": u["system"],
             "linger": u["linger"],
         }
-        for key in ["uid", "shell"]:
+        for key in ["uid", "shell", "initial_hashed_password"]:
             if key in u:
                 record[key] = u[key]
         users[name] = record

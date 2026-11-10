@@ -75,7 +75,10 @@ let
       name: gid: "${name}:x:${toString gid}:${lib.concatStringsSep "," (members name)}"
     ) gids
   );
-  shadow = lib.concatLines (map (name: "${name}:!:1::::::") ([ "root" ] ++ names));
+  shadow = lib.concatLines (
+    map (name: "${name}:${users.${name}.initial_hashed_password or "!"}:1::::::") names
+    ++ [ "root:!:1::::::" ]
+  );
   # People's home directories, made when missing, as tmpfiles takes them.
   homes = lib.concatLines (
     map (name: "d ${users.${name}.home} 0700 ${name} ${users.${name}.group} -") (

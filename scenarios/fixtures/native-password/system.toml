@@ -1,0 +1,6 @@
+[system]
+hostname = "native-password"
+
+[users.demo]
+initial_hashed_password = '$6$usrviewtest$lznQtfeGuvyRFdMEqskIFTTDmMnQNb/ECA5pDQf2oZ6K8HEuc9akWa0uPcvPi1ZcRwM85wBzGdCEAsUj3BnFQ/'
+extra_groups = ["wheel"]

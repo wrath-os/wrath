@@ -447,3 +447,13 @@ fn moving_a_value_to_another_file_keeps_the_model_and_changes_only_the_record() 
     assert!(at(&cited_before).contains("services/one.toml"));
     assert!(at(&cited_after).contains("services/two.toml"));
 }
+
+#[test]
+fn a_new_users_password_hash_reaches_the_model() {
+    let output = distro(&["-C", "scenarios/fixtures/native-password", "dev", "model"]);
+    let model: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let hash = model["base"]["users"]["demo"]["initial_hashed_password"]
+        .as_str()
+        .unwrap();
+    assert!(hash.starts_with("$6$usrviewtest$"), "{hash}");
+}
