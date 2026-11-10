@@ -2,7 +2,7 @@ title = "files written from settings restart what reads them, and udev rules joi
 
 [vm]
 config = "fixtures/configs/native"
-store = "host"
+store = "distro"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { apply_config = "scenarios/fixtures/native-files", expect_plan = ["+ /etc/app.toml", "+ app.service"] },
