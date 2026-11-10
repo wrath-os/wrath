@@ -245,7 +245,9 @@ pub(crate) fn prepare(
         ));
     }
     if uses.contains(&name) && !available.contains(&name) {
-        eprintln!("note: this machine has no name, so it keeps the hostname the network gives it");
+        crate::style::note(
+            "this machine has no name, so it keeps the hostname the network gives it",
+        );
     }
     Ok((given != recorded).then(|| Record {
         file: file.to_path_buf(),

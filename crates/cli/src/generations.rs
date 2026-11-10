@@ -175,7 +175,7 @@ pub fn apply(
     let running = here::running_model().and_then(|path| crate::read_model(&path).ok());
     let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
     match &running {
-        Some(_) => print!("{plan}"),
+        Some(_) => crate::print_plan(&plan),
         None => println!(
             "distro didn't build the running system, so all of it is new: {}",
             plan.summary(5)
@@ -596,7 +596,7 @@ pub fn lock(
         if let Some(role) = role {
             println!("role {role}");
         }
-        print!("{plan}");
+        crate::print_plan(&plan);
     }
     Ok(ExitCode::SUCCESS)
 }

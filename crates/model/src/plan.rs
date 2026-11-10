@@ -205,24 +205,67 @@ impl Plan {
 
 impl fmt::Display for Plan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write(f, false)
+    }
+}
+
+impl Plan {
+    /// The plan as text, with color for a terminal when `color` says so: what's added, removed
+    /// and changed in green, red and yellow, details dimmed, and tiers that need more than a
+    /// switch stand out.
+    pub fn styled(&self, color: bool) -> String {
+        let mut out = String::new();
+        self.write(&mut out, color)
+            .expect("writing to a String doesn't fail");
+        out
+    }
+
+    fn write(&self, f: &mut impl fmt::Write, color: bool) -> fmt::Result {
+        let paint = |codes: &str, text: &str| {
+            if color {
+                format!("\x1b[{codes}m{text}\x1b[0m")
+            } else {
+                text.to_owned()
+            }
+        };
+        let tier = |tier: Tier| {
+            let codes = match tier {
+                Tier::Live => "2",
+                Tier::NextLogin | Tier::SoftReboot => "1;33",
+                Tier::Reboot => "1;31",
+            };
+            paint(codes, &tier.to_string())
+        };
         if self.is_empty() {
             return writeln!(f, "no changes");
         }
         let mut count = 0;
         for (heading, changes) in self.sections().filter(|(_, changes)| !changes.is_empty()) {
-            writeln!(f, "{heading}")?;
+            writeln!(f, "{}", paint("1", heading))?;
             for change in changes {
                 count += 1;
-                write!(f, "  {} {}", change.kind.sign(), change.name)?;
-                if let Some(tier) = change.tier {
-                    write!(f, " (tier: {tier})")?;
+                let kind = match change.kind {
+                    ChangeKind::Added => "32",
+                    ChangeKind::Removed => "31",
+                    ChangeKind::Changed => "33",
+                };
+                let line = format!("{} {}", change.kind.sign(), change.name);
+                write!(f, "  {}", paint(kind, &line))?;
+                if let Some(at) = change.tier {
+                    write!(
+                        f,
+                        "{}{}{}",
+                        paint("2", " (tier: "),
+                        tier(at),
+                        paint("2", ")")
+                    )?;
                 }
                 match change.details.as_slice() {
                     [detail] if change.tier.is_none() => writeln!(f, ": {detail}")?,
                     details => {
                         writeln!(f)?;
                         for detail in details {
-                            writeln!(f, "      {detail}")?;
+                            writeln!(f, "      {}", paint("2", detail))?;
                         }
                     }
                 }
@@ -230,7 +273,7 @@ impl fmt::Display for Plan {
         }
         let noun = if count == 1 { "change" } else { "changes" };
         match self.tier() {
-            Some(tier) => writeln!(f, "{count} {noun}, tier: {tier}"),
+            Some(at) => writeln!(f, "{count} {noun}, tier: {}", tier(at)),
             None => writeln!(f, "{count} {noun}, nothing to apply"),
         }
     }

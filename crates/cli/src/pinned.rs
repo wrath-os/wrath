@@ -39,7 +39,7 @@ pub fn for_lock(running: Option<Source>, current: Option<&Source>, moving: bool)
     }
     let Some(running) = running else {
         if moving && keep.is_some() {
-            eprintln!("note: this distro is a development build, so the lock keeps its distro");
+            crate::style::note("this distro is a development build, so the lock keeps its distro");
         }
         return keep;
     };
@@ -60,13 +60,13 @@ fn note(lock: Option<&Lock>, running: Option<&Source>) -> Option<String> {
     match running {
         Some(running) if running.hash == pinned.hash => None,
         Some(running) => Some(format!(
-            "note: the lock pins {}, and this is {}; running another distro needs a builder, \
+            "the lock pins {}, and this is {}; running another distro needs a builder, \
              so this one goes on, and `distro update distro` pins it",
             describe(pinned),
             describe(running)
         )),
         None => Some(format!(
-            "note: this distro is a development build; the lock pins {}",
+            "this distro is a development build; the lock pins {}",
             describe(pinned)
         )),
     }
@@ -83,7 +83,7 @@ fn describe(source: &Source) -> String {
 /// Says on stderr when the distro `lock` pins isn't the one running.
 pub fn warn_if_other(root: &Path, lock: Option<&Lock>) {
     if let Some(note) = note(lock, running(root).as_ref()) {
-        eprintln!("{note}");
+        crate::style::note(&note);
     }
 }
 
@@ -161,7 +161,7 @@ mod tests {
         );
         assert_eq!(
             note(Some(&lock), None).unwrap(),
-            "note: this distro is a development build; the lock pins distro old"
+            "this distro is a development build; the lock pins distro old"
         );
         let unlocked = lock_with(Source::follow("git+https://x/distro"));
         assert_eq!(note(Some(&unlocked), Some(&at("new", ""))), None);

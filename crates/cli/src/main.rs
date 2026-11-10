@@ -28,6 +28,7 @@ mod run;
 mod schema;
 mod secret;
 mod state;
+mod style;
 mod switching;
 mod system;
 mod templates;
@@ -335,7 +336,7 @@ fn main() -> ExitCode {
             Command::Plan { .. } | Command::Status | Command::History | Command::Sources
         )
     {
-        eprintln!("error: --json works with plan, status, history and sources so far");
+        style::error("--json works with plan, status, history and sources so far");
         return ExitCode::FAILURE;
     }
     // A distro told where its files are is being developed, and runs as it is.
@@ -348,7 +349,7 @@ fn main() -> ExitCode {
         match read_lock(&config) {
             Ok(lock) => pinned::warn_if_other(&root, lock.as_ref()),
             Err(message) => {
-                eprintln!("error: {message}");
+                style::error(&message);
                 return ExitCode::FAILURE;
             }
         }
@@ -528,7 +529,7 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => code,
         Err(message) => {
-            eprintln!("error: {message}");
+            style::error(&message);
             ExitCode::FAILURE
         }
     }
@@ -558,7 +559,7 @@ fn machine_role(config: &Path) -> Option<String> {
         Ok([]) | Err(_) => return None,
     }
     let given = machine::Given::read(Path::new(machine::MACHINE_FILE))
-        .inspect_err(|message| eprintln!("warning: {message}"))
+        .inspect_err(|message| style::warning(message))
         .unwrap_or_default();
     let listed = machine::name(&given).and_then(|name| machine::listed(config, &name));
     let role = machine::role(&given, listed.as_ref())?;
@@ -903,7 +904,7 @@ fn evaluate(config: &Path, modules: &Path) -> Option<Evaluation> {
 
 fn evaluate_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Evaluation> {
     system::evaluate_dir(config, modules, system::ModuleOrder::Sorted, role)
-        .inspect_err(|errors| eprint!("{}", ending_a_line(errors)))
+        .inspect_err(|errors| style::print_report(&ending_a_line(errors)))
         .ok()
 }
 
@@ -938,7 +939,7 @@ fn with_lock(config: &Path, model: Model) -> Option<Model> {
         Ok(Some(lock)) => model.with_lock(&lock),
         Ok(None) => model,
         Err(message) => {
-            eprintln!("error: {message}");
+            style::error(&message);
             return None;
         }
     };
@@ -982,7 +983,7 @@ fn lock(
 ) -> Result<ExitCode, String> {
     if is_project(config) && project::has_local(config) {
         let shared = system::evaluate_shared(config, modules)
-            .inspect_err(|errors| eprint!("{}", ending_a_line(errors)))
+            .inspect_err(|errors| style::print_report(&ending_a_line(errors)))
             .ok()
             .and_then(|evaluation| with_lock(config, Model::from_evaluation(&evaluation)));
         let (Some(shared), Some(mut model)) = (shared, model(config, modules)) else {
@@ -1055,7 +1056,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
     if let Some(compared) = compared {
         println!("against {compared} (model {})", &before.hash()[..16]);
     }
-    print!("{plan}");
+    crate::print_plan(&plan);
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1168,6 +1169,11 @@ fn on_host(
         return Ok(ExitCode::FAILURE);
     };
     host::apply(root, &config, model, &host::Remote::new(host)?, how, yes)
+}
+
+/// Prints `plan`, in color on a terminal.
+pub(crate) fn print_plan(plan: &distro_model::Plan) {
+    print!("{}", plan.styled(style::stdout()));
 }
 
 /// Prints `value` as JSON, for `--json`.

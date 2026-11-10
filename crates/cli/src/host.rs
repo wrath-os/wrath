@@ -185,7 +185,7 @@ pub fn apply(
     }
     let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
     if running.is_some() {
-        print!("{plan}");
+        crate::print_plan(&plan);
     } else {
         println!(
             "distro didn't build what {} runs, so all of it is new: {}",

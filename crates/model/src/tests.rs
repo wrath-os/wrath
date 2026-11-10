@@ -851,3 +851,30 @@ fn a_kernel_change_takes_a_reboot() {
     let plan = plan(&with_kernel("linux"), &with_kernel("linux-latest"));
     assert_eq!(plan.tier(), Some(crate::Tier::Reboot));
 }
+
+#[test]
+fn a_plan_for_a_terminal_is_the_same_text_with_color() {
+    let mut after = Model::default();
+    after.packages.insert("htop".into());
+    after
+        .base
+        .insert("kernel".into(), Value::Str("linux-latest".into()));
+    let plan = plan(&Model::default(), &after);
+    let colored = plan.styled(true);
+    assert!(colored.contains("\x1b[32m+ htop\x1b[0m"), "{colored:?}");
+    assert!(colored.contains("\x1b[1;31mreboot\x1b[0m"), "{colored:?}");
+    let plain: String = {
+        let mut text = String::new();
+        let mut chars = colored.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                chars.by_ref().find(|c| *c == 'm');
+            } else {
+                text.push(c);
+            }
+        }
+        text
+    };
+    assert_eq!(plain, plan.to_string(), "color is all that changes");
+    assert!(!plan.styled(false).contains('\x1b'));
+}

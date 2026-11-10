@@ -325,7 +325,7 @@ fn keep(path: &Path, link: &Path) {
             _ => std::os::unix::fs::symlink(path, link),
         });
     if let Err(message) = kept {
-        eprintln!("warning: cannot link {}: {message}", link.display());
+        crate::style::warning(&format!("cannot link {}: {message}", link.display()));
     }
 }
 
