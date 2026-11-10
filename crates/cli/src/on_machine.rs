@@ -53,7 +53,7 @@ pub fn apply(system: &Path) -> Result<(), String> {
     if let Some(state) = State::of(&crate::activate::model_of(system)?) {
         state.keep_homes(system);
     }
-    link_homes(&sw, &activation);
+    link_homes(system, &activation);
     Ok(())
 }
 
@@ -216,21 +216,33 @@ fn set_hostname() {
     }
 }
 
-fn link_homes(sw: &Path, activation: &Value) {
-    let bash = activation["bash"].as_str().unwrap_or("bash");
+/// Links each home's files from `system` into the home, through the running system.
+fn link_homes(system: &Path, activation: &Value) {
+    let users = crate::activate::ids(Path::new("/etc/passwd"));
+    let groups = crate::activate::ids(Path::new("/etc/group"));
     for home in items(&activation["homes"]) {
         let name = text(home, "name");
-        run(
-            Command::new(bash)
-                .arg(text(activation, "link_home"))
-                .args([
-                    name,
-                    text(home, "group"),
-                    text(home, "home"),
-                    text(home, "links"),
-                ])
-                .env("PATH", sw),
-            &format!("linking {name}'s files"),
-        );
+        let owner = users.get(name).zip(groups.get(text(home, "group")));
+        let source = system.join("users").join(name).join("files");
+        let through = Path::new("/")
+            .join(crate::activate::RUNNING)
+            .join("users")
+            .join(name)
+            .join("files");
+        let files = crate::homes::Files {
+            user: name,
+            home: Path::new(text(home, "home")),
+            owner: owner.map(|(uid, gid)| (*uid, *gid)),
+            source: &source,
+            through: &through,
+        };
+        let record = Path::new(HOME_RECORDS).join(name);
+        match crate::homes::link(Path::new("/"), &files, &record) {
+            Ok(notes) => notes.iter().for_each(|note| eprintln!("distro: {note}")),
+            Err(e) => eprintln!("distro: linking {name}'s files failed: {e}"),
+        }
     }
 }
+
+/// Where distro keeps the list of what it linked into each home.
+const HOME_RECORDS: &str = "/var/lib/distro/homes";

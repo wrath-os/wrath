@@ -1,0 +1,7 @@
+packages = ["jq"]
+
+[files."~/.config/app/config"]
+text = "greeting = hello\n"
+
+[services.sleeper]
+command = ["sleep", "infinity"]

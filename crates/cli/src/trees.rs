@@ -59,7 +59,7 @@ fn collect(top: &Path, relative: &Path, paths: &mut Vec<PathBuf>) -> Result<(), 
 }
 
 /// An I/O error, saying which path it happened at.
-fn at(path: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
+pub(crate) fn at(path: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
     move |e| format!("{}: {e}", path.display())
 }
 

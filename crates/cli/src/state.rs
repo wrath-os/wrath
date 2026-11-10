@@ -82,7 +82,7 @@ fn mounted() -> BTreeSet<PathBuf> {
 }
 
 /// Makes `dir` and the directories above it down from `from`, giving new ones `owner`.
-fn make_dirs(from: &Path, dir: &Path, owner: Owner) -> Result<(), String> {
+pub(crate) fn make_dirs(from: &Path, dir: &Path, owner: Owner) -> Result<(), String> {
     let mut missing = Vec::new();
     let mut at = dir;
     while at.starts_with(from) && at != from && !at.exists() {

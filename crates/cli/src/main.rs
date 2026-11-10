@@ -17,6 +17,7 @@ mod edit;
 mod facts;
 mod fetch;
 mod generations;
+mod homes;
 mod host;
 mod install;
 mod machine;

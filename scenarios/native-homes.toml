@@ -1,0 +1,14 @@
+title = "a user's packages, files and units reach their home, and leave it with the configuration"
+
+[vm]
+config = "scenarios/fixtures/native-homes"
+store = "distro"
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { run_as = "john", run = "cat ~/.config/app/config; jq --version", stdout_contains = "greeting = hello\njq-1.8.1" },
+  { run = "readlink /home/john/.config/systemd/user/sleeper.service; stat -c %U /home/john/.config/app", stdout_contains = "/run/system/users/john/files/.config/systemd/user/sleeper.service\njohn" },
+  { run = "test -L /home/john/.config/systemd/user/default.target.wants/sleeper.service && echo wanted", stdout_contains = "wanted" },
+  { apply_config = "scenarios/fixtures/native-homes-changed" },
+  { run = "test -e /home/john/.config/app/config || echo gone; test -L /home/john/.config/systemd/user/sleeper.service && echo kept", stdout_contains = "gone\nkept" },
+]
+timeout_secs = 600

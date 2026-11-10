@@ -579,7 +579,7 @@ pub(crate) fn ids(path: &Path) -> BTreeMap<String, u32> {
 
 /// The files under `dir`, relative to it. A link to a directory, such as systemd's units, is one
 /// file.
-fn files_in(dir: &Path) -> io::Result<BTreeSet<PathBuf>> {
+pub(crate) fn files_in(dir: &Path) -> io::Result<BTreeSet<PathBuf>> {
     let mut files = BTreeSet::new();
     let mut pending = vec![PathBuf::new()];
     while let Some(relative) = pending.pop() {

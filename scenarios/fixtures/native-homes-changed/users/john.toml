@@ -1,0 +1,4 @@
+packages = ["jq"]
+
+[services.sleeper]
+command = ["sleep", "infinity"]

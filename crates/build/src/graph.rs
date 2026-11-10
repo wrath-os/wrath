@@ -256,9 +256,13 @@ fn links<'a>(
     origin: &str,
     lab: &'a Lab,
     ids: Vec<&'a str>,
-    layout: Vec<(&'static str, &'static str)>,
+    layout: &[(&str, &str)],
     packages: &'a Packages,
 ) -> Result<Action<'a>, String> {
+    let layout: Vec<(String, String)> = layout
+        .iter()
+        .map(|(from, to)| ((*from).to_owned(), (*to).to_owned()))
+        .collect();
     let (unresolved, resolved) = action_records(
         &ids,
         packages,
@@ -295,6 +299,66 @@ const BASE_PACKAGES: &[&str] = &[
     "systemd",
     "util-linux",
 ];
+
+/// What makes a user's home, under `users/NAME` in the generation: links to the programs of
+/// their packages in `bin`, and their files, units among them, in `files`, which distro on the
+/// machine links into the home. Packages no recipe builds join `skipped`.
+fn home_actions<'a>(
+    lab: &'a Lab,
+    user: &str,
+    home: &'a Value,
+    system: &[&'a str],
+    skipped: &mut Vec<String>,
+    packages: &'a Packages,
+) -> Result<Vec<Action<'a>>, String> {
+    let mut actions = Vec::new();
+    let mut ids = Vec::new();
+    for value in home["packages"].as_array().into_iter().flatten() {
+        let id = str_field(value, "package")?;
+        if packages.contains_key(id) {
+            ids.push(id);
+        } else if !skipped.iter().any(|seen| seen == id) {
+            skipped.push(id.to_owned());
+        }
+    }
+    let root = format!("users/{user}");
+    if !ids.is_empty() {
+        let bin = format!("{root}/bin");
+        let pairs = [("bin", bin.as_str()), ("sbin", bin.as_str())];
+        let origin = format!("users.{user}.packages");
+        actions.push(links(&origin, lab, ids.clone(), &pairs, packages)?);
+    }
+    let origin = format!("users.{user}.files");
+    for (path, file) in home["files"].as_object().into_iter().flatten() {
+        let relative = path
+            .strip_prefix("~/")
+            .ok_or_else(|| format!("{user}'s file `{path}` isn't in their home"))?;
+        let mode = file["mode"].as_u64().unwrap_or(0o644) as u32;
+        let content = str_field(&file["text"], "file's text")?.to_owned();
+        let at = format!("{root}/files/{relative}");
+        actions.push(text(&origin, &at, mode, content, &[], packages)?);
+    }
+    // A user's units find the user's programs first, then the system's.
+    let unit_ids: Vec<&str> = ids.iter().chain(system).copied().collect();
+    let units = format!("{root}/files/{USER_UNITS}");
+    for (name, unit) in home["units"].as_object().into_iter().flatten() {
+        actions.push(unit_action(
+            lab,
+            name,
+            unit,
+            unit_ids.clone(),
+            packages,
+            &units,
+        )?);
+    }
+    Ok(actions)
+}
+
+/// Where a user's units go, in their home.
+const USER_UNITS: &str = ".config/systemd/user";
+
+/// Where the system's units go.
+const SYSTEM_UNITS: &str = "etc/systemd/system";
 
 fn system_layout() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -481,14 +545,16 @@ fn unit_action<'a>(
     unit: &'a Value,
     ids: Vec<&'a str>,
     packages: &'a Packages,
+    dir: &str,
 ) -> Result<Action<'a>, String> {
     let sections = &unit["sections"];
-    let (unresolved, resolved) = action_records(
-        &ids,
-        packages,
-        |deps| json!({"kind": "unit", "name": name, "sections": sections, "deps": deps}),
-    )?;
+    let (unresolved, resolved) = action_records(&ids, packages, |deps| {
+        json!({
+            "kind": "unit", "name": name, "dir": dir, "sections": sections, "deps": deps,
+        })
+    })?;
     let name = name.to_owned();
+    let dir = dir.to_owned();
     Ok(Action {
         origin: format!("units.{name}"),
         unresolved,
@@ -501,7 +567,7 @@ fn unit_action<'a>(
             }
             let rendered = render_unit(sections, &found)?;
             let mut entries = BTreeMap::from([(
-                format!("etc/systemd/system/{name}"),
+                format!("{dir}/{name}"),
                 Entry::File {
                     mode: 0o644,
                     object: objects.put(rendered.as_bytes())?,
@@ -515,7 +581,7 @@ fn unit_action<'a>(
                     if entry[0] == "WantedBy" {
                         let target = str_field(&entry[1], "target")?;
                         entries.insert(
-                            format!("etc/systemd/system/{target}.wants/{name}"),
+                            format!("{dir}/{target}.wants/{name}"),
                             Entry::Link {
                                 target: format!("../{name}"),
                             },
@@ -559,9 +625,22 @@ impl Kept {
 }
 
 /// What distro on the machine reads at every boot and switch: files under /etc with a mode of
-/// their own, which are copied instead of linked, and the work it does itself, such as secrets
-/// and homes, which come later.
+/// their own, which are copied instead of linked, the homes whose files it links, and the work it
+/// does itself, such as secrets, which come later.
 fn activation(model: &Value) -> String {
+    let homes: Vec<Value> = model["homes"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, home)| {
+            let has = |key: &str| home[key].as_object().is_some_and(|all| !all.is_empty());
+            has("files") || has("units")
+        })
+        .map(|(name, _)| {
+            let user = &model["base"]["users"][name];
+            json!({"name": name, "group": user["group"], "home": user["home"]})
+        })
+        .collect();
     let mut modes = Map::new();
     for (path, file) in model["files"].as_object().into_iter().flatten() {
         let mode = file["mode"].as_u64().unwrap_or(0o644);
@@ -576,7 +655,7 @@ fn activation(model: &Value) -> String {
         "bash": "@bash@/bin/bash",
         "secrets": {},
         "templates": [],
-        "homes": [],
+        "homes": homes,
     })
     .to_string()
 }
@@ -733,7 +812,7 @@ fn lower<'a>(
             "packages",
             lab,
             everything.clone(),
-            vec![
+            &[
                 ("bin", "bin"),
                 // Some packages put programs for root in sbin, which is on the path all the same.
                 ("sbin", "bin"),
@@ -743,13 +822,13 @@ fn lower<'a>(
             ],
             packages,
         )?,
-        links(base, lab, services.clone(), system_layout(), packages)?,
+        links(base, lab, services.clone(), &system_layout(), packages)?,
         // systemd finds its own units; the others' join the system's.
         links(
             "services",
             lab,
             services[1..].to_vec(),
-            vec![("lib/systemd/system", "etc/systemd/system")],
+            &[("lib/systemd/system", SYSTEM_UNITS)],
             packages,
         )?,
         fixed_links(packages)?,
@@ -786,7 +865,24 @@ fn lower<'a>(
         packages,
     )?);
     for (name, unit) in model["units"].as_object().ok_or("the model has no units")? {
-        actions.push(unit_action(lab, name, unit, named.clone(), packages)?);
+        actions.push(unit_action(
+            lab,
+            name,
+            unit,
+            named.clone(),
+            packages,
+            SYSTEM_UNITS,
+        )?);
+    }
+    for (user, home) in model["homes"].as_object().into_iter().flatten() {
+        actions.extend(home_actions(
+            lab,
+            user,
+            home,
+            &named,
+            &mut skipped,
+            packages,
+        )?);
     }
     let (enabled, unfound) = enabled_units(lab, model, &everything, packages)?;
     actions.push(enabled);
