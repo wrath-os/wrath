@@ -1705,6 +1705,23 @@ pub fn system(
     )
 }
 
+/// Builds the packages `names` from the recipes in `repository`, as [`system`] would, and returns
+/// where each one is in the store.
+pub fn packages(repository: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {
+    let lab = Lab::new(repository.join("work"));
+    let (built, ..) = pilot::build_some(&lab, repository, &SYSTEM_RECIPES, Arm::F, Some(names))?;
+    names
+        .iter()
+        .map(|name| {
+            built
+                .paths
+                .get(*name)
+                .cloned()
+                .ok_or_else(|| format!("there's no recipe for `{name}`"))
+        })
+        .collect()
+}
+
 /// Lowers `model` and realises it. Prints the generation and how long each part took.
 pub fn run(
     lab: &Lab,

@@ -881,29 +881,68 @@ pub(crate) fn build_recipes(
     recipes: &[&str],
     arm: Arm,
 ) -> Result<(Built, StorePath, Vec<Package>), String> {
+    build_some(lab, repository, recipes, arm, None)
+}
+
+/// Like [`build_recipes`], building only `wanted` and what it depends on when it says.
+pub(crate) fn build_some(
+    lab: &Lab,
+    repository: &Path,
+    recipes: &[&str],
+    arm: Arm,
+    wanted: Option<&[&str]>,
+) -> Result<(Built, StorePath, Vec<Package>), String> {
     let mut built = chain::build(lab, repository, "toolchain.toml", arm)?;
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
-    let mut packages = Vec::new();
+    let mut loaded = Vec::new();
     for file in recipes {
-        for package in chain::load(repository, file)? {
-            // A package built here is finished as `chain::build` does, so the next run has it.
-            if let Some(prepared) = chain::build_one(
-                lab,
-                repository,
-                &package,
-                arm,
-                &seed,
-                &mut sources,
-                &mut built,
-            )? {
-                chain::remove(&prepared.build_dir)?;
-                chain::finish(lab, &package, arm, &prepared.out, &mut built)?;
-            }
-            packages.push(package);
+        loaded.extend(chain::load(repository, file)?);
+    }
+    let needed = wanted
+        .map(|wanted| needed_by(&loaded, wanted))
+        .transpose()?;
+    let mut packages = Vec::new();
+    for package in loaded {
+        if needed
+            .as_ref()
+            .is_some_and(|needed| !needed.contains(&package.id))
+        {
+            continue;
         }
+        // A package built here is finished as `chain::build` does, so the next run has it.
+        if let Some(prepared) = chain::build_one(
+            lab,
+            repository,
+            &package,
+            arm,
+            &seed,
+            &mut sources,
+            &mut built,
+        )? {
+            chain::remove(&prepared.build_dir)?;
+            chain::finish(lab, &package, arm, &prepared.out, &mut built)?;
+        }
+        packages.push(package);
     }
     Ok((built, seed, packages))
+}
+
+/// The ids of `wanted` and everything among `packages` they depend on. The toolchain's are
+/// built already, so they needn't be among them.
+fn needed_by(packages: &[Package], wanted: &[&str]) -> Result<BTreeSet<String>, String> {
+    let by_id: BTreeMap<&str, &Package> = packages.iter().map(|p| (p.id.as_str(), p)).collect();
+    let mut needed = BTreeSet::new();
+    let mut queue: Vec<String> = wanted.iter().map(|id| (*id).to_owned()).collect();
+    while let Some(id) = queue.pop() {
+        let Some(package) = by_id.get(id.as_str()) else {
+            continue;
+        };
+        if needed.insert(id) {
+            queue.extend(package.dep_ids()?);
+        }
+    }
+    Ok(needed)
 }
 
 /// Shrinks the run paths of everything already built for `arm`, then runs each package's smoke
@@ -1176,6 +1215,33 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_what_is_wanted_and_its_dependencies_are_needed() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("recipes")).unwrap();
+        let recipe = |id: &str, deps: &str| {
+            format!(
+                "[[package]]\nid = \"{id}\"\nscope = \"runtime\"\nscript = \"\"\ndeps = [{deps}]\n"
+            )
+        };
+        let text = [
+            recipe("zlib", ""),
+            recipe("curl", "\"zlib\""),
+            recipe("jq", ""),
+            recipe("git", "\"curl\", \"glibc\""),
+        ]
+        .concat();
+        fs::write(dir.path().join("recipes/r.toml"), text).unwrap();
+        let packages = chain::load(dir.path(), "r.toml").unwrap();
+
+        let needed = needed_by(&packages, &["git"]).unwrap();
+        assert_eq!(
+            needed,
+            BTreeSet::from(["curl".into(), "git".into(), "zlib".into()])
+        );
+        assert!(needed_by(&packages, &["jq"]).unwrap().contains("jq"));
+    }
 
     #[test]
     fn only_a_whole_usr_is_rewritten() {

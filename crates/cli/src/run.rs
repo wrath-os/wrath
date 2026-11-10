@@ -1,30 +1,27 @@
-//! `distro run` and `distro shell`: packages without installing them. A package comes from where
-//! the configuration would get it, so `jq` is the jq its lock pins, and nothing is written.
+//! `distro run` and `distro shell`: packages without installing them. A package is built from the
+//! recipes of the distro that runs, into its store, and nothing in the configuration is written.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use distro_backend::Target;
-use distro_model::{DISTRO_SOURCE, Model, Source, package_source};
-use serde_json::Value;
+use distro_model::{DISTRO_SOURCE, Model, package_source};
 
-use crate::{generations, project};
+use crate::project;
 
 /// Runs `package`'s program with `args`, in place of this process.
 pub fn run(root: &Path, model: Model, package: &str, args: &[String]) -> Result<ExitCode, String> {
-    let environment = Environment::build(root, model, &[package.to_owned()])?;
-    let (name, picked) = &environment.packages[0];
-    let program = environment.path.join("bin").join(&picked.program);
-    if !program.exists() {
+    let environment = Environment::build(root, &model, &[package.to_owned()])?;
+    let name = &environment.packages[0];
+    let program = environment.bin().join(name);
+    if std::fs::symlink_metadata(&program).is_err() {
         return Err(format!(
-            "`{name}` has no program `{}`; it has: {}",
-            picked.program,
+            "`{name}` has no program `{name}`; it has: {}",
             environment.programs().join(", ")
         ));
     }
-    Err(exec(Command::new(program).args(args)))
+    Err(exec(environment.command(&program).args(args)))
 }
 
 /// Starts the user's shell with `packages` first on the `PATH`, in place of this process. In the
@@ -54,12 +51,12 @@ pub fn shell(
     if wanted.is_empty() {
         return Err("name the packages the shell should have".into());
     }
-    let environment = Environment::build(root, model, &wanted)?;
+    let environment = Environment::build(root, &model, &wanted)?;
     let inherited = inherited_path();
     if let Some(dir) = project {
         keep(&environment.path, &dir.join(".distro/shell"));
         let shadowed = project::shadows(
-            &environment.path.join("bin"),
+            &environment.bin(),
             &environment.programs(),
             &variables,
             &inherited,
@@ -70,18 +67,18 @@ pub fn shell(
         }
     }
     let shell = std::env::var_os("SHELL").unwrap_or_else(|| "bash".into());
-    let path = path_with(&environment.path.join("bin"), &inherited)?;
-    let names: Vec<&str> = environment
-        .packages
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .collect();
-    eprintln!("a shell with {}; exit to leave", names.join(", "));
+    let path = path_with(&environment.bin(), &inherited)?;
+    let names = environment.packages.join(" ");
+    eprintln!(
+        "a shell with {}; exit to leave",
+        environment.packages.join(", ")
+    );
     Err(exec(
-        Command::new(shell)
+        environment
+            .command(Path::new(&shell))
             .envs(variables)
             .env("PATH", path)
-            .env("DISTRO_SHELL", names.join(" ")),
+            .env("DISTRO_SHELL", names),
     ))
 }
 
@@ -98,12 +95,13 @@ pub fn up(root: &Path, model: Model, project: &Path) -> Result<ExitCode, String>
     let variables = project::variables(&model, lookup);
     let mut wanted: Vec<String> = model.packages.iter().cloned().collect();
     wanted.push(PROCESS_COMPOSE.to_owned());
-    let environment = Environment::build(root, model, &wanted)?;
+    let environment = Environment::build(root, &model, &wanted)?;
     keep(&environment.path, &state.join("up"));
-    let bin = environment.path.join("bin");
+    let bin = environment.bin();
     let path = path_with(&bin, &inherited_path())?;
     Err(exec(
-        Command::new(bin.join(PROCESS_COMPOSE))
+        environment
+            .command(&bin.join(PROCESS_COMPOSE))
             .args(["up", "--config"])
             .arg(&file)
             .envs(variables)
@@ -133,108 +131,160 @@ fn exec(command: &mut Command) -> String {
     format!("cannot run {program}: {}", command.exec())
 }
 
-/// The packages, built into one environment.
+/// Where packages are when programs run: their links point into it.
+const STORE: &str = "/store";
+
+/// The packages' programs, linked into one directory.
 struct Environment {
     path: PathBuf,
-    /// Each package by the name the model gives it, in the order asked for.
-    packages: Vec<(String, Picked)>,
-}
-
-/// What a package turned out to be.
-#[derive(Debug, PartialEq, Eq)]
-struct Picked {
-    version: String,
-    /// The program `run` starts.
-    program: String,
+    /// The store the packages were built into, on this machine.
+    store: PathBuf,
+    /// Each package's name, in the order asked for.
+    packages: Vec<String>,
 }
 
 impl Environment {
-    /// Builds `references` from the sources `model` has, and says on stderr what each one is.
-    fn build(root: &Path, mut model: Model, references: &[String]) -> Result<Self, String> {
-        let names = references
+    /// Builds `references` from distro's recipes and links their programs into a directory under
+    /// the user's cache, one for each set of packages.
+    fn build(root: &Path, model: &Model, references: &[String]) -> Result<Self, String> {
+        let packages = references
             .iter()
-            .map(|reference| package_name(&mut model, reference))
+            .map(|reference| package_name(model, reference))
             .collect::<Result<Vec<_>, _>>()?;
-        model.packages = names.iter().cloned().collect();
-        let path = generations::build(root, &model, Target::Environment)?;
-        if let Some(link) = gc_root(&names) {
-            keep(&path, &link);
+        let repository = root
+            .join("build")
+            .canonicalize()
+            .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
+        let names: Vec<&str> = packages.iter().map(String::as_str).collect();
+        let paths = distro_build::graph::packages(&repository, &names)?;
+        let store = repository.join("work/store");
+        let path = environment_dir(&packages)?;
+        let bin = path.join("bin");
+        if path.exists() {
+            std::fs::remove_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         }
-        let file = path.join("share/distro/packages.json");
-        let described: Value = std::fs::read_to_string(&file)
-            .map_err(|e| e.to_string())
-            .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
-            .map_err(|e| format!("{}: {e}", file.display()))?;
-        let packages = names
-            .into_iter()
-            .map(|name| {
-                let picked = picked(&described, &name)
-                    .ok_or_else(|| format!("{}: nothing about `{name}`", file.display()))?;
-                eprintln!("{}", describe(&model, &described, &name, &picked));
-                Ok((name, picked))
-            })
-            .collect::<Result<_, String>>()?;
-        Ok(Self { path, packages })
+        std::fs::create_dir_all(&bin).map_err(|e| format!("{}: {e}", bin.display()))?;
+        let from = describe(model);
+        for (name, built) in names.iter().zip(&paths) {
+            for dir in ["bin", "sbin"] {
+                let Ok(entries) = std::fs::read_dir(store.join(built.hash()).join(dir)) else {
+                    continue;
+                };
+                for program in entries.flatten().map(|entry| entry.file_name()) {
+                    let link = bin.join(&program);
+                    if link.symlink_metadata().is_ok() {
+                        continue;
+                    }
+                    let target = Path::new(STORE).join(built.hash()).join(dir).join(&program);
+                    std::os::unix::fs::symlink(&target, &link)
+                        .map_err(|e| format!("{}: {e}", link.display()))?;
+                }
+            }
+            eprintln!("{name} from {from}");
+        }
+        Ok(Self {
+            path,
+            store,
+            packages,
+        })
+    }
+
+    fn bin(&self) -> PathBuf {
+        self.path.join("bin")
     }
 
     fn programs(&self) -> Vec<String> {
-        std::fs::read_dir(self.path.join("bin"))
+        let mut programs: Vec<String> = std::fs::read_dir(self.bin())
             .map(|entries| {
                 entries
                     .flatten()
                     .map(|entry| entry.file_name().to_string_lossy().into_owned())
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        programs.sort();
+        programs
+    }
+
+    /// A command that runs `program` with the store at `/store`. Where the packages were built
+    /// into another directory, as in a checkout, it runs in a mount namespace with that directory
+    /// at `/store`, the way builds see it.
+    fn command(&self, program: &Path) -> Command {
+        let here = Path::new(STORE).canonicalize().ok();
+        if here.is_some() && here == self.store.canonicalize().ok() {
+            return Command::new(program);
+        }
+        let mut command = Command::new("bwrap");
+        command
+            .args(namespace_args(&self.store))
+            .arg("--")
+            .arg(program);
+        command
     }
 }
 
-fn picked(described: &Value, name: &str) -> Option<Picked> {
-    let package = &described["packages"][name];
-    Some(Picked {
-        version: package["version"].as_str()?.to_owned(),
-        program: package["program"].as_str()?.to_owned(),
-    })
+/// What to pass `bwrap` to run with this machine's directories and `store` at `/store`. `/`
+/// can't take a new directory, so the root is built from its entries.
+fn namespace_args(store: &Path) -> Vec<OsString> {
+    let mut args: Vec<OsString> = Vec::new();
+    let mut entries: Vec<_> = std::fs::read_dir("/")
+        .map(|entries| entries.flatten().collect())
+        .unwrap_or_default();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        if path == Path::new(STORE) {
+            continue;
+        }
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            if let Ok(target) = std::fs::read_link(&path) {
+                args.extend(["--symlink".into(), target.into(), path.into()]);
+            }
+        } else if kind.is_dir() {
+            args.extend(["--dev-bind".into(), path.clone().into(), path.into()]);
+        }
+    }
+    args.extend([
+        OsStr::new("--dev-bind").into(),
+        store.into(),
+        OsStr::new(STORE).into(),
+        OsStr::new("--die-with-parent").into(),
+    ]);
+    args
 }
 
-/// What a package is and where it came from, as
-/// `jq 1.8.1 from nixpkgs (1d06008, 2026-10-30, locked)`.
-fn describe(model: &Model, described: &Value, name: &str, picked: &Picked) -> String {
-    let (source, attribute) = package_source(name);
-    let pinned = &described["sources"][source];
-    let how = match model.sources.get(source) {
-        Some(declared) if declared.is_locked() => "locked",
-        Some(_) => "its newest version",
-        None => "the factory's",
-    };
-    let details: Vec<&str> = [
-        pinned["rev"].as_str().map(|rev| &rev[..rev.len().min(7)]),
-        pinned["date"].as_str(),
-        Some(how),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    format!(
-        "{attribute} {} from {source} ({})",
-        picked.version,
-        details.join(", ")
-    )
+/// Where packages come from, as `distro 1d06008, 2026-10-30` or `this distro`.
+fn describe(model: &Model) -> String {
+    match model.sources.get(DISTRO_SOURCE) {
+        Some(source) if source.is_locked() => {
+            let rev = source.rev.as_deref().map(|rev| &rev[..rev.len().min(7)]);
+            let details: Vec<&str> = [rev, source.date.as_deref()]
+                .into_iter()
+                .flatten()
+                .collect();
+            match details.as_slice() {
+                [] => "distro, as the lock pins it".to_owned(),
+                _ => format!("distro {}", details.join(", ")),
+            }
+        }
+        _ => "this distro".to_owned(),
+    }
 }
 
-/// Where the environment for `names` is kept from garbage collection, under the user's cache.
-/// Each set of packages has one, so running a newer build lets the older one be collected.
-fn gc_root(names: &[String]) -> Option<PathBuf> {
+/// The directory for the environment of `names`, under the user's cache.
+fn environment_dir(names: &[String]) -> Result<PathBuf, String> {
     let cache = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))?;
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
+        .ok_or("neither XDG_CACHE_HOME nor HOME is set, so there's nowhere to keep it")?;
     let mut sorted: Vec<&str> = names.iter().map(String::as_str).collect();
     sorted.sort_unstable();
-    Some(
-        cache
-            .join("distro/environments")
-            .join(root_name(&sorted.join(" "))),
-    )
+    Ok(cache
+        .join("distro/environments")
+        .join(root_name(&sorted.join(" "))))
 }
 
 /// A file name for a set of package names: readable when they're plain, and with a short hash so
@@ -258,45 +308,37 @@ fn root_name(names: &str) -> String {
     format!("{readable}-{:08x}", hash as u32)
 }
 
-/// Keeps the environment while it's in use. Failing to doesn't stop it running.
+/// Links `link` to the environment at `path`, so a project shows what its shell has. Failing to
+/// doesn't stop it running.
 fn keep(path: &Path, link: &Path) {
     let kept = link
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
-        .map_err(|e| e.to_string())
-        .and_then(|()| distro_backend::keep(path, link));
+        .and_then(|()| match std::fs::remove_file(link) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => std::os::unix::fs::symlink(path, link),
+        });
     if let Err(message) = kept {
-        eprintln!(
-            "warning: {} may be garbage collected while it runs: {message}",
-            path.display()
-        );
+        eprintln!("warning: cannot link {}: {message}", link.display());
     }
 }
 
-/// The name the model uses for a package the command line names. A source given as a URL or a
-/// path is added to `model` under that URL, so `github:jqlang/jq#jq` needs nothing declared.
-fn package_name(model: &mut Model, reference: &str) -> Result<String, String> {
+/// The recipe a package the command line names comes from. Packages come from distro's own
+/// recipes; other sources of packages come later.
+fn package_name(model: &Model, reference: &str) -> Result<String, String> {
     let (source, attribute) = package_source(reference);
     refuse_version(reference, attribute)?;
-    if !reference.contains('#') || model.sources.contains_key(source) {
-        return Ok(reference.to_owned());
+    if source == DISTRO_SOURCE {
+        return Ok(attribute.to_owned());
     }
-    let url = if source.starts_with('.') || source.starts_with('/') {
-        let path = Path::new(source)
-            .canonicalize()
-            .map_err(|e| format!("{source}: {e}"))?;
-        format!("path:{}", path.display())
-    } else if source.contains(':') {
-        source.to_owned()
-    } else {
+    if reference.contains('#') && !model.sources.contains_key(source) && !source.contains(':') {
         let known = model.sources.keys().map(String::as_str);
         return Err(no_such_source(source, attribute, known));
-    };
-    model
-        .sources
-        .entry(url.clone())
-        .or_insert_with(|| Source::follow(&url));
-    Ok(format!("{url}#{attribute}"))
+    }
+    Err(format!(
+        "`{reference}`: packages come from distro's recipes for now, and other sources of \
+         packages come later"
+    ))
 }
 
 /// Refuses a package that picks a version, such as `jq@1.7`.
@@ -321,7 +363,7 @@ pub(crate) fn no_such_source<'a>(
     }
     format!(
         "there's no source `{source}`; the configuration has {}, or give a URL such as \
-         `github:NixOS/nixpkgs/nixos-25.11#{attribute}`",
+         `github:owner/repo#{attribute}`",
         known.join(", ")
     )
 }
@@ -329,101 +371,81 @@ pub(crate) fn no_such_source<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use distro_model::Source;
 
-    fn with_stable() -> Model {
+    fn with_acme() -> Model {
         let mut model = Model::default();
-        model.sources.insert(
-            "stable".into(),
-            Source::follow("github:NixOS/nixpkgs/nixos-25.11"),
-        );
+        model
+            .sources
+            .insert("acme".into(), Source::follow("github:acme/recipes"));
         model
     }
 
     #[test]
-    fn packages_come_from_declared_sources_or_urls() {
-        let mut model = with_stable();
-        assert_eq!(package_name(&mut model, "jq").unwrap(), "jq");
-        assert_eq!(package_name(&mut model, "stable#jq").unwrap(), "stable#jq");
-        assert_eq!(
-            package_name(&mut model, "github:jqlang/jq#jq").unwrap(),
-            "github:jqlang/jq#jq"
-        );
-        assert_eq!(
-            model.sources["github:jqlang/jq"],
-            Source::follow("github:jqlang/jq"),
-            "a URL becomes a source of its own, followed to its newest version"
-        );
-
-        let dir = tempfile::tempdir().unwrap();
-        let local = format!("{}#tool", dir.path().display());
-        let path = package_name(&mut model, &local).unwrap();
-        assert!(
-            path.starts_with("path:/") && path.ends_with("#tool"),
-            "{path}"
-        );
+    fn packages_come_from_distros_recipes() {
+        let model = with_acme();
+        assert_eq!(package_name(&model, "jq").unwrap(), "jq");
+        assert_eq!(package_name(&model, "distro#jq").unwrap(), "jq");
+        for other in ["acme#jq", "github:jqlang/jq#jq"] {
+            assert!(
+                package_name(&model, other)
+                    .unwrap_err()
+                    .contains("other sources of packages come later"),
+                "{other}"
+            );
+        }
     }
 
     #[test]
     fn unknown_sources_and_versions_are_refused() {
-        let mut model = with_stable();
+        let model = with_acme();
         assert_eq!(
-            package_name(&mut model, "stabel#jq").unwrap_err(),
-            "there's no source `stabel`; the configuration has distro, stable, or give a URL \
-             such as `github:NixOS/nixpkgs/nixos-25.11#jq`"
+            package_name(&model, "acem#jq").unwrap_err(),
+            "there's no source `acem`; the configuration has distro, acme, or give a URL such \
+             as `github:owner/repo#jq`"
         );
         assert!(
-            package_name(&mut model, "jq@1.7")
+            package_name(&model, "jq@1.7")
                 .unwrap_err()
                 .contains("version index")
         );
-        assert_eq!(
-            package_name(&mut model, "git+ssh://git@example.com/x#jq").unwrap(),
-            "git+ssh://git@example.com/x#jq",
-            "an @ in the source is part of its URL"
-        );
     }
 
     #[test]
-    fn each_set_of_packages_has_its_own_root() {
+    fn each_set_of_packages_has_its_own_directory() {
         assert_eq!(root_name("jq ripgrep"), root_name("jq ripgrep"));
         assert_ne!(root_name("jq ripgrep"), root_name("jq_ripgrep"));
         assert!(root_name("jq ripgrep").starts_with("jq_ripgrep-"));
-        assert!(root_name("github:jqlang/jq#jq").starts_with("github_jqlang_jq_jq-"));
     }
 
     #[test]
-    fn what_was_picked_says_where_it_came_from() {
-        let mut model = with_stable();
+    fn packages_say_which_distro_they_come_from() {
+        let mut model = Model::default();
+        assert_eq!(describe(&model), "this distro");
         model.sources.insert(
-            "distro".into(),
+            DISTRO_SOURCE.into(),
             Source {
-                url: "github:NixOS/nixpkgs/nixos-unstable".into(),
+                url: "github:johnae/distro".into(),
                 rev: Some("1d060086d60c".into()),
                 hash: "sha256-abc".into(),
-                date: None,
+                date: Some("2026-10-30".into()),
             },
         );
-        let described: Value = serde_json::json!({
-            "packages": { "jq": { "version": "1.8.1", "program": "jq" } },
-            "sources": {
-                "distro": { "rev": "1d060086d60c", "date": "2026-10-30" },
-                "stable": { "rev": "b6018f87da91" },
-            },
-        });
-        let jq = picked(&described, "jq").unwrap();
-        assert_eq!(jq.program, "jq");
-        assert_eq!(
-            describe(&model, &described, "jq", &jq),
-            "jq 1.8.1 from distro (1d06008, 2026-10-30, locked)"
-        );
-        assert_eq!(
-            describe(&model, &described, "stable#jq", &jq),
-            "jq 1.8.1 from stable (b6018f8, its newest version)"
-        );
-        assert_eq!(
-            describe(&Model::default(), &described, "jq", &jq),
-            "jq 1.8.1 from distro (1d06008, 2026-10-30, the factory's)"
-        );
-        assert_eq!(picked(&described, "rg"), None);
+        assert_eq!(describe(&model), "distro 1d06008, 2026-10-30");
+    }
+
+    #[test]
+    fn the_store_is_mounted_where_programs_expect_it() {
+        let args: Vec<String> = namespace_args(Path::new("/srv/work/store"))
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let at = args
+            .iter()
+            .position(|arg| arg == "/srv/work/store")
+            .unwrap();
+        assert_eq!(args[at - 1], "--dev-bind");
+        assert_eq!(args[at + 1], "/store");
+        assert!(args.windows(3).any(|w| w == ["--dev-bind", "/tmp", "/tmp"]));
     }
 }
