@@ -64,7 +64,7 @@ module(
                 default = False,
                 doc = "Accept all traffic arriving over the tailnet.",
             ),
-            flags = option(types.list(types.str), default = [], doc = "More flags for tailscaled."),
+            flags = option(types.list(types.str), doc = "More flags for tailscaled."),
         ),
     },
     writes = ["networking.firewall.allowed_udp_ports", "networking.firewall.trusted_interfaces"],

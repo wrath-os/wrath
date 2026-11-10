@@ -11,7 +11,6 @@ module(
     options = {
         "environment": option(
             types.map(types.str),
-            default = {},
             doc = "Variables the project's shell has. Values may refer to others as `$NAME`.",
         ),
     },

@@ -20,7 +20,7 @@ def render(ctx):
     rules.append("  }")
     rules.append("}")
     ctx.package("nftables")
-    ctx.file("/etc/nftables.conf", "\n".join(rules) + "\n")
+    ctx.file("/etc/nftables.conf", lines(rules))
     ctx.unit("nftables.service", {
         "Unit": {"Description": "nftables firewall", "Before": "network-pre.target"},
         "Service": {
@@ -37,11 +37,10 @@ module(
     options = {
         "networking.firewall": types.record(
             enable = option(types.bool, default = True),
-            allowed_tcp_ports = option(types.set(types.port), default = []),
-            allowed_udp_ports = option(types.set(types.port), default = []),
+            allowed_tcp_ports = option(types.set(types.port)),
+            allowed_udp_ports = option(types.set(types.port)),
             trusted_interfaces = option(
                 types.set(types.str),
-                default = [],
                 doc = "Interfaces whose traffic is always accepted, such as a VPN's.",
             ),
         ),

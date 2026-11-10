@@ -1,7 +1,7 @@
 # nginx instances, each with its own config file and unit. Sites become server blocks.
 
 site = types.record(
-    domains = option(types.set(types.str), default = []),
+    domains = option(types.set(types.str)),
     root = option(types.path, optional = True),
     proxy = option(types.str, optional = True),
 )
@@ -14,17 +14,17 @@ instance = types.record(
 )
 
 def server(port, s):
-    lines = [
+    out = [
         "  server {",
         "    listen %d;" % port,
         "    server_name " + " ".join(s["domains"]) + ";",
     ]
     if "root" in s:
-        lines.append("    root " + s["root"] + ";")
+        out.append("    root " + s["root"] + ";")
     if "proxy" in s:
-        lines.append("    location / { proxy_pass " + s["proxy"] + "; }")
-    lines.append("  }")
-    return "\n".join(lines)
+        out.append("    location / { proxy_pass " + s["proxy"] + "; }")
+    out.append("  }")
+    return "\n".join(out)
 
 def render(ctx):
     ports = []
@@ -35,13 +35,13 @@ def render(ctx):
         path = "/etc/nginx/%s.conf" % name
         ctx.package("nginx")
         logs = "/var/log/nginx/" + name
-        ctx.file(path, "\n".join([
+        ctx.file(path, lines([
             "pid /run/nginx-%s/nginx.pid;" % name,
             "error_log %s-error.log;" % logs,
             "events {}",
             "http {",
             "  access_log %s-access.log;" % logs,
-        ] + servers + ["}"]) + "\n")
+        ] + servers + ["}"]))
         ctx.unit("nginx-%s.service" % name, {
             "Unit": {"Description": "nginx (%s)" % name, "After": "network.target"},
             "Service": {

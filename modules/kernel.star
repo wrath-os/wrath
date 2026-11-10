@@ -20,7 +20,7 @@ def render(ctx):
         ]))
         ctx.restart("systemd-sysctl.service", on = [SYSCTL])
     if kernel["modules"]:
-        ctx.file(MODULES, "\n".join(sorted(kernel["modules"])) + "\n")
+        ctx.file(MODULES, lines(sorted(kernel["modules"])))
         ctx.restart("systemd-modules-load.service", on = [MODULES])
     modprobe = modprobe_config(kernel)
     if modprobe:
@@ -48,32 +48,27 @@ module(
                 default = "linux",
                 doc = "The kernel and its modules, such as `linux-latest`.",
             ),
-            modules = option(types.set(types.str), default = [], doc = "Loaded at every boot."),
+            modules = option(types.set(types.str), doc = "Loaded at every boot."),
             initrd_modules = option(
                 types.set(types.str),
-                default = [],
                 doc = "Loaded early, for what's needed to reach the disks.",
             ),
             blacklist = option(
                 types.set(types.str),
-                default = [],
                 doc = "Modules never loaded on their own.",
             ),
             module_options = option(
                 types.map(types.str),
-                default = {},
                 doc = "Options by module, as `modprobe` takes them.",
             ),
             sysctl = option(
                 types.map(types.freeform),
-                default = {},
                 doc = "Kernel settings by name, such as `vm.swappiness`.",
             ),
         ),
         "hardware": types.record(
             firmware = option(
                 types.set(types.str),
-                default = [],
                 doc = "Packages with firmware for the kernel, such as `linux-firmware`.",
             ),
             microcode = option(

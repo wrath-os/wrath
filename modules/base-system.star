@@ -89,12 +89,12 @@ def render(ctx):
     })
 
     ctx.file("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n")
-    ctx.file("/etc/nsswitch.conf", "\n".join([
+    ctx.file("/etc/nsswitch.conf", lines([
         "passwd: files systemd",
         "group: files systemd",
         "shadow: files",
         "hosts: files myhostname dns",
-    ]) + "\n")
+    ]))
     # Login shells, and the service managers of users' sessions, find the system's programs and
     # what they ship, such as D-Bus services and desktop files.
     environment = [

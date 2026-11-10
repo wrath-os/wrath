@@ -10,26 +10,26 @@ def value(v):
 
 def section_lines(name, keys):
     """`[name]` and its keys. A list repeats its key."""
-    lines = ["[%s]" % name]
+    out = ["[%s]" % name]
     for key, v in sorted(keys.items()):
         for item in (v if type(v) == "list" else [v]):
-            lines.append("\t%s = %s" % (key, value(item)))
-    return lines
+            out.append("\t%s = %s" % (key, value(item)))
+    return out
 
 def gitconfig(settings):
     """Settings as `section.key` or `section.subsection.key`, the way `git config` names them."""
-    lines = []
+    out = []
 
     # Git takes the last value of a key, so includes come last to override what's above them.
     order = lambda item: (item[0] in ["include", "includeIf"], item[0])
     for section, keys in sorted(settings.items(), key = order):
         plain = {k: v for k, v in keys.items() if type(v) != "dict"}
         if plain:
-            lines += section_lines(section, plain)
+            out += section_lines(section, plain)
         for subsection, sub in sorted(keys.items()):
             if type(sub) == "dict":
-                lines += section_lines('%s "%s"' % (section, subsection), sub)
-    return "\n".join(lines) + "\n"
+                out += section_lines('%s "%s"' % (section, subsection), sub)
+    return lines(out)
 
 include = types.record(
     condition = option(types.str, doc = "As in `includeIf`, such as `gitdir:~/work/`."),
@@ -68,9 +68,9 @@ def render(ctx):
             })
             ctx.package("delta", user = user)
         settings = merge(settings, git["settings"])
-        for name, lines in [("ignore", git["ignores"]), ("attributes", git["attributes"])]:
-            if lines:
-                ctx.file("~/.config/git/" + name, "\n".join(lines) + "\n", user = user)
+        for name, entries in [("ignore", git["ignores"]), ("attributes", git["attributes"])]:
+            if entries:
+                ctx.file("~/.config/git/" + name, lines(entries), user = user)
         for i, inc in enumerate(git["includes"]):
             path = "~/.config/git/include-%d" % (i + 1)
             ctx.file(path, gitconfig(inc["settings"]), user = user)
@@ -99,7 +99,7 @@ module(
                 default = {},
                 doc = "Anything else, as `section.key` or `section.subsection.key`.",
             ),
-            includes = option(types.list(include), default = []),
+            includes = option(types.list(include)),
             lfs = option(types.bool, default = False, doc = "Large files with Git LFS."),
             delta = option(
                 types.bool,
@@ -108,12 +108,10 @@ module(
             ),
             ignores = option(
                 types.list(types.str),
-                default = [],
                 doc = "Patterns every repository ignores.",
             ),
             attributes = option(
                 types.list(types.str),
-                default = [],
                 doc = "Attributes for every repository, such as `* merge=mergiraf`.",
             ),
         ),

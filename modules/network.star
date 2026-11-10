@@ -3,7 +3,11 @@
 # when it changes.
 
 network = types.record(
-    match = option(types.list(types.str), doc = "Interface names to configure; globs like `enp*` work."),
+    match = option(
+        types.list(types.str),
+        required = True,
+        doc = "Interface names to configure; globs like `enp*` work.",
+    ),
     dhcp = option(types.one_of(["yes", "no", "ipv4", "ipv6"]), default = "yes"),
     priority = option(
         types.range(0, 99),
@@ -67,7 +71,6 @@ module(
         "networking.dns": types.record(
             fallback = option(
                 types.list(types.str),
-                default = [],
                 doc = "Servers to use when no network provides one.",
             ),
             dnssec = option(types.one_of(["yes", "no", "allow-downgrade"]), optional = True),

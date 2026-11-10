@@ -44,7 +44,6 @@ module(
         ),
         "secret_recipients": option(
             types.list(types.str),
-            default = [],
             doc = "Public keys `distro secret` encrypts to: yours, and any other key that " +
                   "should decrypt this home's secrets.",
         ),

@@ -324,25 +324,44 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         Ok(heap.alloc(convert::Runtime(vec![part])))
     }
 
-    /// Declares an option: a type with a default, documentation and flags.
+    /// Declares an option: a type with a default, documentation and flags. A list or table is
+    /// empty when nothing sets it, unless it's `optional` or `required`.
     fn option<'v>(
         #[starlark(require = pos)] r#type: StarValue<'v>,
         #[starlark(require = named)] default: Option<StarValue<'v>>,
         #[starlark(require = named, default = false)] optional: bool,
+        #[starlark(require = named, default = false)] required: bool,
         #[starlark(require = named, default = false)] runtime: bool,
         #[starlark(require = named, default = false)] account: bool,
         #[starlark(require = named, default = "")] doc: &str,
     ) -> anyhow::Result<StarOption> {
+        if required && (optional || default.is_some()) {
+            anyhow::bail!("an option that has to be set can't be optional or have a default");
+        }
         let mut spec = OptionSpec::new(type_of(r#type)?);
         spec.default = default
             .map(convert::from_starlark)
             .transpose()
             .map_err(anyhow::Error::msg)?;
+        if spec.default.is_none() && !optional && !required {
+            spec.default = match spec.ty {
+                Type::List { .. } => Some(Value::List(Vec::new())),
+                Type::Map(_) => Some(Value::Table(Default::default())),
+                _ => None,
+            };
+        }
         spec.optional = optional;
         spec.runtime = runtime;
         spec.account = account;
         spec.doc = doc.to_owned();
         Ok(StarOption(spec))
+    }
+
+    /// The lines of `items`, each ending in a newline, as a file holds them.
+    fn lines(
+        #[starlark(require = pos)] items: starlark::values::list::UnpackList<String>,
+    ) -> anyhow::Result<String> {
+        Ok(items.items.iter().map(|line| format!("{line}\n")).collect())
     }
 
     /// Declares the module. Every module file calls this once. `user_options` are options every

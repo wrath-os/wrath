@@ -9,7 +9,6 @@ device = types.record(
     at_least = option(types.str, optional = True, doc = "The smallest size, such as `500G`."),
     paths = option(
         types.list(types.str),
-        default = [],
         doc = "The disks themselves, such as `/dev/disk/by-id/...`, for a machine that isn't a " +
               "role. Instead of `count`, `kind` and `at_least`.",
     ),
@@ -23,7 +22,7 @@ partition = types.record(
         doc = "A filesystem on just this partition. One on several is under `filesystems`.",
     ),
     mount = option(types.path, optional = True),
-    options = option(types.list(types.str), default = []),
+    options = option(types.list(types.str)),
     encrypt = option(types.bool, default = False, doc = "Encrypted with LUKS."),
     on = option(
         types.one_of(["all", "first"]),
@@ -36,14 +35,13 @@ disk = types.record(
     devices = option(device, default = {}),
     partitions = option(
         types.map(partition),
-        default = {},
         doc = "By name. Fixed sizes come first, by name, and the `rest` last.",
     ),
 )
 
 subvolume = types.record(
     mount = option(types.path, optional = True),
-    options = option(types.list(types.str), default = []),
+    options = option(types.list(types.str)),
 )
 
 filesystem = types.record(
@@ -51,11 +49,12 @@ filesystem = types.record(
     raid = option(types.one_of(["single", "raid1"]), default = "single"),
     on = option(
         types.list(types.str),
+        required = True,
         doc = "Partitions as `<disk>.<partition>`, on every disk that has them.",
     ),
     mount = option(types.path, optional = True),
-    options = option(types.list(types.str), default = []),
-    subvolumes = option(types.map(subvolume), default = {}),
+    options = option(types.list(types.str)),
+    subvolumes = option(types.map(subvolume)),
     degraded = option(
         types.one_of(["boot", "stop"]),
         default = "boot",
@@ -68,7 +67,6 @@ ssh = types.record(
     port = option(types.int, default = 2222),
     authorized_keys = option(
         types.list(types.str),
-        default = [],
         doc = "Public keys allowed to log in to the initrd and unlock the disks. Without any, " +
               "the initrd has no SSH.",
     ),

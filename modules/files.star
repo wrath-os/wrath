@@ -27,7 +27,6 @@ fields = {
 file = types.record(
     restart = option(
         types.set(types.str),
-        default = [],
         doc = "Services that read this file, restarted when it changes.",
     ),
     **fields

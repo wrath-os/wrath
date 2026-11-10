@@ -38,7 +38,6 @@ module(
     options = {
         "units": option(
             types.map(types.freeform),
-            default = {},
             doc = "systemd units by name, each with its sections, such as `Service.ExecStart`. " +
                   "A timer starts with the machine unless it has an `Install` section.",
         ),

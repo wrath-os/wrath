@@ -12,8 +12,8 @@ def render(ctx):
         return
     for user, u in ctx.read("users").items():
         if u["authorized_keys"]:
-            ctx.file("/etc/ssh/authorized_keys.d/" + user, "\n".join(u["authorized_keys"]) + "\n")
-    ctx.file(CONFIG, "\n".join([
+            ctx.file("/etc/ssh/authorized_keys.d/" + user, lines(u["authorized_keys"]))
+    ctx.file(CONFIG, lines([
         "Port %d" % cfg["port"],
         "HostKey " + HOST_KEY,
         "AuthorizedKeysFile %h/.ssh/authorized_keys /etc/ssh/authorized_keys.d/%u",
@@ -22,7 +22,7 @@ def render(ctx):
         "KbdInteractiveAuthentication no",
         "PermitRootLogin prohibit-password",
         "Subsystem sftp internal-sftp",
-    ]) + "\n")
+    ]))
     ctx.file("/etc/sysusers.d/sshd.conf", "u sshd - \"sshd\" /var/empty\n")
     ctx.file("/etc/tmpfiles.d/sshd.conf", "d /var/empty 0555 root root -\n")
     ctx.unit("sshd.service", {
@@ -61,7 +61,6 @@ module(
     user_options = {
         "authorized_keys": option(
             types.list(types.str),
-            default = [],
             doc = "Public keys that can log in as this user over SSH.",
         ),
     },

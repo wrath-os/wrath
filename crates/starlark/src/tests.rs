@@ -1456,3 +1456,70 @@ fn state_has_to_be_kept_somewhere_mounted_and_stay_inside() {
     ));
     assert!(escapes.contains("goes outside"), "{escapes}");
 }
+
+/// The options `source` declares, by path.
+fn declared(source: &str) -> std::collections::BTreeMap<String, OptionSpec> {
+    let mut sources = Sources::default();
+    let module = load(
+        &mut sources,
+        "m.star",
+        source.to_owned(),
+        &repo().join("modules"),
+    )
+    .unwrap_or_else(|e| panic!("{}", distro_eval::render(&[e], &sources)));
+    module
+        .options()
+        .into_iter()
+        .map(|(path, spec)| (path.to_string(), spec))
+        .collect()
+}
+
+#[test]
+fn lists_sets_and_tables_are_empty_unless_a_default_says_otherwise() {
+    let options = declared(
+        "module(name = \"m\", options = {\
+           \"a.ports\": option(types.set(types.port)),\
+           \"a.args\": option(types.list(types.str)),\
+           \"a.env\": option(types.map(option(types.str))),\
+           \"a.given\": option(types.list(types.str), default = [\"x\"]),\
+           \"a.maybe\": option(types.list(types.str), optional = True),\
+           \"a.must\": option(types.list(types.str), required = True),\
+           \"a.name\": option(types.str),\
+         }, writes = [], render = lambda ctx: None)",
+    );
+    let default = |path: &str| options[path].default.clone();
+    assert_eq!(default("a.ports"), Some(distro_eval::Value::List(vec![])));
+    assert_eq!(default("a.args"), Some(distro_eval::Value::List(vec![])));
+    assert_eq!(
+        default("a.env"),
+        Some(distro_eval::Value::Table(Default::default()))
+    );
+    assert_eq!(
+        default("a.given"),
+        Some(distro_eval::Value::List(vec![distro_eval::Value::Str(
+            "x".into()
+        )]))
+    );
+    assert_eq!(default("a.maybe"), None, "an optional list stays unset");
+    assert_eq!(
+        default("a.must"),
+        None,
+        "a list that has to be set has no default"
+    );
+    assert_eq!(default("a.name"), None, "a string still needs a value");
+}
+
+#[test]
+fn lines_join_with_a_newline_after_each() {
+    let evaluation = load_from(
+        &[],
+        "def render(ctx):\n\
+         \x20   ctx.file(\"/etc/a\", lines([\"one\", \"two\"]))\n\
+         \x20   ctx.file(\"/etc/b\", lines([]))\n\
+         module(name = \"m\", options = {}, writes = [], render = render)\n",
+    )
+    .unwrap();
+    let text = |path: &str| output_of(&evaluation, "m").files[path].text.clone();
+    assert_eq!(text("/etc/a"), "one\ntwo\n");
+    assert_eq!(text("/etc/b"), "");
+}

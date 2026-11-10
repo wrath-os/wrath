@@ -45,7 +45,6 @@ module(
         ),
         "system.secret_recipients": option(
             types.list(types.str),
-            default = [],
             doc = "Public keys `distro secret` encrypts to: the machine's host key, and the " +
                   "keys of whoever edits its secrets.",
         ),

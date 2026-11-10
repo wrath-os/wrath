@@ -7,7 +7,7 @@ user = types.record(
     description = option(types.str, optional = True, account = True),
     uid = option(types.int, optional = True, account = True),
     group = option(types.str, default = "users", account = True),
-    extra_groups = option(types.set(types.str), default = [], account = True),
+    extra_groups = option(types.set(types.str), account = True),
     home = option(types.path, optional = True, account = True),
     initial_hashed_password = option(
         types.str,
@@ -22,7 +22,7 @@ user = types.record(
         doc = "The backend's default shell when unset.",
     ),
     system = option(types.bool, default = False, account = True),
-    packages = option(types.set(types.str), default = []),
+    packages = option(types.set(types.str)),
     linger = option(
         types.bool,
         default = False,

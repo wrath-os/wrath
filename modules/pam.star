@@ -9,20 +9,20 @@ rule = types.record(
 )
 
 def stack():
-    return option(types.ordered(rule), default = [])
+    return option(types.ordered(rule))
 
 KINDS = ["account", "auth", "password", "session"]
 
 def render(ctx):
     for service, stacks in ctx.read("security.pam.services").items():
-        lines = []
+        rules = []
         for kind in KINDS:
             for r in stacks[kind]:
                 line = "%s %s %s" % (kind, r["control"], r["module"])
                 if "args" in r:
                     line += " " + " ".join(r["args"])
-                lines.append(line)
-        ctx.file("/etc/pam.d/" + service, "\n".join(lines) + "\n")
+                rules.append(line)
+        ctx.file("/etc/pam.d/" + service, lines(rules))
 
 module(
     name = "pam",

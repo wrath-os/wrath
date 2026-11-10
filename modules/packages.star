@@ -8,7 +8,7 @@ def render(ctx):
 module(
     name = "packages",
     options = {
-        "packages": option(types.set(types.str), default = []),
+        "packages": option(types.set(types.str)),
     },
     writes = [],
     render = render,

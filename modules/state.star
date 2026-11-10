@@ -8,8 +8,8 @@ ALWAYS_KEPT = ["/etc/distro", "/var/lib/distro"]
 ACCOUNTS = "/var/lib/distro/accounts"
 
 kept = types.record(
-    directories = option(types.set(types.str), default = []),
-    files = option(types.set(types.str), default = []),
+    directories = option(types.set(types.str)),
+    files = option(types.set(types.str)),
 )
 
 def check_inside(ctx, at, path):
@@ -89,8 +89,8 @@ def render(ctx):
 module(
     name = "state",
     options = {
-        "state.directories": option(types.set(types.str), default = [], doc = "Kept as they are."),
-        "state.files": option(types.set(types.str), default = []),
+        "state.directories": option(types.set(types.str), doc = "Kept as they are."),
+        "state.files": option(types.set(types.str)),
     },
     user_options = {"state": option(kept, default = {})},
     writes = [],

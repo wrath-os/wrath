@@ -26,13 +26,13 @@ def render(ctx):
             sh.append("export %s=%s" % (name, sh_quote(v)))
         ctx.file(
             "~/.config/environment.d/60-distro.conf",
-            "\n".join(conf) + "\n",
+            lines(conf),
             user = user,
             next_login = True,
         )
         ctx.file(
             "~/.config/distro/session.sh",
-            "\n".join(sh) + "\n",
+            lines(sh),
             user = user,
             next_login = True,
         )
@@ -43,7 +43,6 @@ module(
     user_options = {
         "environment": option(
             types.map(types.str),
-            default = {},
             doc = "Variables every session of the user has. Values may refer to others as `$NAME`.",
         ),
     },

@@ -8,13 +8,13 @@ service = types.record(
     description = option(types.str, optional = True),
     command = option(
         types.list(types.str),
+        required = True,
         doc = "The program and its arguments. Programs on PATH need no path.",
     ),
-    environment = option(types.map(types.str), default = {}),
+    environment = option(types.map(types.str)),
     restart = option(types.one_of(["on-failure", "always", "never"]), default = "on-failure"),
     needs = option(
         types.set(types.str),
-        default = [],
         doc = "Other services of the same home or project, which start first.",
     ),
     ready = option(

@@ -26,7 +26,7 @@ module(
     options = {
         "boot": types.record(
             loader = option(types.one_of(["systemd-boot"]), default = "systemd-boot"),
-            kernel_params = option(types.list(types.str), default = []),
+            kernel_params = option(types.list(types.str)),
         ),
         "networking.dhcp": option(
             types.bool,

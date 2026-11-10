@@ -59,7 +59,7 @@ device = types.record(
 folder = types.record(
     path = option(types.path, doc = "Where the folder is; `~/` is the instance user's home."),
     label = option(types.str, optional = True),
-    devices = option(types.set(types.str), default = [], doc = "Names of devices to share with."),
+    devices = option(types.set(types.str), doc = "Names of devices to share with."),
     versioning = types.record(
         type = option(types.one_of(VERSIONING), default = "none"),
         params = types.map(types.str),

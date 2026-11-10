@@ -15,7 +15,6 @@ build = types.record(
     ),
     patches = option(
         types.list(types.str),
-        default = [],
         doc = "Patch files to apply, relative to the configuration.",
     ),
 )
