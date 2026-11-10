@@ -1137,3 +1137,93 @@ meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
 ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
+
+# GNOME Keyring, which keeps secrets for programs, and the crypto libraries it's built on.
+
+[[package]]
+id = "libgpg-error"
+version = "1.61"
+scope = "runtime"
+core = true
+sources = [{ url = "https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-{version}.tar.bz2" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-doc --disable-nls
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["gpg-error"]
+
+[[package]]
+id = "libgcrypt"
+version = "1.12.4"
+scope = "runtime"
+core = true
+extra_deps = ["libgpg-error"]
+sources = [{ url = "https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-{version}.tar.bz2" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-doc \
+    --with-libgpg-error-prefix=$LAB_DEP_libgpg_error
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["libgcrypt"]
+
+[[package]]
+id = "p11-kit"
+version = "0.26.5"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libffi"]
+sources = [{ url = "https://github.com/p11-glue/p11-kit/releases/download/{version}/p11-kit-{version}.tar.xz" }]
+script = '''
+# Loads PKCS#11 modules, such as GNOME Keyring's. Without the trust module, which would hold
+# certificates.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release --sysconfdir=/etc \
+    -D trust_module=disabled -D systemd=disabled -D bash_completion=disabled \
+    -D zsh_completion=disabled -D gtk_doc=false -D man=false -D nls=false -D test=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["p11-kit-1"]
+
+[[package]]
+id = "gcr3"
+version = "3.41.2"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+  "libgcrypt", "libgpg-error", "p11-kit", "systemd", "gettext", "openssh",
+]
+sources = [{ url = "https://download.gnome.org/sources/gcr/3.41/gcr-{version}.tar.xz" }]
+script = '''
+# The certificate and key library GNOME Keyring uses, without its GTK widgets.
+# It asks where ssh-add is even with its SSH agent off.
+# Its install script updates caches a system makes for itself, and a link for compatibility.
+sed -i "/^meson.add_install_script('meson_post_install.py',/,/^)/d" meson.build
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D gtk=false \
+    -D introspection=false -D gtk_doc=false -D ssh_agent=false -D systemd=enabled \
+    -D gpg_path=/run/system/bin/gpg
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["gcr-base-3", "gck-1"]
+
+[[package]]
+id = "gnome-keyring"
+version = "51.1"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+  "gcr3", "libgcrypt", "libgpg-error", "p11-kit", "systemd", "linux-pam", "gettext",
+]
+sources = [{ url = "https://download.gnome.org/sources/gnome-keyring/51/gnome-keyring-{version}.tar.xz" }]
+script = '''
+# The secrets service, started in each user's session. Its PAM module unlocks it at login.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D ssh-agent=false \
+    -D selinux=disabled -D systemd=enabled -D pam=true -D manpage=false -D libcap-ng=disabled \
+    -D pkcs11-modules=$PREFIX/lib/pkcs11 -D pkcs11-config=$PREFIX/share/p11-kit/modules
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''

@@ -14,8 +14,10 @@ b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f  https://cdn.ke
 5bb5d1be011158090157c9e7587ae5606c262a5020ecdc5caac6686b9910592e  https://deb.debian.org/debian/pool/main/h/hostname/hostname_3.25.tar.xz
 cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243  https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
 92893c8188355264ba639ca3d27943437b26ef069971ea9faa4b20de40595b9a  https://download.gnome.org/sources/at-spi2-core/2.60/at-spi2-core-2.60.7.tar.xz
+bad10f3c553a0e1854649ab59c5b2434da22ca1a54ae6138f1f53961567e1ab7  https://download.gnome.org/sources/gcr/3.41/gcr-3.41.2.tar.xz
 919f529512961a12e81cd4b4b466a48c3933469e7f9a310c6513cd4fb252ba3c  https://download.gnome.org/sources/gdk-pixbuf/2.44/gdk-pixbuf-2.44.8.tar.xz
 8a9ea10943c36fc117e253f80c91e477b673525ae45762942858aef57631bb90  https://download.gnome.org/sources/glib/2.84/glib-2.84.4.tar.xz
+dfe7adc5876ef0670e7eba2907799bdbb8875ce58bb4208e1a52169bd16a47ca  https://download.gnome.org/sources/gnome-keyring/51/gnome-keyring-51.1.tar.xz
 1e2419a5f21d26c324b28ae1c00e29e9175e8b596fff385a04c2172b36652226  https://download.gnome.org/sources/gsettings-desktop-schemas/51/gsettings-desktop-schemas-51.0.tar.xz
 80931fa472a77b9a164f6740e3c0b444fac6770054632d35a7ff9d679e5e7b9f  https://download.gnome.org/sources/gtk/3.24/gtk-3.24.52.tar.xz
 55c5c141a564245b8f8fbe7698663c87a45a7333c2a2c56f06f811ab73b212dd  https://download.gnome.org/sources/json-glib/1.10/json-glib-1.10.8.tar.xz
@@ -99,6 +101,7 @@ f118aa910fc0a137cc2dd0122232dbf82153d9a12fb5b0f5bb64896f6a157abf  https://github
 f0055ad0369bf2e372955ba55128d000cfcc21777057806015b45e4accbebf23  https://github.com/ninja-build/ninja/archive/v1.13.1/ninja-1.13.1.tar.gz
 134c602d8e0d53413a52d6cd58f9ce7e79a07d03288ee0a51ba1abd5db1b1ad9  https://github.com/niri-wm/niri/archive/v26.04/niri-26.04.tar.gz
 c53a47e5e441c930c3928cf7bf6fb00e5d129b630e0aa873b08258656e7345ec  https://github.com/openssl/openssl/releases/download/openssl-3.5.2/openssl-3.5.2.tar.gz
+f2cc09111e44bf3fea58f023180b33acea90aa82d042d6fbb623fbc5ba033bb7  https://github.com/p11-glue/p11-kit/releases/download/0.26.5/p11-kit-0.26.5.tar.xz
 2540302a1844ad2b2b501977abecfa850f265f97b78f065a712ab4074a89f5b5  https://github.com/pnggroup/libpng/archive/v1.6.59/libpng-1.6.59.tar.gz
 9b7bc16f086479dcc626c575976568ba4a85d34297a750d8ab3d2e57f6d8b988  https://github.com/polkit-org/polkit/archive/127/polkit-127.tar.gz
 add4604d3bc410344433122a819ee4154b79dd8316a56298c60417e637c07608  https://github.com/shadow-maint/shadow/releases/download/4.18.0/shadow-4.18.0.tar.xz
@@ -120,6 +123,8 @@ f3f70c4af173cc93d05070a9d412efe3ef5889bdf4ac32298e2c0d9ae1350559  https://gitlab
 f9454eae3a5a6ca903c05ead2a7e47d7d3957fb0ffac3ebb11d92842603ae80f  https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/0.5.19/wireplumber-0.5.19.tar.gz
 4460c20cfcf68b994a5ee206ed15fc19ad312f16c96075186e83b0e3f4aa48a5  https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.50/downloads/wayland-protocols-1.50.tar.xz
 64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3  https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.26.0/downloads/wayland-1.26.0.tar.xz
+d77f68f48879510e79a2f65977ccc68981781ea0923e5bdffac2a193ea3d660e  https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.12.4.tar.bz2
+7a85413f2bc354f4f8aa832b718af122e48965e9e0eb9012ee659c13c6385c93  https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.61.tar.bz2
 7716a0d940a0f6ae8e1f3b3f4f36299dc53e31b16840dbd171254312c41ca12e  https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
 c1fda668b520e6aef763c0eb962c032c9fe52bce322e8b00c69b4e9e847bddc1  https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-1.28.9.tar.xz
 6dbf744f583131a34845cc641e803843766a9ba80ce00378a9043fd6d8d5fb38  https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.9.tar.xz
