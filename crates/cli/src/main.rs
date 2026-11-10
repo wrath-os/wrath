@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
-use distro_backend_nixos as backend;
+use distro_backend as backend;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath, Value};
 use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};

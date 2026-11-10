@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 
-use distro_backend_nixos::{self as backend, Target};
+use distro_backend::{self as backend, Target};
 use distro_eval::Value;
 use distro_model::Model;
 

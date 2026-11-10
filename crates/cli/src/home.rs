@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use distro_backend_nixos::{self as backend, Target, home as homes};
+use distro_backend::{self as backend, Target, home as homes};
 use distro_model::Model;
 
 use crate::generations::{self, Switch};

@@ -25,7 +25,7 @@ toml_edit = "0.23"
 vsock = "0.5"
 
 distro-agent = { path = "crates/agent" }
-distro-backend-nixos = { path = "crates/backend-nixos" }
+distro-backend = { path = "crates/backend" }
 distro-check = { path = "crates/check" }
 distro-eval = { path = "crates/eval" }
 distro-model = { path = "crates/model" }

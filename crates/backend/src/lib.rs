@@ -681,7 +681,7 @@ mod tests {
         let json = r#"{
           "sources": {
             "nixpkgs": { "url": "github:NixOS/nixpkgs/nixos-unstable", "rev": "1d06008", "hash": "sha256-abc" },
-            "etc": { "url": "git+file:///etc/nixos", "rev": null, "hash": "sha256-x" }
+            "etc": { "url": "git+file:///srv/config", "rev": null, "hash": "sha256-x" }
           },
           "packages": { "git": { "version": "2.56.0", "id": "/nix/store/xgw-git-2.56.0" } }
         }"#;

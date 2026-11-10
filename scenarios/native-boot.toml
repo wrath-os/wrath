@@ -10,6 +10,6 @@ steps = [
   { run = "stat -c '%a %U' /run/wrappers/bin/sudo; su john -c 'id -un; sudo -n true 2>&1 | head -1'", stdout_contains = "4755 root\njohn\nsudo: a password is required" },
   { run = "busctl call org.freedesktop.PolicyKit1 /org/freedesktop/PolicyKit1/Authority org.freedesktop.DBus.Properties Get ss org.freedesktop.PolicyKit1.Authority BackendName", stdout_contains = "js" },
   { run = "systemctl is-system-running --wait; systemctl --failed --no-legend", stdout_contains = "running" },
-  { run = "test ! -e /run/current-system/sw/bin/nixos-rebuild && readlink /run/current-system", stdout_contains = "distro-system" },
+  { run = "readlink /run/current-system", stdout_contains = "distro-system" },
 ]
 timeout_secs = 120

@@ -21,7 +21,7 @@
         pname = "distro-cli";
         crates = [
           "agent"
-          "backend-nixos"
+          "backend"
           "check"
           "cli"
           "eval"

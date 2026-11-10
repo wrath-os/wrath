@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use distro_backend_nixos as backend;
+use distro_backend as backend;
 use distro_eval::{ConfigFs, DirFs};
 use distro_model::{Lock, Source};
 

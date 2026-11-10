@@ -529,7 +529,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "distro-backend-nixos"
+name = "distro-backend"
 version = "0.0.0"
 dependencies = [
  "blake3",
@@ -560,7 +560,7 @@ name = "distro-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
- "distro-backend-nixos",
+ "distro-backend",
  "distro-check",
  "distro-eval",
  "distro-model",

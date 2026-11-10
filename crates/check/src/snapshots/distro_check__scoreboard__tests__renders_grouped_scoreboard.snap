@@ -3,7 +3,7 @@ source: crates/check/src/scoreboard.rs
 expression: "render(&milestones, &results)"
 ---
 M1  Harness  1/2
-  PASS  harness-boots    A NixOS image boots
+  PASS  harness-boots    A test image boots
   FAIL  failure-reports  A failure is reported
                          exit code 2, expected 1: error: unrecognized subcommand
 

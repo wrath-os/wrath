@@ -6,7 +6,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use distro_backend_nixos::Target;
+use distro_backend::Target;
 use distro_model::{DEFAULT_SOURCE, Model, Source, package_source};
 use serde_json::Value;
 
@@ -264,7 +264,7 @@ fn keep(path: &Path, link: &Path) {
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .map_err(|e| e.to_string())
-        .and_then(|()| distro_backend_nixos::keep(path, link));
+        .and_then(|()| distro_backend::keep(path, link));
     if let Err(message) = kept {
         eprintln!(
             "warning: {} may be garbage collected while it runs: {message}",

@@ -113,7 +113,7 @@ mod tests {
             milestone("m2", "Compiler core"),
             milestone("m3", "Nothing yet"),
         ];
-        let boots = scenario("m1", "harness-boots", "A NixOS image boots");
+        let boots = scenario("m1", "harness-boots", "A test image boots");
         let fails = scenario("m1", "failure-reports", "A failure is reported");
         let plan = scenario("m2", "plan", "Plan shows the diff");
         let results = [

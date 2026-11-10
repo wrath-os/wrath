@@ -6,7 +6,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 
-use distro_backend_nixos as backend;
+use distro_backend as backend;
 use distro_model::{DISTRO_SOURCE, Lock, Source};
 
 /// Set on the distro run in place of another, to the hash it was run for.

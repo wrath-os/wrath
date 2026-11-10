@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use distro_backend_nixos::{self as backend, Generation, Target};
+use distro_backend::{self as backend, Generation, Target};
 use distro_model::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]

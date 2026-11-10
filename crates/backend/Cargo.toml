@@ -1,5 +1,5 @@
 [package]
-name = "distro-backend-nixos"
+name = "distro-backend"
 description = "Builds and activates systems from the resolved model with Nix and nixpkgs"
 version.workspace = true
 edition.workspace = true
