@@ -457,3 +457,18 @@ fn a_new_users_password_hash_reaches_the_model() {
         .unwrap();
     assert!(hash.starts_with("$6$usrviewtest$"), "{hash}");
 }
+
+#[test]
+fn an_apply_record_keeps_the_module_and_library_code_its_origins_point_into() {
+    let record = apply_record(Path::new("fixtures/configs/native-web"));
+    let sources = record["sources"].as_object().unwrap();
+    for file in ["nginx.star", "lib/pam.star"] {
+        let (_, text) = sources
+            .iter()
+            .find(|(name, _)| name.ends_with(&format!("modules/{file}")))
+            .unwrap_or_else(|| panic!("no {file} in {:?}", sources.keys()));
+        let path = format!("{}/../../modules/{file}", env!("CARGO_MANIFEST_DIR"));
+        let on_disk = std::fs::read_to_string(path).unwrap();
+        assert_eq!(text.as_str().unwrap(), on_disk, "{file}");
+    }
+}

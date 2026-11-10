@@ -72,8 +72,15 @@ pub fn load(
     let ast = parse(path, sources.text(file)).map_err(|e| locate.diagnostic(&e))?;
     let globals = globals();
     let mut libraries = Libraries::new();
-    load_libraries(root, &ast, &globals, &mut libraries, &mut Vec::new())
-        .map_err(|message| Diagnostic::error(format!("{path}: {message}")))?;
+    load_libraries(
+        sources,
+        root,
+        &ast,
+        &globals,
+        &mut libraries,
+        &mut Vec::new(),
+    )
+    .map_err(|message| Diagnostic::error(format!("{path}: {message}")))?;
     let declared = RefCell::new(None);
     StarModule::with_temp_heap(|module| {
         let loading = Loading(&declared);
@@ -113,9 +120,11 @@ fn loader(libraries: &Libraries) -> HashMap<&str, &FrozenModule> {
         .collect()
 }
 
-/// Loads the libraries `ast` loads, and theirs, into `libraries`. `stack` holds the libraries
-/// being loaded, to catch one that ends up loading itself.
+/// Loads the libraries `ast` loads, and theirs, into `libraries`, and adds each one's text to
+/// `sources` once, so an apply keeps the code its modules ran. `stack` holds the libraries being
+/// loaded, to catch one that ends up loading itself.
 fn load_libraries(
+    sources: &mut Sources,
     root: &Path,
     ast: &AstModule,
     globals: &Globals,
@@ -139,11 +148,16 @@ fn load_libraries(
                 "`{path}` isn't a library: libraries are `.star` files in the modules directory"
             ));
         }
-        let text = std::fs::read_to_string(root.join(relative))
-            .map_err(|e| format!("cannot load `{path}`: {e}"))?;
+        let file = root.join(relative);
+        let text =
+            std::fs::read_to_string(&file).map_err(|e| format!("cannot load `{path}`: {e}"))?;
         let library = parse(path, &text).map_err(|e| format!("`{path}`: {e}"))?;
+        let name = file.display().to_string();
+        if !sources.files().any(|id| sources.name(id) == name) {
+            sources.add(name, text);
+        }
         stack.push(path.to_owned());
-        load_libraries(root, &library, globals, libraries, stack)?;
+        load_libraries(sources, root, &library, globals, libraries, stack)?;
         stack.pop();
         let frozen = StarModule::with_temp_heap(|module| {
             {
