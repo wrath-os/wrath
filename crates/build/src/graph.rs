@@ -219,8 +219,53 @@ fn text<'a>(
 /// Directories whose entries are linked whole, directories included: each compiled locale is one.
 const WHOLE_ENTRIES: &[&str] = &["lib/locale"];
 
-/// Links in `to` for every file in `dir` of `package`, and every directory where `dir` is one of
-/// [`WHOLE_ENTRIES`], leaving entries already there alone.
+/// Directories merged from every package, file by file at any depth, as `share` is: what programs
+/// look for under `XDG_DATA_DIRS`, such as fonts, icons and portals.
+const MERGED_TREES: &[&str] = &["share"];
+
+/// What a merged `share` leaves out: translations and manuals, which programs find in their own
+/// package, and what only builds use.
+const UNMERGED: &[&str] = &[
+    "locale",
+    "man",
+    "info",
+    "doc",
+    "gtk-doc",
+    "aclocal",
+    "pkgconfig",
+];
+
+/// The files and links under `root`, as paths relative to it, leaving out [`UNMERGED`] at the top.
+fn tree_files(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut pending = vec![String::new()];
+    while let Some(relative) = pending.pop() {
+        let Ok(listing) = fs::read_dir(root.join(&relative)) else {
+            continue;
+        };
+        for entry in listing.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if relative.is_empty() && UNMERGED.contains(&name.as_str()) {
+                continue;
+            }
+            let path = if relative.is_empty() {
+                name
+            } else {
+                format!("{relative}/{name}")
+            };
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => pending.push(path),
+                Ok(_) => found.push(path),
+                Err(_) => {}
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Links in `to` for every file in `dir` of `package`, at any depth for [`MERGED_TREES`], and every
+/// directory where `dir` is one of [`WHOLE_ENTRIES`], leaving entries already there alone.
 fn linked(
     lab: &Lab,
     package: &PackageRef,
@@ -229,18 +274,23 @@ fn linked(
     entries: &mut Entries,
 ) -> Result<(), String> {
     let source = lab.on_host(&package.path).join(dir);
-    let Ok(listing) = fs::read_dir(&source) else {
-        return Ok(());
+    let names = if MERGED_TREES.contains(&dir) {
+        tree_files(&source)
+    } else {
+        let Ok(listing) = fs::read_dir(&source) else {
+            return Ok(());
+        };
+        let mut names: Vec<_> = listing
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let path = entry.path();
+                path.is_file() || (WHOLE_ENTRIES.contains(&dir) && path.is_dir())
+            })
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
     };
-    let mut names: Vec<_> = listing
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            let path = entry.path();
-            path.is_file() || (WHOLE_ENTRIES.contains(&dir) && path.is_dir())
-        })
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
     for name in names {
         entries
             .entry(format!("{to}/{name}"))
@@ -858,6 +908,7 @@ fn lower<'a>(
                 ("lib/security", "lib/security"),
                 // Compiled locales, which LOCPATH names.
                 ("lib/locale", "lib/locale"),
+                ("share", "share"),
             ],
             packages,
         )?,
@@ -2764,6 +2815,34 @@ mod tests {
         let outcome = realised(&lab, &mut db, &packages, &model(80, false));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         assert!(!root.join("etc/machine-id").exists());
+    }
+
+    #[test]
+    fn a_systems_share_merges_its_packages_data_without_translations_or_manuals() {
+        let (_dir, lab, packages) = setup();
+        let web = lab.on_host(&packages["web"].path);
+        for file in [
+            "share/fonts/web/a.ttf",
+            "share/xdg-desktop-portal/portals/web.portal",
+            "share/locale/sv/LC_MESSAGES/web.mo",
+            "share/man/man1/web.1",
+        ] {
+            fs::create_dir_all(web.join(file).parent().unwrap()).unwrap();
+            fs::write(web.join(file), "").unwrap();
+        }
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let inside = packages["web"].path.inside();
+        for file in [
+            "share/fonts/web/a.ttf",
+            "share/xdg-desktop-portal/portals/web.portal",
+        ] {
+            let target = fs::read_link(root.join(file)).unwrap();
+            assert_eq!(target, Path::new(&format!("{inside}/{file}")));
+        }
+        assert!(!root.join("share/locale").exists());
+        assert!(!root.join("share/man").exists());
     }
 
     #[test]
