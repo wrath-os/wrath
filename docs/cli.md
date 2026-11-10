@@ -186,6 +186,13 @@ The commands that only make sense in this repository move under `distro dev`: `d
 (running scenarios, today's `check`), `dev status`, `dev bench`. `fill-templates` stays hidden;
 activation runs it, and people don't.
 
+`dev test DIR` checks each configuration in `DIR`. One with an `expected/` directory renders:
+each file there must be what the configuration writes at that path, with units under
+`etc/systemd/system/` and a user's files under `home/NAME/`. Any other case is a bad
+configuration whose errors must match its `expected-error.txt`. `--bless` writes what they
+actually give. The modules' own cases are in `modules/tests/`; start one with empty files at the
+paths to check, then bless and review them.
+
 ## What's built
 
 Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `try`, `keep`,

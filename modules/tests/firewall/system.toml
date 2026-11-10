@@ -1,0 +1,7 @@
+[system]
+hostname = "box"
+
+[networking.firewall]
+allowed_tcp_ports = [22, 443]
+allowed_udp_ports = [41641]
+trusted_interfaces = ["tailscale0"]

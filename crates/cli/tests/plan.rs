@@ -119,6 +119,47 @@ fn a_bad_config_whose_error_changed_fails_until_blessed() {
 }
 
 #[test]
+fn the_modules_write_what_their_cases_expect() {
+    let output = distro(&["dev", "test", "modules/tests"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("PASS  firewall"), "{stdout}");
+}
+
+#[test]
+fn a_file_a_case_expects_fails_until_blessed_and_missing_ones_always_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = dir.path().join("firewall");
+    std::fs::create_dir_all(case.join("expected/etc")).unwrap();
+    let config = "[system]\nhostname = \"box\"\n[networking.firewall]\nallowed_tcp_ports = [22]\n";
+    std::fs::write(case.join("system.toml"), config).unwrap();
+    std::fs::write(case.join("expected/etc/nftables.conf"), "old\n").unwrap();
+    let dir = dir.path().to_str().unwrap();
+
+    let failed = distro(&["dev", "test", dir]);
+    let stdout = String::from_utf8(failed.stdout).unwrap();
+    assert!(!failed.status.success());
+    assert!(
+        stdout.contains("FAIL  firewall: etc/nftables.conf differs"),
+        "{stdout}"
+    );
+
+    assert!(distro(&["dev", "test", dir, "--bless"]).status.success());
+    assert!(distro(&["dev", "test", dir]).status.success());
+    let blessed = std::fs::read_to_string(case.join("expected/etc/nftables.conf")).unwrap();
+    assert!(blessed.contains("tcp dport 22 accept"), "{blessed}");
+
+    std::fs::write(case.join("expected/etc/nothing"), "").unwrap();
+    let missing = distro(&["dev", "test", dir, "--bless"]);
+    let stdout = String::from_utf8(missing.stdout).unwrap();
+    assert!(
+        !missing.status.success(),
+        "blessing can't make a file appear"
+    );
+    assert!(stdout.contains("doesn't write etc/nothing"), "{stdout}");
+}
+
+#[test]
 fn bench_measures_plan_time() {
     let output = stdout(&distro(&[
         "dev",

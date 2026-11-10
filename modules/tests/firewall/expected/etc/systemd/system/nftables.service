@@ -1,0 +1,12 @@
+[Unit]
+Before=network-pre.target
+Description=nftables firewall
+
+[Service]
+ExecStart=nft -f /etc/nftables.conf
+ExecStop=nft flush ruleset
+RemainAfterExit=yes
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target

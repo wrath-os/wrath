@@ -814,7 +814,7 @@ fn check(
 
     let mut all_passed = true;
     for dir in dirs {
-        all_passed &= checks::bad_configs(&under_root(root, dir), modules, bless)?;
+        all_passed &= checks::cases(&under_root(root, dir), modules, bless)?;
     }
     let ctx = context(root, image)?;
     for scenario in &scenarios {

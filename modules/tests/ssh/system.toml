@@ -1,0 +1,9 @@
+[system]
+hostname = "box"
+
+[services.ssh]
+enable = true
+port = 2222
+
+[users.john]
+authorized_keys = ["ssh-ed25519 AAAAexample john@laptop"]

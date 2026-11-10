@@ -1,0 +1,12 @@
+[Unit]
+After=network.target
+Description=SSH
+
+[Service]
+ExecStart=/run/system/bin/sshd -D -f /etc/ssh/sshd_config
+ExecStartPre=/bin/sh -c 'test -e /etc/ssh/ssh_host_ed25519_key || ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key'
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
