@@ -279,7 +279,7 @@ fn ask(yes: bool, terminal: bool) -> Ask {
 }
 
 /// When a switch to changes of `tier` takes full effect, if it doesn't right away.
-fn full_effect(tier: Tier) -> Option<&'static str> {
+pub(crate) fn full_effect(tier: Tier) -> Option<&'static str> {
     match tier {
         Tier::Live => None,
         Tier::NextLogin => Some("some changes take effect when users log in again"),

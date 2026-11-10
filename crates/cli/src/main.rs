@@ -17,6 +17,7 @@ mod edit;
 mod facts;
 mod fetch;
 mod generations;
+mod host;
 mod install;
 mod machine;
 mod on_machine;
@@ -71,11 +72,17 @@ enum Command {
         /// Compare against nothing, so everything is new
         #[arg(long)]
         fresh: bool,
+        /// Compare against what another machine runs, reached with `ssh NAME`
+        #[arg(long, value_name = "NAME", conflicts_with_all = ["against", "fresh"])]
+        host: Option<String>,
     },
     /// Switch to the configuration, locking its packages first, and say when it takes effect
     Apply {
         /// A system that is already built, such as one `build` made for this machine elsewhere
         system: Option<PathBuf>,
+        /// Build here and switch another machine, reached with `ssh NAME`
+        #[arg(long, value_name = "NAME", conflicts_with = "system")]
+        host: Option<String>,
         /// Switch without asking first
         #[arg(short, long)]
         yes: bool,
@@ -84,6 +91,9 @@ enum Command {
     Try {
         /// A system that is already built
         system: Option<PathBuf>,
+        /// Build here and try it on another machine, reached with `ssh NAME`
+        #[arg(long, value_name = "NAME", conflicts_with = "system")]
+        host: Option<String>,
         /// How long to try it, such as 90s, 5m or 1h
         #[arg(long = "for", value_name = "DURATION", default_value = "5m")]
         duration: String,
@@ -349,23 +359,34 @@ fn main() -> ExitCode {
                 None => Ok(ExitCode::FAILURE),
             }
         }),
-        Command::Plan { against, fresh } => {
-            let against = match (against, fresh) {
-                (_, true) => Against::Nothing,
-                (Some(path), false) => Against::Path(path),
-                (None, false) => Against::Running,
+        Command::Plan {
+            against,
+            fresh,
+            host,
+        } => {
+            let against = match (against, fresh, host) {
+                (_, true, _) => Against::Nothing,
+                (Some(path), false, _) => Against::Path(path),
+                (None, false, Some(host)) => Against::Host(host),
+                (None, false, None) => Against::Running,
             };
             machine().and_then(|config| plan(&config, against, &modules, json))
         }
-        Command::Apply { system, yes } => {
-            switch(root, system, Switch::Apply, yes, &machine, &modules)
-        }
+        Command::Apply { system, host, yes } => match host {
+            Some(host) => on_host(root, &host, Switch::Apply, yes, &machine, &modules),
+            None => switch(root, system, Switch::Apply, yes, &machine, &modules),
+        },
         Command::Try {
             system,
+            host,
             duration,
             yes,
         } => generations::parse_duration(&duration).and_then(|seconds| {
-            switch(root, system, Switch::Try(seconds), yes, &machine, &modules)
+            let how = Switch::Try(seconds);
+            match host {
+                Some(host) => on_host(root, &host, how, yes, &machine, &modules),
+                None => switch(root, system, how, yes, &machine, &modules),
+            }
         }),
         Command::Keep => generations::keep(),
         Command::Build {
@@ -686,13 +707,13 @@ fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> ExitCode {
         return ExitCode::FAILURE;
     };
     let packages = model.all_packages().count();
-    let locked = if model.is_locked() {
-        "locked"
+    let pinned = if model.is_locked() {
+        "sources pinned"
     } else {
-        "not fully locked"
+        "sources not pinned yet"
     };
     println!(
-        "no errors: {} options, {packages} packages ({locked}), model {}",
+        "no errors: {} options, {packages} packages, {pinned}, model {}",
         model.options.len(),
         &model.hash()[..16]
     );
@@ -973,6 +994,8 @@ enum Against {
     Path(PathBuf),
     /// The running system's model, or nothing when distro didn't build it.
     Running,
+    /// What another machine runs.
+    Host(String),
 }
 
 fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<ExitCode, String> {
@@ -988,6 +1011,12 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
             Some(before) => (before, None),
             None => return Ok(ExitCode::FAILURE),
         },
+        Against::Host(name) => (
+            host::Remote::new(&name)?
+                .running_model()?
+                .unwrap_or_default(),
+            Some(name),
+        ),
         Against::Running => match switching::running_model() {
             Some(path) => (
                 read_model(&path)
@@ -1107,6 +1136,22 @@ fn switch(
         templates::facts(),
     )?;
     generations::apply(root, &config, model, how, yes, record)
+}
+
+/// Builds the configuration here and switches the machine `host` to it, as `how` says.
+fn on_host(
+    root: &Path,
+    host: &str,
+    how: Switch,
+    yes: bool,
+    config: &impl Fn() -> Result<PathBuf, String>,
+    modules: &Path,
+) -> Result<ExitCode, String> {
+    let config = config()?;
+    let Some(model) = model(&config, modules) else {
+        return Ok(ExitCode::FAILURE);
+    };
+    host::apply(root, &config, model, &host::Remote::new(host)?, how, yes)
 }
 
 /// Prints `value` as JSON, for `--json`.

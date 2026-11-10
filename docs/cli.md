@@ -33,7 +33,15 @@ packages
 1 change, tier: live
 ```
 
-Later, `--host NAME` builds locally and applies on another machine over SSH or its agent.
+Another machine is managed from where you have a checkout: `plan --host NAME`, `apply --host NAME`
+and `try --host NAME` build here, copy what the machine lacks over SSH, and switch it with the new
+system's own distro. `NAME` is what `ssh NAME` reaches, so `~/.ssh/config` applies, and
+`DISTRO_SSH` replaces the `ssh` command, such as `DISTRO_SSH="ssh -p 2222"`. The login needs
+root, or sudo, which asks for its password once.
+
+```console
+$ distro apply --host root@framework
+```
 
 ## Naming a package
 
@@ -178,7 +186,7 @@ current directory, with `shell`, `up`, `run`, `add`, `remove`, `check`, `lock`, 
 A home of its own, `home.toml` in `~/.config/distro`, isn't supported for now: a user's
 packages and files go under `[users.NAME]` in the system's configuration.
 
-Not yet: versions (`jq@1.7`), `search`, `info`, `--json` elsewhere, `--host`, and `--verbose`.
+Not yet: versions (`jq@1.7`), `search`, `info`, `--json` elsewhere, and `--verbose`.
 `clean` lists the generations it removes rather than estimating the space first, and says what it
 freed afterwards.
 

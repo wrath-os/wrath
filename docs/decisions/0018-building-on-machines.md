@@ -1,6 +1,6 @@
 # 0018: Building on machines, and applying from elsewhere
 
-Status: proposed, 2026-11-10.
+Status: accepted, 2026-11-10.
 
 ## Context
 
