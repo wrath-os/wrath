@@ -359,6 +359,32 @@ const USER_UNITS: &str = ".config/systemd/user";
 
 /// Where the system's units go.
 const SYSTEM_UNITS: &str = "etc/systemd/system";
+/// Where each user's service manager finds units the system adds.
+const SYSTEM_USER_UNITS: &str = "etc/systemd/user";
+
+/// The units of one kind of service manager: the model field enabling them, where packages keep
+/// them, where the system adds them, and the packages whose units that manager finds already.
+struct UnitKind {
+    enabled: &'static str,
+    packaged: &'static str,
+    added: &'static str,
+    found: &'static [&'static str],
+}
+
+const UNIT_KINDS: [UnitKind; 2] = [
+    UnitKind {
+        enabled: "enabled",
+        packaged: "lib/systemd/system",
+        added: SYSTEM_UNITS,
+        found: &["systemd", "dbus"],
+    },
+    UnitKind {
+        enabled: "enabled_user",
+        packaged: "lib/systemd/user",
+        added: SYSTEM_USER_UNITS,
+        found: &["systemd"],
+    },
+];
 
 fn system_layout() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -828,7 +854,10 @@ fn lower<'a>(
             "services",
             lab,
             services[1..].to_vec(),
-            &[("lib/systemd/system", SYSTEM_UNITS)],
+            &[
+                ("lib/systemd/system", SYSTEM_UNITS),
+                ("lib/systemd/user", SYSTEM_USER_UNITS),
+            ],
             packages,
         )?,
         fixed_links(packages)?,
@@ -899,8 +928,9 @@ fn lower<'a>(
     })
 }
 
-/// Links that pull in the model's enabled units: into each target it names, or into those its
-/// `[Install]` section names when it names none. Also returns the units no package has.
+/// Links that pull in the model's enabled units, the system's and users': into each target it names,
+/// or into those its `[Install]` section names when it names none. Also returns the units no
+/// package has.
 fn enabled_units<'a>(
     lab: &'a Lab,
     model: &'a Value,
@@ -908,43 +938,45 @@ fn enabled_units<'a>(
     packages: &'a Packages,
 ) -> Result<(Action<'a>, Vec<String>), String> {
     // systemd's and dbus's own units first, then those of every other package the system has.
-    let base = ["systemd", "dbus"];
-    let mut ids: Vec<&'a str> = base.to_vec();
-    ids.extend(present.iter().filter(|id| !base.contains(id)));
+    let first = ["systemd", "dbus"];
+    let mut ids: Vec<&'a str> = first.to_vec();
+    ids.extend(present.iter().filter(|id| !first.contains(id)));
     let mut links = BTreeMap::new();
     let mut missing = Vec::new();
-    for (unit, targets) in model["enabled"].as_object().into_iter().flatten() {
-        let file = format!("lib/systemd/system/{unit}");
-        let found = ids.iter().find_map(|id| {
-            let path = &packages.get(*id)?.path;
-            let host = lab.on_host(path).join(&file);
-            host.is_file()
-                .then(|| (*id, host, format!("{}/{file}", path.inside())))
-        });
-        let Some((id, host, inside)) = found else {
-            missing.push(unit.clone());
-            continue;
-        };
-        let mut wanted: Vec<String> = targets
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|target| str_field(target, "target").map(str::to_owned))
-            .collect::<Result<_, _>>()?;
-        if wanted.is_empty() {
-            let text = fs::read_to_string(&host).map_err(with_path(&host))?;
-            wanted = installed_into(&text);
-        }
-        for target in wanted {
-            links.insert(
-                format!("etc/systemd/system/{target}.wants/{unit}"),
-                inside.clone(),
-            );
-        }
-        // systemd finds a wanted unit by its name on its search path, which has its own units and
-        // dbus's already.
-        if !base.contains(&id) {
-            links.insert(format!("etc/systemd/system/{unit}"), inside);
+    for kind in &UNIT_KINDS {
+        for (unit, targets) in model[kind.enabled].as_object().into_iter().flatten() {
+            let file = format!("{}/{unit}", kind.packaged);
+            let found = ids.iter().find_map(|id| {
+                let path = &packages.get(*id)?.path;
+                let host = lab.on_host(path).join(&file);
+                host.is_file()
+                    .then(|| (*id, host, format!("{}/{file}", path.inside())))
+            });
+            let Some((id, host, inside)) = found else {
+                missing.push(unit.clone());
+                continue;
+            };
+            let mut wanted: Vec<String> = targets
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|target| str_field(target, "target").map(str::to_owned))
+                .collect::<Result<_, _>>()?;
+            if wanted.is_empty() {
+                let text = fs::read_to_string(&host).map_err(with_path(&host))?;
+                wanted = installed_into(&text);
+            }
+            for target in wanted {
+                links.insert(
+                    format!("{}/{target}.wants/{unit}", kind.added),
+                    inside.clone(),
+                );
+            }
+            // systemd finds a wanted unit by its name on its search path, which may have the
+            // package's units already.
+            if !kind.found.contains(&id) {
+                links.insert(format!("{}/{unit}", kind.added), inside);
+            }
         }
     }
     let (unresolved, resolved) = action_records(
@@ -2667,6 +2699,44 @@ mod tests {
             conf.contains(&format!("{web}/share/dbus-1/system-services")),
             "{conf}"
         );
+    }
+
+    #[test]
+    fn a_service_packages_user_units_join_the_system_and_enabled_ones_are_wanted() {
+        let (_dir, lab, packages) = setup();
+        let units = lab.on_host(&packages["web"].path).join("lib/systemd/user");
+        fs::create_dir_all(&units).unwrap();
+        fs::write(
+            units.join("web-user.service"),
+            "[Install]\nWantedBy=default.target\n",
+        )
+        .unwrap();
+        fs::write(
+            units.join("web-user.socket"),
+            "[Install]\nWantedBy=sockets.target\n",
+        )
+        .unwrap();
+        fs::write(units.join("web-session.service"), "[Unit]\n").unwrap();
+        let mut model = model(80, false);
+        model["service_packages"] = json!(["web"]);
+        model["enabled_user"] =
+            json!({"web-user.service": [], "web-user.socket": ["other.target"], "nope.socket": []});
+        let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
+        assert_eq!(lowered.unfound, ["nope.socket"]);
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realise(&lab, &mut db, lowered.actions).unwrap();
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let web = packages["web"].path.inside();
+        for (link, unit) in [
+            ("web-session.service", "web-session.service"),
+            ("web-user.service", "web-user.service"),
+            ("default.target.wants/web-user.service", "web-user.service"),
+            ("other.target.wants/web-user.socket", "web-user.socket"),
+        ] {
+            let target = fs::read_link(root.join("etc/systemd/user").join(link)).unwrap();
+            assert_eq!(target, Path::new(&format!("{web}/lib/systemd/user/{unit}")));
+        }
+        assert!(!root.join("etc/systemd/user/sockets.target.wants").exists());
     }
 
     #[test]
