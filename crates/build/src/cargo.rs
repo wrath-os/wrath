@@ -32,7 +32,7 @@ pub struct Crate {
 }
 
 impl Crate {
-    fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!(
             "https://static.crates.io/crates/{0}/{0}-{1}.crate",
             self.name, self.version

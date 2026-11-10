@@ -170,6 +170,12 @@ struct Source {
     into: Option<String>,
     /// The file's name, for a URL that doesn't end in it.
     name: Option<String>,
+    /// For a `tree:` source, a directory relative to the repository: what in it to take.
+    #[serde(default)]
+    include: Vec<String>,
+    /// The hash the file must have, when the recipe knows it, such as a crate's from a
+    /// `Cargo.lock`. Otherwise `sources.lock` pins it.
+    sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -193,6 +199,9 @@ pub(crate) struct Package {
     extra_deps: Vec<DepSpec>,
     #[serde(default)]
     sources: Vec<Source>,
+    /// A `Cargo.lock`, relative to the repository, whose registry crates are added to `sources`,
+    /// each under `vendor/` and checked against the lock's hash.
+    crates: Option<String>,
     #[serde(default)]
     files: Vec<String>,
     script: String,
@@ -320,6 +329,7 @@ impl Package {
             deps: Vec::new(),
             extra_deps,
             sources: Vec::new(),
+            crates: None,
             files: Vec::new(),
             script,
             wrap: true,
@@ -548,12 +558,74 @@ impl Sources {
         fs::write(&self.file, text).map_err(with_path(&self.file))
     }
 
+    /// Where `source` is on the host, with its hash.
+    fn fetch_source(&mut self, lab: &Lab, source: &Source) -> Result<(PathBuf, String), String> {
+        match source.url.strip_prefix("tree:") {
+            Some(tree) => self.fetch_tree(lab, tree, &source.include),
+            None => self.fetch(
+                lab,
+                &source.url,
+                source.name.as_deref(),
+                source.sha256.as_deref(),
+            ),
+        }
+    }
+
+    /// The files `include` names in `tree`, a directory relative to the repository, packed the
+    /// same way whenever they're the same, under one top directory as a downloaded source is.
+    /// What was built in them, `target`, is left out. Named by its hash, which isn't pinned:
+    /// the tree is the repository's own and changes with it.
+    fn fetch_tree(
+        &mut self,
+        lab: &Lab,
+        tree: &str,
+        include: &[String],
+    ) -> Result<(PathBuf, String), String> {
+        let repository = self.file.parent().unwrap_or(Path::new("."));
+        let from = repository.join(tree);
+        let mut include = include.to_vec();
+        include.sort();
+        if let Some(missing) = include.iter().find(|name| !from.join(name).exists()) {
+            return Err(format!("{} has no `{missing}`", from.display()));
+        }
+        let dir = lab.work.join("sources");
+        fs::create_dir_all(&dir).map_err(with_path(&dir))?;
+        let partial = dir.join(format!("tree.partial{}", std::process::id()));
+        run_host(
+            Command::new("tar")
+                .args(["--create", "--file"])
+                .arg(&partial)
+                .arg("--directory")
+                .arg(&from)
+                .args([
+                    "--sort=name",
+                    "--mtime=@0",
+                    "--owner=0",
+                    "--group=0",
+                    "--numeric-owner",
+                    "--mode=go-w",
+                    "--format=gnu",
+                    "--exclude=target",
+                    "--exclude-vcs",
+                ])
+                .arg("--transform=flags=r;s,^,tree/,")
+                .arg("--")
+                .args(&include),
+            &format!("packing {}", from.display()),
+        )?;
+        let hash = sha256_of(&partial)?;
+        let path = dir.join(format!("tree-{hash}.tar"));
+        fs::rename(&partial, &path).map_err(with_path(&path))?;
+        Ok((path, hash))
+    }
+
     /// Where the source at `url` is on the host, with its hash.
     fn fetch(
         &mut self,
         lab: &Lab,
         url: &str,
         name: Option<&str>,
+        expected: Option<&str>,
     ) -> Result<(PathBuf, String), String> {
         let dir = lab.work.join("sources");
         fs::create_dir_all(&dir).map_err(with_path(&dir))?;
@@ -572,6 +644,15 @@ impl Sources {
             fs::rename(&partial, &path).map_err(with_path(&path))?;
         }
         let hash = sha256_of(&path)?;
+        if let Some(expected) = expected {
+            if hash != expected {
+                fs::remove_file(&path).map_err(with_path(&path))?;
+                return Err(format!(
+                    "{url} has hash {hash}, and {expected} was expected"
+                ));
+            }
+            return Ok((path, hash));
+        }
         match self.pins.get(url) {
             Some(pinned) if *pinned != hash => {
                 Err(format!("{url} has hash {hash}, and {pinned} is pinned"))
@@ -590,7 +671,24 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
     let path = repository.join("recipes").join(recipes);
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     let parsed: Recipes = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(parsed.package)
+    let mut packages = parsed.package;
+    for package in &mut packages {
+        let Some(lock) = &package.crates else {
+            continue;
+        };
+        let lock = repository.join(lock);
+        let text = fs::read_to_string(&lock).map_err(with_path(&lock))?;
+        package
+            .sources
+            .extend(crate::cargo::crates(&text)?.into_iter().map(|c| Source {
+                url: c.url(),
+                into: Some(format!("vendor/{}-{}", c.name, c.version)),
+                name: Some(format!("{}-{}.crate", c.name, c.version)),
+                include: Vec::new(),
+                sha256: Some(c.checksum),
+            }));
+    }
+    Ok(packages)
 }
 
 /// Whether a package's arm matters: those built once for every arm share a path.
@@ -816,7 +914,7 @@ pub fn unresolved_keys(
         for package in load(repository, file)? {
             let mut hashes = Vec::new();
             for source in &package.sources {
-                hashes.push(sources.fetch(&lab, &source.url, source.name.as_deref())?.1);
+                hashes.push(sources.fetch_source(&lab, source)?.1);
             }
             let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
             let recipe = recipe_parts(repository, &package, arm, &hashes)?;
@@ -859,7 +957,7 @@ pub(crate) fn build_one(
 
     let mut fetched = Vec::new();
     for source in &package.sources {
-        let (path, hash) = sources.fetch(lab, &source.url, source.name.as_deref())?;
+        let (path, hash) = sources.fetch_source(lab, source)?;
         fetched.push((source, path, hash));
     }
     let source_hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
@@ -1278,5 +1376,162 @@ mod view_tests {
             [("lib".to_owned(), true), ("base".to_owned(), true)]
         );
         assert!(!result[1].rpath);
+    }
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+
+    fn repository() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("project");
+        fs::create_dir_all(tree.join("src")).unwrap();
+        fs::create_dir_all(tree.join("target")).unwrap();
+        fs::write(tree.join("Cargo.toml"), "[package]\n").unwrap();
+        fs::write(tree.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(tree.join("target/junk"), "built\n").unwrap();
+        fs::create_dir_all(dir.path().join("build")).unwrap();
+        dir
+    }
+
+    fn fetch(dir: &Path, include: &[&str]) -> (PathBuf, String) {
+        let repository = dir.join("build");
+        let lab = Lab::new(repository.join("work"));
+        let mut sources = Sources::load(&repository).unwrap();
+        let include: Vec<String> = include.iter().map(|s| (*s).to_owned()).collect();
+        sources.fetch_tree(&lab, "../project", &include).unwrap()
+    }
+
+    fn listing(tar: &Path) -> String {
+        let output = Command::new("tar").arg("-tf").arg(tar).output().unwrap();
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    #[test]
+    fn a_tree_packs_the_same_twice() {
+        let dir = repository();
+        let (first, hash) = fetch(dir.path(), &["Cargo.toml", "src"]);
+        fs::remove_file(&first).unwrap();
+        // Times change between checkouts and mustn't change the source.
+        let main = dir.path().join("project/src/main.rs");
+        Command::new("touch")
+            .args(["-d", "2001-01-01"])
+            .arg(&main)
+            .status()
+            .unwrap();
+        assert_eq!(fetch(dir.path(), &["Cargo.toml", "src"]).1, hash);
+    }
+
+    #[test]
+    fn a_changed_file_changes_the_tree() {
+        let dir = repository();
+        let (_, before) = fetch(dir.path(), &["Cargo.toml", "src"]);
+        fs::write(dir.path().join("project/src/main.rs"), "fn main() { }\n").unwrap();
+        assert_ne!(fetch(dir.path(), &["Cargo.toml", "src"]).1, before);
+    }
+
+    #[test]
+    fn a_tree_has_only_what_it_includes_under_one_top_directory() {
+        let dir = repository();
+        let (tar, _) = fetch(dir.path(), &["Cargo.toml", "src"]);
+        assert_eq!(
+            listing(&tar),
+            "tree/Cargo.toml\ntree/src/\ntree/src/main.rs\n"
+        );
+    }
+
+    #[test]
+    fn a_tree_never_takes_what_was_built_in_it() {
+        let dir = repository();
+        fs::create_dir_all(dir.path().join("project/src/target")).unwrap();
+        fs::write(dir.path().join("project/src/target/x"), "built\n").unwrap();
+        let (tar, _) = fetch(dir.path(), &["src"]);
+        assert!(!listing(&tar).contains("target"), "{}", listing(&tar));
+    }
+
+    #[test]
+    fn a_missing_include_is_an_error() {
+        let dir = repository();
+        let repository = dir.path().join("build");
+        let lab = Lab::new(repository.join("work"));
+        let mut sources = Sources::load(&repository).unwrap();
+        let error = sources
+            .fetch_tree(&lab, "../project", &["nothing".to_owned()])
+            .unwrap_err();
+        assert!(error.contains("nothing"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod crate_tests {
+    use super::*;
+
+    const LOCK: &str = r#"
+[[package]]
+name = "app"
+version = "0.1.0"
+
+[[package]]
+name = "itoa"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
+"#;
+
+    fn repository(recipe: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("build/recipes")).unwrap();
+        fs::write(dir.path().join("Cargo.lock"), LOCK).unwrap();
+        fs::write(dir.path().join("build/recipes/app.toml"), recipe).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_recipe_takes_each_registry_crate_of_a_cargo_lock_pinned_by_its_checksum() {
+        let dir = repository(
+            "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\n\
+             crates = \"../Cargo.lock\"\n",
+        );
+        let packages = load(&dir.path().join("build"), "app.toml").unwrap();
+        let sources: Vec<(&str, Option<&str>, Option<&str>)> = packages[0]
+            .sources
+            .iter()
+            .map(|s| (s.url.as_str(), s.into.as_deref(), s.sha256.as_deref()))
+            .collect();
+        assert_eq!(
+            sources,
+            [(
+                "https://static.crates.io/crates/itoa/itoa-1.0.15.crate",
+                Some("vendor/itoa-1.0.15"),
+                Some("4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"),
+            )]
+        );
+    }
+
+    #[test]
+    fn a_source_with_a_hash_must_have_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("x.crate");
+        fs::write(&file, "not the crate\n").unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let mut sources = Sources::load(dir.path()).unwrap();
+        let source = Source {
+            url: format!("file://{}", file.display()),
+            into: None,
+            name: None,
+            include: Vec::new(),
+            sha256: Some("00".repeat(32)),
+        };
+        let error = sources.fetch_source(&lab, &source).unwrap_err();
+        assert!(error.contains(&"00".repeat(32)), "{error}");
+        let right = sha256_of(&file).unwrap();
+        let source = Source {
+            sha256: Some(right.clone()),
+            ..source
+        };
+        assert_eq!(sources.fetch_source(&lab, &source).unwrap().1, right);
+        // Hashes the recipe carries stay out of `sources.lock`.
+        assert!(!dir.path().join("sources.lock").exists());
     }
 }
