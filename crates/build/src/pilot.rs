@@ -887,7 +887,8 @@ pub(crate) fn build_recipes(
     let mut packages = Vec::new();
     for file in recipes {
         for package in chain::load(repository, file)? {
-            chain::build_one(
+            // A package built here is finished as `chain::build` does, so the next run has it.
+            if let Some(prepared) = chain::build_one(
                 lab,
                 repository,
                 &package,
@@ -895,7 +896,10 @@ pub(crate) fn build_recipes(
                 &seed,
                 &mut sources,
                 &mut built,
-            )?;
+            )? {
+                chain::remove(&prepared.build_dir)?;
+                chain::finish(lab, &package, arm, &prepared.out, &mut built)?;
+            }
             packages.push(package);
         }
     }
