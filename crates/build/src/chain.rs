@@ -1023,7 +1023,7 @@ pub(crate) struct Prepared {
 
 /// The version of what the builder does to every package beside its recipe, such as fixing up
 /// run paths. Every package's key has it, so changing it rebuilds everything.
-const BUILD_RULES: &str = "2";
+const BUILD_RULES: &str = "3";
 
 /// What goes into a package's key from its recipe, before any dependency.
 fn recipe_parts(

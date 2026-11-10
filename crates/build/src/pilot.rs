@@ -911,8 +911,7 @@ pub(crate) fn build_some(
         {
             continue;
         }
-        // A package built here is finished as `chain::build` does, so the next run has it.
-        if let Some(prepared) = chain::build_one(
+        build_and_finish(
             lab,
             repository,
             &package,
@@ -920,13 +919,35 @@ pub(crate) fn build_some(
             &seed,
             &mut sources,
             &mut built,
-        )? {
-            chain::remove(&prepared.build_dir)?;
-            chain::finish(lab, &package, arm, &prepared.out, &mut built)?;
-        }
+        )?;
         packages.push(package);
     }
     Ok((built, seed, packages))
+}
+
+/// Builds `package` when it hasn't been, fixes it up, and moves it to where its contents put it,
+/// so the next run has it.
+pub(crate) fn build_and_finish(
+    lab: &Lab,
+    repository: &Path,
+    package: &Package,
+    arm: Arm,
+    seed: &StorePath,
+    sources: &mut chain::Sources,
+    built: &mut Built,
+) -> Result<(), String> {
+    if let Some(prepared) = chain::build_one(lab, repository, package, arm, seed, sources, built)? {
+        chain::remove(&prepared.build_dir)?;
+        fix_up(
+            lab,
+            arm,
+            &prepared,
+            &mut Fixups::default(),
+            &mut Leaks::default(),
+        )?;
+        chain::finish(lab, package, arm, &prepared.out, built)?;
+    }
+    Ok(())
 }
 
 /// The ids of `wanted` and everything among `packages` they depend on. The toolchain's are

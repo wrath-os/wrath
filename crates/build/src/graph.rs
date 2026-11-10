@@ -1823,12 +1823,7 @@ fn build_variants(
 ) -> Result<(), String> {
     let mut sources = chain::Sources::load(repository)?;
     for variant in variants(recipes, model)? {
-        if let Some(prepared) =
-            chain::build_one(lab, repository, &variant, Arm::F, seed, &mut sources, built)?
-        {
-            chain::remove(&prepared.build_dir)?;
-            chain::finish(lab, &variant, Arm::F, &prepared.out, built)?;
-        }
+        pilot::build_and_finish(lab, repository, &variant, Arm::F, seed, &mut sources, built)?;
     }
     Ok(())
 }
