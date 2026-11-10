@@ -51,3 +51,55 @@ ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
 smoke = ["bin/ping -V"]
+
+[[package]]
+id = "locales"
+scope = "runtime"
+core = true
+script = '''
+# The locales $OPTION_locales names, such as `en_US.UTF-8/UTF-8`, compiled into one archive for
+# glibc to read through LOCALE_ARCHIVE. localedef writes it under glibc's own prefix in --prefix.
+mkdir -p /build/root$LAB_LIB_glibc/lib/locale $DEST$PREFIX/lib/locale
+for entry in ${OPTION_locales:-C.UTF-8/UTF-8}; do
+    name=${entry%/*}
+    charset=${entry#*/}
+    input=${name%%.*}
+    localedef --prefix=/build/root -i "${input%%@*}" -f "$charset" "$name"
+done
+find /build/root -name locale-archive -exec cp {} $DEST$PREFIX/lib/locale/locale-archive \;
+test -s $DEST$PREFIX/lib/locale/locale-archive
+'''
+
+[[package]]
+id = "zram-generator"
+scope = "runtime"
+core = true
+extra_deps = ["rust-bin", "systemd"]
+sources = [{ url = "https://github.com/systemd/zram-generator/archive/v1.2.1/zram-generator-1.2.1.tar.gz" }]
+# The project doesn't ship a lock, so one made once with `cargo generate-lockfile` is kept here.
+crates = "recipes/locks/zram-generator.Cargo.lock"
+files = ["locks/zram-generator.Cargo.lock"]
+script = '''
+cp locks/zram-generator.Cargo.lock Cargo.lock
+# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
+awk -F'"' '
+    /^name = / { name = $2 }
+    /^version = / { version = $2 }
+    /^checksum = / {
+        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
+    }
+' Cargo.lock
+mkdir -p .cargo
+cat > .cargo/config.toml <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+CONFIG
+export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
+dirs="SYSTEMD_UTIL_DIR=$LAB_DEP_systemd/lib/systemd \
+    SYSTEMD_SYSTEM_UNIT_DIR=$PREFIX/lib/systemd/system \
+    SYSTEMD_SYSTEM_GENERATOR_DIR=$PREFIX/lib/systemd/system-generators"
+make build NOMAN=1 CARGOFLAGS="--offline --locked" $dirs
+make install NOMAN=1 DESTDIR=$DEST $dirs
+'''

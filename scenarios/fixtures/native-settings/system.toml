@@ -1,4 +1,4 @@
-packages = ["glibc.bin"]
+packages = ["glibc"]
 
 [system]
 hostname = "native"

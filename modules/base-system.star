@@ -39,8 +39,8 @@ def locale_environment(ctx):
         charset = locale.partition(".")[2] or "ISO-8859-1"
         ctx.build(
             LOCALES,
-            package = "glibcLocales",
-            options = {"allLocales": False, "locales": ["%s/%s" % (locale, charset)]},
+            package = "locales",
+            options = {"locales": ["%s/%s" % (locale, charset)]},
         )
         ctx.package(LOCALES)
         environment.append(("LOCALE_ARCHIVE", SYSTEM + "/lib/locale/locale-archive"))

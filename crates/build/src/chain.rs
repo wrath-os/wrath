@@ -315,6 +315,39 @@ impl Package {
             .collect()
     }
 
+    /// This recipe built as `id` with `options`, which its script reads as `OPTION_<name>`
+    /// variables set at its top, so the script says what they are and they're part of its key.
+    /// A list is its items separated by spaces.
+    pub(crate) fn variant(
+        &self,
+        id: &str,
+        options: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self, String> {
+        let text_of = |value: &serde_json::Value| match value {
+            serde_json::Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        let mut exports = String::new();
+        for (name, value) in options {
+            if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(format!("`{}` has no option `{name}`", self.id));
+            }
+            let text = match value {
+                serde_json::Value::Array(items) => {
+                    items.iter().map(text_of).collect::<Vec<_>>().join(" ")
+                }
+                other => text_of(other),
+            };
+            let quoted = text.replace('\'', "'\\''");
+            exports.push_str(&format!("export OPTION_{name}='{quoted}'\n"));
+        }
+        Ok(Self {
+            id: id.to_owned(),
+            script: format!("{exports}{}", self.script),
+            ..self.clone()
+        })
+    }
+
     /// A package linking a small program against `library` from this package.
     pub(crate) fn probe(&self, library: &str) -> Self {
         let mut extra_deps = vec![DepSpec::Id(self.id.clone())];
@@ -686,7 +719,9 @@ fn fetch_all(
         let (path, hash) = sources.fetch_source(lab, source)?;
         fetched.push((source.clone(), path, hash));
     }
-    let locked = locked_sources(package, fetched.first().map(|(_, path, _)| path.as_path()))?;
+    let repository = sources.file.parent().unwrap_or(Path::new("."));
+    let first = fetched.first().map(|(_, path, _)| path.as_path());
+    let locked = locked_sources(package, repository, first)?;
     for source in locked {
         let (path, hash) = sources.fetch_source(lab, &source)?;
         fetched.push((source, path, hash));
@@ -695,8 +730,17 @@ fn fetch_all(
 }
 
 /// The sources `package`'s locks list, read from its first source, `first`.
-fn locked_sources(package: &Package, first: Option<&Path>) -> Result<Vec<Source>, String> {
+/// A lock under `recipes/` is one kept beside the recipes, for a project that doesn't ship one.
+fn locked_sources(
+    package: &Package,
+    repository: &Path,
+    first: Option<&Path>,
+) -> Result<Vec<Source>, String> {
     let read = |lock: &str| {
+        if lock.starts_with("recipes/") {
+            let path = repository.join(lock);
+            return fs::read_to_string(&path).map_err(with_path(&path));
+        }
         let first = first.ok_or_else(|| format!("`{}` names a lock but no source", package.id))?;
         read_in(first, lock)
     };
@@ -1095,7 +1139,11 @@ pub(crate) fn build_one(
     }
     for name in &package.files {
         let from = repository.join("recipes").join(name);
-        fs::copy(&from, src.join(name)).map_err(with_path(&from))?;
+        let to = src.join(name);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(with_path(parent))?;
+        }
+        fs::copy(&from, &to).map_err(with_path(&from))?;
     }
 
     let view_dir = lab.work.join("views").join(out.hash());
@@ -1578,7 +1626,12 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
     fn a_recipe_takes_each_crate_of_the_cargo_lock_in_its_source_pinned_by_its_checksum() {
         let dir = tempfile::tempdir().unwrap();
         let archive = archive(dir.path(), &[("Cargo.lock", LOCK)]);
-        let locked = locked_sources(&package("crates = \"Cargo.lock\"\n"), Some(&archive)).unwrap();
+        let locked = locked_sources(
+            &package("crates = \"Cargo.lock\"\n"),
+            dir.path(),
+            Some(&archive),
+        )
+        .unwrap();
         let sources: Vec<(&str, Option<&str>, Option<&str>, bool)> = locked
             .iter()
             .map(|s| {
@@ -1606,7 +1659,8 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
         let dir = tempfile::tempdir().unwrap();
         let go_sum = "filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5=\n";
         let archive = archive(dir.path(), &[("go.sum", go_sum)]);
-        let locked = locked_sources(&package("go = \"go.sum\"\n"), Some(&archive)).unwrap();
+        let locked =
+            locked_sources(&package("go = \"go.sum\"\n"), dir.path(), Some(&archive)).unwrap();
         assert_eq!(locked.len(), 1);
         assert_eq!(
             locked[0].into.as_deref(),
@@ -1616,12 +1670,24 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
     }
 
     #[test]
+    fn a_lock_kept_beside_the_recipes_is_read_from_there() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("recipes/locks")).unwrap();
+        fs::write(dir.path().join("recipes/locks/app.Cargo.lock"), LOCK).unwrap();
+        let fields = "crates = \"recipes/locks/app.Cargo.lock\"\n";
+        let locked = locked_sources(&package(fields), dir.path(), None).unwrap();
+        assert_eq!(locked.len(), 1);
+        assert_eq!(locked[0].into.as_deref(), Some("vendor/itoa-1.0.15"));
+    }
+
+    #[test]
     fn a_lock_the_source_doesnt_have_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let archive = archive(dir.path(), &[("README", "")]);
-        let error = locked_sources(&package("go = \"go.sum\"\n"), Some(&archive)).unwrap_err();
+        let error =
+            locked_sources(&package("go = \"go.sum\"\n"), dir.path(), Some(&archive)).unwrap_err();
         assert!(error.contains("no `go.sum`"), "{error}");
-        let error = locked_sources(&package("go = \"go.sum\"\n"), None).unwrap_err();
+        let error = locked_sources(&package("go = \"go.sum\"\n"), dir.path(), None).unwrap_err();
         assert!(error.contains("no source"), "{error}");
     }
 
@@ -1694,5 +1760,44 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
             (again, fs::read_to_string(kept).unwrap()),
             (hash, "x\n".to_owned())
         );
+    }
+}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+
+    fn recipe() -> Package {
+        let text = "[[package]]\nid = \"locales\"\nscope = \"runtime\"\nscript = \"make\\n\"\n";
+        toml::from_str::<Recipes>(text).unwrap().package.remove(0)
+    }
+
+    #[test]
+    fn a_variant_is_the_recipe_with_its_options_set_at_the_top_of_its_script() {
+        let options = serde_json::json!({
+            "locales": ["en_US.UTF-8/UTF-8", "sv_SE.UTF-8/UTF-8"],
+            "note": "it's",
+            "small": true,
+        });
+        let variant = recipe()
+            .variant("system-locales", options.as_object().unwrap())
+            .unwrap();
+        assert_eq!(variant.id, "system-locales");
+        assert_eq!(
+            variant.script,
+            "export OPTION_locales='en_US.UTF-8/UTF-8 sv_SE.UTF-8/UTF-8'\n\
+             export OPTION_note='it'\\''s'\n\
+             export OPTION_small='true'\n\
+             make\n"
+        );
+    }
+
+    #[test]
+    fn an_option_name_that_isnt_a_variable_name_is_refused() {
+        let options = serde_json::json!({"bad name": 1});
+        let error = recipe()
+            .variant("x", options.as_object().unwrap())
+            .unwrap_err();
+        assert!(error.contains("no option `bad name`"), "{error}");
     }
 }

@@ -5,7 +5,6 @@ hostname = "kernel"
 extra_groups = ["wheel"]
 
 [kernel]
-package = "linux-latest"
 modules = ["dummy"]
 initrd_modules = ["nbd"]
 blacklist = ["pcspkr"]

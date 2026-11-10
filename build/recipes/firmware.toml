@@ -1,0 +1,36 @@
+# Firmware the kernel loads into devices, and CPU microcode, which goes at the very start of the
+# initrd for the CPU to read before anything else runs.
+
+[[package]]
+id = "linux-firmware"
+scope = "runtime"
+core = true
+whole = true
+sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20250917.tar.xz" }]
+script = '''
+# Every file the project lists, with the links it makes between them.
+./copy-firmware.sh $DEST$PREFIX/lib/firmware
+'''
+
+[[package]]
+id = "microcode-amd"
+scope = "runtime"
+core = true
+whole = true
+sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20250917.tar.xz" }]
+script = '''
+# The name and place the kernel reads microcode from in the initrd.
+mkdir -p $DEST$PREFIX/kernel/x86/microcode
+cat amd-ucode/microcode_amd*.bin > $DEST$PREFIX/kernel/x86/microcode/AuthenticAMD.bin
+'''
+
+[[package]]
+id = "zd1211fw"
+scope = "runtime"
+core = true
+whole = true
+sources = [{ url = "https://downloads.sourceforge.net/project/zd1211/zd1211-firmware/1.5/zd1211-firmware-1.5.tar.bz2" }]
+script = '''
+mkdir -p $DEST$PREFIX/lib/firmware/zd1211
+cp zd1211_* zd1211b_* $DEST$PREFIX/lib/firmware/zd1211/
+'''

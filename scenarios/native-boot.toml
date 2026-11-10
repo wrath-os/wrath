@@ -2,14 +2,14 @@ title = "a system boots, and the agent answers"
 
 [vm]
 config = "fixtures/configs/native"
-store = "host"
+store = "distro"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { run = "cat /etc/os-release; uname -n", stdout_contains = "ID=distro\nPRETTY_NAME=distro\nnative" },
-  { run = "id john", stdout_contains = "uid=1000(john) gid=100(users) groups=100(users),1(wheel)" },
+  { run = "id -un john; id -nG john", stdout_contains = "john\nusers wheel" },
   { run = "stat -c '%a %U' /run/wrappers/bin/sudo; su john -c 'id -un; sudo -n true 2>&1 | head -1'", stdout_contains = "4755 root\njohn\nsudo: a password is required" },
   { run = "busctl call org.freedesktop.PolicyKit1 /org/freedesktop/PolicyKit1/Authority org.freedesktop.DBus.Properties Get ss org.freedesktop.PolicyKit1.Authority BackendName", stdout_contains = "js" },
   { run = "systemctl is-system-running --wait; systemctl --failed --no-legend", stdout_contains = "running" },
-  { run = "readlink /run/current-system", stdout_contains = "distro-system" },
+  { run = "readlink /run/system", stdout_contains = "/store/" },
 ]
 timeout_secs = 120

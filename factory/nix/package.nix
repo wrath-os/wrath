@@ -15,6 +15,7 @@ let
     linux = "linuxPackages";
     linux-latest = "linuxPackages_latest";
     device-mapper = "lvm2";
+    locales = "glibcLocales";
   };
   attrIn =
     source: set: attr:
@@ -69,7 +70,10 @@ let
           ++ lib.imap0 (i: text: pkgs.writeText "distro-${toString i}.patch" text) patches;
       });
 
+  # nixpkgs builds every locale unless told otherwise; distro's locales recipe builds those given.
+  optionsFor =
+    build: lib.optionalAttrs (build.package == "locales") { allLocales = false; } // build.options;
   built =
-    name: build: withPatches (withOptions name (find build.package) build.options) build.patches;
+    name: build: withPatches (withOptions name (find build.package) (optionsFor build)) build.patches;
 in
 name: if builds ? ${name} then built name builds.${name} else find name

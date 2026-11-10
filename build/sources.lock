@@ -1,5 +1,6 @@
 c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9  http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz
 c9cc77c7c560c543135edc555af609d5619dbef011997e988ce40a3d75d86088  https://astron.com/pub/file/file-5.46.tar.gz
+120575b756915a11e736f599316a756b6a29a76d6135ad86208868b21c58fb75  https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20250917.tar.xz
 ea43491bc7ace1e414b3b2d957f8cf96e7049155123f0acce798accf8da1acba  https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.1.tar.xz
 021a2e709a0edf4250b1256bd5a9e500411a90dddabea830ed59cef90eb9d85c  https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.0p1.tar.gz
 81ee8170028865581a8e10eaf055afb620fa4baa0beb6387241241a975033508  https://cmake.org/files/v4.1/cmake-4.1.0.tar.gz
@@ -11,6 +12,7 @@ cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243  https://distfi
 39bf67452fa41d0948c2197601053f48b3d78a029389734332a6309a680c6c87  https://download.savannah.gnu.org/releases/attr/attr-2.5.2.tar.gz
 1b1203ca152ccd63983c3f2112f7fe6fa5afd453218ede5153d1b31e11bb8405  https://download.savannah.gnu.org/releases/libpipeline/libpipeline-1.5.8.tar.gz
 2f5164e64dd7d91eadd1e0e8a77d92c06dd7837bb19f1d9189ce1939b363d2b4  https://downloads.sourceforge.net/project/e2fsprogs/e2fsprogs/v1.47.3/e2fsprogs-1.47.3.tar.gz
+f11d3810d7f72833997f634584a586dcced71a353f965abf81062ec431d02b12  https://downloads.sourceforge.net/project/zd1211/zd1211-firmware/1.5/zd1211-firmware-1.5.tar.bz2
 90f8d2fa8b5567c6899830ddef2c03f3c27960b11aca222fa17aa7ac613c2890  https://duktape.org/duktape-2.7.0.tar.xz
 0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d  https://files.pythonhosted.org/packages/source/j/jinja2/jinja2-3.1.6.tar.gz
 ee55d3edf80167e48ea11a923c7386f4669df67d7994554387f84e7d8b0a2bf0  https://files.pythonhosted.org/packages/source/m/markupsafe/markupsafe-3.0.2.tar.gz
@@ -63,6 +65,7 @@ c53a47e5e441c930c3928cf7bf6fb00e5d129b630e0aa873b08258656e7345ec  https://github
 9b7bc16f086479dcc626c575976568ba4a85d34297a750d8ab3d2e57f6d8b988  https://github.com/polkit-org/polkit/archive/127/polkit-127.tar.gz
 add4604d3bc410344433122a819ee4154b79dd8316a56298c60417e637c07608  https://github.com/shadow-maint/shadow/releases/download/4.18.0/shadow-4.18.0.tar.xz
 f280278161446fe3838bedb970c7b3998043ad107f7627735a81483218c6f6f9  https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz
+9c82cd3db386e82fba2adfe01c3d09436c9e9cfe3ca8bb341d7eb882768c58af  https://github.com/systemd/zram-generator/archive/v1.2.1/zram-generator-1.2.1.tar.gz
 9b7fe9f915744ca1448efeb88d7333b7a86df375a4623941d2e41880c51c0aec  https://github.com/tailscale/tailscale/archive/v1.86.2/tailscale-1.86.2.tar.gz
 0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e  https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz
 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz

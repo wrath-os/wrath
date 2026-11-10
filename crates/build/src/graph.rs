@@ -298,6 +298,10 @@ fn system_layout() -> Vec<(&'static str, &'static str)> {
         ("lib/modules-load.d", "etc/modules-load.d"),
         ("lib/udev/rules.d", "etc/udev/rules.d"),
         ("lib/udev/hwdb.d", "etc/udev/hwdb.d"),
+        (
+            "lib/systemd/system-generators",
+            "etc/systemd/system-generators",
+        ),
         ("share/dbus-1/system.d", "etc/dbus-1/system.d"),
     ]
 }
@@ -347,6 +351,56 @@ fn account_files(model: &Value) -> Result<(String, String, String), String> {
     Ok((passwd, group, shadow))
 }
 
+/// Where the booted system's firmware is.
+const BOOTED_FIRMWARE: &str = "run/system-booted/firmware";
+
+/// The packages with firmware for the kernel that the model names.
+fn firmware_ids(model: &Value) -> impl Iterator<Item = &str> {
+    model["base"]["kernel"]["firmware"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+}
+
+/// The firmware of each of `ids`, linked into one directory, `firmware`, for the kernel to load.
+fn firmware_links<'a>(
+    lab: &'a Lab,
+    ids: Vec<&'a str>,
+    packages: &'a Packages,
+) -> Result<Action<'a>, String> {
+    let (unresolved, resolved) = action_records(
+        &ids,
+        packages,
+        |deps| json!({"kind": "firmware", "deps": deps}),
+    )?;
+    Ok(Action {
+        origin: "hardware.firmware".to_owned(),
+        unresolved,
+        resolved,
+        run: Box::new(move |_| {
+            let mut entries = Entries::new();
+            for id in &ids {
+                let path = &package(packages, id)?.path;
+                let dir = lab.on_host(path).join("lib/firmware");
+                let mut names: Vec<String> = fs::read_dir(&dir)
+                    .map_err(with_path(&dir))?
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect();
+                names.sort();
+                for name in names {
+                    let target = format!("{}/lib/firmware/{name}", path.inside());
+                    entries
+                        .entry(format!("firmware/{name}"))
+                        .or_insert(Entry::Link { target });
+                }
+            }
+            Ok(entries)
+        }),
+    })
+}
+
 /// The kernel's options for the system's boot entries: where its root is, then the model's. A
 /// system on disks the model describes has its initrd mount the root from its fstab instead.
 fn kernel_params(model: &Value) -> Result<String, String> {
@@ -364,6 +418,10 @@ fn kernel_params(model: &Value) -> Result<String, String> {
         .flatten()
     {
         params.push(str_field(param, "kernel option")?.to_owned());
+    }
+    // The kernel looks for firmware here, given before /etc exists.
+    if firmware_ids(model).next().is_some() {
+        params.push(format!("firmware_class.path=/{BOOTED_FIRMWARE}"));
     }
     Ok(params.join(" ") + "\n")
 }
@@ -523,7 +581,31 @@ fn lower<'a>(
     kept: &Kept,
     packages: &'a Packages,
 ) -> Result<Lowered<'a>, String> {
-    let (named, skipped) = model_packages(model, |id| packages.contains_key(id))?;
+    let (named, mut skipped) = model_packages(model, |id| packages.contains_key(id))?;
+    // The kernel, its firmware and microcode are packages too, named where the kernel is set up.
+    let kernel = &model["base"]["kernel"];
+    let mut missing = |name: &str| {
+        if !skipped.iter().any(|seen| seen == name) {
+            skipped.push(name.to_owned());
+        }
+    };
+    // There's one kernel recipe so far.
+    if let Some(other) = kernel["package"].as_str().filter(|name| *name != "linux") {
+        missing(other);
+    }
+    let mut firmware = Vec::new();
+    for name in firmware_ids(model) {
+        if packages.contains_key(name) {
+            firmware.push(name);
+        } else {
+            missing(name);
+        }
+    }
+    if let Some(name) = kernel["microcode"]["package"].as_str()
+        && !packages.contains_key(name)
+    {
+        missing(name);
+    }
     let everything: Vec<&'a str> = {
         let mut all: BTreeSet<&'a str> = BASE_PACKAGES.iter().copied().collect();
         all.extend(named.iter().copied());
@@ -553,7 +635,7 @@ fn lower<'a>(
             base,
             "etc/os-release",
             0o644,
-            "NAME=distro\nID=distro\n".into(),
+            "NAME=distro\nID=distro\nPRETTY_NAME=distro\n".into(),
             &[],
             packages,
         )?,
@@ -649,6 +731,8 @@ fn lower<'a>(
                 // Some packages put programs for root in sbin, which is on the path all the same.
                 ("sbin", "bin"),
                 ("lib/security", "lib/security"),
+                // A compiled locale archive, which LOCALE_ARCHIVE names.
+                ("lib/locale", "lib/locale"),
             ],
             packages,
         )?,
@@ -700,6 +784,9 @@ fn lower<'a>(
     let (enabled, unfound) = enabled_units(lab, model, &everything, packages)?;
     actions.push(enabled);
     actions.push(boot_files(lab, model, packages)?);
+    if !firmware.is_empty() {
+        actions.push(firmware_links(lab, firmware, packages)?);
+    }
     Ok(Lowered {
         actions,
         skipped,
@@ -848,7 +935,11 @@ const INITRD_RELEASE: &str = "NAME=distro\nID=distro\nPRETTY_NAME=\"distro (init
 /// The initrd's own files, by path, where `@id@` stands for package `id`'s path: systemd's
 /// configuration, accounts, how to unlock and mount the disks, and the service that readies the
 /// root.
-fn initrd_files(disks: &early::Disks, hostname: &str) -> Vec<(String, u32, String)> {
+fn initrd_files(
+    disks: &early::Disks,
+    hostname: &str,
+    modprobe: &str,
+) -> Vec<(String, u32, String)> {
     let unit = "[Unit]\nDescription=Ready the root to switch to\nDefaultDependencies=no\n\
         RequiresMountsFor=/sysroot /sysroot/store\nAfter=initrd-fs.target\n\
         Before=initrd.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n\
@@ -905,6 +996,14 @@ fn initrd_files(disks: &early::Disks, hostname: &str) -> Vec<(String, u32, Strin
     if !hostname.is_empty() {
         files.push(file("etc/hostname", 0o644, format!("{hostname}\n")));
     }
+    // Options for modules, which those loaded in the initrd need too.
+    if !modprobe.is_empty() {
+        files.push(file(
+            "etc/modprobe.d/distro.conf",
+            0o644,
+            modprobe.to_owned(),
+        ));
+    }
     files
 }
 
@@ -935,15 +1034,30 @@ fn kernel_has(tree: &Path, wanted: &[String]) -> Vec<String> {
 /// line. Without disks, the root is the one `root=` names.
 fn boot_files<'a>(
     lab: &'a Lab,
-    model: &Value,
+    model: &'a Value,
     packages: &'a Packages,
 ) -> Result<Action<'a>, String> {
-    let disks = early::disks(&model["base"]["storage"]);
+    let kernel = &model["base"]["kernel"];
+    let mut disks = early::disks(&model["base"]["storage"]);
+    // The configuration's own initrd modules, after what the disks need.
+    for module in kernel["initrd_modules"].as_array().into_iter().flatten() {
+        if let Some(module) = module.as_str()
+            && !disks.modules.iter().any(|m| m == module)
+        {
+            disks.modules.push(module.to_owned());
+        }
+    }
     let hostname = model["base"]["system"]["hostname"]
         .as_str()
         .unwrap_or_default();
-    let files = initrd_files(&disks, hostname);
-    let ids = [INITRD_PACKAGES.as_slice(), &["linux"]].concat();
+    let modprobe = kernel["modprobe"].as_str().unwrap_or_default();
+    let files = initrd_files(&disks, hostname, modprobe);
+    // CPU microcode, from a package with it at `kernel/x86/microcode/`.
+    let microcode = kernel["microcode"]["package"]
+        .as_str()
+        .filter(|id| packages.contains_key(*id));
+    let mut ids = [INITRD_PACKAGES.as_slice(), &["linux"]].concat();
+    ids.extend(microcode);
     let (unresolved, resolved) = action_records(&ids, packages, |deps| {
         json!({"kind": "boot", "files": files, "rules": DM_RULES,
                "outputs": ["initrd", "kernel"], "deps": deps})
@@ -1050,8 +1164,18 @@ fn boot_files<'a>(
                 "etc/systemd/system-generators/systemd-gpt-auto-generator",
                 link("/dev/null".to_owned()),
             );
-            let compressed = zstd::bulk::compress(&initrd::archive(&nodes), 3)
-                .map_err(|e| format!("compressing the initrd: {e}"))?;
+            let mut compressed = Vec::new();
+            // The CPU reads its microcode from an uncompressed archive at the very start.
+            if let Some(id) = microcode {
+                let mut early = initrd::Nodes::new();
+                let from = lab.on_host(&package(packages, id)?.path).join("kernel");
+                initrd::add_tree(&mut early, &from, "kernel")?;
+                compressed = initrd::archive(&early);
+            }
+            compressed.extend(
+                zstd::bulk::compress(&initrd::archive(&nodes), 3)
+                    .map_err(|e| format!("compressing the initrd: {e}"))?,
+            );
             let path = StorePath::from_hash(&digest(&compressed));
             let directory = lab.on_host(&path);
             fs::create_dir_all(&directory).map_err(with_path(&directory))?;
@@ -1455,16 +1579,17 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 /// The recipe files systems are built from, in `recipes/`.
-pub const SYSTEM_RECIPES: [&str; 10] = [
+pub const SYSTEM_RECIPES: [&str; 11] = [
     "pilot.toml",
     "full.toml",
     "storage.toml",
     "boot.toml",
     "e2e.toml",
+    "rust.toml",
     "services.toml",
     "go.toml",
+    "firmware.toml",
     "network.toml",
-    "rust.toml",
     "distro.toml",
 ];
 
@@ -1516,6 +1641,45 @@ fn system_from(
     })
 }
 
+/// Builds what the model's `builds` ask for: each a recipe built under the build's name with the
+/// options it gives, which the recipe's script reads as `OPTION_<name>`.
+fn build_variants(
+    lab: &Lab,
+    repository: &Path,
+    recipes: &[chain::Package],
+    seed: &StorePath,
+    built: &mut Built,
+    model: &Value,
+) -> Result<(), String> {
+    let mut sources = chain::Sources::load(repository)?;
+    for (name, build) in model["builds"].as_object().into_iter().flatten() {
+        let base = str_field(&build["package"], "build's package")?;
+        let recipe = recipes
+            .iter()
+            .find(|recipe| recipe.id == base)
+            .ok_or_else(|| {
+                format!("there's no recipe for `{base}`, which the build `{name}` starts from")
+            })?;
+        if build["patches"]
+            .as_array()
+            .is_some_and(|patches| !patches.is_empty())
+        {
+            return Err(format!(
+                "the build `{name}` has patches, which aren't supported yet"
+            ));
+        }
+        let options = build["options"].as_object().cloned().unwrap_or_default();
+        let variant = recipe.variant(name, &options)?;
+        if let Some(prepared) =
+            chain::build_one(lab, repository, &variant, Arm::F, seed, &mut sources, built)?
+        {
+            chain::remove(&prepared.build_dir)?;
+            chain::finish(lab, &variant, Arm::F, &prepared.out, built)?;
+        }
+    }
+    Ok(())
+}
+
 /// Builds the system `model` describes from the recipes in `repository`, which holds `recipes/`,
 /// the pins and the `work` directory with the store, building packages it doesn't have yet.
 pub fn system(
@@ -1525,7 +1689,9 @@ pub fn system(
     inputs: Option<&Value>,
 ) -> Result<System, String> {
     let lab = Lab::new(repository.join("work"));
-    let (built, ..) = pilot::build_recipes(&lab, repository, &SYSTEM_RECIPES, Arm::F)?;
+    let (mut built, seed, recipes) =
+        pilot::build_recipes(&lab, repository, &SYSTEM_RECIPES, Arm::F)?;
+    build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
     let mut db = Db::open(&db_path(&lab))?;
     record_packages(&mut db, &built)?;
     system_from(
@@ -2117,10 +2283,11 @@ mod tests {
             modules: vec!["dm_crypt".into(), "btrfs".into()],
             ..early::Disks::default()
         };
-        let files: BTreeMap<String, String> = initrd_files(&disks, "w-01")
-            .into_iter()
-            .map(|(path, _, text)| (path, text))
-            .collect();
+        let files: BTreeMap<String, String> =
+            initrd_files(&disks, "w-01", "options nbd nbds_max=2\n")
+                .into_iter()
+                .map(|(path, _, text)| (path, text))
+                .collect();
         assert_eq!(files["etc/crypttab"], disks.crypttab);
         assert_eq!(files["etc/fstab"], disks.initrd_fstab);
         assert_eq!(files["etc/modules-load.d/distro.conf"], "dm_crypt\nbtrfs\n");
@@ -2280,6 +2447,94 @@ mod tests {
         assert!(fs::symlink_metadata(root.join("bin/useradd")).is_ok());
     }
 
+    /// The model with firmware from `web`, as a machine's hardware.
+    fn with_hardware(mut model: Value) -> Value {
+        model["base"]["kernel"] = json!({
+            "initrd_modules": ["nbd"],
+            "modprobe": "options nbd nbds_max=2\n",
+            "firmware": ["web"],
+        });
+        model
+    }
+
+    #[test]
+    fn firmware_joins_the_system_where_the_kernel_is_told_to_look() {
+        let (_dir, lab, packages) = setup();
+        let firmware = lab
+            .on_host(&packages["web"].path)
+            .join("lib/firmware/zd1211");
+        fs::create_dir_all(&firmware).unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &with_hardware(model(80, false)));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let web = packages["web"].path.inside();
+        assert_eq!(
+            fs::read_link(root.join("firmware/zd1211")).unwrap(),
+            Path::new(&format!("{web}/lib/firmware/zd1211"))
+        );
+        let params = fs::read_to_string(root.join("kernel-params")).unwrap();
+        assert!(
+            params.contains("firmware_class.path=/run/system-booted/firmware"),
+            "{params}"
+        );
+    }
+
+    #[test]
+    fn microcode_goes_first_in_the_initrd_uncompressed() {
+        let (_dir, lab, packages) = setup();
+        let microcode = lab
+            .on_host(&packages["kmod"].path)
+            .join("kernel/x86/microcode");
+        fs::create_dir_all(&microcode).unwrap();
+        fs::write(microcode.join("AuthenticAMD.bin"), "ucode").unwrap();
+        fs::create_dir_all(lab.on_host(&packages["web"].path).join("lib/firmware")).unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let mut model = with_hardware(model(80, false));
+        model["base"]["kernel"]["microcode"] = json!({"package": "kmod", "image": "amd-ucode.img"});
+        let outcome = realised(&lab, &mut db, &packages, &model);
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let inside = fs::read_link(root.join("initrd")).unwrap();
+        let host = lab
+            .work
+            .join("store")
+            .join(inside.strip_prefix("/store").unwrap());
+        let initrd = fs::read(host).unwrap();
+        let start = String::from_utf8_lossy(&initrd[..2048.min(initrd.len())]).into_owned();
+        assert!(start.starts_with("070701"), "an uncompressed archive first");
+        assert!(start.contains("kernel/x86/microcode/AuthenticAMD.bin"));
+    }
+
+    #[test]
+    fn a_kernel_or_firmware_without_a_recipe_is_missing() {
+        let (_dir, lab, packages) = setup();
+        let mut model = with_hardware(model(80, false));
+        model["base"]["kernel"]["package"] = json!("linux-latest");
+        model["base"]["kernel"]["firmware"] = json!(["nofirmware"]);
+        let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
+        assert!(
+            lowered.skipped.contains(&"linux-latest".to_owned()),
+            "{:?}",
+            lowered.skipped
+        );
+        assert!(
+            lowered.skipped.contains(&"nofirmware".to_owned()),
+            "{:?}",
+            lowered.skipped
+        );
+    }
+
+    #[test]
+    fn a_compiled_locale_archive_is_where_locale_archive_points() {
+        let (_dir, lab, packages) = setup();
+        let locale = lab.on_host(&packages["web"].path).join("lib/locale");
+        fs::create_dir_all(&locale).unwrap();
+        fs::write(locale.join("locale-archive"), "").unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert!(fs::symlink_metadata(root.join("lib/locale/locale-archive")).is_ok());
+    }
+
     #[test]
     fn a_system_calls_itself_distro() {
         let (_dir, lab, packages) = setup();
@@ -2287,7 +2542,7 @@ mod tests {
         let outcome = realised(&lab, &mut db, &packages, &model(80, false));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let release = fs::read_to_string(root.join("etc/os-release")).unwrap();
-        assert_eq!(release, "NAME=distro\nID=distro\n");
+        assert_eq!(release, "NAME=distro\nID=distro\nPRETTY_NAME=distro\n");
     }
 
     #[test]
