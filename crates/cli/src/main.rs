@@ -28,6 +28,7 @@ mod project;
 mod run;
 mod secret;
 mod state;
+mod switching;
 mod system;
 mod templates;
 

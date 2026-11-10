@@ -56,10 +56,10 @@ const PROFILES: &str = "nix/var/nix/profiles";
 
 /// Where a machine from distro's store keeps its generations, under the root: each a link
 /// named by its number to a system in `/store`.
-const GENERATIONS: &str = "system/generations";
+pub(crate) const GENERATIONS: &str = "system/generations";
 
 /// The link to the current generation, under the root, as `generations/N`.
-const CURRENT: &str = "system/current";
+pub(crate) const CURRENT: &str = "system/current";
 
 /// Writes a boot loader entry for each generation of the system at `root`, with its kernel and
 /// initrd copied to the ESP at `/boot`, and makes the current generation the default. Kernels
@@ -212,7 +212,7 @@ fn cpio(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
 
 /// The generations of the machine at `root`, by number with the link to each, oldest first, and
 /// the current one's number.
-fn generations(root: &Path) -> Result<(Vec<(u32, PathBuf)>, u32), String> {
+pub(crate) fn generations(root: &Path) -> Result<(Vec<(u32, PathBuf)>, u32), String> {
     let store = root.join(GENERATIONS);
     type NumberOf = fn(&str) -> Option<u32>;
     let (dir, current, number_of): (PathBuf, PathBuf, NumberOf) = if store.is_dir() {

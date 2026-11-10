@@ -4,8 +4,10 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use distro_backend::{self as backend, Generation, Target};
+use distro_backend::{self as backend, Target};
 use distro_model::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
+
+use crate::switching::{self as here, Generation};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum BuildTarget {
@@ -191,7 +193,7 @@ fn full_effect(tier: Tier) -> Option<&'static str> {
 /// `status` as data: the running generation, whether a system is being tried, the running and
 /// configured models' hashes, and how many packages aren't locked yet.
 pub fn status_json(model: &Model) -> serde_json::Value {
-    let current = backend::history()
+    let current = here::history()
         .ok()
         .and_then(|generations| generations.into_iter().find(|g| g.current));
     let running = backend::current_model_hash();
@@ -202,7 +204,7 @@ pub fn status_json(model: &Model) -> serde_json::Value {
         .count();
     serde_json::json!({
         "generation": current.map(|g| g.number),
-        "trying": backend::trying(),
+        "trying": here::trying(),
         "matches": running.as_deref() == Some(hash.as_str()),
         "running": running,
         "model": hash,
@@ -214,7 +216,7 @@ pub fn status_json(model: &Model) -> serde_json::Value {
 pub fn history_json() -> Result<serde_json::Value, String> {
     let mut before: Option<Model> = None;
     let mut generations = Vec::new();
-    for generation in backend::history()? {
+    for generation in here::history()? {
         let model = generation_model(generation.number).ok();
         let changes = before
             .as_ref()
@@ -234,10 +236,10 @@ pub fn history_json() -> Result<serde_json::Value, String> {
 
 /// Says which generation is running and whether it's the configuration's `model`.
 pub fn status(model: &Model) -> Result<ExitCode, String> {
-    let current = backend::history()
+    let current = here::history()
         .ok()
         .and_then(|generations| generations.into_iter().find(|g| g.current));
-    if backend::trying() {
+    if here::trying() {
         println!(
             "trying a system that isn't a generation yet; it switches back on its own, \
              `distro keep` keeps it and `distro rollback` switches back now"
@@ -311,7 +313,7 @@ pub fn switch_to(system: &Path, how: Switch) -> Result<ExitCode, String> {
     match how {
         Switch::Apply => activate(system),
         Switch::Try(seconds) => {
-            backend::try_system(system, seconds)?;
+            here::try_system(system, seconds)?;
             println!("trying {}", system.display());
             println!(
                 "it switches back in {} unless you run `distro keep`; `distro rollback` switches \
@@ -325,12 +327,8 @@ pub fn switch_to(system: &Path, how: Switch) -> Result<ExitCode, String> {
 
 /// Makes the system being tried the current generation.
 pub fn keep() -> Result<ExitCode, String> {
-    backend::keep_trial()?;
-    let generation = backend::history()?.into_iter().find(|g| g.current);
-    match generation {
-        Some(generation) => println!("kept it as generation {}", generation.number),
-        None => println!("kept it"),
-    }
+    let number = here::keep_trial()?;
+    println!("kept it as generation {number}");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -370,7 +368,7 @@ fn duration(seconds: u64) -> String {
 /// Removes old generations, keeping the current one and the `keep` before it, and what only
 /// they used, after saying which and asking.
 pub fn clean(keep: usize, yes: bool) -> Result<ExitCode, String> {
-    let generations = backend::history()?;
+    let generations = here::history()?;
     let old = to_remove(&generations, keep);
     if old.is_empty() {
         println!("no generations to remove; collecting what nothing uses");
@@ -385,7 +383,7 @@ pub fn clean(keep: usize, yes: bool) -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
     }
-    let freed = backend::clean(&old)?;
+    let freed = here::clean(&old)?;
     println!("{freed}");
     Ok(ExitCode::SUCCESS)
 }
@@ -403,7 +401,7 @@ fn to_remove(generations: &[Generation], keep: usize) -> Vec<u32> {
 }
 
 pub fn activate(system: &Path) -> Result<ExitCode, String> {
-    backend::activate(system)?;
+    here::activate(system)?;
     println!("switched to {}", system.display());
     Ok(ExitCode::SUCCESS)
 }
@@ -411,7 +409,7 @@ pub fn activate(system: &Path) -> Result<ExitCode, String> {
 /// Lists the generations, each with what changed from the one before it.
 pub fn history() -> Result<ExitCode, String> {
     let mut before: Option<Model> = None;
-    for generation in backend::history()? {
+    for generation in here::history()? {
         println!("{generation}");
         let model = generation_model(generation.number).ok();
         if let (Some(before), Some(after)) = (&before, &model) {
@@ -427,7 +425,7 @@ pub fn diff(from: u32, to: Option<u32>) -> Result<ExitCode, String> {
     let to = match to {
         Some(to) => to,
         None => {
-            let current = backend::history()?.into_iter().find(|g| g.current);
+            let current = here::history()?.into_iter().find(|g| g.current);
             current.ok_or("there's no current generation")?.number
         }
     };
@@ -438,7 +436,7 @@ pub fn diff(from: u32, to: Option<u32>) -> Result<ExitCode, String> {
 }
 
 fn generation_model(number: u32) -> Result<Model, String> {
-    let path = backend::generation_model(number);
+    let path = here::generation_model(number)?;
     if !path.exists() {
         return Err(format!(
             "generation {number} has no model; it doesn't exist, or distro didn't build it"
@@ -448,13 +446,13 @@ fn generation_model(number: u32) -> Result<Model, String> {
 }
 
 pub fn rollback() -> Result<ExitCode, String> {
-    if backend::trying() {
-        let generation = backend::end_trial()?;
-        println!("stopped trying; back to generation {}", generation.number);
+    if here::trying() {
+        let number = here::end_trial()?;
+        println!("stopped trying; back to generation {number}");
         return Ok(ExitCode::SUCCESS);
     }
-    let generation = backend::rollback()?;
-    println!("rolled back to generation {}", generation.number);
+    let number = here::rollback()?;
+    println!("rolled back to generation {number}");
     Ok(ExitCode::SUCCESS)
 }
 

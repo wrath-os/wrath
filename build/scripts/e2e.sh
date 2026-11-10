@@ -57,14 +57,12 @@ while read -r kind one two; do
     esac
 done < <("$lab" graph-closure "$arm" work/e2e/two.json | grep -E '^(root|path) ')
 
-number=1
-for generation in "$first" "$second"; do
-    cp -a "work/store/$generation" "$root/store/"
-    ln -s "/store/$generation" "$root/system/generations/$number"
-    number=$((number + 1))
-done
+# Only the first is a generation; the first boot applies the second with distro.
+cp -a "work/store/$first" "work/store/$second" "$root/store/"
+ln -s "/store/$first" "$root/system/generations/1"
 ln -s generations/1 "$root/system/current"
 mkdir -p "$root"/{bin,etc,dev,proc,sys,run,tmp,var/lib,root,home,srv}
+echo "/store/$second" > "$root/var/lib/e2e-next"
 ln -s "/store/${store[bash]}/bin/bash" "$root/bin/sh"
 [[ ! -e $root/usr ]] || { echo "the image has a /usr" >&2; exit 1; }
 
@@ -149,7 +147,11 @@ grep -aE 'E2E |=== boot|INITRD' <<< "$plain" | sed -E 's/^.*(E2E |INITRD)/\1/' |
 # Passes when each boot reached a running system with no failed units, and the switch happened.
 count() { grep -acE "$1" <<< "$plain" || true; }
 if [[ $(count 'E2E DONE') == 3 && $(count 'E2E state=running') == 3 \
-    && $(count 'E2E failed: ?$') == 3 && $(count 'E2E switched') == 1 ]]; then
+    && $(count 'E2E failed: ?$') == 3 && $(count 'E2E switched') == 1 \
+    && $(count 'E2E rolled back to generation 1') == 1 \
+    && $(count 'E2E page on 8080 after rolling back: <h1>blog</h1>') == 1 \
+    && $(count 'E2E trying, page on 8081: <h1>blog</h1>') == 1 \
+    && $(count 'E2E after the try, page on 8080: <h1>blog</h1>') == 1 ]]; then
     echo "e2e passed"
 else
     echo "e2e failed" >&2

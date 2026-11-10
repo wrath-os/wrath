@@ -1,5 +1,6 @@
 #!@bash@/bin/bash
-# Runs at the end of every boot. The first boot also switches to the second generation, live.
+# Runs at the end of every boot. The first boot also applies the second system live with distro,
+# and rolls back.
 export PATH=/system/current/sw/bin SYSTEMD_PAGER= SYSTEMD_COLORS=0
 say() { echo "E2E $*"; }
 fetch() {
@@ -26,9 +27,7 @@ say "startup: $(systemd-analyze 2>&1 | head -1)"
 if ((boots == 0)); then
     nginx=$(invocation nginx-main) dbus=$(invocation dbus) nftables=$(invocation nftables)
     start=$EPOCHREALTIME
-    ln -sfn generations/2 /system/.next
-    mv -T /system/.next /system/current
-    /system/current/bin/switch-to-configuration switch
+    distro apply "$(cat /var/lib/e2e-next)" > /dev/null
     took=$(bc <<< "$EPOCHREALTIME - $start")
     say "switched to $(readlink -f /system/current | cut -c8-15) in ${took}s"
     sleep 1
@@ -38,6 +37,14 @@ if ((boots == 0)); then
     say "restarted nginx=$(restarted nginx-main "$nginx") dbus=$(restarted dbus "$dbus")" \
         "nftables=$(restarted nftables "$nftables")"
     say "failed after: $(systemctl list-units --failed --no-legend --plain | tr '\n' ' ')"
+    say "history: $(distro history | tr -s ' ' | tr '\n' ';')"
+    say "$(distro rollback 2>&1)"
+    sleep 1
+    say "page on 8080 after rolling back: $(fetch 8080)"
+    distro try --for 3s "$(cat /var/lib/e2e-next)" > /dev/null
+    say "trying, page on 8081: $(fetch 8081)"
+    sleep 6
+    say "after the try, page on 8080: $(fetch 8080)"
 fi
 say DONE
 systemctl poweroff
