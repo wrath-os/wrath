@@ -996,9 +996,6 @@ fn a_kernel_change_takes_a_reboot() {
         model
     };
 
-    let plan = plan(
-        &with_kernel("linuxPackages"),
-        &with_kernel("linuxPackages_latest"),
-    );
+    let plan = plan(&with_kernel("linux"), &with_kernel("linux-latest"));
     assert_eq!(plan.tier(), Some(crate::Tier::Reboot));
 }

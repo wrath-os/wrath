@@ -6,6 +6,15 @@
 lib: pkgs: sources: builds:
 let
   inherit (pkgs.stdenv.hostPlatform) system;
+  # distro's names for packages, where nixpkgs calls them something else.
+  nixpkgsNames = {
+    bash = "bashInteractive";
+    grep = "gnugrep";
+    sed = "gnused";
+    dejavu-fonts = "dejavu_fonts";
+    linux = "linuxPackages";
+    linux-latest = "linuxPackages_latest";
+  };
   attrIn =
     source: set: attr:
     let
@@ -21,7 +30,7 @@ let
       parts = lib.splitString "#" name;
     in
     if builtins.length parts == 1 then
-      attrIn "nixpkgs" pkgs name
+      attrIn "nixpkgs" pkgs (nixpkgsNames.${name} or name)
     else
       let
         source = builtins.head parts;

@@ -17,4 +17,8 @@
     "experimental-features = nix-command flakes"
     "build-users-group ="
   ];
+
+  # Programs from nixpkgs look for graphics drivers under /run/opengl-driver.
+  etc."tmpfiles.d/opengl-driver.conf".text =
+    "L+ /run/opengl-driver - - - - /run/current-system/sw\n";
 }

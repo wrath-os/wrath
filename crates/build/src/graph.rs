@@ -798,23 +798,6 @@ struct Lowered<'a> {
     unfound: Vec<String>,
 }
 
-/// nixpkgs names whose recipe goes by another name.
-const RENAMED: &[(&str, &str)] = &[
-    ("bashInteractive", "bash"),
-    ("gnugrep", "grep"),
-    ("gnused", "sed"),
-];
-
-/// The recipe that builds `name`, a package or `package.output` from the model.
-fn recipe_for(name: &str, known: impl Fn(&str) -> bool) -> Option<&str> {
-    let base = name.split_once('.').map_or(name, |(base, _)| base);
-    let id = RENAMED
-        .iter()
-        .find(|(from, _)| *from == base)
-        .map_or(base, |(_, to)| *to);
-    known(id).then_some(id)
-}
-
 /// The recipes for the model's packages, and the names no recipe builds, each once.
 fn model_packages(
     model: &Value,
@@ -826,11 +809,12 @@ fn model_packages(
         .flat_map(|key| model[key].as_array().into_iter().flatten());
     for value in listed {
         let name = str_field(value, "package")?;
-        match recipe_for(name, &known) {
-            Some(id) if !named.contains(&id) => named.push(id),
-            Some(_) => {}
-            None if !skipped.iter().any(|seen| seen == name) => skipped.push(name.to_owned()),
-            None => {}
+        if known(name) {
+            if !named.contains(&name) {
+                named.push(name);
+            }
+        } else if !skipped.iter().any(|seen| seen == name) {
+            skipped.push(name.to_owned());
         }
     }
     Ok((named, skipped))
@@ -2087,17 +2071,6 @@ mod tests {
             rendered,
             "[Service]\nExecStartPre=/bin/sh -c true\nExecStart=/run/system/bin/web\n\n"
         );
-    }
-
-    #[test]
-    fn nixpkgs_names_and_outputs_find_their_recipe() {
-        let (_dir, _lab, packages) = setup();
-        let known = |id: &str| packages.contains_key(id);
-        assert_eq!(recipe_for("bashInteractive", known), Some("bash"));
-        assert_eq!(recipe_for("gnugrep", known), Some("grep"));
-        assert_eq!(recipe_for("web.bin", known), Some("web"));
-        assert_eq!(recipe_for("web", known), Some("web"));
-        assert_eq!(recipe_for("polkit", known), None);
     }
 
     #[test]

@@ -45,8 +45,8 @@ module(
         "kernel": types.record(
             package = option(
                 types.str,
-                default = "linuxPackages",
-                doc = "The kernel and its modules, such as `linuxPackages_latest`.",
+                default = "linux",
+                doc = "The kernel and its modules, such as `linux-latest`.",
             ),
             modules = option(types.set(types.str), default = [], doc = "Loaded at every boot."),
             initrd_modules = option(

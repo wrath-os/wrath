@@ -12,7 +12,7 @@ FONTS_CONF = """<?xml version="1.0"?>
 def render(ctx):
     if "session" not in ctx.read("desktop"):
         return
-    ctx.package("dejavu_fonts")
+    ctx.package("dejavu-fonts")
     ctx.file("/etc/fonts/fonts.conf", FONTS_CONF)
 
 module(name = "fonts", options = {}, writes = [], render = render)

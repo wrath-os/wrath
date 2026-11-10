@@ -5,7 +5,7 @@ load("lib/pam.star", "unix_stacks")
 
 def render(ctx):
     ctx.service_package("polkit")
-    ctx.package("polkit.bin")
+    ctx.package("polkit")
     # Agents check a user's password through this helper, started for each request.
     ctx.enable("polkit-agent-helper.socket")
     ctx.wrapper("pkexec", source = "/run/system/bin/pkexec")

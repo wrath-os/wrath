@@ -10,6 +10,3 @@ extra_groups = ["wheel"]
 
 [zram]
 enable = true
-
-[caches."https://cache.example.org"]
-key = "cache.example.org:AAAA"

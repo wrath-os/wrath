@@ -5,12 +5,12 @@ SYSTEM = "/run/system"
 LOCALES = "system-locales"
 
 PACKAGES = [
-    "bashInteractive",
+    "bash",
     "coreutils",
     "findutils",
     "gawk",
-    "gnugrep",
-    "gnused",
+    "grep",
+    "sed",
     "iproute2",
     "iputils",
     "kmod",
@@ -73,8 +73,8 @@ def render(ctx):
     ctx.unit("modprobe@.service.d/distro.conf", {
         "Service": {"ExecSearchPath": SYSTEM + "/bin"},
     })
-    # Device nodes for modules not loaded yet, such as /dev/btrfs-control. The kernel's modules are
-    # where nixpkgs' kmod looks for them, rather than in /lib/modules.
+    # Device nodes for modules not loaded yet, such as /dev/btrfs-control, from the list the
+    # booted kernel's modules come with.
     ctx.unit("kmod-static-nodes.service.d/distro.conf", {
         "Unit": {
             "ConditionFileNotEmpty": [

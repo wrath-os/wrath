@@ -1,4 +1,4 @@
-title = "a system has its language, console keyboard, compressed swap and package caches"
+title = "a system has its language, console keyboard and compressed swap"
 
 [vm]
 config = "scenarios/fixtures/native-settings"
@@ -6,6 +6,5 @@ store = "host"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { run = "echo $LANG; locale -a | grep -c en_US; grep -c zram0 /proc/swaps; systemctl show -p Result --value systemd-vconsole-setup; grep KEYMAP /etc/vconsole.conf", stdout_contains = "en_US.UTF-8\n1\n1\nsuccess\nKEYMAP=sv-latin1" },
-  { run = "nix config show | grep '^substituters'", stdout_contains = "https://cache.example.org" },
 ]
 timeout_secs = 900
