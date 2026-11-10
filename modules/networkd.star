@@ -9,7 +9,7 @@ def render(ctx):
             "Match": {"Type": "ether", "Kind": "!*"},
             "Network": {"DHCP": "yes"},
         }))
-    if dhcp or resolved or ctx.read("networking.networks"):
+    if dhcp or ctx.read("networking.networks"):
         ctx.enable("systemd-networkd.service")
         ctx.enable("systemd-networkd-wait-online.service")
         ctx.enable("network-online.target", wanted_by = "multi-user.target")

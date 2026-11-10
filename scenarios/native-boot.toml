@@ -11,5 +11,6 @@ steps = [
   { run = "busctl call org.freedesktop.PolicyKit1 /org/freedesktop/PolicyKit1/Authority org.freedesktop.DBus.Properties Get ss org.freedesktop.PolicyKit1.Authority BackendName", stdout_contains = "js" },
   { run = "systemctl is-system-running --wait; systemctl --failed --no-legend", stdout_contains = "running" },
   { run = "readlink /run/system", stdout_contains = "/store/" },
+  { run = "systemctl is-active systemd-resolved; grep -c 127.0.0.53 /etc/resolv.conf", stdout_contains = "active\n1" },
 ]
 timeout_secs = 120

@@ -35,8 +35,8 @@ module(
         ),
         "networking.resolved": option(
             types.bool,
-            default = False,
-            doc = "Run systemd-resolved for DNS.",
+            default = True,
+            doc = "Run systemd-resolved for DNS, which `/etc/resolv.conf` points at.",
         ),
         "audio.enable": option(types.bool, default = False, doc = "Run PipeWire for users."),
         "desktop": types.record(
