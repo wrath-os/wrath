@@ -257,6 +257,7 @@ const BASE_PACKAGES: &[&str] = &[
     "coreutils",
     "dbus",
     "diffutils",
+    "distro",
     "findutils",
     "gawk",
     "grep",
@@ -326,20 +327,17 @@ fn account_files(model: &Value) -> Result<(String, String, String), String> {
     Ok((passwd, group, shadow))
 }
 
-/// The programs to copy into `/run/wrappers/bin`, one `name owner group mode source` line each,
-/// with the mode in octal.
-fn wrappers(model: &Value) -> Result<String, String> {
-    let mut lines = String::new();
-    for (name, wrapper) in model["wrappers"].as_object().into_iter().flatten() {
-        let mode = wrapper["mode"].as_u64().ok_or("a wrapper has no mode")?;
-        lines.push_str(&format!(
-            "{name} {} {} {mode:o} {}\n",
-            str_field(&wrapper["owner"], "wrapper owner")?,
-            str_field(&wrapper["group"], "wrapper group")?,
-            str_field(&wrapper["source"], "wrapper source")?,
-        ));
+/// The kernel's options for the system's boot entries: where its root is, then the model's.
+fn kernel_params(model: &Value) -> Result<String, String> {
+    let mut params = vec![format!("root=LABEL={ROOT_LABEL}"), "rw".to_owned()];
+    for param in model["base"]["boot"]["kernel_params"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        params.push(str_field(param, "kernel option")?.to_owned());
     }
-    Ok(lines)
+    Ok(params.join(" ") + "\n")
 }
 
 /// tmpfiles rules that make each user's home, owned by them, when it doesn't exist.
@@ -437,18 +435,62 @@ fn unit_action<'a>(
 
 const INIT: &str = include_str!("../system/init");
 const INITRD_INIT: &str = include_str!("../system/initrd-init");
-const SWITCH: &str = include_str!("../system/switch");
-const WRAPPERS: &str = include_str!("../system/wrappers");
+const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
 const REPORT: &str = include_str!("../system/report");
 const REPORT_UNIT: &str = "[Unit]\nDescription=Report how the boot went\n\
     After=multi-user.target\n\n\
     [Service]\nType=exec\nExecStart=/system/current/report\nStandardOutput=tty\n\
     StandardError=tty\nTTYPath=/dev/ttyS0\n";
 
+/// The label of the file system a system's root is on.
+pub const ROOT_LABEL: &str = "distro-root";
+
+/// What a generation keeps of its model, so distro on the machine knows what it runs: distro's
+/// canonical text of it, and that text's hash.
+pub struct Kept {
+    pub text: String,
+    pub hash: String,
+}
+
+impl Kept {
+    /// For a model that didn't come from distro, such as one `lab` reads from a file.
+    pub fn plain(model: &Value) -> Self {
+        let text = format!("{model}\n");
+        Self {
+            hash: digest(text.as_bytes()),
+            text,
+        }
+    }
+}
+
+/// What distro on the machine reads at every boot and switch: files under /etc with a mode of
+/// their own, which are copied instead of linked, and the work it does itself, such as secrets
+/// and homes, which come later.
+fn activation(model: &Value) -> String {
+    let mut modes = Map::new();
+    for (path, file) in model["files"].as_object().into_iter().flatten() {
+        let mode = file["mode"].as_u64().unwrap_or(0o644);
+        if let Some(inside) = path.strip_prefix("/etc/")
+            && mode != 0o644
+        {
+            modes.insert(inside.to_owned(), json!(format!("{mode:04o}")));
+        }
+    }
+    json!({
+        "etc_modes": modes,
+        "bash": "@bash@/bin/bash",
+        "secrets": {},
+        "templates": [],
+        "homes": [],
+    })
+    .to_string()
+}
+
 /// Turns a model into actions. Every package it names must have a recipe.
 fn lower<'a>(
     lab: &'a Lab,
     model: &'a Value,
+    kept: &Kept,
     packages: &'a Packages,
 ) -> Result<Lowered<'a>, String> {
     let (named, skipped) = model_packages(model, |id| packages.contains_key(id))?;
@@ -521,23 +563,46 @@ fn lower<'a>(
             "init",
             0o755,
             INIT.into(),
-            &["bash", "systemd"],
+            &["bash", "coreutils"],
             packages,
         )?,
-        text(base, "switch", 0o755, SWITCH.into(), &["bash"], packages)?,
         text(
             base,
-            "wrappers",
+            "bin/switch-to-configuration",
             0o755,
-            WRAPPERS.into(),
+            SWITCH_TO.into(),
+            &["bash", "coreutils"],
+            packages,
+        )?,
+        text(
+            "model",
+            "etc/distro/model.json",
+            0o644,
+            kept.text.clone(),
+            &[],
+            packages,
+        )?,
+        text(
+            "model",
+            "etc/distro/model-hash",
+            0o644,
+            kept.hash.clone(),
+            &[],
+            packages,
+        )?,
+        text(
+            "files",
+            "activation.json",
+            0o644,
+            activation(model),
             &["bash"],
             packages,
         )?,
         text(
-            "wrappers",
-            "wrappers.list",
+            "base.boot",
+            "kernel-params",
             0o644,
-            wrappers(model)?,
+            kernel_params(model)?,
             &[],
             packages,
         )?,
@@ -590,14 +655,9 @@ fn lower<'a>(
         &[],
         packages,
     )?);
-    let mut restarts = String::new();
     for (name, unit) in model["units"].as_object().ok_or("the model has no units")? {
-        for read in unit["restart_on"].as_array().into_iter().flatten() {
-            restarts.push_str(&format!("{name} {}\n", str_field(read, "restart_on")?));
-        }
         actions.push(unit_action(lab, name, unit, named.clone(), packages)?);
     }
-    actions.push(text("units", "restart-on", 0o644, restarts, &[], packages)?);
     let (enabled, unfound) = enabled_units(lab, model, &named, packages)?;
     actions.push(enabled);
     actions.push(boot_files(lab, packages)?);
@@ -742,11 +802,10 @@ fn model_packages(
 fn boot_files<'a>(lab: &'a Lab, packages: &'a Packages) -> Result<Action<'a>, String> {
     const TOOLS: [&str; 4] = ["bash", "coreutils", "util-linux", "kmod"];
     let ids = [TOOLS.as_slice(), &["linux"]].concat();
-    let (unresolved, resolved) = action_records(
-        &ids,
-        packages,
-        |deps| json!({"kind": "boot", "init": INITRD_INIT, "deps": deps}),
-    )?;
+    let (unresolved, resolved) = action_records(&ids, packages, |deps| {
+        json!({"kind": "boot", "init": INITRD_INIT, "files": ["initrd", "kernel"],
+                "deps": deps})
+    })?;
     Ok(Action {
         origin: "base.boot".to_owned(),
         unresolved,
@@ -755,7 +814,7 @@ fn boot_files<'a>(lab: &'a Lab, packages: &'a Packages) -> Result<Action<'a>, St
             let linux = &package(packages, "linux")?.path;
             let filled = fill(INITRD_INIT, &ids, packages)?;
             let mut nodes = initrd::Nodes::new();
-            for dir in ["proc", "sys", "dev", "sysroot"] {
+            for dir in ["proc", "sys", "dev", "run", "sysroot"] {
                 initrd::insert(&mut nodes, dir, initrd::Node::Dir);
             }
             initrd::insert(
@@ -797,11 +856,11 @@ fn boot_files<'a>(lab: &'a Lab, packages: &'a Packages) -> Result<Action<'a>, St
             let link = |target: String| Entry::Link { target };
             Ok(BTreeMap::from([
                 (
-                    "boot/initrd".to_owned(),
+                    "initrd".to_owned(),
                     link(format!("{}/initrd", path.inside())),
                 ),
                 (
-                    "boot/kernel".to_owned(),
+                    "kernel".to_owned(),
                     link(format!("{}/bzImage", linux.inside())),
                 ),
             ]))
@@ -809,43 +868,53 @@ fn boot_files<'a>(lab: &'a Lab, packages: &'a Packages) -> Result<Action<'a>, St
     })
 }
 
+/// Links every system has, where `@systemd@` stands for systemd's path. They're part of the
+/// action's key, so changing one changes the action.
+const FIXED_LINKS: [(&str, &str); 6] = [
+    // distro starts systemd from here at boot.
+    ("systemd", "@systemd@"),
+    (
+        "etc/systemd/system/sockets.target.wants/dbus.socket",
+        "../dbus.socket",
+    ),
+    (
+        "etc/systemd/system/default.target",
+        "@systemd@/lib/systemd/system/multi-user.target",
+    ),
+    // It stats /usr to decide whether /etc is up to date, and there is no /usr.
+    (
+        "etc/systemd/system/systemd-update-done.service",
+        "/dev/null",
+    ),
+    (
+        "etc/systemd/system/multi-user.target.wants/report.service",
+        "../report.service",
+    ),
+    // A login prompt on the screen.
+    (
+        "etc/systemd/system/getty.target.wants/getty@tty1.service",
+        "@systemd@/lib/systemd/system/getty@.service",
+    ),
+];
+
 fn fixed_links(packages: &Packages) -> Result<Action<'_>, String> {
     let (unresolved, resolved) = action_records(
         &["systemd"],
         packages,
-        |deps| json!({"kind": "fixed-links", "deps": deps}),
+        |deps| json!({"kind": "fixed-links", "links": FIXED_LINKS, "deps": deps}),
     )?;
-    let systemd = package(packages, "systemd")?.path.inside();
     Ok(Action {
         origin: "base".to_owned(),
         unresolved,
         resolved,
         run: Box::new(move |_| {
-            let link = |target: String| Entry::Link { target };
-            Ok(BTreeMap::from([
-                (
-                    "etc/systemd/system/sockets.target.wants/dbus.socket".to_owned(),
-                    link("../dbus.socket".to_owned()),
-                ),
-                (
-                    "etc/systemd/system/default.target".to_owned(),
-                    link(format!("{systemd}/lib/systemd/system/multi-user.target")),
-                ),
-                // It stats /usr to decide whether /etc is up to date, and there is no /usr.
-                (
-                    "etc/systemd/system/systemd-update-done.service".to_owned(),
-                    link("/dev/null".to_owned()),
-                ),
-                (
-                    "etc/systemd/system/multi-user.target.wants/report.service".to_owned(),
-                    link("../report.service".to_owned()),
-                ),
-                // A login prompt on the screen.
-                (
-                    "etc/systemd/system/getty.target.wants/getty@tty1.service".to_owned(),
-                    link(format!("{systemd}/lib/systemd/system/getty@.service")),
-                ),
-            ]))
+            FIXED_LINKS
+                .iter()
+                .map(|(path, target)| {
+                    let target = fill(target, &["systemd"], packages)?;
+                    Ok(((*path).to_owned(), Entry::Link { target }))
+                })
+                .collect()
         }),
     })
 }
@@ -1176,13 +1245,14 @@ fn system_from(
     db: &mut Db,
     packages: &Packages,
     model: &Value,
+    kept: &Kept,
     inputs: Option<&Value>,
 ) -> Result<System, String> {
     let Lowered {
         actions,
         skipped,
         unfound,
-    } = lower(lab, model, packages)?;
+    } = lower(lab, model, kept, packages)?;
     let outcome = realise(lab, db, actions)?;
     let apply = match inputs {
         Some(inputs) => Some(record_apply(lab, db, model, &outcome, inputs)?),
@@ -1200,12 +1270,17 @@ fn system_from(
 
 /// Builds the system `model` describes from the recipes in `repository`, which holds `recipes/`,
 /// the pins and the `work` directory with the store, building packages it doesn't have yet.
-pub fn system(repository: &Path, model: &Value, inputs: Option<&Value>) -> Result<System, String> {
+pub fn system(
+    repository: &Path,
+    model: &Value,
+    kept: &Kept,
+    inputs: Option<&Value>,
+) -> Result<System, String> {
     let lab = Lab::new(repository.join("work"));
     let (built, ..) = pilot::build_recipes(&lab, repository, &SYSTEM_RECIPES, Arm::F)?;
     let mut db = Db::open(&db_path(&lab))?;
     record_packages(&mut db, &built)?;
-    system_from(&lab, &mut db, &known_packages(&built), model, inputs)
+    system_from(&lab, &mut db, &known_packages(&built), model, kept, inputs)
 }
 
 /// Lowers `model` and realises it. Prints the generation and how long each part took.
@@ -1233,7 +1308,8 @@ pub fn run(
     let records = elapsed_ms(start);
 
     let start = Instant::now();
-    let system = system_from(lab, &mut db, &packages, &model, inputs.as_ref())?;
+    let kept = Kept::plain(&model);
+    let system = system_from(lab, &mut db, &packages, &model, &kept, inputs.as_ref())?;
     let realised = elapsed_ms(start);
     let skipped: Vec<&str> = system
         .skipped
@@ -1361,15 +1437,23 @@ pub fn diff(lab: &Lab, first: i64, second: i64) -> Result<String, String> {
         }
         changed.insert(format!("/{path}"));
     }
-    let restarts_at = lab
-        .on_host(&StorePath::from_hash(&second))
-        .join("restart-on");
-    let restarts = fs::read_to_string(&restarts_at).map_err(with_path(&restarts_at))?;
-    let units: BTreeSet<&str> = restarts
-        .lines()
-        .filter_map(|line| line.split_once(' '))
-        .filter(|(_, file)| changed.contains(*file))
-        .map(|(unit, _)| unit)
+    let kept = read_json(
+        &lab.on_host(&StorePath::from_hash(&second))
+            .join("etc/distro/model.json"),
+    )?;
+    let units: BTreeSet<&str> = kept["units"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, unit)| {
+            unit["restart_on"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|file| changed.contains(file))
+        })
+        .map(|(name, _)| name.as_str())
         .collect();
     let units: Vec<&str> = units.into_iter().collect();
     report.push_str(&format!("restarts {}\n", units.join(" ")));
@@ -1491,7 +1575,11 @@ mod tests {
         fs::create_dir_all(dir.path().join("store")).unwrap();
         let mut packages = Packages::new();
         for id in BASE_PACKAGES.iter().chain(["web", "linux"].iter()) {
-            let programs: &[&str] = if *id == "web" { &["web"] } else { &[] };
+            let programs: &[&str] = match *id {
+                "web" => &["web"],
+                "distro" => &["distro"],
+                _ => &[],
+            };
             packages.insert((*id).to_owned(), fake(&lab, id, programs));
         }
         (dir, lab, packages)
@@ -1521,7 +1609,14 @@ mod tests {
     }
 
     fn realised(lab: &Lab, db: &mut Db, packages: &Packages, model: &Value) -> Outcome {
-        realise(lab, db, lower(lab, model, packages).unwrap().actions).unwrap()
+        realise(
+            lab,
+            db,
+            lower(lab, model, &Kept::plain(model), packages)
+                .unwrap()
+                .actions,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1540,18 +1635,24 @@ mod tests {
         let (_dir, lab, packages) = setup();
         let mut db = Db::open(&db_path(&lab)).unwrap();
         realised(&lab, &mut db, &packages, &model(80, false));
-        // The file, and the generation.
-        assert_eq!(realised(&lab, &mut db, &packages, &model(81, false)).ran, 2);
+        // The file, the model the generation keeps and its hash, and the generation.
+        assert_eq!(realised(&lab, &mut db, &packages, &model(81, false)).ran, 4);
     }
 
     #[test]
-    fn an_option_nothing_reads_leaves_the_generation_alone() {
+    fn an_option_nothing_reads_changes_only_the_model_the_generation_keeps() {
         let (_dir, lab, packages) = setup();
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let first = realised(&lab, &mut db, &packages, &model(80, false));
         let second = realised(&lab, &mut db, &packages, &model(80, true));
-        assert_eq!(first.generation, second.generation);
-        assert_eq!(second.ran, 0);
+        let changed: Vec<&str> = first
+            .made
+            .iter()
+            .filter(|(path, made)| second.made[path.as_str()]["action"] != made["action"])
+            .map(|(path, _)| path.as_str())
+            .collect();
+        assert_eq!(changed, ["etc/distro/model-hash", "etc/distro/model.json"]);
+        assert_eq!(second.ran, 3);
     }
 
     #[test]
@@ -1559,7 +1660,7 @@ mod tests {
         let (_dir, lab, packages) = setup();
         let mut model = model(80, false);
         model["packages"] = json!(["web", "missing", "polkit.bin"]);
-        let lowered = lower(&lab, &model, &packages).unwrap();
+        let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
         assert_eq!(lowered.skipped, ["missing", "polkit.bin"]);
     }
 
@@ -1570,7 +1671,8 @@ mod tests {
         let mut model = model(80, false);
         model["packages"] = json!(["web", "missing"]);
 
-        let built = system_from(&lab, &mut db, &packages, &model, None).unwrap();
+        let built =
+            system_from(&lab, &mut db, &packages, &model, &Kept::plain(&model), None).unwrap();
         assert_eq!(built.skipped, ["missing"]);
         assert_eq!(built.apply, None);
         assert_eq!(
@@ -1580,7 +1682,15 @@ mod tests {
         assert!(built.path.join("etc/web.conf").exists());
 
         let inputs = inputs("a.toml", 80);
-        let again = system_from(&lab, &mut db, &packages, &model, Some(&inputs)).unwrap();
+        let again = system_from(
+            &lab,
+            &mut db,
+            &packages,
+            &model,
+            &Kept::plain(&model),
+            Some(&inputs),
+        )
+        .unwrap();
         assert_eq!(again.generation, built.generation);
         assert_eq!(again.outcome.ran, 0);
         let seq = again.apply.unwrap();
@@ -1600,7 +1710,7 @@ mod tests {
         let mut model = model(80, false);
         model["enabled"] =
             json!({"x.service": [], "y.target": ["multi-user.target"], "z.socket": []});
-        let lowered = lower(&lab, &model, &packages).unwrap();
+        let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
         assert!(lowered.skipped.is_empty(), "{:?}", lowered.skipped);
         assert_eq!(lowered.unfound, ["z.socket"]);
         let mut db = Db::open(&db_path(&lab)).unwrap();
@@ -1659,19 +1769,6 @@ mod tests {
     }
 
     #[test]
-    fn each_wrapper_is_listed_with_its_owner_and_octal_mode() {
-        let model = json!({"wrappers": {
-            "sudo": {"source": "/run/current-system/sw/bin/sudo", "owner": "root",
-                     "group": "root", "mode": 0o4755},
-        }});
-        assert_eq!(
-            wrappers(&model).unwrap(),
-            "sudo root root 4755 /run/current-system/sw/bin/sudo\n"
-        );
-        assert_eq!(wrappers(&json!({})).unwrap(), "");
-    }
-
-    #[test]
     fn each_user_gets_a_home_they_own() {
         let model = json!({"base": {"users": {"ann": {"home": "/home/ann"}}}});
         assert_eq!(homes(&model).unwrap(), "d /home/ann 0700 ann users -\n");
@@ -1712,6 +1809,85 @@ mod tests {
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let release = fs::read_to_string(root.join("etc/os-release")).unwrap();
         assert_eq!(release, "NAME=distro\nID=distro\n");
+    }
+
+    #[test]
+    fn a_generation_keeps_the_model_it_was_built_from() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let model = model(80, false);
+        let outcome = realised(&lab, &mut db, &packages, &model);
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let kept = Kept::plain(&model);
+        let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
+        assert_eq!(read("etc/distro/model.json"), kept.text);
+        assert_eq!(read("etc/distro/model-hash"), kept.hash);
+    }
+
+    #[test]
+    fn a_generation_boots_and_switches_through_distro() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
+        assert!(read("init").contains("/sw/bin/distro\" activate --mode init \"$self\""));
+        let switch = read("bin/switch-to-configuration");
+        assert!(switch.contains("/sw/bin/distro\" activate --mode \"$1\" \"$self\""));
+        let distro = packages["distro"].path.inside();
+        assert_eq!(
+            fs::read_link(root.join("sw/bin/distro")).unwrap(),
+            Path::new(&format!("{distro}/bin/distro"))
+        );
+        let systemd = packages["systemd"].path.inside();
+        assert_eq!(
+            fs::read_link(root.join("systemd")).unwrap(),
+            Path::new(&systemd)
+        );
+        for gone in ["switch", "wrappers", "wrappers.list", "restart-on"] {
+            assert!(!root.join(gone).exists(), "{gone}");
+        }
+    }
+
+    #[test]
+    fn the_kernel_and_initrd_are_at_the_top_with_the_kernels_options_beside_them() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let mut model = model(80, false);
+        model["base"]["boot"] = json!({"kernel_params": ["quiet", "loglevel=3"]});
+        let outcome = realised(&lab, &mut db, &packages, &model);
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let linux = packages["linux"].path.inside();
+        assert_eq!(
+            fs::read_link(root.join("kernel")).unwrap(),
+            Path::new(&format!("{linux}/bzImage"))
+        );
+        assert!(
+            fs::read_link(root.join("initrd"))
+                .unwrap()
+                .ends_with("initrd")
+        );
+        let params = fs::read_to_string(root.join("kernel-params")).unwrap();
+        assert_eq!(
+            params,
+            format!("root=LABEL={ROOT_LABEL} rw quiet loglevel=3\n")
+        );
+    }
+
+    #[test]
+    fn activation_lists_the_etc_files_with_a_mode_of_their_own() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let mut model = model(80, false);
+        model["files"]["/etc/web.key"] = json!({"mode": 0o600, "text": "key\n"});
+        let outcome = realised(&lab, &mut db, &packages, &model);
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let text = fs::read_to_string(root.join("activation.json")).unwrap();
+        let activation: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(activation["etc_modes"], json!({"web.key": "0600"}));
+        let bash = packages["bash"].path.inside();
+        assert_eq!(activation["bash"], json!(format!("{bash}/bin/bash")));
+        assert_eq!(activation["homes"], json!([]));
     }
 
     #[test]

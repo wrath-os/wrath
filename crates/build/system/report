@@ -25,7 +25,12 @@ say "page on $(port): $(fetch "$(port)")"
 say "startup: $(systemd-analyze 2>&1 | head -1)"
 if ((boots == 0)); then
     nginx=$(invocation nginx-main) dbus=$(invocation dbus) nftables=$(invocation nftables)
-    say "$(/system/current/switch 2)"
+    start=$EPOCHREALTIME
+    ln -sfn generations/2 /system/.next
+    mv -T /system/.next /system/current
+    /system/current/bin/switch-to-configuration switch
+    took=$(bc <<< "$EPOCHREALTIME - $start")
+    say "switched to $(readlink -f /system/current | cut -c8-15) in ${took}s"
     sleep 1
     say "page on 8081: $(fetch 8081)"
     say "page on 8080 afterwards: $(fetch 8080)"

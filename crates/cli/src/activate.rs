@@ -51,8 +51,15 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
     }
 }
 
-/// Where the system's generations are, under the root.
+/// Where a machine from Nix keeps its generations, under the root.
 const PROFILES: &str = "nix/var/nix/profiles";
+
+/// Where a machine from distro's store keeps its generations, under the root: each a link
+/// named by its number to a system in `/store`.
+const GENERATIONS: &str = "system/generations";
+
+/// The link to the current generation, under the root, as `generations/N`.
+const CURRENT: &str = "system/current";
 
 /// Writes a boot loader entry for each generation of the system at `root`, with its kernel and
 /// initrd copied to the ESP at `/boot`, and makes the current generation the default. Kernels
@@ -63,9 +70,7 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     if !esp.join("loader").is_dir() {
         return Ok(());
     }
-    let profiles = root.join(PROFILES);
-    let profile = profiles.join("system");
-    let current = fs::read_link(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+    let (generations, current) = generations(root)?;
     let kernels = esp.join("EFI/distro");
     let entries = esp.join("loader/entries");
     for dir in [&kernels, &entries] {
@@ -73,8 +78,8 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     }
     let mut kept = BTreeSet::new();
     let mut written = BTreeSet::new();
-    for (number, link) in generations(&profiles)? {
-        let system = inside(root, &profiles.join(&link));
+    for (number, link) in generations {
+        let system = inside(root, &link);
         let mut files = Vec::new();
         for part in ["kernel", "initrd"] {
             let path = fs::read_link(system.join(part))
@@ -82,6 +87,7 @@ fn boot_entries(root: &Path) -> Result<(), String> {
             // Named after the store path, so a kernel shared by generations is copied once.
             let name = path
                 .strip_prefix("/nix/store")
+                .or_else(|_| path.strip_prefix("/store"))
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('/', "-");
@@ -115,8 +121,15 @@ fn boot_entries(root: &Path) -> Result<(), String> {
             kept.insert(name.clone());
             files.push(name);
         }
-        let params = fs::read_to_string(system.join("kernel-params"))
-            .map_err(|e| format!("{}: {e}", system.display()))?;
+        let mut params = fs::read_to_string(system.join("kernel-params"))
+            .map_err(|e| format!("{}: {e}", system.display()))?
+            .trim()
+            .to_owned();
+        // A system from distro's store can't name itself in its own files, so the entry does.
+        if !params.split(' ').any(|param| param.starts_with("init=")) {
+            let named = fs::read_link(&link).map_err(|e| format!("{}: {e}", link.display()))?;
+            params.push_str(&format!(" init={}/init", named.display()));
+        }
         let entry = format!("distro-{number}.conf");
         let initrds: String = files[1..]
             .iter()
@@ -125,12 +138,11 @@ fn boot_entries(root: &Path) -> Result<(), String> {
         let text = format!(
             "title distro\nversion generation {number}\nsort-key distro\nlinux /EFI/distro/{}\n\
              {initrds}options {}\n",
-            files[0],
-            params.trim()
+            files[0], params
         );
         write_replacing(&entries.join(&entry), &text, 0o644)?;
         written.insert(entry.clone());
-        if current == Path::new(&link) {
+        if number == current {
             let loader = format!("default {entry}\ntimeout 3\neditor no\n");
             write_replacing(&esp.join("loader/loader.conf"), &loader, 0o644)?;
         }
@@ -198,23 +210,42 @@ fn cpio(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-/// The generations in `profiles`, by number, with the name of each one's link.
-fn generations(profiles: &Path) -> Result<Vec<(u32, String)>, String> {
-    let mut generations: Vec<(u32, String)> = fs::read_dir(profiles)
-        .map_err(|e| format!("{}: {e}", profiles.display()))?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let number = name
-                .strip_prefix("system-")?
+/// The generations of the machine at `root`, by number with the link to each, oldest first, and
+/// the current one's number.
+fn generations(root: &Path) -> Result<(Vec<(u32, PathBuf)>, u32), String> {
+    let store = root.join(GENERATIONS);
+    type NumberOf = fn(&str) -> Option<u32>;
+    let (dir, current, number_of): (PathBuf, PathBuf, NumberOf) = if store.is_dir() {
+        (store, root.join(CURRENT), |name| {
+            name.strip_prefix("generations/")
+                .unwrap_or(name)
+                .parse()
+                .ok()
+        })
+    } else {
+        let profiles = root.join(PROFILES);
+        (profiles.clone(), profiles.join("system"), |name| {
+            name.strip_prefix("system-")?
                 .strip_suffix("-link")?
                 .parse()
-                .ok()?;
-            Some((number, name))
+                .ok()
+        })
+    };
+    let mut generations: Vec<(u32, PathBuf)> = fs::read_dir(&dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            Some((
+                number_of(&entry.file_name().to_string_lossy())?,
+                entry.path(),
+            ))
         })
         .collect();
     generations.sort();
-    Ok(generations)
+    let link = fs::read_link(&current).map_err(|e| format!("{}: {e}", current.display()))?;
+    let current = number_of(&link.to_string_lossy())
+        .ok_or_else(|| format!("{} names no generation", current.display()))?;
+    Ok((generations, current))
 }
 
 /// Where `link` points, within `root`: absolute targets are under it.
@@ -304,7 +335,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     if let Some(state) = &state {
         state.save_accounts(root);
     }
-    make_wrappers(root, system, &model)?;
+    warn(make_wrappers(root, system, &model)?);
     crate::on_machine::apply(system)
 }
 
@@ -328,7 +359,7 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     if let Some(state) = &state {
         state.save_accounts(root);
     }
-    make_wrappers(root, system, &after)?;
+    warn(make_wrappers(root, system, &after)?);
     crate::on_machine::apply(system)?;
     run(Command::new("systemd-tmpfiles").arg("--create"))?;
     run(Command::new("systemctl").arg("daemon-reload"))?;
@@ -336,6 +367,13 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     systemctl("try-reload-or-restart", &activation.reload)?;
     systemctl("start", &installed(&activation, &after))?;
     replace_link(system, &current)
+}
+
+/// Says what activation left out, and carries on.
+fn warn(left_out: Vec<String>) {
+    for message in left_out {
+        eprintln!("distro: {message}");
+    }
 }
 
 pub(crate) fn model_of(system: &Path) -> Result<Model, String> {
@@ -376,12 +414,17 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
     let new_modes = etc_modes(system);
     let old_modes = old.map(etc_modes).unwrap_or_default();
     replace_link(&new_etc, &etc.join("static"))?;
-    let in_static = |path: &Path| Path::new("/etc/static").join(path);
+    // A link in the system's /etc is made as it is: through /etc/static it would be two steps,
+    // and systemd takes a unit reached in two steps for a unit of its own, so `default.target`
+    // would stop being `multi-user.target`. Files are linked through /etc/static.
+    let target_in = |system_etc: &Path, path: &Path| {
+        fs::read_link(system_etc.join(path)).unwrap_or_else(|_| Path::new("/etc/static").join(path))
+    };
     for path in &new_files {
         if ACCOUNTS.iter().any(|name| path == Path::new(name)) {
             continue;
         }
-        let target = in_static(path);
+        let target = target_in(&new_etc, path);
         let link = etc.join(path);
         if let Some(parent) = link.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
@@ -400,8 +443,9 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
     }
     for path in old_files.difference(&new_files) {
         let link = etc.join(path);
+        let old_target = old.map(|old| target_in(&old.join("etc"), path));
         if old_modes.contains_key(path)
-            || fs::read_link(&link).is_ok_and(|current| current == in_static(path))
+            || fs::read_link(&link).is_ok_and(|current| Some(current) == old_target)
         {
             fs::remove_file(&link).map_err(|e| format!("{}: {e}", link.display()))?;
         }
@@ -437,8 +481,9 @@ fn etc_modes(system: &Path) -> BTreeMap<PathBuf, u32> {
 }
 
 /// Makes `/run/wrappers/bin` hold `model`'s wrappers, copied from `system`, each with its owner and
-/// mode. The new set replaces the old one in one step.
-fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<(), String> {
+/// mode. The new set replaces the old one in one step. A wrapper that can't be made, such as one
+/// for a program the system lacks, is left out, and returned with why, so the rest still work.
+fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<Vec<String>, String> {
     let wrappers = root.join("run/wrappers");
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -452,6 +497,7 @@ fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<(), String
             "wrapper `{wrapper}`: there's no {what} `{account}`"
         ))
     };
+    let mut left_out = Vec::new();
     for (name, wrapper) in &model.wrappers {
         // Sources name the running system, which is `system` once this switch is done.
         let source = match wrapper.source.strip_prefix("/run/current-system/") {
@@ -459,16 +505,25 @@ fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<(), String
             None => PathBuf::from(&wrapper.source),
         };
         let path = dir.join(name);
-        fs::copy(&source, &path).map_err(|e| format!("{}: {e}", source.display()))?;
-        std::os::unix::fs::chown(
-            &path,
-            Some(id(&users, name, &wrapper.owner, "user")?),
-            Some(id(&groups, name, &wrapper.group, "group")?),
-        )
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-        // After the owner, which clears setuid.
-        fs::set_permissions(&path, fs::Permissions::from_mode(wrapper.mode))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let made = fs::copy(&source, &path)
+            .map_err(|e| format!("{}: {e}", source.display()))
+            .and_then(|_| {
+                std::os::unix::fs::chown(
+                    &path,
+                    Some(id(&users, name, &wrapper.owner, "user")?),
+                    Some(id(&groups, name, &wrapper.group, "group")?),
+                )
+                .map_err(|e| format!("{}: {e}", path.display()))
+            })
+            // After the owner, which clears setuid.
+            .and_then(|()| {
+                fs::set_permissions(&path, fs::Permissions::from_mode(wrapper.mode))
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            });
+        if let Err(message) = made {
+            let _ = fs::remove_file(&path);
+            left_out.push(format!("wrapper `{name}`: {message}"));
+        }
     }
     replace_link(&dir, &wrappers.join("bin"))?;
     for entry in fs::read_dir(&wrappers).map_err(|e| format!("{}: {e}", wrappers.display()))? {
@@ -478,7 +533,7 @@ fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<(), String
             let _ = fs::remove_dir_all(path);
         }
     }
-    Ok(())
+    Ok(left_out)
 }
 
 /// Names to ids in an accounts file such as `/etc/passwd`.
@@ -580,6 +635,68 @@ fn run(command: &mut Command) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A machine from distro's store, with generations `numbered` by store name, each with its own
+    /// kernel and the same initrd, and `current` the current one.
+    fn store_machine(root: &Path, numbered: &[(u32, &str)], current: u32) {
+        let store = root.join("store");
+        for (name, file) in [("k1", "bzImage"), ("k2", "bzImage"), ("i1", "initrd")] {
+            fs::create_dir_all(store.join(name)).unwrap();
+            fs::write(store.join(name).join(file), name).unwrap();
+        }
+        let generations = root.join(GENERATIONS);
+        fs::create_dir_all(&generations).unwrap();
+        for (number, name) in numbered {
+            let dir = store.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            let kernel = if *number == 1 { "k1" } else { "k2" };
+            symlink(format!("/store/{kernel}/bzImage"), dir.join("kernel")).unwrap();
+            symlink("/store/i1/initrd", dir.join("initrd")).unwrap();
+            fs::write(dir.join("kernel-params"), "root=LABEL=distro-root rw\n").unwrap();
+            symlink(
+                format!("/store/{name}"),
+                generations.join(number.to_string()),
+            )
+            .unwrap();
+        }
+        symlink(format!("generations/{current}"), root.join(CURRENT)).unwrap();
+    }
+
+    #[test]
+    fn a_store_machine_gets_an_entry_per_generation_that_starts_its_init() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        store_machine(root, &[(1, "aaa"), (2, "bbb"), (10, "ccc")], 2);
+        fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
+
+        boot_entries(root).unwrap();
+
+        let esp = root.join("boot");
+        assert_eq!(
+            fs::read_to_string(esp.join("loader/loader.conf")).unwrap(),
+            "default distro-2.conf\ntimeout 3\neditor no\n"
+        );
+        let entry = fs::read_to_string(esp.join("loader/entries/distro-10.conf")).unwrap();
+        assert!(entry.contains("linux /EFI/distro/k2-bzImage\n"), "{entry}");
+        assert!(entry.contains("initrd /EFI/distro/i1-initrd\n"), "{entry}");
+        assert!(
+            entry.contains("options root=LABEL=distro-root rw init=/store/ccc/init\n"),
+            "{entry}"
+        );
+        assert_eq!(fs::read_dir(esp.join("EFI/distro")).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn a_store_machine_lists_its_generations_by_number_with_the_current_one() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        store_machine(root, &[(2, "bbb"), (10, "ccc"), (1, "aaa")], 10);
+        let (listed, current) = generations(root).unwrap();
+        let numbers: Vec<u32> = listed.iter().map(|(number, _)| *number).collect();
+        assert_eq!(numbers, [1, 2, 10]);
+        assert_eq!(current, 10);
+        assert_eq!(listed[0].1, root.join(GENERATIONS).join("1"));
+    }
 
     #[test]
     fn each_generation_gets_a_boot_entry_and_the_current_one_is_the_default() {
@@ -763,8 +880,8 @@ mod tests {
                 mode: 0o4750,
             },
         );
-        make_wrappers(&root, &system, &model).unwrap();
-        make_wrappers(&root, &system, &model).unwrap();
+        assert!(make_wrappers(&root, &system, &model).unwrap().is_empty());
+        assert!(make_wrappers(&root, &system, &model).unwrap().is_empty());
 
         let tool = root.join("run/wrappers/bin/tool");
         assert_eq!(fs::read_to_string(&tool).unwrap(), "new\n");
@@ -775,6 +892,86 @@ mod tests {
             sets, 2,
             "the link and one set of wrappers; the old set is gone"
         );
+    }
+
+    #[test]
+    fn a_wrapper_for_a_program_the_system_lacks_is_left_out_and_the_rest_are_made() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path().join("root");
+        let system = work.path().join("system");
+        fs::create_dir_all(system.join("sw/bin")).unwrap();
+        fs::write(system.join("sw/bin/tool"), "new\n").unwrap();
+        fs::create_dir_all(root.join("etc")).unwrap();
+        let (uid, gid) = own_ids();
+        fs::write(
+            root.join("etc/passwd"),
+            format!("me:x:{uid}:{gid}::/:/bin/sh\n"),
+        )
+        .unwrap();
+        fs::write(root.join("etc/group"), format!("mine:x:{gid}:\n")).unwrap();
+        let mut model = Model::default();
+        for name in ["gone", "tool"] {
+            model.wrappers.insert(
+                name.into(),
+                distro_eval::Wrapper {
+                    source: format!("/run/current-system/sw/bin/{name}"),
+                    owner: "me".into(),
+                    group: "mine".into(),
+                    mode: 0o755,
+                },
+            );
+        }
+        let left_out = make_wrappers(&root, &system, &model).unwrap();
+        assert_eq!(left_out.len(), 1);
+        assert!(left_out[0].starts_with("wrapper `gone`: "), "{left_out:?}");
+        assert!(root.join("run/wrappers/bin/tool").exists());
+        assert!(!root.join("run/wrappers/bin/gone").exists());
+    }
+
+    #[test]
+    fn links_in_a_systems_etc_are_made_as_they_are_so_systemd_sees_one_step() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path().join("root");
+        let system = |name: &str, links: &[(&str, &str)]| {
+            let etc = work.path().join(name).join("etc");
+            fs::create_dir_all(&etc).unwrap();
+            fs::write(etc.join("passwd"), "root:x:0:0::/root:/bin/sh\n").unwrap();
+            for (path, target) in links {
+                let link = etc.join(path);
+                fs::create_dir_all(link.parent().unwrap()).unwrap();
+                symlink(target, link).unwrap();
+            }
+            work.path().join(name)
+        };
+        let wants = "systemd/system/multi-user.target.wants/web.service";
+        let default = "systemd/system/default.target";
+        let gone = "systemd/system/sockets.target.wants/old.socket";
+        let old = system("old", &[(wants, "../web.service"), (gone, "../old.socket")]);
+        let new = system(
+            "new",
+            &[
+                (wants, "../web.service"),
+                (
+                    default,
+                    "/store/systemd/lib/systemd/system/multi-user.target",
+                ),
+            ],
+        );
+        fs::create_dir_all(root.join("etc")).unwrap();
+        switch_etc(&root, None, &old).unwrap();
+
+        switch_etc(&root, Some(&old), &new).unwrap();
+
+        let etc = root.join("etc");
+        assert_eq!(
+            fs::read_link(etc.join(wants)).unwrap(),
+            Path::new("../web.service")
+        );
+        assert_eq!(
+            fs::read_link(etc.join(default)).unwrap(),
+            Path::new("/store/systemd/lib/systemd/system/multi-user.target")
+        );
+        assert!(fs::symlink_metadata(etc.join(gone)).is_err());
     }
 
     /// The user and group this test runs as, which it can give its own files.

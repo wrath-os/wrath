@@ -44,8 +44,12 @@ pub fn build_generation(root: &Path, model: &Model) -> Result<PathBuf, String> {
         .join("build")
         .canonicalize()
         .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
-    let model = serde_json::from_str(&model.canonical()).map_err(|e| e.to_string())?;
-    let system = distro_build::graph::system(&repository, &model, None)?;
+    let kept = distro_build::graph::Kept {
+        text: model.canonical(),
+        hash: model.hash(),
+    };
+    let model = serde_json::from_str(&kept.text).map_err(|e| e.to_string())?;
+    let system = distro_build::graph::system(&repository, &model, &kept, None)?;
     for package in &system.skipped {
         eprintln!("warning: there's no recipe for `{package}` yet, so the system goes without it");
     }

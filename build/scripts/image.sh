@@ -42,7 +42,7 @@ while read -r kind one two; do
 done < <("$lab" graph-closure "$arm" "$work/model.json" | grep -E '^(root|path) ')
 cp -a "work/store/$generation" "$root/store/"
 ln -s "/store/$generation" "$root/system/generations/1"
-ln -s "/store/$generation" "$root/system/current"
+ln -s generations/1 "$root/system/current"
 mkdir -p "$root"/{bin,etc,dev,proc,sys,run,tmp,var/lib,root,home,srv}
 ln -s "/store/${store[bash]}/bin/bash" "$root/bin/sh"
 [[ ! -e $root/usr ]] || { echo "the image has a /usr" >&2; exit 1; }
@@ -56,7 +56,7 @@ mcopy -i "$esp" "work/store/${store[systemd]}/lib/systemd/boot/efi/systemd-bootx
     ::/EFI/BOOT/BOOTX64.EFI
 files=()
 for name in kernel initrd; do
-    path=$(readlink "work/store/$generation/boot/$name")
+    path=$(readlink "work/store/$generation/$name")
     directory=${path#/store/}
     directory=${directory%%/*}
     [[ -e $root/store/$directory ]] || cp -a --reflink=auto "work/store/$directory" "$root/store/"
@@ -67,7 +67,8 @@ done
     echo "title distro"
     echo "linux ${files[0]}"
     echo "initrd ${files[1]}"
-    echo "options root=LABEL=$label rw distro.rescue $consoles generation=$generation"
+    echo "options $(cat "work/store/$generation/kernel-params") distro.rescue $consoles" \
+        "init=/store/$generation/init"
 } > "$work/entry.conf"
 mcopy -i "$esp" "$work/entry.conf" ::/loader/entries/distro.conf
 printf 'default distro.conf\ntimeout 3\n' > "$work/loader.conf"

@@ -1,11 +1,13 @@
 #!@bash@/bin/bash
 # The first process. Brings up the disk, finds the root file system and hands over to the
-# generation the boot entry names. With `distro.rescue` on the command line, a failure opens a
+# init the boot entry names. With `distro.rescue` on the command line, a failure opens a
 # shell.
 export PATH=@coreutils@/bin:@util-linux@/bin:@kmod@/bin:@bash@/bin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
+# switch_root takes /run along, where distro keeps what it sets up at boot.
+mount -t tmpfs -o mode=0755 tmpfs /run
 exec </dev/console >/dev/console 2>&1
 read -r -a arguments < /proc/cmdline
 fail() {
@@ -26,10 +28,10 @@ fail() {
 for argument in "${arguments[@]}"; do
     case $argument in
         root=LABEL=*) label=${argument#root=LABEL=} ;;
-        generation=*) generation=${argument#generation=} ;;
+        init=*) init=${argument#init=} ;;
     esac
 done
-[[ -n ${label:-} && -n ${generation:-} ]] || fail "the command line lacks root= or generation="
+[[ -n ${label:-} && -n ${init:-} ]] || fail "the command line lacks root= or init="
 
 # USB storage can take seconds to show up.
 for _ in {1..300}; do
@@ -40,10 +42,10 @@ while [[ -z ${device:-} ]]; do
     fail "no file system labelled $label"
     device=$(blkid -L "$label")
 done
-echo "INITRD root is $device, generation $generation"
+echo "INITRD root is $device, init $init"
 
 mkdir -p /sysroot
 until mount -o rw "$device" /sysroot; do
     fail "can't mount $device"
 done
-exec switch_root /sysroot "/store/$generation/init"
+exec switch_root /sysroot "$init"

@@ -63,7 +63,7 @@ for generation in "$first" "$second"; do
     ln -s "/store/$generation" "$root/system/generations/$number"
     number=$((number + 1))
 done
-ln -s "/store/$first" "$root/system/current"
+ln -s generations/1 "$root/system/current"
 mkdir -p "$root"/{bin,etc,dev,proc,sys,run,tmp,var/lib,root,home,srv}
 ln -s "/store/${store[bash]}/bin/bash" "$root/bin/sh"
 [[ ! -e $root/usr ]] || { echo "the image has a /usr" >&2; exit 1; }
@@ -71,7 +71,7 @@ ln -s "/store/${store[bash]}/bin/bash" "$root/bin/sh"
 # Each generation's kernel and initrd are in the store. The boot partition holds copies.
 for generation in "$first" "$second"; do
     for name in kernel initrd; do
-        path=$(readlink "work/store/$generation/boot/$name")
+        path=$(readlink "work/store/$generation/$name")
         directory=${path#/store/}
         directory=${directory%%/*}
         [[ -e $root/store/$directory ]] \
@@ -81,7 +81,7 @@ done
 [[ -z $(grep -rla '/nix/store' "$root/store" | head -1) ]] && echo "no /nix/store references" \
     | tee -a "$measures"
 
-options="root=LABEL=root rw console=ttyS0 panic=-1 systemd.getty_auto=0"
+options="console=ttyS0 panic=-1 systemd.getty_auto=0"
 disk=$work/disk.img
 esp=$work/esp.img
 system=$work/root.img
@@ -96,7 +96,7 @@ declare -A copied
 for generation in "$first" "$second"; do
     files=()
     for name in kernel initrd; do
-        path=$(readlink "work/store/$generation/boot/$name")
+        path=$(readlink "work/store/$generation/$name")
         directory=${path#/store/}
         directory=${directory%%/*}
         esp_name=$directory-$name
@@ -111,7 +111,8 @@ for generation in "$first" "$second"; do
         echo "title Generation $number"
         echo "linux ${files[0]}"
         echo "initrd ${files[1]}"
-        echo "options $options generation=$generation"
+        echo "options $(cat "work/store/$generation/kernel-params") $options" \
+            "init=/store/$generation/init"
     } > "$entry"
     mcopy -i "$esp" "$entry" "::/loader/entries/gen-$number.conf"
     number=$((number + 1))
@@ -119,7 +120,7 @@ done
 
 truncate -s 5500M "$system"
 bwrap --unshare-user --uid 0 --gid 0 --bind / / --dev-bind /dev /dev -- \
-    mke2fs -q -t ext4 -L root -d "$root" "$system"
+    mke2fs -q -t ext4 -L distro-root -d "$root" "$system"
 truncate -s 6G "$disk"
 sfdisk --quiet "$disk" <<TABLE
 label: gpt
