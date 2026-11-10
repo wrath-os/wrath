@@ -734,3 +734,227 @@ meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
 ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
+
+# Xwayland, which runs X programs in a Wayland session, and the X libraries it and they use.
+
+[[package]]
+id = "xorgproto"
+version = "2026.1"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf"]
+sources = [{ url = "https://www.x.org/archive/individual/proto/xorgproto-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D legacy=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["xproto"]
+
+[[package]]
+id = "xtrans"
+version = "1.6.0"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/xtrans-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-docs
+make DESTDIR=$DEST install
+'''
+
+[[package]]
+id = "libXau"
+version = "1.0.12"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libXau-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xau"]
+
+[[package]]
+id = "libXdmcp"
+version = "1.1.5"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libXdmcp-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-docs
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xdmcp"]
+
+[[package]]
+id = "xcb-proto"
+version = "1.17.0"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "python3"]
+sources = [{ url = "https://www.x.org/archive/individual/proto/xcb-proto-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX
+make DESTDIR=$DEST install
+'''
+
+[[package]]
+id = "libxcb"
+version = "1.17.0"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "python3", "xcb-proto", "libXau", "libXdmcp", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libxcb-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-devel-docs --without-doxygen
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xcb"]
+
+[[package]]
+id = "libX11"
+version = "1.8.14"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "xorgproto", "xtrans", "libxcb", "libXau", "libXdmcp"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libX11-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-specs --without-xmlto --without-fop
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["x11"]
+
+[[package]]
+id = "libxkbfile"
+version = "1.2.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libX11", "libxcb", "libXau", "libXdmcp", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libxkbfile-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["xkbfile"]
+
+[[package]]
+id = "xkbcomp"
+version = "1.5.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "bison-final", "m4-final", "libxkbfile", "libX11", "libxcb",
+  "libXau", "libXdmcp", "xorgproto",
+]
+sources = [{ url = "https://www.x.org/archive/individual/app/xkbcomp-{version}.tar.xz" }]
+script = '''
+# Compiles keymaps for Xwayland.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/xkbcomp -version"]
+
+[[package]]
+id = "libfontenc"
+version = "1.1.9"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "xorgproto", "zlib"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libfontenc-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["fontenc"]
+
+[[package]]
+id = "libXfont2"
+version = "2.0.9"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "xorgproto", "xtrans", "libfontenc", "freetype", "libpng", "zlib"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libXfont2-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-devel-docs
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xfont2"]
+
+[[package]]
+id = "libxcvt"
+version = "0.1.3"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libxcvt-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["libxcvt"]
+
+[[package]]
+id = "libxshmfence"
+version = "1.3.3"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/lib/libxshmfence-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xshmfence"]
+
+[[package]]
+id = "libepoxy"
+version = "1.5.10"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "mesa", "libdrm"]
+sources = [{ url = "https://github.com/anholt/libepoxy/archive/{version}/libepoxy-{version}.tar.gz" }]
+script = '''
+# OpenGL function loading over EGL, without GLX.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D glx=no -D x11=false \
+    -D egl=yes -D tests=false -D docs=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["epoxy"]
+
+[[package]]
+id = "xwayland"
+version = "24.1.15"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "xorgproto", "xtrans", "pixman", "libxkbfile", "libXfont2",
+  "libfontenc", "freetype", "libpng", "zlib", "libxcvt", "libdrm", "libepoxy", "mesa", "wayland",
+  "wayland-protocols", "libxshmfence", "openssl", "libXau", "libXdmcp", "libX11", "libxcb",
+  "xkeyboard-config", "xkbcomp", "libffi", "expat",
+]
+sources = [{ url = "https://www.x.org/archive/individual/xserver/xwayland-{version}.tar.xz" }]
+script = '''
+# Keymaps come from xkeyboard-config and are compiled with xkbcomp, both found where they are.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D glamor=true -D glx=false \
+    -D dri3=true -D secure-rpc=false -D xdmcp=false -D xdm-auth-1=false -D sha1=libcrypto \
+    -D docs=false -D devel-docs=false -D dtrace=false -D libdecor=false -D xvfb=false \
+    -D xkb_dir=$LAB_DEP_xkeyboard_config/share/X11/xkb -D xkb_bin_dir=$LAB_DEP_xkbcomp/bin \
+    -D xkb_output_dir=/var/lib/xkb
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/Xwayland -version"]
