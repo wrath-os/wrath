@@ -1,6 +1,6 @@
 # 0001: Build the front end first, on a NixOS backend
 
-Status: accepted, 2026-11-05
+Status: accepted, 2026-11-05. Superseded by 0014 and 0017: Nix is gone.
 
 ## Context
 

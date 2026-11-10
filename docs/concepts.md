@@ -106,14 +106,13 @@ configuration. Each change has a **tier**, saying when it takes full effect:
 A **generation** is a built configuration that can be switched to. `apply` makes a new one,
 `rollback` goes back to an earlier one, and `history` lists them.
 
-A **backend** turns a model into a running system. Today it assembles the system from packages
-in nixpkgs and builds it with Nix. distro's own builder, which builds every package from source,
-is replacing it (decision 0014). Nothing above this line depends on how it works.
+The **builder** turns a model into a generation: it builds every package from its recipe, from
+source, into a content-addressed store, and assembles the system from them. Nothing above this
+line depends on how it works.
 
 ## Words we keep out of sight
 
-Derivation, flake, attribute path, closure, overlay, channel, profile and store path are how the
-backend works. They appear only in `--verbose` output and in `why`, never in TOML or in
+Action, sandbox, closure, view and store path are how the builder works. They appear only in `--verbose` output and in `why`, never in TOML or in
 what commands normally print.
 
 ## The verbs

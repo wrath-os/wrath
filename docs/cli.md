@@ -45,65 +45,40 @@ Everywhere a package is named, on the command line and in TOML, it's written the
 
 | You write | You get |
 |---|---|
-| `jq` | jq as your configuration's lock pins it |
-| `jq@1.7` | the newest jq 1.7.x that any nixpkgs had |
-| `stable#jq` | jq from the source you named `stable` |
-| `github:NixOS/nixpkgs/nixos-25.05#jq` | jq from that nixpkgs branch, without declaring it |
-| `github:jqlang/jq#jq` | jq from the project's own flake |
-| `./tools#mytool` | a package defined in a local directory |
+| `jq` | jq from the recipes of the distro your lock pins |
+| `jq@1.7` | jq 1.7 from the newest distro revision that had it (planned) |
+| `acme#jq` | jq from the recipes in the source you named `acme` (planned) |
 
 ### Which jq is `jq`?
 
-The one your configuration would give you. If the context's lock has jq, `distro run jq` runs
-that build. If it doesn't, jq comes from the nixpkgs the context is already pinned to, so it
-shares the libraries already on the machine and needs nothing new evaluated or downloaded beyond
-jq itself. It never quietly means "whatever unstable is today", which is what
-`nix run nixpkgs#jq` does through the registry.
+The one your configuration would give you. Recipes live in distro's repository, so the distro
+revision your lock pins decides every package's version and source. `distro run jq` builds that
+recipe, or finds it in the store already, and nothing else changes. It never quietly means
+"whatever is newest today".
 
-Every command that picks a package says what it picked, on stderr:
-
-```console
-$ distro run jq -- --version
-jq 1.8.1 from nixpkgs, locked 2026-10-30 (1d06008)
-jq-1.8.1
-```
-
-### Versions
-
-nixpkgs mostly carries one version of each package, so `jq@1.7` needs to know where 1.7 lived.
-The factory publishes a version index: every version each package had across nixpkgs history,
-with the newest nixpkgs revision that has it. `@1.7` matches 1.7, 1.7.1 and so on, and takes the
-newest. Packages that nixpkgs carries in several versions at once (`python312`, `nodejs_20`)
-are in the index too, so `python@3.12` works without knowing the attribute name.
+Every command that picks a package says where it came from, on stderr:
 
 ```console
-$ distro info jq
-jq  command-line JSON processor
-  1.8.1  nixpkgs (locked)                     installed for john
-  1.8.1  stable  nixos-25.11
-  1.7.1  nixpkgs 2025-04-12 (a1b2c3d)         ~42 MB more to download
-  1.6    nixpkgs 2023-11-02 (9f8e7d6)         ~61 MB more to download
+$ distro run age -- --version
+age from distro 1d06008, 2026-10-30
+v1.2.1
 ```
 
-An older version comes from an older nixpkgs, with its own copies of the libraries, and
-`info` shows that cost up front.
+### Versions (planned)
+
+`jq@1.7` means the recipe from the newest distro revision that had jq 1.7, built from that
+revision. The store is content-addressed, so whatever comes out the same as what you have is
+shared, and an older version costs only what differs.
 
 ### Trying, then keeping
 
 ```console
-$ distro run jq@1.7 -- --version      # runs it, changes nothing
-$ distro shell jq@1.7 ripgrep         # a shell with both, changes nothing
-$ distro add jq@1.7                   # writes it into your TOML and the lock
+$ distro run jq -- --version      # runs it, changes nothing
+$ distro shell jq ripgrep         # a shell with both, changes nothing
+$ distro add jq                   # writes it into your TOML
 ```
 
-`add` writes what you typed, `packages = ["jq@1.7"]`, and the lock records the nixpkgs revision
-it came from. `add` with a URL declares the source for you, named after the last part of the URL:
-
-```console
-$ distro add --home john github:jqlang/jq#jq
-declared source jq as github:jqlang/jq
-added jq#jq to users.john.packages in users/john.toml
-```
+`add` writes what you typed, `packages = ["jq"]`.
 
 ## Commands
 
@@ -165,7 +140,7 @@ Understanding the configuration:
 Secrets: `distro secret edit NAME`, `distro secret list`, `distro secret rekey`.
 
 Setting up a machine: `distro install -C DIR [--disk NAME=/dev/...] [--role NAME] [--name NAME]`,
-from any Linux with Nix and the disk tools, lays out the disks the configuration describes with
+from distro's image or a checkout with its builder, lays out the disks the configuration describes with
 systemd-repart, encrypts them with a passphrase it asks for, builds the system onto them and
 records the machine's role and name. It refuses disks that have partitions unless given `--wipe`.
 The machine's SSH host key and initrd key, kept encrypted in `secrets/machines/NAME/`, are
@@ -207,24 +182,9 @@ Not yet: versions (`jq@1.7`), `search`, `info`, `--json` elsewhere, `--host`, an
 `clean` lists the generations it removes rather than estimating the space first, and says what it
 freed afterwards.
 
-## For people coming from Nix
-
-| Nix | distro |
-|---|---|
-| `nix-shell -p jq`, `nix shell nixpkgs#jq` | `distro shell jq` |
-| `nix run nixpkgs#jq` | `distro run jq` |
-| `nix profile install`, `nix-env -i` | `distro add jq` |
-| `nix flake update`, `nix flake lock --update-input x` | `distro update`, `distro update x` |
-| `nixos-rebuild switch`, `home-manager switch` | `distro apply` |
-| `nixos-rebuild dry-activate` | `distro plan` |
-| `nix search nixpkgs jq` | `distro search jq` |
-| `nix-collect-garbage -d` | `distro clean` |
-| `nix why-depends` | `distro why` |
-
 ## Open questions
 
-- Where the version index comes from: built by our factory from nixpkgs history and Hydra, or
-  reusing an existing index.
-- Whether `update PKG` moving one package without its source is worth what it costs: that
-  package then comes from a different nixpkgs than the rest.
+- How a machine builds what it needs, or fetches it built, without a checkout.
+- Whether `update PKG` moving one package without moving distro is worth what it costs: that
+  package then comes from a different distro revision than the rest.
 - How long `try` waits by default, and whether it rolls back when the machine loses the network.
