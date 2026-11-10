@@ -67,8 +67,17 @@ pub fn classify(relative: &str) -> Class {
                 .is_some_and(|rest| rest.starts_with('/'))
     };
     // The compiler finds these relative to itself.
-    if under("include/c++") {
+    if under("include/c++") || under("lib/gcc") || under("lib/clang") {
         return Class::Out;
+    }
+    // Headers a library keeps beside it, such as glib's `lib/glib-2.0/include/glibconfig.h`,
+    // which its pkg-config file names through `libdir` with the other headers.
+    if relative
+        .strip_prefix("lib/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(_, rest)| rest.starts_with("include/"))
+    {
+        return Class::Dev;
     }
     if DOC_DIRS.iter().any(|dir| under(dir)) {
         return Class::Doc;
@@ -669,6 +678,9 @@ pub fn split_package(lab: &Lab, package: &StorePath) -> Result<(Outputs, Option<
         }
         let mut bytes = fs::read(file).map_err(with_path(file))?;
         rewrite_with(&mut bytes, &plan, |rest| placement.wanted(class, rest));
+        if relative.ends_with(".pc") {
+            bytes = programs_in(&bytes, &package.inside());
+        }
         if output == package {
             fs::set_permissions(
                 file,
@@ -713,6 +725,28 @@ pub fn split_package(lab: &Lab, package: &StorePath) -> Result<(Outputs, Option<
     Ok((outputs, None))
 }
 
+/// A pkg-config file whose program directories, `bindir`, `sbindir` and `libexecdir`, name
+/// `programs`: its `prefix` is the output with headers, and the programs aren't there.
+fn programs_in(bytes: &[u8], programs: &str) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let fixed = ["bindir=", "sbindir=", "libexecdir="]
+            .iter()
+            .find_map(|key| {
+                let rest = line.strip_prefix(key)?;
+                let rest = rest
+                    .strip_prefix("${exec_prefix}")
+                    .or_else(|| rest.strip_prefix("${prefix}"))?;
+                Some(format!("{key}{programs}{rest}"))
+            });
+        out.push_str(fixed.as_deref().unwrap_or(line));
+    }
+    out.into_bytes()
+}
+
 /// Removes the directories below `root` that moving files out of left empty.
 fn remove_empty_dirs(root: &Path) -> Result<(), String> {
     for entry in fs::read_dir(root).map_err(with_path(root))? {
@@ -751,6 +785,9 @@ mod tests {
             ("bin/ls", Class::Out),
             ("lib/systemd/libsystemd-shared.so", Class::Out),
             ("lib/gcc/x/13/cc1", Class::Out),
+            ("lib/gcc/x/13/include/stddef.h", Class::Out),
+            ("lib/glib-2.0/include/glibconfig.h", Class::Dev),
+            ("lib/dbus-1.0/include/dbus/dbus-arch-deps.h", Class::Dev),
             ("lib", Class::Out),
         ] {
             assert_eq!(classify(path), class, "{path}");
@@ -1136,6 +1173,41 @@ mod in_place {
             text.contains(&format!("prefix={}\n", outputs[&Class::Dev].inside())),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_pkgconfig_file_finds_the_programs_in_the_main_output() {
+        let (_dir, lab) = lab();
+        let package = StorePath::derive("test", &[b"tools"]).named("glib-2.84.4");
+        let own = package.inside();
+        let files = [
+            (
+                "lib/pkgconfig/glib.pc",
+                format!(
+                    "prefix={own}\nexec_prefix=${{prefix}}\nbindir=${{exec_prefix}}/bin\n\
+                     libexecdir=${{prefix}}/libexec\nincludedir=${{prefix}}/include\n\
+                     glib_mkenums=${{bindir}}/glib-mkenums\n"
+                ),
+            ),
+            ("include/glib.h", "// glib\n".to_owned()),
+            ("bin/glib-mkenums", "#!/bin/sh\n".to_owned()),
+        ];
+        for (name, text) in files {
+            let path = lab.on_host(&package).join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let (outputs, _) = split_package(&lab, &package).unwrap();
+        let dev = lab.on_host(&outputs[&Class::Dev]);
+        let text = fs::read_to_string(dev.join("lib/pkgconfig/glib.pc")).unwrap();
+        let out = outputs[&Class::Out].inside();
+        assert!(text.contains(&format!("bindir={out}/bin\n")), "{text}");
+        assert!(
+            text.contains(&format!("libexecdir={out}/libexec\n")),
+            "{text}"
+        );
+        let dev_path = outputs[&Class::Dev].inside();
+        assert!(text.contains(&format!("prefix={dev_path}\n")), "{text}");
     }
 
     #[test]
