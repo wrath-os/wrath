@@ -679,7 +679,9 @@ pub fn split_package(lab: &Lab, package: &StorePath) -> Result<(Outputs, Option<
         let mut bytes = fs::read(file).map_err(with_path(file))?;
         rewrite_with(&mut bytes, &plan, |rest| placement.wanted(class, rest));
         if relative.ends_with(".pc") {
-            bytes = programs_in(&bytes, &package.inside());
+            bytes = pc_dirs(&bytes, |class| {
+                plan.output(own, class).map(StorePath::inside)
+            });
         }
         if output == package {
             fs::set_permissions(
@@ -725,23 +727,29 @@ pub fn split_package(lab: &Lab, package: &StorePath) -> Result<(Outputs, Option<
     Ok((outputs, None))
 }
 
-/// A pkg-config file whose program directories, `bindir`, `sbindir` and `libexecdir`, name
-/// `programs`: its `prefix` is the output with headers, and the programs aren't there.
-fn programs_in(bytes: &[u8], programs: &str) -> Vec<u8> {
+/// A pkg-config file whose directories defined from `${prefix}` or `${exec_prefix}` name the
+/// output holding what's in them. `prefix` is the output with the headers, so `includedir` stays
+/// as it is, while programs, data and libraries are in the outputs `output_of` gives.
+fn pc_dirs(bytes: &[u8], output_of: impl Fn(Class) -> Option<String>) -> Vec<u8> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return bytes.to_vec();
     };
     let mut out = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
-        let fixed = ["bindir=", "sbindir=", "libexecdir="]
-            .iter()
-            .find_map(|key| {
-                let rest = line.strip_prefix(key)?;
-                let rest = rest
-                    .strip_prefix("${exec_prefix}")
-                    .or_else(|| rest.strip_prefix("${prefix}"))?;
-                Some(format!("{key}{programs}{rest}"))
-            });
+        let fixed = line.split_once('=').and_then(|(key, value)| {
+            let variable = key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+            if !variable || key == "prefix" || key == "exec_prefix" {
+                return None;
+            }
+            let rest = value
+                .strip_prefix("${exec_prefix}")
+                .or_else(|| value.strip_prefix("${prefix}"))?;
+            let class = reference_class(rest.trim_end());
+            if class == Class::Dev {
+                return None;
+            }
+            Some(format!("{key}={}{rest}", output_of(class)?))
+        });
         out.push_str(fixed.as_deref().unwrap_or(line));
     }
     out.into_bytes()
@@ -1186,6 +1194,7 @@ mod in_place {
                 format!(
                     "prefix={own}\nexec_prefix=${{prefix}}\nbindir=${{exec_prefix}}/bin\n\
                      libexecdir=${{prefix}}/libexec\nincludedir=${{prefix}}/include\n\
+                     datadir=${{prefix}}/share\nlibdir=${{prefix}}/lib\n\
                      glib_mkenums=${{bindir}}/glib-mkenums\n"
                 ),
             ),
