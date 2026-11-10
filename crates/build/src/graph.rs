@@ -450,6 +450,8 @@ fn system_layout() -> Vec<(&'static str, &'static str)> {
             "etc/systemd/system-generators",
         ),
         ("share/dbus-1/system.d", "etc/dbus-1/system.d"),
+        // PKCS#11 modules, such as GNOME Keyring's, which p11-kit loads.
+        ("share/p11-kit/modules", "etc/pkcs11/modules"),
     ]
 }
 
@@ -2744,6 +2746,7 @@ mod tests {
         let web = lab.on_host(&packages["web"].path);
         for (dir, file) in [
             ("lib/udev/rules.d", "95-web.rules"),
+            ("share/p11-kit/modules", "web.module"),
             ("lib/systemd/system", "web-helper.service"),
         ] {
             fs::create_dir_all(web.join(dir)).unwrap();
@@ -2756,6 +2759,7 @@ mod tests {
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let linked = |path: &str| fs::symlink_metadata(root.join(path)).is_ok();
         assert!(linked("etc/udev/rules.d/95-web.rules"));
+        assert!(linked("etc/pkcs11/modules/web.module"));
         assert!(linked("etc/systemd/system/web-helper.service"));
         let conf = fs::read_to_string(root.join("etc/dbus-1/system.d/services.conf")).unwrap();
         let web = packages["web"].path.inside();

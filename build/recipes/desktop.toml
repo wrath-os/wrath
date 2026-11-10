@@ -1228,4 +1228,7 @@ meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D ssh-ag
     -D pkcs11-modules=$PREFIX/lib/pkcs11 -D pkcs11-config=$PREFIX/share/p11-kit/modules
 ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
+# The module config names the library alone, which p11-kit would look for in its own directory.
+sed -i "s|^module: .*|module: $PREFIX/lib/pkcs11/gnome-keyring-pkcs11.so|" \
+    $DEST$PREFIX/share/p11-kit/modules/gnome-keyring.module
 '''
