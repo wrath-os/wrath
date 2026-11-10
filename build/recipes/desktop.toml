@@ -576,6 +576,8 @@ id = "wireplumber"
 version = "0.5.19"
 scope = "runtime"
 core = true
+# Its library finds its modules by adding their directory to its own at run time.
+whole = true
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "pipewire", "glib", "lua", "systemd", "pcre2", "libffi",
   "util-linux", "zlib",

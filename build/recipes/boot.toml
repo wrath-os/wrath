@@ -24,6 +24,8 @@ scripts/config --enable DEVTMPFS --enable DEVTMPFS_MOUNT --enable EXT4_FS --enab
     --enable BLK_DEV_INITRD --enable RD_ZSTD --module VIRTIO_BLK --disable DEBUG_INFO --disable DEBUG_INFO_BTF
 # The clock starts from the machine's, which Linux 7's defaults leave to programs to set.
 scripts/config --enable RTC_HCTOSYS
+# Programs mount files through FUSE, such as the desktop portal's documents.
+scripts/config --enable FUSE_FS
 # What a PC needs to boot from USB or NVMe and log in at its screen, with no GPU driver.
 scripts/config --enable PCI --enable BLK_DEV_NVME --enable USB_SUPPORT --enable USB \
     --enable USB_PCI --enable USB_XHCI_HCD --enable USB_XHCI_PCI --enable USB_STORAGE --enable USB_UAS \
