@@ -1,0 +1,6 @@
+[system]
+hostname = "box"
+
+[networking.wireless]
+enable = true
+country = "SE"

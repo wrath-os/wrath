@@ -14,3 +14,11 @@ authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIzm5RyD+1nfy1LquvkEog4S
 # Logging in to the tailnet stays a step on the machine: `sudo tailscale up` prints a link.
 [services.tailscale]
 enable = true
+
+# The MediaTek MT7925 wifi, which needs its firmware and the country's radio rules.
+[networking.wireless]
+enable = true
+country = "SE"
+
+[hardware]
+firmware = ["linux-firmware"]

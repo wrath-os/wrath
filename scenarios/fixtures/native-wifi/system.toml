@@ -1,0 +1,12 @@
+[system]
+hostname = "native"
+
+[networking.wireless]
+enable = true
+country = "SE"
+
+[kernel]
+modules = ["mac80211_hwsim"]
+
+[users.john]
+extra_groups = ["wheel"]

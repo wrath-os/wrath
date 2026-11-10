@@ -2,6 +2,7 @@ c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9  http://ftp.rpm
 c9cc77c7c560c543135edc555af609d5619dbef011997e988ce40a3d75d86088  https://astron.com/pub/file/file-5.46.tar.gz
 120575b756915a11e736f599316a756b6a29a76d6135ad86208868b21c58fb75  https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20250917.tar.xz
 ea43491bc7ace1e414b3b2d957f8cf96e7049155123f0acce798accf8da1acba  https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.1.tar.xz
+b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f  https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.4.tar.xz
 021a2e709a0edf4250b1256bd5a9e500411a90dddabea830ed59cef90eb9d85c  https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.0p1.tar.gz
 81ee8170028865581a8e10eaf055afb620fa4baa0beb6387241241a975033508  https://cmake.org/files/v4.1/cmake-4.1.0.tar.gz
 6cd0a8a5b126ddfda61c94dc2c3fc53481ba7a35461cf7c5ab66aa9d6775b609  https://curl.se/download/curl-8.15.0.tar.xz
@@ -76,6 +77,8 @@ f280278161446fe3838bedb970c7b3998043ad107f7627735a81483218c6f6f9  https://github
 0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e  https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz
 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
 7716a0d940a0f6ae8e1f3b3f4f36299dc53e31b16840dbd171254312c41ca12e  https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
+d89a5e45c7180170e19be828f9e944a768c593758094fc57a358d0e7c4cb1a49  https://mirrors.edge.kernel.org/pub/linux/network/wireless/iwd-3.12.tar.xz
+b22e0901227b820cd1c280abe681a15b773a5103a5e10dc442e94ebb34cbf58d  https://mirrors.edge.kernel.org/pub/software/network/wireless-regdb/wireless-regdb-2026.09.03.tar.xz
 c6b5c6b086c0df9d3ca3ff5e084c1d0ef909e6038279c71c1c3e985f576ff76a  https://nginx.org/download/nginx-1.28.0.tar.gz
 5681fa8e3ef822d18fb2b7e6bed7fe4dbae2f39176fb3eec8d73089c19e4474f  https://proxy.golang.org/4d63.com/gocheckcompilerdirectives/@v/v1.2.1.mod
 5345b619a528329a0be9177c6f0232230d82038db7050b1dc712521046dfc04c  https://proxy.golang.org/4d63.com/gocheckcompilerdirectives/@v/v1.2.1.zip

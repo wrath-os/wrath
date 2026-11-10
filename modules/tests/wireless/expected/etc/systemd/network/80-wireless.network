@@ -1,0 +1,9 @@
+[Match]
+Type=wlan
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+DHCP=yes
+IgnoreCarrierLoss=3s

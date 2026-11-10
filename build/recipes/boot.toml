@@ -42,6 +42,15 @@ scripts/config --module DUMMY --module BLK_DEV_NBD --enable WLAN --enable WLAN_V
 # Tunnels, such as the one Tailscale runs, and user namespaces, which sandboxes such as
 # bubblewrap and browsers make without root.
 scripts/config --enable TUN --enable USER_NS
+# What iwd does its cryptography with: the kernel's ciphers and keys, which it asks for through
+# sockets and keyrings. And simulated radios, for testing wifi in a VM.
+scripts/config --enable CRYPTO_USER_API_HASH --enable CRYPTO_USER_API_SKCIPHER --enable KEYS \
+    --enable KEY_DH_OPERATIONS --enable CRYPTO_ECB --enable CRYPTO_MD4 --enable CRYPTO_MD5 \
+    --enable CRYPTO_CBC --enable CRYPTO_SHA256 --enable CRYPTO_SHA512 --enable CRYPTO_SHA1 \
+    --enable CRYPTO_AES --enable CRYPTO_DES --enable CRYPTO_CMAC --enable CRYPTO_HMAC \
+    --enable ASYMMETRIC_KEY_TYPE --enable ASYMMETRIC_PUBLIC_KEY_SUBTYPE \
+    --enable X509_CERTIFICATE_PARSER --enable PKCS7_MESSAGE_PARSER \
+    --enable PKCS8_PRIVATE_KEY_PARSER --module MAC80211_HWSIM
 # Swap on compressed memory.
 scripts/config --module ZRAM --enable ZRAM_BACKEND_ZSTD --enable ZRAM_DEF_COMP_ZSTD --enable CRYPTO_ZSTD
 make olddefconfig
