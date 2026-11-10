@@ -2,7 +2,7 @@ title = "a system logs people in over SSH with their keys, and refuses passwords
 
 [vm]
 config = "scenarios/fixtures/native-ssh"
-store = "host"
+store = "distro"
 wait_for = ["agent", "unit:multi-user.target", "unit:sshd.service"]
 steps = [
   { run = "cat /etc/ssh/authorized_keys.d/john", stdout_contains = "declared" },

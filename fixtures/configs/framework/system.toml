@@ -1,0 +1,12 @@
+# The Framework Desktop booted from a USB stick: a console login and SSH with a key, on the wired
+# network the machine gets an address on by DHCP.
+[system]
+hostname = "framework"
+
+[services.ssh]
+enable = true
+
+[users.demo]
+extra_groups = ["wheel"]
+initial_hashed_password = '$6$usrviewtest$lznQtfeGuvyRFdMEqskIFTTDmMnQNb/ECA5pDQf2oZ6K8HEuc9akWa0uPcvPi1ZcRwM85wBzGdCEAsUj3BnFQ/'
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIzm5RyD+1nfy1LquvkEog4SZtPgdhzjr49jSC8PAinp alternate"]

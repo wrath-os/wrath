@@ -7,6 +7,7 @@ use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -143,10 +144,30 @@ fn action_records(
         unresolved.insert((*id).to_owned(), json!(package.unresolved));
         resolved.insert((*id).to_owned(), json!(package.path.hash()));
     }
+    let with_lowering = |mut record: Value| {
+        if let Some(fields) = record.as_object_mut() {
+            fields.insert("lowering".to_owned(), json!(lowering()));
+        }
+        record
+    };
     Ok((
-        record(Value::Object(unresolved)),
-        record(Value::Object(resolved)),
+        with_lowering(record(Value::Object(unresolved))),
+        with_lowering(record(Value::Object(resolved))),
     ))
+}
+
+/// The hash of the code that turns a model into actions, in every action's key: what an action
+/// makes is decided there as much as by its inputs, so changing that code reruns the actions.
+fn lowering() -> &'static str {
+    static LOWERING: OnceLock<String> = OnceLock::new();
+    LOWERING.get_or_init(|| {
+        let code = [
+            include_str!("graph.rs"),
+            include_str!("initrd.rs"),
+            include_str!("early.rs"),
+        ];
+        digest(code.concat().as_bytes())
+    })
 }
 
 fn package<'a>(packages: &'a Packages, id: &str) -> Result<&'a PackageRef, String> {
@@ -366,7 +387,9 @@ fn render_unit(sections: &Value, packages: &[(PathBuf, String)]) -> Result<Strin
                 let command = value.trim_start_matches(['-', '@', ':', '+', '!']);
                 let (prefixes, command) = value.split_at(value.len() - command.len());
                 let program = command.split(' ').next().unwrap_or("");
+                // A program given by its path is used as it is.
                 if !program.is_empty()
+                    && !program.contains('/')
                     && let Some((_, inside)) = packages
                         .iter()
                         .find(|(host, _)| host.join("bin").join(program).exists())
@@ -603,7 +626,7 @@ fn lower<'a>(
             "packages",
             lab,
             everything.clone(),
-            vec![("bin", "sw/bin")],
+            vec![("bin", "sw/bin"), ("lib/security", "sw/lib/security")],
             packages,
         )?,
         links(
@@ -812,11 +835,6 @@ const INITRD_PACKAGES: [&str; 9] = [
 /// device-mapper's udev rules, which name unlocked containers so they can be mounted.
 const DM_RULES: [&str; 3] = ["10-dm.rules", "13-dm-disk.rules", "95-dm-notify.rules"];
 
-/// How the initrd is put together, in its action's key: what it's made of is decided in code here,
-/// so a change to that changes this, and the key with it.
-const INITRD_ASSEMBLY: &str = "systemd; packages without build files; the libraries they load; \
-     kmod by its names; udev rules in /etc";
-
 const INITRD_RELEASE: &str = "NAME=distro\nID=distro\nPRETTY_NAME=\"distro (initrd)\"\n";
 
 /// The initrd's own files, by path, where `@id@` stands for package `id`'s path: systemd's
@@ -897,7 +915,7 @@ fn boot_files<'a>(
     let files = initrd_files(&disks, hostname);
     let ids = [INITRD_PACKAGES.as_slice(), &["linux"]].concat();
     let (unresolved, resolved) = action_records(&ids, packages, |deps| {
-        json!({"kind": "boot", "assembly": INITRD_ASSEMBLY, "files": files, "rules": DM_RULES,
+        json!({"kind": "boot", "files": files, "rules": DM_RULES,
                "outputs": ["initrd", "kernel"], "deps": deps})
     })?;
     Ok(Action {
@@ -1385,12 +1403,13 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 /// The recipe files systems are built from, in `recipes/`.
-pub const SYSTEM_RECIPES: [&str; 7] = [
+pub const SYSTEM_RECIPES: [&str; 8] = [
     "pilot.toml",
     "full.toml",
     "storage.toml",
     "boot.toml",
     "e2e.toml",
+    "network.toml",
     "rust.toml",
     "distro.toml",
 ];
@@ -1995,6 +2014,21 @@ mod tests {
     }
 
     #[test]
+    fn a_program_given_by_its_path_is_left_as_it_is() {
+        let (_dir, lab, packages) = setup();
+        let web = &packages["web"].path;
+        let sections = json!([{"name": "Service", "entries": [
+            ["ExecStartPre", "/bin/sh -c true"],
+            ["ExecStart", "/run/current-system/sw/bin/web"],
+        ]}]);
+        let rendered = render_unit(&sections, &[(lab.on_host(web), web.inside())]).unwrap();
+        assert_eq!(
+            rendered,
+            "[Service]\nExecStartPre=/bin/sh -c true\nExecStart=/run/current-system/sw/bin/web\n\n"
+        );
+    }
+
+    #[test]
     fn nixpkgs_names_and_outputs_find_their_recipe() {
         let (_dir, _lab, packages) = setup();
         let known = |id: &str| packages.contains_key(id);
@@ -2065,6 +2099,34 @@ mod tests {
             "mounts": [], "unlock": {},
         });
         assert_ne!(key(&model), before);
+    }
+
+    #[test]
+    fn every_action_is_keyed_by_the_code_that_lowers_it_too() {
+        let (_dir, lab, packages) = setup();
+        let model = model(80, false);
+        let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
+        for action in &lowered.actions {
+            for record in [&action.resolved, &action.unresolved] {
+                assert_eq!(record["lowering"], json!(lowering()), "{}", action.origin);
+            }
+        }
+    }
+
+    #[test]
+    fn pam_finds_the_modules_packages_ship_under_the_systems_sw() {
+        let (_dir, lab, packages) = setup();
+        let security = lab.on_host(&packages["systemd"].path).join("lib/security");
+        fs::create_dir_all(&security).unwrap();
+        fs::write(security.join("pam_systemd.so"), "").unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let systemd = packages["systemd"].path.inside();
+        assert_eq!(
+            fs::read_link(root.join("sw/lib/security/pam_systemd.so")).unwrap(),
+            Path::new(&format!("{systemd}/lib/security/pam_systemd.so"))
+        );
     }
 
     #[test]

@@ -1,0 +1,16 @@
+# Reaching a machine over the network: the SSH server and client.
+
+[[package]]
+id = "openssh"
+scope = "runtime"
+core = true
+extra_deps = ["openssl", "zlib", "linux-pam", "libxcrypt"]
+sources = [{ url = "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.0p1.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --sysconfdir=/etc/ssh --with-pam \
+    --with-privsep-path=/var/empty --with-privsep-user=sshd --with-pid-dir=/run \
+    --disable-strip --without-hardening-link
+make -j$NPROC
+make install-nokeys DESTDIR=$DEST
+'''
+smoke = ["bin/ssh -V", "bin/ssh-keygen -q -t ed25519 -N '' -f /tmp/key"]

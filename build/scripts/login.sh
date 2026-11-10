@@ -28,6 +28,7 @@ if wait_for "login: " 180; then
         send 'echo "MOUNTS $(findmnt -no SOURCE,OPTIONS /home)"'
         send "printf '%s\\n' '$password' | sudo -S -p '' id -un | sed 's/^/SUDO-AS /'"
         send 'distro status 2>&1 | grep -q "it matches the configuration" && echo STATUS-MATCHES'
+        send 'echo "SSHD $(systemctl is-active sshd 2>&1)"'
         if wait_for "HOME-WRITE written" 20 && wait_for "MOUNTS " 10 \
             && wait_for "SUDO-AS root" 20 && wait_for "STATUS-MATCHES" 30; then
             result=passed
@@ -38,7 +39,7 @@ screendump "$work/screen.png"
 vm_stop
 plain_log \
     | grep -aE -e 'INITRD|login:|LOGIN|HOME-WRITE|MOUNTS|SUDO-AS' \
-        -e 'sudo:|wrappers:|Login incorrect|FAILED|STATUS-|distro:' \
+        -e 'sudo:|wrappers:|Login incorrect|FAILED|STATUS-|SSHD|distro:' \
     | cut -c1-200
 echo "login $result"
 [[ $result == passed ]]
