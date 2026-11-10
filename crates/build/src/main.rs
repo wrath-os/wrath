@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use distro_build::chain::{self, Arm, Views};
+use distro_build::graph::names_of;
 use distro_build::sandbox::Status;
 use distro_build::store::Lab;
 use distro_build::{seed, seed_pack};
@@ -86,7 +87,10 @@ fn full(lab: &Lab, arm: &str) -> Result<(), String> {
 }
 
 const SPREAD_RECIPES: [&str; 3] = ["toolchain.toml", "pilot.toml", "full.toml"];
-const BOOT_RECIPES: [&str; 12] = distro_build::graph::SYSTEM_RECIPES;
+/// The recipe files of a system, from `recipes/` here.
+fn boot_recipes() -> Result<Vec<String>, String> {
+    distro_build::graph::system_recipes(Path::new("."))
+}
 
 fn parse_counts(first: &str, second: &str) -> Result<(usize, usize), String> {
     let parse = |text: &str| text.parse::<usize>().map_err(|e| e.to_string());
@@ -98,7 +102,7 @@ fn graph(lab: &Lab, arm: &str, model: &str, inputs: Option<&Path>) -> Result<(),
     distro_build::graph::run(
         lab,
         Path::new("."),
-        &BOOT_RECIPES,
+        &names_of(&boot_recipes()?),
         arm,
         Path::new(model),
         inputs,
@@ -121,7 +125,14 @@ fn main() -> ExitCode {
         ["pilot", arm] => pilot(&lab, arm),
         ["full", arm] => full(&lab, arm),
         ["boot", arm] => Arm::parse(arm).and_then(|arm| {
-            distro_build::pilot::run(&lab, Path::new("."), "boot", &BOOT_RECIPES, arm).map(|_| ())
+            distro_build::pilot::run(
+                &lab,
+                Path::new("."),
+                "boot",
+                &names_of(&boot_recipes()?),
+                arm,
+            )
+            .map(|_| ())
         }),
         ["graph", arm, model] => graph(&lab, arm, model, None),
         ["graph-apply", arm, model, inputs] => graph(&lab, arm, model, Some(Path::new(inputs))),
@@ -136,7 +147,7 @@ fn main() -> ExitCode {
                 distro_build::graph::closure(
                     &lab,
                     Path::new("."),
-                    &BOOT_RECIPES,
+                    &names_of(&boot_recipes()?),
                     arm,
                     Path::new(model),
                 )
@@ -165,27 +176,50 @@ fn main() -> ExitCode {
                 print!("{}", distro_build::cargo::source_lines(&crates));
                 Ok(())
             }),
-        ["recheck", arm] => Arm::parse(arm)
-            .and_then(|arm| distro_build::pilot::recheck(&lab, Path::new("."), &BOOT_RECIPES, arm)),
+        ["recheck", arm] => Arm::parse(arm).and_then(|arm| {
+            distro_build::pilot::recheck(&lab, Path::new("."), &names_of(&boot_recipes()?), arm)
+        }),
         ["shrink", arm] => Arm::parse(arm)
-            .and_then(|arm| distro_build::pilot::shrink(&lab, Path::new("."), &BOOT_RECIPES, arm))
+            .and_then(|arm| {
+                distro_build::pilot::shrink(&lab, Path::new("."), &names_of(&boot_recipes()?), arm)
+            })
             .and_then(|text| {
                 print!("{text}");
                 std::fs::write("results/shrink-b.md", text).map_err(|e| e.to_string())
             }),
         ["split", arm, ids @ ..] => Arm::parse(arm)
             .and_then(|arm| {
-                distro_build::pilot::split(&lab, Path::new("."), &BOOT_RECIPES, arm, ids, false)
+                distro_build::pilot::split(
+                    &lab,
+                    Path::new("."),
+                    &names_of(&boot_recipes()?),
+                    arm,
+                    ids,
+                    false,
+                )
             })
             .map(|text| print!("{text}")),
         ["slots", arm, ids @ ..] => Arm::parse(arm)
             .and_then(|arm| {
-                distro_build::pilot::split(&lab, Path::new("."), &BOOT_RECIPES, arm, ids, true)
+                distro_build::pilot::split(
+                    &lab,
+                    Path::new("."),
+                    &names_of(&boot_recipes()?),
+                    arm,
+                    ids,
+                    true,
+                )
             })
             .map(|text| print!("{text}")),
         ["closure", arm, ids @ ..] => Arm::parse(arm)
             .and_then(|arm| {
-                distro_build::pilot::closure(&lab, Path::new("."), &BOOT_RECIPES, arm, ids)
+                distro_build::pilot::closure(
+                    &lab,
+                    Path::new("."),
+                    &names_of(&boot_recipes()?),
+                    arm,
+                    ids,
+                )
             })
             .map(|text| print!("{text}")),
         ["repro", arm, only @ ..] => Arm::parse(arm)

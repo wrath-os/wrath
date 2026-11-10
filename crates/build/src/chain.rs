@@ -939,10 +939,12 @@ fn note_whole(lab: &Lab, arm: Arm, package: &Package, reason: &str) -> Result<()
 
 /// Builds every package of `recipes` for `arm`, reusing what's already built.
 pub fn build(lab: &Lab, repository: &Path, recipes: &str, arm: Arm) -> Result<Built, String> {
-    let packages = load(repository, recipes)?;
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut built = built_from_seed(&seed);
+    let packages = in_order(load(repository, recipes)?, |id| {
+        built.paths.contains_key(id)
+    })?;
     for package in &packages {
         if let Some(prepared) = build_one(
             lab,
@@ -1037,31 +1039,25 @@ pub fn unresolved_keys(
     for file in recipes {
         packages.extend(load(repository, file)?);
     }
-    keys_of(lab, repository, &packages, arm)
+    keys_of(lab, repository, packages, arm)
 }
 
-/// The key each of `packages` has before anything is built. A package comes after what it
-/// depends on.
+/// The key each of `packages` has before anything is built.
 pub(crate) fn keys_of(
     lab: &Lab,
     repository: &Path,
-    packages: &[Package],
+    packages: Vec<Package>,
     arm: Arm,
 ) -> Result<BTreeMap<String, String>, String> {
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut keys = BTreeMap::from([("seed".to_owned(), seed.hash().to_owned())]);
-    for package in packages {
+    let packages = in_order(packages, |id| keys.contains_key(id))?;
+    for package in &packages {
         let fetched = fetch_all(&mut sources, lab, package)?;
         let hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
         let recipe = recipe_parts(repository, package, arm, &hashes)?;
         let deps = package.all_deps()?;
-        if let Some(dep) = deps.iter().rfind(|dep| !keys.contains_key(&dep.id)) {
-            return Err(format!(
-                "`{}` needs `{}`, listed after it",
-                package.id, dep.id
-            ));
-        }
         let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
         keys.insert(package.id.clone(), key.hash().to_owned());
     }
@@ -1882,5 +1878,96 @@ mod duration_tests {
         for bad in ["3", "h", "3d", "", "-1h", "3é"] {
             assert!(duration(bad).is_err(), "{bad}");
         }
+    }
+}
+
+/// `packages` in an order where each comes after what it depends on, otherwise in the order
+/// given. A dependency is either one of them or something `have` says is there already, such as
+/// the toolchain.
+pub(crate) fn in_order(
+    packages: Vec<Package>,
+    have: impl Fn(&str) -> bool,
+) -> Result<Vec<Package>, String> {
+    let ids: BTreeMap<String, usize> = packages
+        .iter()
+        .enumerate()
+        .map(|(index, package)| (package.id.clone(), index))
+        .collect();
+    let mut needs: Vec<BTreeSet<usize>> = Vec::with_capacity(packages.len());
+    for package in &packages {
+        let mut deps = BTreeSet::new();
+        for dep in package.dep_ids()? {
+            match ids.get(&dep) {
+                Some(index) => {
+                    deps.insert(*index);
+                }
+                None if have(&dep) => {}
+                None => {
+                    return Err(format!(
+                        "`{}` needs `{dep}`, which no recipe builds",
+                        package.id
+                    ));
+                }
+            }
+        }
+        needs.push(deps);
+    }
+    let mut placed = vec![false; packages.len()];
+    let mut order = Vec::with_capacity(packages.len());
+    while order.len() < packages.len() {
+        let ready = (0..packages.len())
+            .find(|index| !placed[*index] && needs[*index].iter().all(|dep| placed[*dep]))
+            .ok_or_else(|| {
+                let stuck: Vec<&str> = (0..packages.len())
+                    .filter(|index| !placed[*index])
+                    .map(|index| packages[index].id.as_str())
+                    .collect();
+                format!("these packages depend on each other: {}", stuck.join(", "))
+            })?;
+        placed[ready] = true;
+        order.push(ready);
+    }
+    let mut packages: Vec<Option<Package>> = packages.into_iter().map(Some).collect();
+    Ok(order
+        .into_iter()
+        .filter_map(|index| packages[index].take())
+        .collect())
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    fn packages(text: &str) -> Vec<Package> {
+        toml::from_str::<Recipes>(text).unwrap().package
+    }
+
+    fn recipe(id: &str, deps: &str) -> String {
+        format!("[[package]]\nid = \"{id}\"\nscope = \"runtime\"\nscript = \"\"\ndeps = [{deps}]\n")
+    }
+
+    #[test]
+    fn a_package_comes_after_what_it_needs_wherever_it_was_written() {
+        let text = [
+            recipe("git", "\"curl\", \"glibc\""),
+            recipe("jq", ""),
+            recipe("curl", "\"zlib\""),
+            recipe("zlib", ""),
+        ]
+        .concat();
+        let ordered = in_order(packages(&text), |id| id == "glibc").unwrap();
+        let ids: Vec<&str> = ordered.iter().map(|package| package.id.as_str()).collect();
+        assert_eq!(ids, ["jq", "zlib", "curl", "git"]);
+    }
+
+    #[test]
+    fn a_missing_dependency_or_a_cycle_says_which_packages() {
+        let missing = recipe("git", "\"curl\"");
+        let error = in_order(packages(&missing), |_| false).unwrap_err();
+        assert_eq!(error, "`git` needs `curl`, which no recipe builds");
+
+        let cycle = [recipe("a", "\"b\""), recipe("b", "\"a\""), recipe("c", "")].concat();
+        let error = in_order(packages(&cycle), |_| false).unwrap_err();
+        assert_eq!(error, "these packages depend on each other: a, b");
     }
 }

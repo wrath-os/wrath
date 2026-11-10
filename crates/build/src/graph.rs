@@ -1701,21 +1701,28 @@ fn read_json(path: &Path) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
-/// The recipe files systems are built from, in `recipes/`.
-pub const SYSTEM_RECIPES: [&str; 12] = [
-    "pilot.toml",
-    "full.toml",
-    "storage.toml",
-    "boot.toml",
-    "e2e.toml",
-    "rust.toml",
-    "services.toml",
-    "go.toml",
-    "firmware.toml",
-    "network.toml",
-    "programs.toml",
-    "distro.toml",
-];
+/// The recipe files systems are built from: every file in `recipes/` but the toolchain's, which
+/// is built first. Which file a recipe is in doesn't matter; each package is built after what it
+/// depends on.
+pub fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
+    let dir = repository.join("recipes");
+    let mut files: Vec<String> = fs::read_dir(&dir)
+        .map_err(with_path(&dir))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".toml") && name != TOOLCHAIN_RECIPES)
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// `files` as the borrowed names the builder takes.
+pub fn names_of(files: &[String]) -> Vec<&str> {
+    files.iter().map(String::as_str).collect()
+}
+
+/// The recipes of the toolchain everything else is built with.
+const TOOLCHAIN_RECIPES: &str = "toolchain.toml";
 
 /// A system built from a model.
 pub struct System {
@@ -1798,12 +1805,12 @@ fn variants(recipes: &[chain::Package], model: &Value) -> Result<Vec<chain::Pack
 pub fn package_keys(repository: &Path, model: &Value) -> Result<BTreeMap<String, String>, String> {
     let lab = Lab::new(repository.join("work"));
     let mut packages = Vec::new();
-    for file in std::iter::once(&"toolchain.toml").chain(SYSTEM_RECIPES.iter()) {
-        packages.extend(chain::load(repository, file)?);
+    for file in std::iter::once(TOOLCHAIN_RECIPES.to_owned()).chain(system_recipes(repository)?) {
+        packages.extend(chain::load(repository, &file)?);
     }
     let builds = variants(&packages, model)?;
     packages.extend(builds);
-    chain::keys_of(&lab, repository, &packages, Arm::F)
+    chain::keys_of(&lab, repository, packages, Arm::F)
 }
 
 /// Builds what the model's `builds` ask for: each a recipe built under the build's name with the
@@ -1837,8 +1844,12 @@ pub fn system(
     inputs: Option<&Value>,
 ) -> Result<System, String> {
     let lab = Lab::new(repository.join("work"));
-    let (mut built, seed, recipes) =
-        pilot::build_recipes(&lab, repository, &SYSTEM_RECIPES, Arm::F)?;
+    let (mut built, seed, recipes) = pilot::build_recipes(
+        &lab,
+        repository,
+        &names_of(&system_recipes(repository)?),
+        Arm::F,
+    )?;
     build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
     let mut db = Db::open(&db_path(&lab))?;
     record_packages(&mut db, &built)?;
@@ -1857,7 +1868,9 @@ pub fn system(
 /// where each one is in the store.
 pub fn packages(repository: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {
     let lab = Lab::new(repository.join("work"));
-    let (built, ..) = pilot::build_some(&lab, repository, &SYSTEM_RECIPES, Arm::F, Some(names))?;
+    let recipes = system_recipes(repository)?;
+    let (built, ..) =
+        pilot::build_some(&lab, repository, &names_of(&recipes), Arm::F, Some(names))?;
     names
         .iter()
         .map(|name| {

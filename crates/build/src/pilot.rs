@@ -899,6 +899,7 @@ pub(crate) fn build_some(
     for file in recipes {
         loaded.extend(chain::load(repository, file)?);
     }
+    let loaded = chain::in_order(loaded, |id| built.paths.contains_key(id))?;
     let needed = wanted
         .map(|wanted| needed_by(&loaded, wanted))
         .transpose()?;
