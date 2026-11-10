@@ -1061,6 +1061,9 @@ impl VmRun<'_> {
         target: Option<&str>,
         deadline: Instant,
     ) -> Result<(), String> {
+        if self.spec.store == Store::Distro {
+            return self.prepare_system(agent, config, target, deadline);
+        }
         let mut build = vec!["build", "--config", config];
         if let Some(target) = target {
             build.extend(["--target", target]);
@@ -1100,6 +1103,38 @@ impl VmRun<'_> {
         copy_dir(
             &self.host.workdir.join(config),
             &share.join("configs").join(name),
+        )
+    }
+
+    /// Builds `config` on the host as `target`, a test generation unless said, copies it into the
+    /// guest's store and leaves its path in `/run/distro-share/system` and the configuration in
+    /// `/run/distro-share/configs/<name>`, for a step that installs it.
+    fn prepare_system(
+        &self,
+        agent: &mut Client<VsockStream>,
+        config: &str,
+        target: Option<&str>,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let target = target.unwrap_or("test-generation");
+        let built = self
+            .host
+            .distro(&["build", "--config", config, "--target", target])?;
+        let name = Path::new(built.trim())
+            .file_name()
+            .ok_or("a generation has a name")?
+            .to_string_lossy()
+            .into_owned();
+        self.copy_from_store(agent, &name, deadline)?;
+        let share = self.dir.join(SHARE);
+        fs::write(share.join("system"), format!("/store/{name}\n"))
+            .map_err(io_err("the system's path"))?;
+        let config_name = Path::new(config)
+            .file_name()
+            .ok_or("a configuration needs a name")?;
+        copy_dir(
+            &self.host.workdir.join(config),
+            &share.join("configs").join(config_name),
         )
     }
 

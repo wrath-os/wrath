@@ -2,6 +2,36 @@
 # btrfs-progs for subvolumes, and what those use.
 
 [[package]]
+id = "markupsafe"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/m/markupsafe/markupsafe-3.0.2.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r src/markupsafe $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "jinja2"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/j/jinja2/jinja2-3.1.6.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r src/jinja2 $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "pyelftools"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/p/pyelftools/pyelftools-0.32.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r elftools $DEST$PREFIX/site/
+'''
+
+[[package]]
 id = "json-c"
 scope = "runtime"
 core = true
@@ -29,14 +59,42 @@ make install DESTDIR=$DEST
 probes = ["popt"]
 
 [[package]]
+id = "libudev"
+scope = "runtime"
+core = true
+toolchain_limits = true
+extra_deps = [
+    "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap", "util-linux",
+    "libxcrypt", "m4-final",
+]
+sources = [{ url = "https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz" }]
+script = '''
+# Only systemd's udev library, for device-mapper, which systemd itself builds on through cryptsetup.
+export PYTHONPATH=$LAB_DEP_jinja2/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyelftools/site
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release --auto-features=disabled \
+    -D mode=release -D man=disabled -D html=disabled -D tests=false -D install-tests=false
+# The library, named by its full version, and its pkg-config file, wherever meson puts them.
+library=$(ninja -C /build/b -t targets all | awk -F: '$1 ~ /libudev\.so\.[0-9.]*[0-9]$/ { print $1; exit }')
+pc=$(ninja -C /build/b -t targets all | awk -F: '$1 ~ /libudev\.pc$/ { print $1; exit }')
+ninja -C /build/b -j$NPROC "$library" "$pc"
+mkdir -p $DEST$PREFIX/lib/pkgconfig $DEST$PREFIX/include
+cp "/build/b/$library" $DEST$PREFIX/lib/
+ln -s "${library##*/}" $DEST$PREFIX/lib/libudev.so.1
+ln -s libudev.so.1 $DEST$PREFIX/lib/libudev.so
+cp "/build/b/$pc" $DEST$PREFIX/lib/pkgconfig/
+cp src/libudev/libudev.h $DEST$PREFIX/include/
+'''
+probes = ["udev"]
+
+[[package]]
 id = "device-mapper"
 scope = "runtime"
 core = true
-extra_deps = ["util-linux", "pkgconf"]
+extra_deps = ["util-linux", "pkgconf", "libudev"]
 sources = [{ url = "https://sourceware.org/pub/lvm2/LVM2.2.03.30.tgz" }]
 script = '''
 ./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --libdir=$PREFIX/lib --disable-static_link \
-    --enable-pkgconfig --disable-selinux --disable-readline --disable-udev_sync \
+    --enable-pkgconfig --disable-selinux --disable-readline --enable-udev_sync \
     --with-udev-prefix=$PREFIX --with-systemdsystemunitdir=$PREFIX/lib/systemd/system \
     --with-default-dm-run-dir=/run --with-default-run-dir=/run/lvm --with-default-locking-dir=/run/lock/lvm
 make -j$NPROC device-mapper
@@ -74,3 +132,15 @@ make -j$NPROC
 make install DESTDIR=$DEST
 '''
 smoke = ["bin/btrfs --version", "bin/mkfs.btrfs --version"]
+
+[[package]]
+id = "dosfstools"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --enable-compat-symlinks --without-udev
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/mkfs.vfat --help"]

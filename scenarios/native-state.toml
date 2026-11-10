@@ -2,16 +2,16 @@ title = "a root erased at every boot keeps only what the configuration lists"
 
 [vm]
 config = "scenarios/fixtures/native-state-installer"
-store = "host"
+store = "distro"
 blank_disks = ["8G"]
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
-  { prepare_build = "scenarios/fixtures/native-state", target = "test-installed-system" },
-  { run = "cp -r /run/distro-share/configs/native-state /tmp/config && printf 'correct horse' > /tmp/passphrase && DISTRO_ROOT=/run/distro-share/root distro install -C /tmp/config --disk /dev/vda --passphrase-file /tmp/passphrase --name w-01 --system-target test-installed-system -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { prepare_build = "scenarios/fixtures/native-state" },
+  { run = "cp -r /run/distro-share/configs/native-state /tmp/config && printf 'correct horse' > /tmp/passphrase && distro install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name w-01 --system $(cat /run/distro-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
   { boot_installed = true, passphrase = "correct horse" },
   { run = "findmnt -no FSTYPE /; findmnt -no FSTYPE /var/log; cat /var/lib/distro/machine.toml", stdout_contains = "tmpfs\nbtrfs\n" },
   { run = "systemctl start sshd; systemctl is-active sshd; test -s /etc/ssh/ssh_host_ed25519_key && echo key; cp /etc/machine-id /tmp/id; cat /etc/machine-id > /var/lib/app/machine-id; sha256sum /etc/ssh/ssh_host_ed25519_key > /var/lib/app/key.sum", stdout_contains = "active\nkey" },
-  { run = "stat -c '%U %a' /home/john/'My Games'; echo saved > /home/john/'My Games'/save; runuser -u john -- sh -c 'echo cmd > /home/john/.history'; stat -L -c %U /home/john/.history /home/john/.config/app; echo gone > /var/lib/not-kept; useradd -r extra; grep -c extra /etc/passwd; id -u extra > /var/lib/app/extra-id; systemctl stop distro-save-accounts; sync", stdout_contains = "john 755\njohn\njohn\n1" },
+  { run = "stat -c '%U %a' /home/john/'My Games'; echo saved > /home/john/'My Games'/save; su john -c 'echo cmd > /home/john/.history'; stat -L -c %U /home/john/.history /home/john/.config/app; echo gone > /var/lib/not-kept; useradd -r extra; grep -c extra /etc/passwd; id -u extra > /var/lib/app/extra-id; systemctl stop distro-save-accounts; sync", stdout_contains = "john 755\njohn\njohn\n1" },
   { boot_installed = true, passphrase = "correct horse" },
   { run = "test -e /var/lib/not-kept || echo erased; cat '/home/john/My Games/save' /home/john/.history", stdout_contains = "erased\nsaved\ncmd" },
   { run = "test \"$(cat /etc/machine-id)\" = \"$(cat /var/lib/app/machine-id)\" && echo same-id; sha256sum -c /var/lib/app/key.sum; findmnt -no FSTYPE /etc/machine-id", stdout_contains = "same-id\n/etc/ssh/ssh_host_ed25519_key: OK\nbtrfs" },

@@ -323,6 +323,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     switch_etc(root, old.as_deref(), system)?;
     replace_link(&system.join("sw/bin/bash"), &root.join("bin/sh"))?;
     replace_link(&system.join("sw/bin/env"), &root.join("usr/bin/env"))?;
+    link_kernel_modules(root, system)?;
     // /run doesn't allow setuid programs, so the wrappers get a filesystem of their own.
     run(Command::new(system.join("sw/bin/mount")).args([
         "-t",
@@ -338,6 +339,20 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     }
     warn(make_wrappers(root, system, &model)?);
     crate::on_machine::apply(system)
+}
+
+/// Links /lib/modules to the modules of the kernel that booted, where kmod looks for them. A
+/// system whose kernel modules aren't in it leaves /lib/modules alone.
+fn link_kernel_modules(root: &Path, system: &Path) -> Result<(), String> {
+    if !system.join("kernel-modules").exists() {
+        return Ok(());
+    }
+    let lib = root.join("lib");
+    fs::create_dir_all(&lib).map_err(|e| format!("{}: {e}", lib.display()))?;
+    replace_link(
+        Path::new("/run/booted-system/kernel-modules/lib/modules"),
+        &lib.join("modules"),
+    )
 }
 
 fn switch(root: &Path, system: &Path) -> Result<(), String> {
@@ -973,6 +988,23 @@ mod tests {
             Path::new("/store/systemd/lib/systemd/system/multi-user.target")
         );
         assert!(fs::symlink_metadata(etc.join(gone)).is_err());
+    }
+
+    #[test]
+    fn lib_modules_is_the_booted_kernels_when_the_system_has_its_modules() {
+        let work = tempfile::tempdir().unwrap();
+        let (root, system) = (work.path().join("root"), work.path().join("system"));
+        fs::create_dir_all(&system).unwrap();
+        link_kernel_modules(&root, &system).unwrap();
+        assert!(fs::symlink_metadata(root.join("lib/modules")).is_err());
+        let linux = work.path().join("linux");
+        fs::create_dir_all(&linux).unwrap();
+        symlink(&linux, system.join("kernel-modules")).unwrap();
+        link_kernel_modules(&root, &system).unwrap();
+        assert_eq!(
+            fs::read_link(root.join("lib/modules")).unwrap(),
+            Path::new("/run/booted-system/kernel-modules/lib/modules")
+        );
     }
 
     /// The user and group this test runs as, which it can give its own files.

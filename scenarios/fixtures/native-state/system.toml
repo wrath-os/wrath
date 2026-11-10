@@ -13,7 +13,7 @@ partitions.system = { size = "rest", encrypt = true }
 
 [filesystems.root]
 on = ["main.system"]
-subvolumes."@nix" = { mount = "/nix" }
+subvolumes."@store" = { mount = "/store" }
 subvolumes."@keep" = { mount = "/keep" }
 
 [state]

@@ -347,6 +347,45 @@ pub fn clean(numbers: &[u32]) -> Result<String, String> {
     Ok(format!("{removed} store paths removed"))
 }
 
+/// Installs `system`, already built and in this machine's store, onto the filesystems mounted at
+/// `target`: copies what it needs into their store, makes it their first generation, and has its
+/// own distro put the boot loader and its entries in place. Needs root.
+pub fn install(system: &Path, target: &Path) -> Result<(), String> {
+    if !system.starts_with("/store") {
+        return backend::install(system, target);
+    }
+    copy_onto(Path::new(ROOT), system, target)?;
+    run(Command::new(system.join("sw/bin/distro"))
+        .args(["activate", "--mode", "install", "--root"])
+        .arg(target)
+        .arg(system))
+}
+
+/// Copies `system` and every store path it refers to from the store under `from` into the one
+/// under `target`, and makes it generation 1 there. Paths already there are left alone.
+fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
+    let generation = store_path(system)
+        .ok_or_else(|| format!("{} isn't a system in /store", system.display()))?;
+    let store = target.join("store");
+    fs::create_dir_all(&store).map_err(|e| format!("{}: {e}", store.display()))?;
+    let lab = Lab::new(from);
+    for path in distro_build::chain::runtime_closure(&lab, &generation)? {
+        if store.join(path.hash()).exists() {
+            continue;
+        }
+        run(Command::new("cp")
+            .args(["-a", "--reflink=auto"])
+            .arg(lab.on_host(&path))
+            .arg(&store))?;
+    }
+    let generations = target.join(GENERATIONS);
+    fs::create_dir_all(&generations).map_err(|e| format!("{}: {e}", generations.display()))?;
+    let first = generations.join("1");
+    let _ = fs::remove_file(&first);
+    symlink(generation.inside(), &first).map_err(|e| format!("{}: {e}", first.display()))?;
+    make_current(target, 1)
+}
+
 /// Runs `system`'s switch as `mode` says: `switch`, `test` or `boot`.
 fn switch(system: &Path, mode: &str) -> Result<(), String> {
     run(Command::new(system.join("bin/switch-to-configuration")).arg(mode))
@@ -486,6 +525,36 @@ mod tests {
             BTreeSet::from([hash('b'), hash('c'), ".system".to_owned()])
         );
         assert!(remove(root, &[2]).unwrap_err().contains("current"));
+    }
+
+    #[test]
+    fn installing_copies_what_the_system_needs_and_makes_it_the_first_generation() {
+        let dir = machine(&[&hash('a')]);
+        let from = dir.path();
+        let system = from.join("store").join(hash('a'));
+        fs::write(
+            system.join("sw"),
+            format!("/store/{}/bin/tool\n", hash('b')),
+        )
+        .unwrap();
+        for name in [hash('b'), hash('c')] {
+            fs::create_dir_all(from.join("store").join(name)).unwrap();
+        }
+        let target = tempfile::tempdir().unwrap();
+        let inside = PathBuf::from(format!("/store/{}", hash('a')));
+        copy_onto(from, &inside, target.path()).unwrap();
+        let store = target.path().join("store");
+        assert!(
+            store
+                .join(hash('a'))
+                .join("etc/distro/model-hash")
+                .is_file()
+        );
+        assert!(store.join(hash('b')).is_dir());
+        assert!(!store.join(hash('c')).exists(), "nothing uses c");
+        let (listed, current) = generations(target.path()).unwrap();
+        assert_eq!((listed.len(), current), (1, 1));
+        assert_eq!(fs::read_link(&listed[0].1).unwrap(), inside);
     }
 
     #[test]

@@ -278,6 +278,7 @@ const BASE_PACKAGES: &[&str] = &[
     "bc",
     "coreutils",
     "dbus",
+    "device-mapper",
     "diffutils",
     "distro",
     "findutils",
@@ -349,9 +350,17 @@ fn account_files(model: &Value) -> Result<(String, String, String), String> {
     Ok((passwd, group, shadow))
 }
 
-/// The kernel's options for the system's boot entries: where its root is, then the model's.
+/// The kernel's options for the system's boot entries: where its root is, then the model's. A
+/// system on disks the model describes has its initrd mount the root from its fstab instead.
 fn kernel_params(model: &Value) -> Result<String, String> {
-    let mut params = vec![format!("root=LABEL={ROOT_LABEL}"), "rw".to_owned()];
+    let on_disks = !early::disks(&model["base"]["storage"])
+        .initrd_fstab
+        .is_empty();
+    let mut params = if on_disks {
+        Vec::new()
+    } else {
+        vec![format!("root=LABEL={ROOT_LABEL}"), "rw".to_owned()]
+    };
     for param in model["base"]["boot"]["kernel_params"]
         .as_array()
         .into_iter()
@@ -544,7 +553,6 @@ fn lower<'a>(
             &[],
             packages,
         )?,
-        text(base, "etc/machine-id", 0o644, String::new(), &[], packages)?,
         text("base.users", "etc/passwd", 0o644, passwd, &[], packages)?,
         text("base.users", "etc/group", 0o644, group, &[], packages)?,
         text("base.users", "etc/shadow", 0o600, shadow, &[], packages)?,
@@ -626,13 +634,18 @@ fn lower<'a>(
             "packages",
             lab,
             everything.clone(),
-            vec![("bin", "sw/bin"), ("lib/security", "sw/lib/security")],
+            vec![
+                ("bin", "sw/bin"),
+                // Some packages put programs for root in sbin, which is on the path all the same.
+                ("sbin", "sw/bin"),
+                ("lib/security", "sw/lib/security"),
+            ],
             packages,
         )?,
         links(
             base,
             lab,
-            vec!["systemd", "dbus"],
+            vec!["systemd", "dbus", "device-mapper"],
             system_layout(),
             packages,
         )?,
@@ -646,6 +659,12 @@ fn lower<'a>(
         fixed_links(packages)?,
     ];
 
+    let disks = early::disks(&model["base"]["storage"]);
+    for (path, contents) in [("etc/fstab", disks.fstab), ("etc/crypttab", disks.crypttab)] {
+        if !contents.is_empty() {
+            actions.push(text("base.storage", path, 0o644, contents, &[], packages)?);
+        }
+    }
     let mut outside = String::new();
     for (path, file) in model["files"].as_object().ok_or("the model has no files")? {
         let at = installed_at(path);
@@ -900,6 +919,28 @@ fn initrd_files(disks: &early::Disks, hostname: &str) -> Vec<(String, u32, Strin
     files
 }
 
+/// The modules of `wanted` that the kernel whose modules are in `tree` has, as a module or built
+/// in. Names match with `-` and `_` alike, as kmod matches them.
+fn kernel_has(tree: &Path, wanted: &[String]) -> Vec<String> {
+    let mut known = BTreeSet::new();
+    for version in fs::read_dir(tree).into_iter().flatten().flatten() {
+        for list in ["modules.builtin", "modules.dep"] {
+            let text = fs::read_to_string(version.path().join(list)).unwrap_or_default();
+            for line in text.lines() {
+                let path = line.split(':').next().unwrap_or_default();
+                let file = path.rsplit('/').next().unwrap_or_default();
+                let name = file.split(".ko").next().unwrap_or_default();
+                known.insert(name.replace('-', "_"));
+            }
+        }
+    }
+    wanted
+        .iter()
+        .filter(|module| known.contains(&module.replace('-', "_")))
+        .cloned()
+        .collect()
+}
+
 /// The kernel and an initrd that reaches the root: systemd, which unlocks the disks the model
 /// describes, mounts the root under /sysroot and switches to the `init=` on the kernel's command
 /// line. Without disks, the root is the one `root=` names.
@@ -1003,6 +1044,23 @@ fn boot_files<'a>(
                 let target = format!("{}/lib/modules", linux.inside());
                 initrd::insert(&mut nodes, "lib/modules", link(target));
             }
+            // Only what this kernel has, as a module or built in, so none of them fails to load.
+            let loaded: String = kernel_has(&modules, &disks.modules)
+                .iter()
+                .map(|module| format!("{module}\n"))
+                .collect();
+            let bytes = loaded.into_bytes();
+            initrd::insert(
+                &mut nodes,
+                "etc/modules-load.d/distro.conf",
+                initrd::Node::File { mode: 0o644, bytes },
+            );
+            // Roots come from `root=` or the fstab, never from a partition marked as one.
+            initrd::insert(
+                &mut nodes,
+                "etc/systemd/system-generators/systemd-gpt-auto-generator",
+                link("/dev/null".to_owned()),
+            );
             let compressed = zstd::bulk::compress(&initrd::archive(&nodes), 3)
                 .map_err(|e| format!("compressing the initrd: {e}"))?;
             let path = StorePath::from_hash(&digest(&compressed));
@@ -1050,11 +1108,16 @@ fn report_actions(packages: &Packages) -> Result<Vec<Action<'_>>, String> {
     ])
 }
 
-/// Links every system has, where `@systemd@` stands for systemd's path. They're part of the
-/// action's key, so changing one changes the action.
-const FIXED_LINKS: [(&str, &str); 5] = [
+/// The packages links can point into, by `@id@`.
+const LINKED: [&str; 2] = ["systemd", "linux"];
+
+/// Links every system has, where `@id@` stands for the path of package `id`, one of [`LINKED`].
+/// They're part of the action's key, so changing one changes the action.
+const FIXED_LINKS: [(&str, &str); 6] = [
     // distro starts systemd from here at boot.
     ("systemd", "@systemd@"),
+    // The modules of the kernel, which distro links at /lib/modules when the system boots.
+    ("kernel-modules", "@linux@"),
     (
         "etc/systemd/system/sockets.target.wants/dbus.socket",
         "../dbus.socket",
@@ -1079,15 +1142,15 @@ fn fixed_links(packages: &Packages) -> Result<Action<'_>, String> {
     links_to("base", &FIXED_LINKS, packages)
 }
 
-/// Links, each from a path in the generation to a target where `@systemd@` stands for systemd's
-/// path. They're part of the action's key.
+/// Links, each from a path in the generation to a target where `@id@` stands for the path of
+/// package `id`, one of [`LINKED`]. They're part of the action's key.
 fn links_to<'a>(
     origin: &str,
     links: &'static [(&'static str, &'static str)],
     packages: &'a Packages,
 ) -> Result<Action<'a>, String> {
     let (unresolved, resolved) = action_records(
-        &["systemd"],
+        &LINKED,
         packages,
         |deps| json!({"kind": "fixed-links", "links": links, "deps": deps}),
     )?;
@@ -1099,7 +1162,7 @@ fn links_to<'a>(
             links
                 .iter()
                 .map(|(path, target)| {
-                    let target = fill(target, &["systemd"], packages)?;
+                    let target = fill(target, &LINKED, packages)?;
                     Ok(((*path).to_owned(), Entry::Link { target }))
                 })
                 .collect()
@@ -2127,6 +2190,101 @@ mod tests {
             fs::read_link(root.join("sw/lib/security/pam_systemd.so")).unwrap(),
             Path::new(&format!("{systemd}/lib/security/pam_systemd.so"))
         );
+    }
+
+    fn with_disks(mut model: Value) -> Value {
+        model["base"]["storage"] = json!({
+            "partitions": [{"encrypt": true, "label": "main0-system"}],
+            "mounts": [
+                {"device": "none", "format": "tmpfs", "options": ["mode=755"], "path": "/"},
+                {"device": "/dev/mapper/main0-system", "format": "btrfs",
+                 "options": ["subvol=@store"], "path": "/store"},
+            ],
+            "unlock": {},
+        });
+        model
+    }
+
+    #[test]
+    fn a_system_on_disks_mounts_and_unlocks_them_and_finds_its_root_by_its_fstab() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &with_disks(model(80, false)));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
+        assert!(read("etc/fstab").contains("/dev/mapper/main0-system /store btrfs subvol=@store"));
+        assert!(
+            read("etc/crypttab").starts_with("main0-system /dev/disk/by-partlabel/main0-system")
+        );
+        assert!(
+            !read("kernel-params").contains("root="),
+            "{}",
+            read("kernel-params")
+        );
+    }
+
+    #[test]
+    fn a_system_without_disks_has_no_fstab_and_finds_its_root_by_label() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert!(!root.join("etc/fstab").exists());
+        assert!(!root.join("etc/crypttab").exists());
+    }
+
+    #[test]
+    fn the_initrd_loads_only_modules_the_kernel_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let version = dir.path().join("6.16.1");
+        fs::create_dir_all(&version).unwrap();
+        fs::write(
+            version.join("modules.builtin"),
+            "kernel/fs/btrfs/btrfs.ko\n",
+        )
+        .unwrap();
+        fs::write(
+            version.join("modules.dep"),
+            "kernel/drivers/md/dm-crypt.ko.zst: kernel/drivers/md/dm-mod.ko.zst\n",
+        )
+        .unwrap();
+        let wanted = ["btrfs", "dm_crypt", "tmpfs", "af_alg"].map(String::from);
+        assert_eq!(kernel_has(dir.path(), &wanted), ["btrfs", "dm_crypt"]);
+    }
+
+    #[test]
+    fn every_system_has_device_mappers_udev_rules() {
+        let (_dir, lab, packages) = setup();
+        let rules = lab
+            .on_host(&packages["device-mapper"].path)
+            .join("lib/udev/rules.d");
+        fs::create_dir_all(&rules).unwrap();
+        fs::write(rules.join("95-dm-notify.rules"), "").unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert!(fs::symlink_metadata(root.join("etc/udev/rules.d/95-dm-notify.rules")).is_ok());
+    }
+
+    #[test]
+    fn a_system_leaves_its_machine_id_to_the_machine() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert!(!root.join("etc/machine-id").exists());
+    }
+
+    #[test]
+    fn programs_a_package_keeps_in_sbin_are_on_the_path_too() {
+        let (_dir, lab, packages) = setup();
+        let sbin = lab.on_host(&packages["util-linux"].path).join("sbin");
+        fs::create_dir_all(&sbin).unwrap();
+        fs::write(sbin.join("useradd"), "").unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert!(fs::symlink_metadata(root.join("sw/bin/useradd")).is_ok());
     }
 
     #[test]

@@ -114,6 +114,8 @@ pub struct Install<'a> {
     pub yes: bool,
     /// What to build and install: the system, or a test system.
     pub system: Target,
+    /// A system already built and in the store, installed instead of building one.
+    pub prebuilt: Option<&'a Path>,
 }
 
 /// The devices given with `--disk`, by the disk of the layout they're for. One given without a
@@ -182,11 +184,14 @@ pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, Str
         .open(&key)
         .and_then(|mut file| file.write_all(passphrase.as_bytes()))
         .map_err(|e| format!("cannot keep the passphrase: {e}"))?;
-    let system = generations::build(root, &model, how.system)?;
+    let system = match how.prebuilt {
+        Some(system) => system.to_path_buf(),
+        None => generations::build(root, &model, how.system)?,
+    };
     let result = lay_out(&partitions, storage, how, &key, work.path())
         // Before the boot loader: it copies the initrd's SSH key into the initrd.
         .and_then(|()| place_keys(how))
-        .and_then(|()| backend::install(&system, how.target))
+        .and_then(|()| crate::switching::install(&system, how.target))
         .and_then(|()| record(how))
         .and_then(|()| match crate::state::State::of(&model) {
             Some(state) => state.move_into_keep(how.target),
@@ -779,6 +784,7 @@ mod tests {
             wipe: false,
             yes: true,
             system: Target::System,
+            prebuilt: None,
         };
 
         assert_eq!(place_keys(&install(Some("w-01"))), Ok(()));

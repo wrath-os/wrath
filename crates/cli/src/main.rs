@@ -184,6 +184,9 @@ enum Command {
         /// What to install, for the test harness
         #[arg(long, value_enum, default_value = "system", hide = true)]
         system_target: generations::BuildTarget,
+        /// A system already built and in /store, to install instead of building one
+        #[arg(long, value_name = "PATH")]
+        system: Option<PathBuf>,
         /// Go ahead without asking
         #[arg(short, long)]
         yes: bool,
@@ -424,11 +427,16 @@ fn main() -> ExitCode {
             wipe,
             yes,
             system_target,
+            system,
         } => machine().and_then(|config| {
             let Some(model) = model(&config, &modules) else {
                 return Ok(ExitCode::FAILURE);
             };
-            let model = generations::locked(root, &config, model)?;
+            // A system built already is installed as it is, with nothing left to lock.
+            let model = match system {
+                Some(_) => model,
+                None => generations::locked(root, &config, model)?,
+            };
             install::install(
                 root,
                 model,
@@ -443,6 +451,7 @@ fn main() -> ExitCode {
                     wipe,
                     yes,
                     system: system_target.try_into()?,
+                    prebuilt: system.as_deref(),
                 },
             )
         }),

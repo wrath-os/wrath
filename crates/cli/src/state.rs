@@ -139,6 +139,8 @@ struct Places<'a> {
     /// The state path as the running machine sees it, which links point to.
     keep_absolute: &'a str,
     mount: PathBuf,
+    /// At boot nothing is on the path yet, so programs are named by where the system has them.
+    cp: PathBuf,
     mounted: BTreeSet<PathBuf>,
 }
 
@@ -166,7 +168,7 @@ impl Places<'_> {
         if new {
             // Whatever the directory already holds, when it's only now being kept.
             ok(
-                Command::new("cp")
+                Command::new(&self.cp)
                     .arg("-a")
                     .arg(target.join("."))
                     .arg(&source),
@@ -269,6 +271,7 @@ impl State {
             keep: root.join(under(&self.path)),
             keep_absolute: &self.path,
             mount: system.join("sw/bin/mount"),
+            cp: system.join("sw/bin/cp"),
             mounted: mounted(),
         }
     }
@@ -429,6 +432,7 @@ mod tests {
             keep: root.join("keep"),
             keep_absolute: "/keep",
             mount: PathBuf::from("/does/not/run"),
+            cp: PathBuf::from("cp"),
             // Mounting is done already, so nothing runs in these tests.
             mounted: BTreeSet::from([root.join("var/lib/a"), root.join("etc/key")]),
         }

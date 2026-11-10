@@ -33,6 +33,8 @@ scripts/config --enable PCI --enable BLK_DEV_NVME --enable USB_SUPPORT --enable 
 scripts/config --enable VSOCKETS --enable VIRTIO_VSOCKETS --enable MD --enable BLK_DEV_DM \
     --enable DM_CRYPT --enable CRYPTO_XTS --enable CRYPTO_AES_NI_INTEL --enable TCG_TPM \
     --enable TCG_TIS --enable TCG_CRB
+# Installs put the store and what's kept on btrfs subvolumes.
+scripts/config --enable BTRFS_FS --enable BTRFS_FS_POSIX_ACL --enable CRYPTO_CRC32C
 make olddefconfig
 make -j$NPROC bzImage modules
 mkdir -p $DEST$PREFIX /build/tools
@@ -41,36 +43,6 @@ cp arch/x86/boot/bzImage .config $DEST$PREFIX/
 ln -s $LAB_DEP_kmod/bin/kmod /build/tools/depmod
 make modules_install INSTALL_MOD_PATH=$DEST$PREFIX INSTALL_MOD_STRIP=1 DEPMOD=/build/tools/depmod
 rm -f $DEST$PREFIX/lib/modules/*/build
-'''
-
-[[package]]
-id = "markupsafe"
-scope = "runtime"
-core = true
-sources = [{ url = "https://files.pythonhosted.org/packages/source/m/markupsafe/markupsafe-3.0.2.tar.gz" }]
-script = '''
-mkdir -p $DEST$PREFIX/site
-cp -r src/markupsafe $DEST$PREFIX/site/
-'''
-
-[[package]]
-id = "jinja2"
-scope = "runtime"
-core = true
-sources = [{ url = "https://files.pythonhosted.org/packages/source/j/jinja2/jinja2-3.1.6.tar.gz" }]
-script = '''
-mkdir -p $DEST$PREFIX/site
-cp -r src/jinja2 $DEST$PREFIX/site/
-'''
-
-[[package]]
-id = "pyelftools"
-scope = "runtime"
-core = true
-sources = [{ url = "https://files.pythonhosted.org/packages/source/p/pyelftools/pyelftools-0.32.tar.gz" }]
-script = '''
-mkdir -p $DEST$PREFIX/site
-cp -r elftools $DEST$PREFIX/site/
 '''
 
 [[package]]
@@ -139,7 +111,7 @@ toolchain_limits = true
 extra_deps = [
     "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap", "util-linux",
     "libxcrypt", "acl", "kmod", "xz", "lz4", "zstd", "openssl", "kbd", "gettext", "m4-final", "zlib",
-    "linux-pam", "cryptsetup", "device-mapper", "json-c",
+    "linux-pam", "cryptsetup", "device-mapper", "json-c", "libudev",
 ]
 sources = [{ url = "https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz" }]
 script = '''
@@ -168,6 +140,9 @@ for unit in $(grep -rlE '^Exec[A-Za-z]*=[-@:+!]*[a-z]' $DEST$PREFIX/lib/systemd 
     sed -Ei "s#^(Exec[A-Za-z]*=[-@:+!]*)rm( |\$)#\1$LAB_DEP_coreutils/bin/rm\2#" $unit
 done
 sed -i "s#/sbin/agetty#$LAB_DEP_util_linux/bin/agetty#" $DEST$PREFIX/lib/systemd/system/*getty*.service
+# kmod is modprobe by the name it's called; `@` gives a program the name to run as.
+sed -i "s#^ExecStart=-/sbin/modprobe #ExecStart=-@$LAB_DEP_kmod/bin/kmod modprobe #" \
+    $DEST$PREFIX/lib/systemd/system/modprobe@.service
 '''
 smoke = ["bin/systemctl --version", "lib/systemd/systemd --version", "bin/udevadm --version",
     "bin/systemd-repart --version", "lib/systemd/systemd-cryptsetup --version"]
