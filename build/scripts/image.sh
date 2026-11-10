@@ -20,7 +20,7 @@ lab=../target/release/lab
 distro=$PWD/../target/release/distro
 work=work/image
 root=$work/root
-label=usrview-root
+label=distro-root
 
 if [[ -d $root ]]; then
     chmod -R u+w -- "$root"
@@ -51,7 +51,7 @@ esp=$work/esp.img
 rm -f -- "$esp"
 truncate -s 256M "$esp"
 mkfs.vfat -F 32 -n ESP "$esp" > /dev/null
-mmd -i "$esp" ::/EFI ::/EFI/BOOT ::/EFI/usrview ::/loader ::/loader/entries
+mmd -i "$esp" ::/EFI ::/EFI/BOOT ::/EFI/distro ::/loader ::/loader/entries
 mcopy -i "$esp" "work/store/${store[systemd]}/lib/systemd/boot/efi/systemd-bootx64.efi" \
     ::/EFI/BOOT/BOOTX64.EFI
 files=()
@@ -60,17 +60,17 @@ for name in kernel initrd; do
     directory=${path#/store/}
     directory=${directory%%/*}
     [[ -e $root/store/$directory ]] || cp -a --reflink=auto "work/store/$directory" "$root/store/"
-    mcopy -i "$esp" "work/store/$directory/${path##*/}" "::/EFI/usrview/$directory-$name"
-    files+=("/EFI/usrview/$directory-$name")
+    mcopy -i "$esp" "work/store/$directory/${path##*/}" "::/EFI/distro/$directory-$name"
+    files+=("/EFI/distro/$directory-$name")
 done
 {
-    echo "title usrview"
+    echo "title distro"
     echo "linux ${files[0]}"
     echo "initrd ${files[1]}"
-    echo "options root=LABEL=$label rw usrview.rescue $consoles generation=$generation"
+    echo "options root=LABEL=$label rw distro.rescue $consoles generation=$generation"
 } > "$work/entry.conf"
-mcopy -i "$esp" "$work/entry.conf" ::/loader/entries/usrview.conf
-printf 'default usrview.conf\ntimeout 3\n' > "$work/loader.conf"
+mcopy -i "$esp" "$work/entry.conf" ::/loader/entries/distro.conf
+printf 'default distro.conf\ntimeout 3\n' > "$work/loader.conf"
 mcopy -i "$esp" "$work/loader.conf" ::/loader/loader.conf
 
 # Room for logs and homes on top of what's there.

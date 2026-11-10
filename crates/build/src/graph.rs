@@ -466,7 +466,7 @@ fn lower<'a>(
             base,
             "etc/os-release",
             0o644,
-            "NAME=usrview\nID=usrview\n".into(),
+            "NAME=distro\nID=distro\n".into(),
             &[],
             packages,
         )?,
@@ -1701,6 +1701,16 @@ mod tests {
         assert_eq!(recipe_for("web.bin", known), Some("web"));
         assert_eq!(recipe_for("web", known), Some("web"));
         assert_eq!(recipe_for("polkit", known), None);
+    }
+
+    #[test]
+    fn a_system_calls_itself_distro() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let release = fs::read_to_string(root.join("etc/os-release")).unwrap();
+        assert_eq!(release, "NAME=distro\nID=distro\n");
     }
 
     #[test]

@@ -88,7 +88,7 @@ system=$work/root.img
 rm -f -- "$disk" "$esp" "$system"
 truncate -s 256M "$esp"
 mkfs.vfat -F 32 -n ESP "$esp" > /dev/null
-mmd -i "$esp" ::/EFI ::/EFI/BOOT ::/EFI/usrview ::/loader ::/loader/entries
+mmd -i "$esp" ::/EFI ::/EFI/BOOT ::/EFI/distro ::/loader ::/loader/entries
 mcopy -i "$esp" "work/store/${store[systemd]}/lib/systemd/boot/efi/systemd-bootx64.efi" \
     ::/EFI/BOOT/BOOTX64.EFI
 number=1
@@ -101,10 +101,10 @@ for generation in "$first" "$second"; do
         directory=${directory%%/*}
         esp_name=$directory-$name
         if [[ -z ${copied[$esp_name]:-} ]]; then
-            mcopy -i "$esp" "work/store/$directory/${path##*/}" "::/EFI/usrview/$esp_name"
+            mcopy -i "$esp" "work/store/$directory/${path##*/}" "::/EFI/distro/$esp_name"
             copied[$esp_name]=1
         fi
-        files+=("/EFI/usrview/$esp_name")
+        files+=("/EFI/distro/$esp_name")
     done
     entry=$work/gen-$number.conf
     {
@@ -142,7 +142,7 @@ for entry in 1 2 1; do
         -nic user,model=virtio-net-pci \
         | tee -a "$log" || true
 done
-plain=$(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$log")
+plain=$(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\r$//' "$log")
 grep -aE 'E2E |=== boot|INITRD' <<< "$plain" | sed -E 's/^.*(E2E |INITRD)/\1/' | cut -c1-200
 
 # Passes when each boot reached a running system with no failed units, and the switch happened.
