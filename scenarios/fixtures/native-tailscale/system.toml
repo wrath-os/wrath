@@ -1,0 +1,11 @@
+[system]
+hostname = "native"
+
+[networking]
+dhcp = true
+
+[services.tailscale]
+enable = true
+
+[users.john]
+extra_groups = ["wheel"]

@@ -258,6 +258,7 @@ fn tailscale_runs_its_agent_and_networkd_leaves_its_interface_alone() {
     [Service]
     CacheDirectory=tailscale
     CacheDirectoryMode=0750
+    Environment=TS_DEBUG_FIREWALL_MODE=nftables
     ExecStart=tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641 --tun tailscale0
     ExecStopPost=tailscaled --cleanup
     Restart=on-failure

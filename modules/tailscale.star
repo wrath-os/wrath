@@ -26,6 +26,8 @@ def render(ctx):
                          ),
             "ExecStopPost": "tailscaled --cleanup",
             "Restart": "on-failure",
+            # The system has nftables, and no iptables to fall back on.
+            "Environment": "TS_DEBUG_FIREWALL_MODE=nftables",
             "RuntimeDirectory": "tailscale",
             "RuntimeDirectoryMode": "0755",
             "StateDirectory": "tailscale",

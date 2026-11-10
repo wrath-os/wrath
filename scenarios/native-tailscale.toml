@@ -1,0 +1,12 @@
+title = "a system runs the Tailscale agent, waiting to be logged in"
+
+[vm]
+config = "scenarios/fixtures/native-tailscale"
+store = "distro"
+wait_for = ["agent", "unit:multi-user.target", "unit:tailscaled.service"]
+steps = [
+  { run = "tailscale status 2>&1; true", stdout_contains = "Logged out" },
+  { run = "ip link show tailscale0 >/dev/null && echo up", stdout_contains = "up" },
+  { run = "test -z \"$(systemctl --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },
+]
+timeout_secs = 300

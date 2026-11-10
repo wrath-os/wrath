@@ -38,6 +38,8 @@ scripts/config --enable BTRFS_FS --enable BTRFS_FS_POSIX_ACL --enable CRYPTO_CRC
 # Modules configurations ask for by name, and the Framework Desktop's wifi.
 scripts/config --module DUMMY --module BLK_DEV_NBD --enable WLAN --enable WLAN_VENDOR_MEDIATEK \
     --module CFG80211 --module MAC80211 --module MT7925E --enable MICROCODE_AMD
+# Tunnels, such as the one Tailscale runs.
+scripts/config --enable TUN
 # Swap on compressed memory.
 scripts/config --module ZRAM --enable ZRAM_BACKEND_ZSTD --enable ZRAM_DEF_COMP_ZSTD --enable CRYPTO_ZSTD
 make olddefconfig
