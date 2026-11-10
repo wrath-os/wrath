@@ -1828,6 +1828,44 @@ fn build_variants(
     Ok(())
 }
 
+/// The packages a system built from `model` uses: the base system's and the initrd's, its
+/// kernel, microcode and firmware, the packages it and its users name, and those its builds start
+/// from. A system build builds them and what they depend on, and no other recipe.
+fn system_packages(model: &Value) -> Vec<String> {
+    let strings = |value: &Value| -> Vec<String> {
+        let items = value.as_array().into_iter().flatten();
+        items.filter_map(Value::as_str).map(str::to_owned).collect()
+    };
+    let mut ids: BTreeSet<String> = BASE_PACKAGES
+        .iter()
+        .chain(&INITRD_PACKAGES)
+        .chain(&LINKED)
+        .chain(&["dbus"])
+        .map(|id| (*id).to_owned())
+        .collect();
+    ids.extend(strings(&model["packages"]));
+    ids.extend(strings(&model["service_packages"]));
+    for home in model["homes"]
+        .as_object()
+        .into_iter()
+        .flat_map(|homes| homes.values())
+    {
+        ids.extend(strings(&home["packages"]));
+    }
+    for build in model["builds"]
+        .as_object()
+        .into_iter()
+        .flat_map(|builds| builds.values())
+    {
+        ids.extend(build["package"].as_str().map(str::to_owned));
+    }
+    let kernel = &model["base"]["kernel"];
+    ids.extend(kernel["package"].as_str().map(str::to_owned));
+    ids.extend(kernel["microcode"]["package"].as_str().map(str::to_owned));
+    ids.extend(strings(&kernel["firmware"]));
+    ids.into_iter().collect()
+}
+
 /// Builds the system `model` describes from the recipes in `repository`, which holds `recipes/`,
 /// the pins and the `work` directory with the store, building packages it doesn't have yet.
 pub fn system(
@@ -1837,11 +1875,13 @@ pub fn system(
     inputs: Option<&Value>,
 ) -> Result<System, String> {
     let lab = Lab::new(repository.join("work"));
-    let (mut built, seed, recipes) = pilot::build_recipes(
+    let wanted = system_packages(model);
+    let (mut built, seed, recipes) = pilot::build_some(
         &lab,
         repository,
         &names_of(&system_recipes(repository)?),
         Arm::F,
+        Some(&names_of(&wanted)),
     )?;
     build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
     let mut db = Db::open(&db_path(&lab))?;
@@ -2156,6 +2196,38 @@ pub fn write_records(path: &Path, writer: usize, records: usize) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_system_builds_what_it_uses_and_nothing_else() {
+        let model = json!({
+            "packages": ["jq", "patched"],
+            "service_packages": ["polkit"],
+            "homes": {"john": {"packages": ["ripgrep"]}},
+            "builds": {"patched": {"package": "gnu-hello"}},
+            "base": {"kernel": {
+                "package": "linux",
+                "microcode": {"package": "microcode-amd"},
+                "firmware": ["linux-firmware"],
+            }},
+        });
+        let wanted = system_packages(&model);
+        for id in [
+            "jq",
+            "polkit",
+            "ripgrep",
+            "gnu-hello",
+            "linux",
+            "microcode-amd",
+            "linux-firmware",
+            "systemd",
+            "dbus",
+            "bash",
+            "cryptsetup",
+        ] {
+            assert!(wanted.iter().any(|w| w == id), "{id}");
+        }
+        assert!(!wanted.iter().any(|w| w == "mesa"));
+    }
 
     fn fake(lab: &Lab, name: &str, programs: &[&str]) -> PackageRef {
         let path = StorePath::derive("test", &[name.as_bytes()]);
