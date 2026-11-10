@@ -168,8 +168,6 @@ impl DepSpec {
 struct Source {
     url: String,
     into: Option<String>,
-    /// The file's name, for a URL that doesn't end in it.
-    name: Option<String>,
     /// For a `tree:` source, a directory relative to the repository: what in it to take.
     #[serde(default)]
     include: Vec<String>,
@@ -562,12 +560,7 @@ impl Sources {
     fn fetch_source(&mut self, lab: &Lab, source: &Source) -> Result<(PathBuf, String), String> {
         match source.url.strip_prefix("tree:") {
             Some(tree) => self.fetch_tree(lab, tree, &source.include),
-            None => self.fetch(
-                lab,
-                &source.url,
-                source.name.as_deref(),
-                source.sha256.as_deref(),
-            ),
+            None => self.fetch(lab, &source.url, source.sha256.as_deref()),
         }
     }
 
@@ -614,56 +607,56 @@ impl Sources {
             &format!("packing {}", from.display()),
         )?;
         let hash = sha256_of(&partial)?;
-        let path = dir.join(format!("tree-{hash}.tar"));
+        let path = dir.join(&hash);
         fs::rename(&partial, &path).map_err(with_path(&path))?;
         Ok((path, hash))
     }
 
-    /// Where the source at `url` is on the host, with its hash.
+    /// Where the source at `url` is on the host, with its hash. Downloads are kept by their hash,
+    /// so a source pinned in `sources.lock` or by `expected` that's kept already isn't fetched
+    /// again, and two URLs ending alike never share a file.
     fn fetch(
         &mut self,
         lab: &Lab,
         url: &str,
-        name: Option<&str>,
         expected: Option<&str>,
     ) -> Result<(PathBuf, String), String> {
         let dir = lab.work.join("sources");
         fs::create_dir_all(&dir).map_err(with_path(&dir))?;
-        let name = name.unwrap_or_else(|| url.rsplit('/').next().unwrap_or(url));
-        let path = dir.join(name);
-        if !path.exists() {
-            let partial = dir.join(format!("{name}.partial"));
-            run_host(
-                Command::new("curl")
-                    .args(["--fail", "--location", "--silent", "--show-error"])
-                    .args(["--max-time", "1800", "--retry", "3", "--output"])
-                    .arg(&partial)
-                    .arg(url),
-                &format!("downloading {url}"),
-            )?;
-            fs::rename(&partial, &path).map_err(with_path(&path))?;
+        let known = expected.or_else(|| self.pins.get(url).map(String::as_str));
+        if let Some(hash) = known
+            && dir.join(hash).is_file()
+        {
+            return Ok((dir.join(hash), hash.to_owned()));
         }
-        let hash = sha256_of(&path)?;
-        if let Some(expected) = expected {
-            if hash != expected {
-                fs::remove_file(&path).map_err(with_path(&path))?;
-                return Err(format!(
-                    "{url} has hash {hash}, and {expected} was expected"
-                ));
-            }
-            return Ok((path, hash));
+        let partial = dir.join(format!("partial.{}", std::process::id()));
+        run_host(
+            Command::new("curl")
+                .args(["--fail", "--location", "--silent", "--show-error"])
+                .args(["--max-time", "1800", "--retry", "3", "--output"])
+                .arg(&partial)
+                .arg(url),
+            &format!("downloading {url}"),
+        )?;
+        let hash = sha256_of(&partial)?;
+        if let Some(known) = known
+            && hash != known
+        {
+            fs::remove_file(&partial).map_err(with_path(&partial))?;
+            let what = if expected.is_some() {
+                "was expected"
+            } else {
+                "is pinned"
+            };
+            return Err(format!("{url} has hash {hash}, and {known} {what}"));
         }
-        match self.pins.get(url) {
-            Some(pinned) if *pinned != hash => {
-                Err(format!("{url} has hash {hash}, and {pinned} is pinned"))
-            }
-            Some(_) => Ok((path, hash)),
-            None => {
-                self.pins.insert(url.to_owned(), hash.clone());
-                self.save()?;
-                Ok((path, hash))
-            }
+        let path = dir.join(&hash);
+        fs::rename(&partial, &path).map_err(with_path(&path))?;
+        if known.is_none() {
+            self.pins.insert(url.to_owned(), hash.clone());
+            self.save()?;
         }
+        Ok((path, hash))
     }
 }
 
@@ -683,7 +676,6 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
             .extend(crate::cargo::crates(&text)?.into_iter().map(|c| Source {
                 url: c.url(),
                 into: Some(format!("vendor/{}-{}", c.name, c.version)),
-                name: Some(format!("{}-{}.crate", c.name, c.version)),
                 include: Vec::new(),
                 sha256: Some(c.checksum),
             }));
@@ -1519,7 +1511,6 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
         let source = Source {
             url: format!("file://{}", file.display()),
             into: None,
-            name: None,
             include: Vec::new(),
             sha256: Some("00".repeat(32)),
         };
@@ -1533,5 +1524,49 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
         assert_eq!(sources.fetch_source(&lab, &source).unwrap().1, right);
         // Hashes the recipe carries stay out of `sources.lock`.
         assert!(!dir.path().join("sources.lock").exists());
+    }
+
+    fn source(url: String) -> Source {
+        Source {
+            url,
+            into: None,
+            include: Vec::new(),
+            sha256: None,
+        }
+    }
+
+    #[test]
+    fn downloads_are_kept_by_their_hash_so_like_named_urls_dont_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        for (sub, text) in [("one", "first\n"), ("two", "second\n")] {
+            fs::create_dir_all(dir.path().join(sub)).unwrap();
+            fs::write(dir.path().join(sub).join("v1.0.tar.gz"), text).unwrap();
+        }
+        let lab = Lab::new(dir.path().join("work"));
+        let mut sources = Sources::load(dir.path()).unwrap();
+        let url = |sub: &str| format!("file://{}/{sub}/v1.0.tar.gz", dir.path().display());
+        let (first, first_hash) = sources.fetch_source(&lab, &source(url("one"))).unwrap();
+        let (second, second_hash) = sources.fetch_source(&lab, &source(url("two"))).unwrap();
+        assert_ne!(first_hash, second_hash);
+        assert_eq!(fs::read_to_string(&first).unwrap(), "first\n");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "second\n");
+        assert_eq!(first.file_name().unwrap().to_string_lossy(), first_hash);
+    }
+
+    #[test]
+    fn a_pinned_download_already_kept_isnt_fetched_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("x.tar.gz");
+        fs::write(&file, "x\n").unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let mut sources = Sources::load(dir.path()).unwrap();
+        let url = format!("file://{}", file.display());
+        let (_, hash) = sources.fetch_source(&lab, &source(url.clone())).unwrap();
+        fs::remove_file(&file).unwrap();
+        let (kept, again) = sources.fetch_source(&lab, &source(url)).unwrap();
+        assert_eq!(
+            (again, fs::read_to_string(kept).unwrap()),
+            (hash, "x\n".to_owned())
+        );
     }
 }

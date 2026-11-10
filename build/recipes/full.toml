@@ -530,7 +530,7 @@ id = "psmisc"
 scope = "runtime"
 core = true
 extra_deps = ["ncurses"]
-sources = [{ url = "https://sourceforge.net/projects/psmisc/files/psmisc/psmisc-23.7.tar.xz/download", name = "psmisc-23.7.tar.xz" }]
+sources = [{ url = "https://sourceforge.net/projects/psmisc/files/psmisc/psmisc-23.7.tar.xz/download" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -638,7 +638,7 @@ id = "procps"
 scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "ncurses"]
-sources = [{ url = "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-4.0.5.tar.xz/download", name = "procps-ng-4.0.5.tar.xz" }]
+sources = [{ url = "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-4.0.5.tar.xz/download" }]
 script = '''
 CFLAGS='-O2 -include stdbool.h' ./configure --prefix=$PREFIX --disable-static --disable-nls --disable-kill \
     --without-systemd
