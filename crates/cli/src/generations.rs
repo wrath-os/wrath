@@ -64,13 +64,25 @@ pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBu
         add_test_layer(&mut model);
     }
     let system = distro_build::graph::system(&repository, &model, &kept, None)?;
-    for package in &system.skipped {
-        eprintln!("warning: there's no recipe for `{package}` yet, so the system goes without it");
+    match missing(&system.skipped, &system.unfound) {
+        Some(message) => Err(message),
+        None => Ok(system.path),
     }
-    for unit in &system.unfound {
-        eprintln!("warning: `{unit}` is enabled, but nothing the system has provides it yet");
-    }
-    Ok(system.path)
+}
+
+/// What a configuration asks for that nothing builds: packages without a recipe, and units no
+/// package provides. A system that silently went without them wouldn't be the one described.
+fn missing(packages: &[String], units: &[String]) -> Option<String> {
+    let mut lines: Vec<String> = packages
+        .iter()
+        .map(|package| format!("there's no recipe for the package `{package}`"))
+        .collect();
+    lines.extend(
+        units
+            .iter()
+            .map(|unit| format!("`{unit}` is enabled, but no package the system has provides it")),
+    );
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 /// What a test system adds so the VM harness can drive it: the agent on vsock, the harness's
@@ -786,6 +798,17 @@ fn factory(root: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_system_missing_a_package_or_a_unit_isnt_built() {
+        assert_eq!(missing(&[], &[]), None);
+        let message = missing(&["iputils".into()], &["polkit-agent-helper.socket".into()]).unwrap();
+        assert_eq!(
+            message,
+            "there's no recipe for the package `iputils`\n\
+             `polkit-agent-helper.socket` is enabled, but no package the system has provides it"
+        );
+    }
 
     #[test]
     fn a_test_system_adds_the_agent_the_shares_and_a_serial_console() {
