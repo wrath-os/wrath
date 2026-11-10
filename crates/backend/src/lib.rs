@@ -4,14 +4,12 @@
 mod generations;
 mod lower;
 
-use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use distro_model::{Lock, Locked, Model, Source};
-use serde::Deserialize;
+use distro_model::{Model, Source};
 
 pub mod home;
 pub use generations::Generation;
@@ -95,32 +93,6 @@ pub fn keep(path: &Path, link: &Path) -> Result<(), String> {
             .arg(path),
     )
     .map(drop)
-}
-
-/// Resolves `model`'s packages to a lock: from each source as its lock pins it, or the latest
-/// of a source the lock doesn't pin. Without a `nixpkgs` source, the factory's own.
-pub fn resolve(model: &Model, factory: &Path, work: &Path) -> Result<Lock, String> {
-    let (stdout, _) = nix(&["eval", "--json"], model, factory, "resolve", work)?;
-    let mut lock = parse_resolved(&stdout)?;
-    for (name, locked) in &mut lock.packages {
-        locked.build = model.builds.get(name).map(distro_model::Build::hash);
-    }
-    Ok(lock)
-}
-
-#[derive(Deserialize)]
-struct Resolved {
-    sources: BTreeMap<String, Source>,
-    packages: BTreeMap<String, Locked>,
-}
-
-fn parse_resolved(json: &str) -> Result<Lock, String> {
-    let resolved: Resolved = serde_json::from_str(json)
-        .map_err(|e| format!("cannot read the packages Nix resolved: {e}"))?;
-    Ok(Lock {
-        sources: resolved.sources,
-        packages: resolved.packages,
-    })
 }
 
 /// Runs `nix` with `args` on the factory's `function` applied to `model`'s lowered input.
@@ -458,21 +430,6 @@ pub fn install(system: &Path, root: &Path) -> Result<(), String> {
     )
 }
 
-/// A source as a tree of files, so a configuration can include files from it: the tree pinned by
-/// `source`'s hash, from the store when it's there already.
-pub fn fetch_source(source: &Source) -> Result<PathBuf, String> {
-    let expression = format!("(builtins.fetchTree ({})).outPath", pinned_ref(source));
-    let (stdout, _) = run(Command::new("nix").args(["eval", "--raw", "--expr", &expression]))
-        .map_err(|message| {
-            if message.contains("hash mismatch") {
-                "its files changed since the lock pinned them".to_owned()
-            } else {
-                message
-            }
-        })?;
-    Ok(PathBuf::from(stdout.trim()))
-}
-
 /// The `distro` program `source` pins, built from its own factory, or from the store when it's
 /// there already.
 pub fn distro_at(source: &Source) -> Result<PathBuf, String> {
@@ -491,56 +448,17 @@ pub fn distro_at(source: &Source) -> Result<PathBuf, String> {
     Ok(PathBuf::from(stdout.trim()).join("bin/distro"))
 }
 
-/// `source` as a flake reference attribute set, pinned by its hash and revision.
+/// `source` as a flake reference attribute set, pinned by its revision.
 fn pinned_ref(source: &Source) -> String {
     format!(
-        "removeAttrs (builtins.parseFlakeRef {url}) [ \"ref\" ] // {{ narHash = {hash}; }}{rev}",
+        "removeAttrs (builtins.parseFlakeRef {url}) [ \"ref\" ]{rev}",
         url = nix_string(&source.url),
-        hash = nix_string(&source.hash),
         rev = source
             .rev
             .as_deref()
             .map(|rev| format!(" // {{ rev = {}; }}", nix_string(rev)))
             .unwrap_or_default(),
     )
-}
-
-/// The newest version of the source at `url`, pinned, and its tree of files.
-pub fn follow_source(url: &str) -> Result<(Source, PathBuf), String> {
-    let expression = format!(
-        "let tree = builtins.fetchTree (builtins.parseFlakeRef {url}); in \
-         {{ path = tree.outPath; rev = tree.rev or null; hash = tree.narHash; \
-         date = tree.lastModifiedDate or null; }}",
-        url = nix_string(url)
-    );
-    let (stdout, _) =
-        run(Command::new("nix").args(["eval", "--impure", "--json", "--expr", &expression]))?;
-    parse_followed(url, &stdout)
-}
-
-#[derive(Deserialize)]
-struct Followed {
-    path: PathBuf,
-    rev: Option<String>,
-    hash: String,
-    /// As Nix gives it, `20261030123456`.
-    date: Option<String>,
-}
-
-fn parse_followed(url: &str, json: &str) -> Result<(Source, PathBuf), String> {
-    let followed: Followed = serde_json::from_str(json)
-        .map_err(|e| format!("cannot read the source Nix fetched: {e}"))?;
-    let date = followed
-        .date
-        .filter(|stamp| stamp.len() >= 8)
-        .map(|stamp| format!("{}-{}-{}", &stamp[..4], &stamp[4..6], &stamp[6..8]));
-    let source = Source {
-        url: url.to_owned(),
-        rev: followed.rev,
-        hash: followed.hash,
-        date,
-    };
-    Ok((source, followed.path))
 }
 
 /// `text` as a Nix string literal.
@@ -677,24 +595,6 @@ mod tests {
     }
 
     #[test]
-    fn resolved_packages_become_a_lock() {
-        let json = r#"{
-          "sources": {
-            "nixpkgs": { "url": "github:NixOS/nixpkgs/nixos-unstable", "rev": "1d06008", "hash": "sha256-abc" },
-            "etc": { "url": "git+file:///srv/config", "rev": null, "hash": "sha256-x" }
-          },
-          "packages": { "git": { "version": "2.56.0", "id": "/nix/store/xgw-git-2.56.0" } }
-        }"#;
-
-        let lock = parse_resolved(json).unwrap();
-
-        assert_eq!(lock.sources["nixpkgs"].rev.as_deref(), Some("1d06008"));
-        assert_eq!(lock.sources["etc"].rev, None);
-        assert_eq!(lock.packages["git"].version, "2.56.0");
-        assert!(parse_resolved("{}").is_err());
-    }
-
-    #[test]
     fn the_factory_is_read_through_its_repository_or_as_plain_files() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
@@ -716,19 +616,6 @@ mod tests {
     fn strings_reach_nix_as_written() {
         assert_eq!(nix_string("github:a/b"), "\"github:a/b\"");
         assert_eq!(nix_string("a\"${b}\\"), "\"a\\\"\\${b}\\\\\"");
-    }
-
-    #[test]
-    fn a_followed_source_is_pinned_with_its_date() {
-        let (source, path) = parse_followed(
-            "github:acme/templates",
-            r#"{"path":"/nix/store/x-source","rev":"abc","hash":"sha256-h","date":"20261030123456"}"#,
-        )
-        .unwrap();
-        assert_eq!(path, PathBuf::from("/nix/store/x-source"));
-        assert_eq!(source.rev.as_deref(), Some("abc"));
-        assert_eq!(source.date.as_deref(), Some("2026-10-30"));
-        assert!(source.is_locked());
     }
 
     #[test]

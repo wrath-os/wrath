@@ -31,9 +31,9 @@ pub use fs::{ConfigFs, DirFs, MemFs};
 pub use load::{ConfigKind, DeclaredSource, kind_of, roles};
 pub use machines::Machine;
 pub use module::{
-    Build, ConfigReader, DEFAULT_SOURCE, DISTRO_SOURCE, File, HOME_SECRETS_DIR, Home, Module,
-    ModuleId, Output, ReadError, RenderError, SECRETS_DIR, Secret, Section, Setting, Template,
-    Unit, UnitAction, Wrapper, home_path, package_source,
+    Build, ConfigReader, DISTRO_SOURCE, File, HOME_SECRETS_DIR, Home, Module, ModuleId, Output,
+    ReadError, RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction,
+    Wrapper, home_path, package_source,
 };
 pub use path::OptionPath;
 pub use requires::{Check, FACTS, Kind, Requirement};

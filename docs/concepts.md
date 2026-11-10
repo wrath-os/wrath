@@ -53,11 +53,11 @@ command line.
 A **build** is a package built differently from how its source builds it, with other values for
 its build options or with patches: `[builds.whisper-vulkan]` with `package = "whisper-cpp"` and
 `options.vulkanSupport = true`. The name goes in `packages` like any other. Only that package
-changes, and the lock records which build it pinned, so a changed build needs locking again.
+changes.
 
 A **source** is where packages, or files to include, come from: a name and the URL it follows,
-pinned in the lock. `nixpkgs` is the default, and the base system comes from it too. A file from a
-source is included as `{ source = "acme", path = "rust-service.toml" }`.
+pinned in the lock. `distro` is the default: its recipes build every package and the base
+system. A file from a source is included as `{ source = "acme", path = "rust-service.toml" }`.
 
 A **file** is a file the configuration writes, on the system or in a home. It is text, or settings
 written out as JSON, TOML or systemd's format, and a system file can restart what reads it. A file
@@ -88,9 +88,8 @@ Values other than the name are declared in `[machine.values]`, as `zone = { type
 
 ## Making it so
 
-The **lock** pins every source and records the build of every package, so the same
-configuration always means the same software. It lives next to the configuration as
-`distro.lock`.
+The **lock** pins every source, distro's own among them, so the same configuration always
+means the same software. It lives next to the configuration as `distro.lock`.
 
 The **model** is the configuration fully resolved: every option's value and everything modules
 produced, with nothing left to compute. Its hash identifies a system.

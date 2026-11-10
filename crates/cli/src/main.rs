@@ -917,7 +917,7 @@ fn with_lock(config: &Path, model: Model) -> Option<Model> {
     Some(model)
 }
 
-/// The lock next to `config`, if there is one. A project's local file adds the packages it locks
+/// The lock next to `config`, if there is one. A project's local file adds the sources it pins
 /// on its own.
 pub(crate) fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
     let lock = read_lock_file(&config.join(LOCK_FILE))?;
@@ -930,9 +930,6 @@ pub(crate) fn read_lock(config: &Path) -> Result<Option<Lock>, String> {
     let mut lock = lock.unwrap_or_default();
     for (name, source) in local.sources {
         lock.sources.entry(name).or_insert(source);
-    }
-    for (name, locked) in local.packages {
-        lock.packages.entry(name).or_insert(locked);
     }
     Ok(Some(lock))
 }

@@ -1,26 +1,29 @@
-//! The lock: which build of each package a configuration uses, and the package sets they come
-//! from. It sits next to the configuration as `distro.lock` and is read like it, so the model
-//! and its hash cover exactly what will run. Resolving it takes the backend (`distro lock`);
-//! reading it doesn't.
+//! The lock: the version of each source a configuration uses, distro's own among them. Distro's
+//! pin decides every package, since recipes live in its repository. The lock sits next to the
+//! configuration as `distro.lock` and is read like it, so the model and its hash cover exactly
+//! what will run.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use serde::Deserialize;
 
-pub use distro_eval::{DEFAULT_SOURCE, DISTRO_SOURCE, package_source};
+pub use distro_eval::{DISTRO_SOURCE, package_source};
 
 /// The lock file's name in a configuration directory.
 pub const LOCK_FILE: &str = "distro.lock";
 
 /// The lock file format's version.
-const FORMAT: i64 = 2;
+const FORMAT: i64 = 3;
+
+/// The format before distro built its own packages, which also pinned each package. Those
+/// entries are ignored.
+const FORMAT_WITH_PACKAGES: i64 = 2;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lock {
-    /// Each package source by name, pinned.
+    /// Each source by name, pinned.
     pub sources: BTreeMap<String, Source>,
-    pub packages: BTreeMap<String, Locked>,
 }
 
 /// The lock file as written.
@@ -31,14 +34,14 @@ struct File {
     #[serde(default)]
     sources: BTreeMap<String, Source>,
     #[serde(default)]
-    packages: BTreeMap<String, Locked>,
+    packages: Option<toml::Table>,
 }
 
-/// Where packages come from, such as a nixpkgs revision.
+/// Where packages or files come from, such as a repository at a commit.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
-    /// What `distro update` follows, such as `github:NixOS/nixpkgs/nixos-unstable`.
+    /// What `distro update` follows, such as `github:johnae/distro`.
     pub url: String,
     /// The revision it was at, when it has one.
     pub rev: Option<String>,
@@ -63,38 +66,25 @@ impl Source {
     }
 }
 
-/// One package as resolved.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Locked {
-    pub version: String,
-    /// What the backend builds, such as a store path. Changes when anything in the build does.
-    pub id: String,
-    /// For a package the configuration builds differently, the hash of how it was built then.
-    #[serde(default)]
-    pub build: Option<String>,
-}
-
 impl Lock {
     pub fn parse(text: &str) -> Result<Self, String> {
         let file: File = toml::from_str(text).map_err(|e| e.message().to_owned())?;
-        if file.version != FORMAT {
-            return Err(format!(
-                "lock format version {} isn't supported, only {FORMAT}",
-                file.version
-            ));
+        match (file.version, file.packages) {
+            (FORMAT, None) | (FORMAT_WITH_PACKAGES, _) => Ok(Self {
+                sources: file.sources,
+            }),
+            (FORMAT, Some(_)) => Err("unknown field `packages`".into()),
+            (other, _) => Err(format!(
+                "lock format version {other} isn't supported, only {FORMAT}"
+            )),
         }
-        Ok(Self {
-            sources: file.sources,
-            packages: file.packages,
-        })
     }
 
-    /// The lock file's text, one package per line.
+    /// The lock file's text, one source per table.
     pub fn to_toml(&self) -> String {
         let mut out = String::from(
-            "# The packages this configuration uses, written by `distro lock` and moved to newer\n\
-             # versions of their sources by `distro update`.\n",
+            "# The versions of the sources this configuration uses, written by `distro lock` and\n\
+             # moved to newer ones by `distro update`.\n",
         );
         // Writing to a String cannot fail.
         let _ = writeln!(out, "version = {FORMAT}");
@@ -108,20 +98,6 @@ impl Lock {
             if let Some(date) = &source.date {
                 let _ = writeln!(out, "date = {}", quote(date));
             }
-        }
-        out.push_str("\n[packages]\n");
-        for (name, locked) in &self.packages {
-            let build = match &locked.build {
-                Some(build) => format!(", build = {}", quote(build)),
-                None => String::new(),
-            };
-            let _ = writeln!(
-                out,
-                "{} = {{ version = {}, id = {}{build} }}",
-                key(name),
-                quote(&locked.version),
-                quote(&locked.id)
-            );
         }
         out
     }
@@ -143,98 +119,78 @@ fn key(name: &str) -> String {
 mod tests {
     use super::*;
 
-    fn locked(version: &str, id: &str) -> Locked {
-        Locked {
-            version: version.into(),
-            id: id.into(),
-            build: None,
-        }
-    }
-
     fn lock() -> Lock {
         Lock {
             sources: BTreeMap::from([
                 (
-                    "nixpkgs".to_owned(),
+                    "distro".to_owned(),
                     Source {
-                        url: "github:NixOS/nixpkgs/nixos-unstable".into(),
+                        url: "github:johnae/distro".into(),
                         rev: Some("1d06008".into()),
                         hash: "sha256-abc".into(),
                         date: Some("2026-10-30".into()),
                     },
                 ),
                 (
-                    "stable".to_owned(),
+                    "acme".to_owned(),
                     Source {
-                        url: "github:NixOS/nixpkgs/nixos-25.11".into(),
-                        rev: Some("9f2c1aa".into()),
+                        url: "https://example.org/acme.tar.gz".into(),
+                        rev: None,
                         hash: "sha256-def".into(),
                         date: None,
                     },
-                ),
-            ]),
-            packages: BTreeMap::from([
-                (
-                    "git".to_owned(),
-                    locked("2.51.0", "/nix/store/aaa-git-2.51.0"),
-                ),
-                (
-                    "python3Packages.rich".to_owned(),
-                    locked("14.0", "/nix/store/bbb-rich"),
-                ),
-                (
-                    "stable#git".to_owned(),
-                    locked("2.50.1", "/nix/store/ccc-git-2.50.1"),
                 ),
             ]),
         }
     }
 
     #[test]
-    fn locks_are_written_one_source_and_package_per_entry_and_read_back() {
+    fn locks_are_written_one_source_per_table_and_read_back() {
         let text = lock().to_toml();
 
         insta::assert_snapshot!(text, @r#"
-        # The packages this configuration uses, written by `distro lock` and moved to newer
-        # versions of their sources by `distro update`.
-        version = 2
+        # The versions of the sources this configuration uses, written by `distro lock` and
+        # moved to newer ones by `distro update`.
+        version = 3
 
-        [sources.nixpkgs]
-        url = "github:NixOS/nixpkgs/nixos-unstable"
+        [sources.acme]
+        url = "https://example.org/acme.tar.gz"
+        hash = "sha256-def"
+
+        [sources.distro]
+        url = "github:johnae/distro"
         rev = "1d06008"
         hash = "sha256-abc"
         date = "2026-10-30"
-
-        [sources.stable]
-        url = "github:NixOS/nixpkgs/nixos-25.11"
-        rev = "9f2c1aa"
-        hash = "sha256-def"
-
-        [packages]
-        git = { version = "2.51.0", id = "/nix/store/aaa-git-2.51.0" }
-        "python3Packages.rich" = { version = "14.0", id = "/nix/store/bbb-rich" }
-        "stable#git" = { version = "2.50.1", id = "/nix/store/ccc-git-2.50.1" }
         "#);
         assert_eq!(Lock::parse(&text).unwrap(), lock());
     }
 
     #[test]
-    fn locks_of_another_format_or_shape_are_refused() {
-        let other = lock().to_toml().replace("version = 2", "version = 3");
-        assert_eq!(
-            Lock::parse(&other).unwrap_err(),
-            "lock format version 3 isn't supported, only 2"
-        );
-        let typo = lock().to_toml().replace("hash =", "hsah =");
-        assert!(Lock::parse(&typo).unwrap_err().contains("hsah"));
+    fn an_older_lock_reads_without_its_packages() {
+        let old = "version = 2\n\n[sources.distro]\nurl = \"github:johnae/distro\"\n\
+                   hash = \"sha256-abc\"\n\n[packages]\n\
+                   git = { version = \"2.51.0\", id = \"/x/aaa-git\" }\n";
+        let lock = Lock::parse(old).unwrap();
+        assert_eq!(lock.sources["distro"].hash, "sha256-abc");
     }
 
     #[test]
-    fn package_names_say_their_source_or_come_from_nixpkgs() {
-        assert_eq!(package_source("stable#git"), ("stable", "git"));
+    fn locks_of_another_format_or_shape_are_refused() {
+        let other = lock().to_toml().replace("version = 3", "version = 4");
         assert_eq!(
-            package_source("python3Packages.rich"),
-            ("nixpkgs", "python3Packages.rich")
+            Lock::parse(&other).unwrap_err(),
+            "lock format version 4 isn't supported, only 3"
         );
+        let typo = lock().to_toml().replace("hash =", "hsah =");
+        assert!(Lock::parse(&typo).unwrap_err().contains("hsah"));
+        let packages = format!("{}\n[packages]\n", lock().to_toml());
+        assert!(Lock::parse(&packages).unwrap_err().contains("packages"));
+    }
+
+    #[test]
+    fn package_names_say_their_source_or_come_from_distro() {
+        assert_eq!(package_source("acme#git"), ("acme", "git"));
+        assert_eq!(package_source("git"), ("distro", "git"));
     }
 }

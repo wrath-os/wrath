@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
 
-use crate::{Build, File, Home, Locked, Model, Secret, Source, VERSION};
+use crate::{Build, File, Home, Model, Secret, Source, VERSION};
 
 impl Model {
     /// The model in `json`, written by [`Model::canonical`] by this version of the format.
@@ -42,7 +42,6 @@ impl Model {
             secrets: read_secrets(field("secrets")?)?,
             homes,
             sources: read_sources(field("sources")?)?,
-            locked: read_locked(field("locked")?)?,
             templates: read_templates(field("templates")?)?,
             next_login: strings(field("next_login")?)?,
             service_packages: strings(field("service_packages")?)?,
@@ -298,16 +297,6 @@ fn read_sources(value: &Value) -> Result<BTreeMap<String, Source>, String> {
             rev: optional_string(fields, "rev", name)?,
             hash: string_at(fields, "hash", name)?,
             date: optional_string(fields, "date", name)?,
-        })
-    })
-}
-
-fn read_locked(value: &Value) -> Result<BTreeMap<String, Locked>, String> {
-    read_tables(value, "locked", |fields, name| {
-        Ok(Locked {
-            version: string_at(fields, "version", name)?,
-            id: string_at(fields, "id", name)?,
-            build: optional_string(fields, "build", name)?,
         })
     })
 }

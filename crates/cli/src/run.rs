@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use distro_backend::Target;
-use distro_model::{DEFAULT_SOURCE, Model, Source, package_source};
+use distro_model::{DISTRO_SOURCE, Model, Source, package_source};
 use serde_json::Value;
 
 use crate::{generations, project};
@@ -316,8 +316,8 @@ pub(crate) fn no_such_source<'a>(
     declared: impl Iterator<Item = &'a str>,
 ) -> String {
     let mut known: Vec<&str> = declared.collect();
-    if !known.contains(&DEFAULT_SOURCE) {
-        known.insert(0, DEFAULT_SOURCE);
+    if !known.contains(&DISTRO_SOURCE) {
+        known.insert(0, DISTRO_SOURCE);
     }
     format!(
         "there's no source `{source}`; the configuration has {}, or give a URL such as \
@@ -368,7 +368,7 @@ mod tests {
         let mut model = with_stable();
         assert_eq!(
             package_name(&mut model, "stabel#jq").unwrap_err(),
-            "there's no source `stabel`; the configuration has nixpkgs, stable, or give a URL \
+            "there's no source `stabel`; the configuration has distro, stable, or give a URL \
              such as `github:NixOS/nixpkgs/nixos-25.11#jq`"
         );
         assert!(
@@ -395,7 +395,7 @@ mod tests {
     fn what_was_picked_says_where_it_came_from() {
         let mut model = with_stable();
         model.sources.insert(
-            "nixpkgs".into(),
+            "distro".into(),
             Source {
                 url: "github:NixOS/nixpkgs/nixos-unstable".into(),
                 rev: Some("1d060086d60c".into()),
@@ -406,7 +406,7 @@ mod tests {
         let described: Value = serde_json::json!({
             "packages": { "jq": { "version": "1.8.1", "program": "jq" } },
             "sources": {
-                "nixpkgs": { "rev": "1d060086d60c", "date": "2026-10-30" },
+                "distro": { "rev": "1d060086d60c", "date": "2026-10-30" },
                 "stable": { "rev": "b6018f87da91" },
             },
         });
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(jq.program, "jq");
         assert_eq!(
             describe(&model, &described, "jq", &jq),
-            "jq 1.8.1 from nixpkgs (1d06008, 2026-10-30, locked)"
+            "jq 1.8.1 from distro (1d06008, 2026-10-30, locked)"
         );
         assert_eq!(
             describe(&model, &described, "stable#jq", &jq),
@@ -422,7 +422,7 @@ mod tests {
         );
         assert_eq!(
             describe(&Model::default(), &described, "jq", &jq),
-            "jq 1.8.1 from nixpkgs (1d06008, 2026-10-30, the factory's)"
+            "jq 1.8.1 from distro (1d06008, 2026-10-30, the factory's)"
         );
         assert_eq!(picked(&described, "rg"), None);
     }

@@ -153,8 +153,8 @@ fn basic_with_lock(lock: &str) -> tempfile::TempDir {
 
 const LOCK: &str = r#"version = 2
 
-[sources.nixpkgs]
-url = "github:NixOS/nixpkgs/nixos-unstable"
+[sources.distro]
+url = "github:johnae/distro"
 rev = "1d06008aaaaaaaaaaaa"
 hash = "sha256-abc"
 
@@ -177,11 +177,9 @@ fn plan_shows_what_the_lock_pins() {
     let body = plan.split_once('\n').unwrap().1;
     insta::assert_snapshot!(body, @"
     packages
-      + source nixpkgs (tier: live)
-          github:NixOS/nixpkgs/nixos-unstable at 1d06008aaaaa
-      ~ nginx (tier: live)
-          locked at 1.29.1
-    2 changes, tier: live
+      + source distro (tier: live)
+          github:johnae/distro at 1d06008aaaaa
+    1 change, tier: live
     ");
 }
 
@@ -280,7 +278,7 @@ fn run_refuses_sources_the_configuration_doesnt_have_before_building() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("there's no source `stabel`; the configuration has nixpkgs"),
+        stderr.contains("there's no source `stabel`; the configuration has distro"),
         "{stderr}"
     );
 }

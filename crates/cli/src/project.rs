@@ -1,11 +1,11 @@
 //! Projects: finding the one a command runs in, and what its shell sets on top of the home.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use distro_eval::{ConfigFs, DirFs, Value};
-use distro_model::{DEFAULT_SOURCE, DISTRO_SOURCE, Lock, Model};
+use distro_model::{DISTRO_SOURCE, Lock, Model};
 
 const PROJECT: &str = "distro.toml";
 const PROJECT_LOCAL: &str = "distro.local.toml";
@@ -175,27 +175,14 @@ pub fn has_local(dir: &Path) -> bool {
     dir.join(PROJECT_LOCAL).is_file()
 }
 
-/// Splits `lock` into what `shared`, the project without its local file, uses, and the rest,
-/// which only the local file adds.
+/// Splits `lock` into the sources `shared`, the project without its local file, uses, and the
+/// rest, which only the local file adds.
 pub fn split_lock(lock: Lock, shared: &Model) -> (Lock, Lock) {
-    let packages: BTreeSet<&str> = shared.all_packages().collect();
-    let (ours, local) = lock
-        .packages
+    let (sources, local) = lock
+        .sources
         .into_iter()
-        .partition(|(name, _)| packages.contains(name.as_str()));
-    let (sources, local_sources) = lock.sources.into_iter().partition(|(name, _)| {
-        shared.sources.contains_key(name) || name == DEFAULT_SOURCE || name == DISTRO_SOURCE
-    });
-    (
-        Lock {
-            sources,
-            packages: ours,
-        },
-        Lock {
-            sources: local_sources,
-            packages: local,
-        },
-    )
+        .partition(|(name, _)| shared.sources.contains_key(name) || name == DISTRO_SOURCE);
+    (Lock { sources }, Lock { sources: local })
 }
 
 /// process-compose's configuration for the project's services in `model`, which `distro up`
@@ -405,18 +392,11 @@ mod tests {
 
     #[test]
     fn what_only_the_local_file_adds_is_locked_apart() {
-        let locked = |version: &str| distro_model::Locked {
-            version: version.into(),
-            id: format!("/nix/store/{version}"),
-            build: None,
-        };
         let mut lock = Lock::default();
-        for name in ["nixpkgs", "acme", "mine"] {
+        for name in ["distro", "acme", "mine"] {
             lock.sources
                 .insert(name.into(), distro_model::Source::follow(name));
         }
-        lock.packages.insert("jq".into(), locked("1.8"));
-        lock.packages.insert("bacon".into(), locked("3.0"));
         let mut shared = Model::default();
         shared.packages.insert("jq".into());
         shared
@@ -424,9 +404,7 @@ mod tests {
             .insert("acme".into(), distro_model::Source::follow("acme"));
 
         let (ours, local) = split_lock(lock, &shared);
-        assert_eq!(ours.packages.keys().collect::<Vec<_>>(), ["jq"]);
-        assert_eq!(ours.sources.keys().collect::<Vec<_>>(), ["acme", "nixpkgs"]);
-        assert_eq!(local.packages.keys().collect::<Vec<_>>(), ["bacon"]);
+        assert_eq!(ours.sources.keys().collect::<Vec<_>>(), ["acme", "distro"]);
         assert_eq!(local.sources.keys().collect::<Vec<_>>(), ["mine"]);
     }
 

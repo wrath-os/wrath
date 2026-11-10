@@ -1,11 +1,11 @@
 //! Building systems and moving between generations.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use distro_backend::{self as backend, Target};
-use distro_model::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
+use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
 
 use crate::switching::{self as here, Generation};
 
@@ -235,17 +235,48 @@ pub fn apply(
     Ok(code)
 }
 
-/// `model` with its packages locked: locks what the lock next to `config` doesn't have yet, so
-/// the lock always describes what runs.
+/// `model` with its sources pinned: pins what the lock next to `config` doesn't have yet, so the
+/// lock always describes what runs.
 pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, String> {
     if model.is_locked() {
         crate::fetch::record(config)?;
         return Ok(model);
     }
-    let mut lock = resolve(root, &model)?;
-    lock.sources.extend(crate::fetch::fetched());
+    let distro = crate::pinned::for_lock(
+        crate::pinned::running(root),
+        model.sources.get(DISTRO_SOURCE),
+        false,
+    );
+    let mut lock = Lock {
+        sources: pins(&model)?,
+    };
+    lock.sources
+        .extend(distro.map(|d| (DISTRO_SOURCE.to_owned(), d)));
     write_lock(config, &lock)?;
     Ok(model.with_lock(&lock))
+}
+
+/// The pin of each source `model` names besides distro: the version files were read from, the one
+/// it has, or the newest for a source nothing was read from yet.
+fn pins(model: &Model) -> Result<BTreeMap<String, Source>, String> {
+    let fetched = crate::fetch::fetched();
+    model
+        .sources
+        .iter()
+        .filter(|(name, _)| name.as_str() != DISTRO_SOURCE)
+        .map(|(name, source)| {
+            let pinned = match fetched.get(name) {
+                Some(read) => read.clone(),
+                None if source.is_locked() => source.clone(),
+                None => {
+                    crate::trees::follow(&source.url)
+                        .map_err(|message| format!("source `{name}`: {message}"))?
+                        .0
+                }
+            };
+            Ok((name.clone(), pinned))
+        })
+        .collect()
 }
 
 /// Whether to go ahead after showing the plan: yes with `-y`, else the person at the terminal
@@ -299,24 +330,20 @@ fn full_effect(tier: Tier) -> Option<&'static str> {
 }
 
 /// `status` as data: the running generation, whether a system is being tried, the running and
-/// configured models' hashes, and how many packages aren't locked yet.
+/// configured models' hashes, and whether the lock pins every source.
 pub fn status_json(model: &Model) -> serde_json::Value {
     let current = here::history()
         .ok()
         .and_then(|generations| generations.into_iter().find(|g| g.current));
     let running = backend::current_model_hash();
     let hash = model.hash();
-    let unlocked = model
-        .all_packages()
-        .filter(|name| !model.locked.contains_key(*name))
-        .count();
     serde_json::json!({
         "generation": current.map(|g| g.number),
         "trying": here::trying(),
         "matches": running.as_deref() == Some(hash.as_str()),
         "running": running,
         "model": hash,
-        "unlocked": unlocked,
+        "locked": model.is_locked(),
     })
 }
 
@@ -362,12 +389,8 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
         "{}",
         matching(backend::current_model_hash().as_deref(), model)
     );
-    let unlocked = model
-        .all_packages()
-        .filter(|name| !model.locked.contains_key(*name))
-        .count();
-    if unlocked > 0 {
-        println!("{unlocked} packages aren't locked yet; `distro apply` locks them first");
+    if !model.is_locked() {
+        println!("the lock doesn't pin every source yet; `distro apply` pins them first");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -564,12 +587,12 @@ pub fn rollback() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Resolves the packages of every role in `models` and writes the one lock next to `config`,
-/// then prints how each role's packages changed. The first role pins the sources and the others
-/// keep those pins, so every role runs the same software. With `update`, those sources move to
-/// their newest version first, or every source when it names none. A configuration of one
-/// machine has a single role, `None`. A project with a local file passes `shared`, the project
-/// without it: what that uses goes in `distro.lock`, and the rest in `distro.local.lock`.
+/// Pins the sources of every role in `models` and writes the one lock next to `config`, then
+/// prints how each role changed. The first role pins the sources and the others keep those pins,
+/// so every role runs the same software. With `update`, those sources move to their newest
+/// version first, or every source when it names none. A configuration of one machine has a
+/// single role, `None`. A project with a local file passes `shared`, the project without it:
+/// what that uses goes in `distro.lock`, and the rest in `distro.local.lock`.
 pub fn lock(
     root: &Path,
     config: &Path,
@@ -588,27 +611,12 @@ pub fn lock(
         Some(names) => follow_newest(models, names)?,
         None => models.to_vec(),
     };
-    let mut lock: Option<Lock> = None;
+    let mut lock = Lock::default();
     for (_, model) in &models {
-        let wanted = match &lock {
-            Some(lock) => model.clone().with_lock(lock),
-            None => model.clone(),
-        };
-        let resolved = resolve(root, &wanted)?;
-        match &mut lock {
-            Some(lock) => {
-                lock.sources.extend(resolved.sources);
-                lock.packages.extend(resolved.packages);
-            }
-            None => lock = Some(resolved),
-        }
+        lock.sources.extend(pins(&model.clone().with_lock(&lock))?);
     }
-    let mut lock = lock.ok_or("there's nothing to lock")?;
-    // Files were read from these versions, whatever resolving found since.
-    lock.sources.extend(crate::fetch::fetched());
-    if let Some(distro) = distro {
-        lock.sources.insert(DISTRO_SOURCE.to_owned(), distro);
-    }
+    lock.sources
+        .extend(distro.map(|d| (DISTRO_SOURCE.to_owned(), d)));
     match shared {
         Some(shared) => {
             let (ours, local) = crate::project::split_lock(lock.clone(), shared);
@@ -617,10 +625,11 @@ pub fn lock(
         }
         None => write_lock(config, &lock)?,
     }
-    let count = lock.packages.len();
-    let noun = if count == 1 { "package" } else { "packages" };
     let sources: Vec<&str> = lock.sources.keys().map(String::as_str).collect();
-    println!("locked {count} {noun} from {}", sources.join(", "));
+    match sources.as_slice() {
+        [] => println!("there's nothing to pin: distro is a development build"),
+        _ => println!("pinned {}", sources.join(", ")),
+    }
     for (role, model) in &models {
         let plan = distro_model::plan(model, &model.clone().with_lock(&lock));
         if plan.is_empty() {
@@ -634,19 +643,13 @@ pub fn lock(
     Ok(ExitCode::SUCCESS)
 }
 
-/// The models with the sources `names` unpinned, or all of them when it names none, so resolving
+/// The models with the sources `names` unpinned, or all of them when it names none, so locking
 /// takes their newest versions. A name has to be a source of at least one of them.
 fn follow_newest(
     models: &[(Option<String>, Model)],
     names: &[String],
 ) -> Result<Vec<(Option<String>, Model)>, String> {
     let mut models = models.to_vec();
-    for (_, model) in &mut models {
-        model
-            .sources
-            .entry(DEFAULT_SOURCE.to_owned())
-            .or_insert_with(|| Source::follow(DEFAULT_URL));
-    }
     let known: BTreeSet<&str> = models
         .iter()
         .flat_map(|(_, model)| model.sources.keys().map(String::as_str))
@@ -667,14 +670,6 @@ fn follow_newest(
         }
     }
     Ok(models)
-}
-
-/// What the default source follows when nothing says otherwise. The factory pins it.
-const DEFAULT_URL: &str = "github:NixOS/nixpkgs/nixos-unstable";
-
-fn resolve(root: &Path, model: &Model) -> Result<Lock, String> {
-    let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
-    backend::resolve(model, &factory(root)?, work.path())
 }
 
 pub(crate) fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
@@ -719,10 +714,10 @@ fn sources_table(model: &Model, today: i64) -> String {
         .iter()
         .map(|(name, source)| [name.clone(), source.url.clone(), pin(source, today)])
         .collect();
-    if !model.sources.contains_key(DEFAULT_SOURCE) {
+    if !model.sources.contains_key(DISTRO_SOURCE) {
         let factory = [
-            DEFAULT_SOURCE.to_owned(),
-            "the factory's".to_owned(),
+            DISTRO_SOURCE.to_owned(),
+            "the running distro's".to_owned(),
             String::new(),
         ];
         rows.insert(0, factory);
@@ -914,9 +909,9 @@ mod tests {
             .insert("jq".into(), Source::follow("github:jqlang/jq"));
 
         insta::assert_snapshot!(sources_table(&model, today), @"
-        nixpkgs  the factory's
-        jq       github:jqlang/jq                  not locked yet
-        stable   github:NixOS/nixpkgs/nixos-25.11  b6018f8, 2026-10-30, 7 days old
+        distro  the running distro's
+        jq      github:jqlang/jq                  not locked yet
+        stable  github:NixOS/nixpkgs/nixos-25.11  b6018f8, 2026-10-30, 7 days old
         ");
     }
 
@@ -970,7 +965,7 @@ mod tests {
             date: None,
         };
         let mut model = Model::default();
-        model.sources.insert("nixpkgs".into(), pinned("github:a/b"));
+        model.sources.insert("acme".into(), pinned("github:a/b"));
         model.sources.insert("stable".into(), pinned("github:c/d"));
 
         let mut other = Model::default();
@@ -979,7 +974,7 @@ mod tests {
         let follow = |names: &[String]| follow_newest(&models, names);
 
         let one = follow(&["stable".into()]).unwrap();
-        assert!(one[0].1.sources["nixpkgs"].is_locked());
+        assert!(one[0].1.sources["acme"].is_locked());
         assert_eq!(one[0].1.sources["stable"], Source::follow("github:c/d"));
         assert!(one[1].1.sources["edge"].is_locked());
 
@@ -993,11 +988,8 @@ mod tests {
         let unknown = follow(&["stabel".into()]).unwrap_err();
         assert_eq!(
             unknown,
-            "there's no source `stabel`; the configuration has distro, edge, nixpkgs, stable"
+            "there's no source `stabel`; the configuration has acme, distro, edge, stable"
         );
-
-        let fresh = follow_newest(&[(None, Model::default())], &[]).unwrap();
-        assert_eq!(fresh[0].1.sources["nixpkgs"], Source::follow(DEFAULT_URL));
     }
 
     #[test]

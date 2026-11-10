@@ -14,7 +14,7 @@ use crate::fs::ConfigFs;
 use crate::load::{self, ConfigKind, DeclaredSource};
 use crate::machines::{self, Machine};
 use crate::module::{
-    ConfigReader, DEFAULT_SOURCE, HOME_SECRETS_DIR, Module, ModuleId, Output, ReadError,
+    ConfigReader, DISTRO_SOURCE, HOME_SECRETS_DIR, Module, ModuleId, Output, ReadError,
     RenderError, SECRETS_DIR, Setting, UnitAction, home_path, package_source,
 };
 use crate::ordered::{self, OrderError};
@@ -538,7 +538,7 @@ fn unknown_sources(
     let declared: BTreeSet<&str> = sources
         .keys()
         .map(String::as_str)
-        .chain([DEFAULT_SOURCE])
+        .chain([DISTRO_SOURCE])
         .collect();
     let mut diagnostics = Vec::new();
     for module in rendered {

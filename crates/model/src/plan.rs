@@ -5,7 +5,7 @@ use std::fmt;
 
 use distro_eval::{Template, Unit, UnitAction, Value, Wrapper, home_path};
 
-use crate::{DEFAULT_SOURCE, File, Locked, Model, Secret, Source};
+use crate::{DISTRO_SOURCE, File, Model, Secret, Source};
 
 /// How much applying a change disrupts the running system, least first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -306,7 +306,6 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     let activation = Activation::from_changes(&units, after, &files);
     units.extend(triggered(after, &files));
     units.sort_by(|a, b| a.name.cmp(&b.name));
-    let locking = after.sources.values().any(Source::is_locked);
     Plan {
         options: diff(&before.options, &after.options, |before, after| {
             (vec![value_change(before, after)], None)
@@ -318,11 +317,8 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
                 ..change
             })
             .chain(builds(before, after))
-            .chain(diff(&packages(before), &packages(after), |old, new| {
-                (
-                    package_details(old.copied(), new.copied(), locking),
-                    Some(Tier::Live),
-                )
+            .chain(diff(&packages(before), &packages(after), |_, _| {
+                (Vec::new(), Some(Tier::Live))
             }))
             .collect(),
         files,
@@ -435,40 +431,20 @@ fn value_change(before: Option<&Value>, after: Option<&Value>) -> String {
     }
 }
 
-/// The system's packages, and each user's as `name (for user)`, with what the lock says.
-fn packages(model: &Model) -> BTreeMap<String, Option<&Locked>> {
+/// The system's packages, and each user's as `name (for user)`.
+fn packages(model: &Model) -> BTreeMap<String, ()> {
     let users = model.homes.iter().flat_map(|(user, home)| {
         home.packages
             .iter()
-            .map(move |package| (package, format!("{package} (for {user})")))
+            .map(move |package| format!("{package} (for {user})"))
     });
     model
         .packages
         .iter()
-        .map(|package| (package, package.clone()))
+        .cloned()
         .chain(users)
-        .map(|(package, shown)| (shown, model.locked.get(package)))
+        .map(|shown| (shown, ()))
         .collect()
-}
-
-/// A package's version, how it changed, or that the configuration's lock doesn't have it yet.
-fn package_details(
-    before: Option<Option<&Locked>>,
-    after: Option<Option<&Locked>>,
-    has_lock: bool,
-) -> Vec<String> {
-    let line = match (before, after) {
-        (_, None) => return Vec::new(),
-        (_, Some(None)) if has_lock => "not locked yet".to_owned(),
-        (_, Some(None)) => return Vec::new(),
-        (Some(Some(old)), Some(Some(new))) if old.version != new.version => {
-            format!("{} -> {}", old.version, new.version)
-        }
-        (Some(Some(_)), Some(Some(new))) => format!("rebuilt, still {}", new.version),
-        (Some(None), Some(Some(new))) => format!("locked at {}", new.version),
-        (None, Some(Some(new))) => new.version.clone(),
-    };
-    vec![line]
 }
 
 /// How a file with secrets in it changed, or who owns a new one.
@@ -556,7 +532,7 @@ fn source_change(
     let moved = before
         .zip(after)
         .is_some_and(|(old, new)| old.is_locked() && new.is_locked());
-    if moved && name == DEFAULT_SOURCE {
+    if moved && name == DISTRO_SOURCE {
         let reboot = "the base system, such as systemd and D-Bus, runs fully after a soft reboot";
         (vec![detail, reboot.to_owned()], Some(Tier::SoftReboot))
     } else {

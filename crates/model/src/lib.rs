@@ -14,11 +14,11 @@ use distro_eval::{
     Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper, formats,
 };
 
-pub use lock::{DEFAULT_SOURCE, DISTRO_SOURCE, LOCK_FILE, Lock, Locked, Source, package_source};
+pub use lock::{DISTRO_SOURCE, LOCK_FILE, Lock, Source, package_source};
 pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan};
 
 /// The version of the model format, part of the hash.
-pub const VERSION: i64 = 13;
+pub const VERSION: i64 = 14;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -40,8 +40,6 @@ pub struct Model {
     pub homes: BTreeMap<String, Home>,
     /// Where packages come from, by name. A source the lock doesn't pin has no hash.
     pub sources: BTreeMap<String, Source>,
-    /// The packages, the system's and users', that the lock has resolved.
-    pub locked: BTreeMap<String, Locked>,
     /// Files with secrets in them, by path, filled in on the machine.
     pub templates: BTreeMap<String, Template>,
     /// Files only read when a user logs in, by path as plans show them.
@@ -245,43 +243,26 @@ impl Model {
         model
     }
 
-    /// The model with what `lock` says about its sources and packages. A source the
-    /// configuration names gets the lock's pin while its URL is the one locked; a different URL
-    /// stays unpinned until it's locked again. The default source the configuration doesn't name
-    /// is the backend's, so it keeps the lock's pin. Packages are locked while their source is,
-    /// and the ones the model doesn't use are left out.
+    /// The model with the sources `lock` pins. A source the configuration names gets the lock's
+    /// pin while its URL is the one locked; a different URL stays unpinned until it's locked
+    /// again. Distro's own source, which the configuration needn't name, keeps the lock's pin.
     pub fn with_lock(mut self, lock: &Lock) -> Self {
         for (name, locked) in &lock.sources {
             match self.sources.get_mut(name) {
                 Some(source) if source.url == locked.url => *source = locked.clone(),
-                None if name == DEFAULT_SOURCE || name == DISTRO_SOURCE => {
+                None if name == DISTRO_SOURCE => {
                     self.sources.insert(name.clone(), locked.clone());
                 }
                 _ => {}
             }
         }
-        self.locked = self
-            .all_packages()
-            .filter(|name| {
-                let (source, _) = package_source(name);
-                self.sources.get(source).is_some_and(Source::is_locked)
-            })
-            .filter_map(|name| {
-                let locked = lock.packages.get(name)?;
-                let current = locked.build == self.builds.get(name).map(Build::hash);
-                current.then(|| (name.to_owned(), locked.clone()))
-            })
-            .collect();
         self
     }
 
-    /// Whether every source is pinned and every package locked, so nothing needs resolving.
+    /// Whether distro and every source the configuration names are pinned, so nothing needs
+    /// fetching.
     pub fn is_locked(&self) -> bool {
-        self.sources.contains_key(DEFAULT_SOURCE)
-            && self.sources.values().all(Source::is_locked)
-            && self
-                .all_packages()
-                .all(|name| self.locked.contains_key(name))
+        self.sources.contains_key(DISTRO_SOURCE) && self.sources.values().all(Source::is_locked)
     }
 
     /// The system's and every user's packages, each once.
@@ -372,20 +353,6 @@ impl Model {
                 },
             )
             .collect();
-        let locked = self
-            .locked
-            .iter()
-            .map(|(name, locked)| {
-                let mut entry = BTreeMap::from([
-                    ("version".to_owned(), Value::Str(locked.version.clone())),
-                    ("id".to_owned(), Value::Str(locked.id.clone())),
-                ]);
-                if let Some(build) = &locked.build {
-                    entry.insert("build".to_owned(), Value::Str(build.clone()));
-                }
-                (name.clone(), Value::Table(entry))
-            })
-            .collect();
         let next_login = self.next_login.iter().cloned().map(Value::Str).collect();
         let service_packages = self
             .service_packages
@@ -396,7 +363,6 @@ impl Model {
         table([
             ("version", Value::Int(VERSION)),
             ("sources", Value::Table(sources)),
-            ("locked", Value::Table(locked)),
             ("templates", templates_value(&self.templates)),
             ("next_login", Value::List(next_login)),
             ("service_packages", Value::List(service_packages)),
