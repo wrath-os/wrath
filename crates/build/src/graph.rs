@@ -736,10 +736,15 @@ fn lower<'a>(
             services.push(name);
         }
     }
-    let dbus_services: String = services
-        .iter()
-        .map(|id| format!("<servicedir>@{id}@/share/dbus-1/system-services</servicedir>"))
-        .collect();
+    // The buses' service directories, system and session, of every service package.
+    let service_dirs = |dir: &str| -> String {
+        services
+            .iter()
+            .map(|id| format!("<servicedir>@{id}@/share/dbus-1/{dir}</servicedir>"))
+            .collect()
+    };
+    let (system_services, session_services) =
+        (service_dirs("system-services"), service_dirs("services"));
     let hostname = str_field(&model["base"]["system"]["hostname"], "hostname")?;
     let (passwd, group, shadow) = account_files(model)?;
     let mut actions = vec![
@@ -774,7 +779,15 @@ fn lower<'a>(
             base,
             "etc/dbus-1/system.d/services.conf",
             0o644,
-            format!("<busconfig>{dbus_services}</busconfig>\n"),
+            format!("<busconfig>{system_services}</busconfig>\n"),
+            &services,
+            packages,
+        )?,
+        text(
+            base,
+            "etc/dbus-1/session.d/services.conf",
+            0o644,
+            format!("<busconfig>{session_services}</busconfig>\n"),
             &services,
             packages,
         )?,
@@ -2698,6 +2711,11 @@ mod tests {
         assert!(
             conf.contains(&format!("{web}/share/dbus-1/system-services")),
             "{conf}"
+        );
+        let session = fs::read_to_string(root.join("etc/dbus-1/session.d/services.conf")).unwrap();
+        assert!(
+            session.contains(&format!("{web}/share/dbus-1/services")),
+            "{session}"
         );
     }
 
