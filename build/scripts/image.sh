@@ -29,8 +29,9 @@ fi
 mkdir -p "$root/store" "$root/system/generations"
 
 (cd .. && "$distro" -C "$configuration" dev model 2>/dev/null) > "$work/model.json"
-"$lab" graph "$arm" "$work/model.json" | tee "$work/graph.out" | grep -E '^(generation|skipped) '
-generation=$(awk '$1=="generation"{print $2}' "$work/graph.out")
+generation=$(cd .. && "$distro" -C "$configuration" build --target generation)
+generation=${generation##*/}
+echo "generation $generation"
 
 declare -A store
 while read -r kind one two; do

@@ -26,6 +26,7 @@ vsock = "0.5"
 
 distro-agent = { path = "crates/agent" }
 distro-backend = { path = "crates/backend" }
+distro-build = { path = "crates/build" }
 distro-check = { path = "crates/check" }
 distro-eval = { path = "crates/eval" }
 distro-model = { path = "crates/model" }

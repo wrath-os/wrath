@@ -451,7 +451,7 @@ fn lower<'a>(
     model: &'a Value,
     packages: &'a Packages,
 ) -> Result<Lowered<'a>, String> {
-    let (named, mut skipped) = model_packages(model, |id| packages.contains_key(id))?;
+    let (named, skipped) = model_packages(model, |id| packages.contains_key(id))?;
     let everything: Vec<&'a str> = {
         let mut all: BTreeSet<&'a str> = BASE_PACKAGES.iter().copied().collect();
         all.extend(named.iter().copied());
@@ -598,11 +598,14 @@ fn lower<'a>(
         actions.push(unit_action(lab, name, unit, named.clone(), packages)?);
     }
     actions.push(text("units", "restart-on", 0o644, restarts, &[], packages)?);
-    let (enabled, missing) = enabled_units(lab, model, &named, packages)?;
+    let (enabled, unfound) = enabled_units(lab, model, &named, packages)?;
     actions.push(enabled);
-    skipped.extend(missing);
     actions.push(boot_files(lab, packages)?);
-    Ok(Lowered { actions, skipped })
+    Ok(Lowered {
+        actions,
+        skipped,
+        unfound,
+    })
 }
 
 /// Links that pull in the model's enabled units: into each target it names, or into those its
@@ -689,10 +692,12 @@ fn installed_into(unit: &str) -> Vec<String> {
     targets
 }
 
-/// A model's actions, and the packages it names that no recipe builds.
+/// A model's actions, the packages it names that no recipe builds, and the units it enables that
+/// no package it has provides.
 struct Lowered<'a> {
     actions: Vec<Action<'a>>,
     skipped: Vec<String>,
+    unfound: Vec<String>,
 }
 
 /// nixpkgs names whose recipe goes by another name.
@@ -1140,6 +1145,68 @@ fn read_json(path: &Path) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
+/// The recipe files systems are built from, in `recipes/`.
+pub const SYSTEM_RECIPES: [&str; 5] = [
+    "pilot.toml",
+    "full.toml",
+    "boot.toml",
+    "e2e.toml",
+    "rust.toml",
+];
+
+/// A system built from a model.
+pub struct System {
+    pub generation: String,
+    /// The generation on the host.
+    pub path: PathBuf,
+    /// Packages the model names that have no recipe, so the system goes without them.
+    pub skipped: Vec<String>,
+    /// Units the model enables that no package the system has provides.
+    pub unfound: Vec<String>,
+    /// The apply recorded, when there were inputs to record.
+    pub apply: Option<i64>,
+    pub outcome: Outcome,
+}
+
+/// Lowers `model` with `packages` and realises it, and records an apply with `inputs`, what
+/// `distro dev apply-record` prints, when given.
+fn system_from(
+    lab: &Lab,
+    db: &mut Db,
+    packages: &Packages,
+    model: &Value,
+    inputs: Option<&Value>,
+) -> Result<System, String> {
+    let Lowered {
+        actions,
+        skipped,
+        unfound,
+    } = lower(lab, model, packages)?;
+    let outcome = realise(lab, db, actions)?;
+    let apply = match inputs {
+        Some(inputs) => Some(record_apply(lab, db, model, &outcome, inputs)?),
+        None => None,
+    };
+    Ok(System {
+        path: lab.on_host(&StorePath::from_hash(&outcome.generation)),
+        generation: outcome.generation.clone(),
+        skipped,
+        unfound,
+        apply,
+        outcome,
+    })
+}
+
+/// Builds the system `model` describes from the recipes in `repository`, which holds `recipes/`,
+/// the pins and the `work` directory with the store, building packages it doesn't have yet.
+pub fn system(repository: &Path, model: &Value, inputs: Option<&Value>) -> Result<System, String> {
+    let lab = Lab::new(repository.join("work"));
+    let (built, ..) = pilot::build_recipes(&lab, repository, &SYSTEM_RECIPES, Arm::F)?;
+    let mut db = Db::open(&db_path(&lab))?;
+    record_packages(&mut db, &built)?;
+    system_from(&lab, &mut db, &known_packages(&built), model, inputs)
+}
+
 /// Lowers `model` and realises it. Prints the generation and how long each part took.
 pub fn run(
     lab: &Lab,
@@ -1151,6 +1218,7 @@ pub fn run(
 ) -> Result<(), String> {
     let start = Instant::now();
     let model = read_json(model_path)?;
+    let inputs = inputs_path.map(read_json).transpose()?;
     let read = elapsed_ms(start);
 
     let start = Instant::now();
@@ -1164,27 +1232,29 @@ pub fn run(
     let records = elapsed_ms(start);
 
     let start = Instant::now();
-    let Lowered { actions, skipped } = lower(lab, &model, &packages)?;
-    let lowered = elapsed_ms(start);
+    let system = system_from(lab, &mut db, &packages, &model, inputs.as_ref())?;
+    let realised = elapsed_ms(start);
+    let skipped: Vec<&str> = system
+        .skipped
+        .iter()
+        .chain(&system.unfound)
+        .map(String::as_str)
+        .collect();
     if !skipped.is_empty() {
         println!("skipped {}", skipped.join(" "));
     }
-    let start = Instant::now();
-    let outcome = realise(lab, &mut db, actions)?;
-    let realised = elapsed_ms(start);
-
-    println!("generation {}", outcome.generation);
-    if let Some(path) = inputs_path {
-        let seq = record_apply(lab, &db, &model, &outcome, &read_json(path)?)?;
+    println!("generation {}", system.generation);
+    if let Some(seq) = system.apply {
         println!("apply {seq}");
     }
+    let outcome = &system.outcome;
     println!(
         "actions {} ran {} files {} new {}",
         outcome.actions, outcome.ran, outcome.files, outcome.materialized
     );
     println!(
-        "ms read {read:.1} packages {resolve:.1} records {records:.1} lower {lowered:.1} \
-         realise {realised:.1}"
+        "ms read {read:.1} packages {resolve:.1} records {records:.1} lower and realise \
+         {realised:.1}"
     );
     Ok(())
 }
@@ -1493,6 +1563,30 @@ mod tests {
     }
 
     #[test]
+    fn a_system_is_its_generation_what_it_skipped_and_the_apply_it_recorded() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let mut model = model(80, false);
+        model["packages"] = json!(["web", "missing"]);
+
+        let built = system_from(&lab, &mut db, &packages, &model, None).unwrap();
+        assert_eq!(built.skipped, ["missing"]);
+        assert_eq!(built.apply, None);
+        assert_eq!(
+            built.path,
+            lab.on_host(&StorePath::from_hash(&built.generation))
+        );
+        assert!(built.path.join("etc/web.conf").exists());
+
+        let inputs = inputs("a.toml", 80);
+        let again = system_from(&lab, &mut db, &packages, &model, Some(&inputs)).unwrap();
+        assert_eq!(again.generation, built.generation);
+        assert_eq!(again.outcome.ran, 0);
+        let seq = again.apply.unwrap();
+        assert_eq!(row(&db, seq).3, built.generation);
+    }
+
+    #[test]
     fn enabled_units_go_into_the_targets_named_or_those_they_install_into() {
         let (_dir, lab, packages) = setup();
         let units = lab
@@ -1506,7 +1600,8 @@ mod tests {
         model["enabled"] =
             json!({"x.service": [], "y.target": ["multi-user.target"], "z.socket": []});
         let lowered = lower(&lab, &model, &packages).unwrap();
-        assert_eq!(lowered.skipped, ["z.socket"]);
+        assert!(lowered.skipped.is_empty(), "{:?}", lowered.skipped);
+        assert_eq!(lowered.unfound, ["z.socket"]);
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let outcome = realise(&lab, &mut db, lowered.actions).unwrap();
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));

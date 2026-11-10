@@ -364,15 +364,15 @@ fn main() -> ExitCode {
         Command::Keep => generations::keep(),
         Command::Build { target } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => {
-                let target = if is_home(&config) {
-                    backend::Target::Home
+                let path = if matches!(target, generations::BuildTarget::Generation) {
+                    generations::build_generation(root, &model)?
+                } else if is_home(&config) {
+                    generations::build(root, &model, backend::Target::Home)?
                 } else {
-                    target.into()
+                    generations::build(root, &model, target.try_into()?)?
                 };
-                generations::build(root, &model, target).map(|path| {
-                    println!("{}", path.display());
-                    ExitCode::SUCCESS
-                })
+                println!("{}", path.display());
+                Ok(ExitCode::SUCCESS)
             }
             None => Ok(ExitCode::FAILURE),
         }),
@@ -425,7 +425,7 @@ fn main() -> ExitCode {
                     target: &target,
                     wipe,
                     yes,
-                    system: system_target.into(),
+                    system: system_target.try_into()?,
                 },
             )
         }),

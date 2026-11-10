@@ -9,3 +9,4 @@ devenv.local.yaml
 *.pending-snap
 *.snap.new
 /build/work
+/build/results

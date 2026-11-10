@@ -17,24 +17,49 @@ pub enum BuildTarget {
     TestVm,
     /// The test system as `distro install` puts it on a VM's disk
     TestInstalledSystem,
+    /// The system as a generation from distro's own builder, which is replacing Nix
+    Generation,
 }
 
-impl From<BuildTarget> for Target {
-    fn from(target: BuildTarget) -> Self {
+impl TryFrom<BuildTarget> for Target {
+    type Error = String;
+
+    fn try_from(target: BuildTarget) -> Result<Self, String> {
         match target {
-            BuildTarget::System => Self::System,
-            BuildTarget::TestVmSystem => Self::TestVmSystem,
-            BuildTarget::TestVm => Self::TestVm,
-            BuildTarget::TestInstalledSystem => Self::TestInstalledSystem,
+            BuildTarget::System => Ok(Self::System),
+            BuildTarget::TestVmSystem => Ok(Self::TestVmSystem),
+            BuildTarget::TestVm => Ok(Self::TestVm),
+            BuildTarget::TestInstalledSystem => Ok(Self::TestInstalledSystem),
+            BuildTarget::Generation => {
+                Err("a generation is built by `distro build --target generation`".to_owned())
+            }
         }
     }
 }
 
+/// Builds `model` into a generation with distro's own builder, from the recipes in `build/` under
+/// `root`, and returns where it is. Packages without a recipe are left out, with a warning.
+pub fn build_generation(root: &Path, model: &Model) -> Result<PathBuf, String> {
+    let repository = root
+        .join("build")
+        .canonicalize()
+        .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
+    let model = serde_json::from_str(&model.canonical()).map_err(|e| e.to_string())?;
+    let system = distro_build::graph::system(&repository, &model, None)?;
+    for package in &system.skipped {
+        eprintln!("warning: there's no recipe for `{package}` yet, so the system goes without it");
+    }
+    for unit in &system.unfound {
+        eprintln!("warning: `{unit}` is enabled, but nothing the system has provides it yet");
+    }
+    Ok(system.path)
+}
+
 /// Builds `target` from `model` with the factory under `root` and returns its store path. The
 /// backend's warnings go to stderr.
-pub fn build(root: &Path, model: &Model, target: impl Into<Target>) -> Result<PathBuf, String> {
+pub fn build(root: &Path, model: &Model, target: Target) -> Result<PathBuf, String> {
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
-    let built = backend::build(model, &factory(root)?, target.into(), work.path())?;
+    let built = backend::build(model, &factory(root)?, target, work.path())?;
     for warning in &built.warnings {
         eprintln!("warning: {warning}");
     }
@@ -85,7 +110,7 @@ pub fn apply(
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     }
-    let system = build(root, &model, BuildTarget::System)?;
+    let system = build(root, &model, Target::System)?;
     if let Some(record) = record {
         record.write()?;
     }
@@ -663,6 +688,16 @@ fn factory(root: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_nix_targets_map_to_the_nix_backend() {
+        assert!(matches!(
+            Target::try_from(BuildTarget::System),
+            Ok(Target::System)
+        ));
+        let error = Target::try_from(BuildTarget::Generation).unwrap_err();
+        assert!(error.contains("--target generation"), "{error}");
+    }
 
     #[test]
     fn apply_says_when_a_change_takes_full_effect() {

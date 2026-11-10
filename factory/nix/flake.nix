@@ -22,6 +22,7 @@
         crates = [
           "agent"
           "backend"
+          "build"
           "check"
           "cli"
           "eval"
