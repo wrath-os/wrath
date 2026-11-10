@@ -15,7 +15,7 @@ use distro_eval::{
 };
 
 pub use lock::{DISTRO_SOURCE, LOCK_FILE, Lock, Source, package_source};
-pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan};
+pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan, rebuilt};
 
 /// The version of the model format, part of the hash.
 pub const VERSION: i64 = 14;

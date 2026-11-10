@@ -78,6 +78,12 @@ pub fn running_model() -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
+/// What the running system says it was built from, when it says.
+pub fn running_built_from() -> Option<String> {
+    let keys = distro_build::graph::PACKAGE_KEYS;
+    fs::read_to_string(Path::new(ROOT).join(RUNNING).join(keys)).ok()
+}
+
 /// Where a system keeps its model and the model's hash.
 const MODEL: &str = "etc/distro/model.json";
 const MODEL_HASH: &str = "etc/distro/model-hash";

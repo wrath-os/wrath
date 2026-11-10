@@ -1026,29 +1026,42 @@ fn package_key(
 
 /// The unresolved key of every package in `recipes`, with nothing built.
 pub fn unresolved_keys(
+    lab: &Lab,
     repository: &Path,
     recipes: &[&str],
     arm: Arm,
 ) -> Result<BTreeMap<String, String>, String> {
-    let lab = Lab::new("work");
-    let seed = seed::prepare(&lab)?;
+    let mut packages = Vec::new();
+    for file in recipes {
+        packages.extend(load(repository, file)?);
+    }
+    keys_of(lab, repository, &packages, arm)
+}
+
+/// The key each of `packages` has before anything is built. A package comes after what it
+/// depends on.
+pub(crate) fn keys_of(
+    lab: &Lab,
+    repository: &Path,
+    packages: &[Package],
+    arm: Arm,
+) -> Result<BTreeMap<String, String>, String> {
+    let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut keys = BTreeMap::from([("seed".to_owned(), seed.hash().to_owned())]);
-    for file in recipes {
-        for package in load(repository, file)? {
-            let fetched = fetch_all(&mut sources, &lab, &package)?;
-            let hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
-            let recipe = recipe_parts(repository, &package, arm, &hashes)?;
-            let deps = package.all_deps()?;
-            if let Some(dep) = deps.iter().rfind(|dep| !keys.contains_key(&dep.id)) {
-                return Err(format!(
-                    "`{}` needs `{}`, listed after it",
-                    package.id, dep.id
-                ));
-            }
-            let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
-            keys.insert(package.id.clone(), key.hash().to_owned());
+    for package in packages {
+        let fetched = fetch_all(&mut sources, lab, package)?;
+        let hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
+        let recipe = recipe_parts(repository, package, arm, &hashes)?;
+        let deps = package.all_deps()?;
+        if let Some(dep) = deps.iter().rfind(|dep| !keys.contains_key(&dep.id)) {
+            return Err(format!(
+                "`{}` needs `{}`, listed after it",
+                package.id, dep.id
+            ));
         }
+        let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
+        keys.insert(package.id.clone(), key.hash().to_owned());
     }
     keys.remove("seed");
     Ok(keys)

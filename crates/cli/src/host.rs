@@ -80,6 +80,13 @@ impl Remote {
             .map_err(|e| format!("{}: {RUNNING_MODEL}: {e}", self.name))
     }
 
+    /// What the system the machine runs says it was built from, when it says.
+    pub fn running_built_from(&self) -> Result<Option<String>, String> {
+        let keys = distro_build::graph::PACKAGE_KEYS;
+        let text = self.output(&format!("cat /run/system/{keys} 2>/dev/null || true"))?;
+        Ok((!text.trim().is_empty()).then_some(text))
+    }
+
     /// Copies what the machine lacks of `system`, built in `lab`, to a file on it, and returns
     /// that file, or `None` when it has everything already.
     fn send(&self, lab: &Lab, system: &StorePath) -> Result<Option<String>, String> {
@@ -179,11 +186,14 @@ pub fn apply(
 ) -> Result<ExitCode, String> {
     let model = generations::locked(root, config, model)?;
     let running = remote.running_model()?;
-    if running.as_ref().is_some_and(|r| r.hash() == model.hash()) {
+    let rebuilt = generations::rebuilt(root, &model, remote.running_built_from()?.as_deref());
+    let same = running.as_ref().is_some_and(|r| r.hash() == model.hash());
+    if same && rebuilt.as_ref().is_some_and(Vec::is_empty) {
         println!("{} runs model {} already", remote.name, &model.hash()[..16]);
         return Ok(ExitCode::SUCCESS);
     }
     let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
+    let plan = generations::with_rebuilt(plan, rebuilt);
     if running.is_some() {
         crate::print_plan(&plan);
     } else {

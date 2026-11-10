@@ -141,6 +141,48 @@ pub fn build_image(
     Ok(out)
 }
 
+/// What today's recipes rebuild in a system built from `built_from`, the text of its
+/// [`distro_build::graph::PACKAGE_KEYS`], as changes for a plan. `None`, with a note saying why,
+/// when that can't be told: the system doesn't say what it was built from, or there are no
+/// recipes here to compare with.
+pub(crate) fn rebuilt(
+    root: &Path,
+    model: &Model,
+    built_from: Option<&str>,
+) -> Option<Vec<distro_model::Change>> {
+    let Some(before) = built_from.and_then(|text| serde_json::from_str(text).ok()) else {
+        crate::style::note(
+            "what runs doesn't say which packages it was built from, so the plan can't show \
+             what a newer distro rebuilds",
+        );
+        return None;
+    };
+    let repository = root.join("build").canonicalize().ok()?;
+    let value = serde_json::from_str(&model.canonical()).ok()?;
+    match distro_build::graph::package_keys(&repository, &value) {
+        Ok(after) => Some(distro_model::rebuilt(model, &before, &after)),
+        Err(message) => {
+            crate::style::warning(&format!(
+                "cannot tell what a newer distro rebuilds: {message}"
+            ));
+            None
+        }
+    }
+}
+
+/// `plan` with the packages `rebuilt` lists, leaving out those the plan adds or removes.
+pub(crate) fn with_rebuilt(
+    mut plan: distro_model::Plan,
+    rebuilt: Option<Vec<distro_model::Change>>,
+) -> distro_model::Plan {
+    for change in rebuilt.into_iter().flatten() {
+        if !plan.packages.iter().any(|known| known.name == change.name) {
+            plan.packages.push(change);
+        }
+    }
+    plan
+}
+
 /// How to switch to a system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Switch {
@@ -165,7 +207,9 @@ pub fn apply(
 ) -> Result<ExitCode, String> {
     let model = locked(root, config, model)?;
     let hash = model.hash();
-    if record.is_none() && here::running_model_hash().as_deref() == Some(hash.as_str()) {
+    let rebuilt = rebuilt(root, &model, here::running_built_from().as_deref());
+    let same = here::running_model_hash().as_deref() == Some(hash.as_str());
+    if record.is_none() && same && rebuilt.as_ref().is_some_and(Vec::is_empty) {
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
     }
@@ -174,6 +218,7 @@ pub fn apply(
     }
     let running = here::running_model().and_then(|path| crate::read_model(&path).ok());
     let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
+    let plan = with_rebuilt(plan, rebuilt);
     match &running {
         Some(_) => crate::print_plan(&plan),
         None => println!(

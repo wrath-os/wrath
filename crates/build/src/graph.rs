@@ -794,6 +794,8 @@ fn lower<'a>(
     if !firmware.is_empty() {
         actions.push(firmware_links(lab, firmware, packages)?);
     }
+    let keys = built_from(&actions, packages);
+    actions.push(text("model", PACKAGE_KEYS, 0o644, keys, &[], packages)?);
     Ok(Lowered {
         actions,
         skipped,
@@ -889,6 +891,24 @@ fn installed_into(unit: &str) -> Vec<String> {
         }
     }
     targets
+}
+
+/// Where a generation says what it was built from: the key each package it uses has before
+/// anything is built, by package. A plan compares them with today's recipes to say what a newer
+/// distro rebuilds.
+pub const PACKAGE_KEYS: &str = "etc/distro/packages.json";
+
+/// The packages `actions` use, with their keys, as [`PACKAGE_KEYS`] holds them.
+fn built_from(actions: &[Action<'_>], packages: &Packages) -> String {
+    let used: BTreeMap<&str, &str> = actions
+        .iter()
+        .filter_map(|action| action.unresolved["deps"].as_object())
+        .flat_map(Map::keys)
+        .filter_map(|id| Some((id.as_str(), packages.get(id)?.unresolved.as_str())))
+        .collect();
+    let mut text = serde_json::to_string_pretty(&used).expect("a map of strings serializes");
+    text.push('\n');
+    text
 }
 
 /// A model's actions, the packages it names that no recipe builds, and the units it enables that
@@ -1649,6 +1669,47 @@ fn system_from(
     })
 }
 
+/// The recipes the model's `builds` make: each a recipe under the build's name, with the
+/// options and patches it gives.
+fn variants(recipes: &[chain::Package], model: &Value) -> Result<Vec<chain::Package>, String> {
+    model["builds"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(name, build)| {
+            let base = str_field(&build["package"], "build's package")?;
+            let recipe = recipes
+                .iter()
+                .find(|recipe| recipe.id == base)
+                .ok_or_else(|| {
+                    format!("there's no recipe for `{base}`, which the build `{name}` starts from")
+                })?;
+            let options = build["options"].as_object().cloned().unwrap_or_default();
+            let patches: Vec<String> = build["patches"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            recipe.variant(name, &options, &patches)
+        })
+        .collect()
+}
+
+/// The key each package of the toolchain and the system recipes, and of the builds `model` asks
+/// for, has before anything is built: what [`PACKAGE_KEYS`] records, from today's recipes.
+pub fn package_keys(repository: &Path, model: &Value) -> Result<BTreeMap<String, String>, String> {
+    let lab = Lab::new(repository.join("work"));
+    let mut packages = Vec::new();
+    for file in std::iter::once(&"toolchain.toml").chain(SYSTEM_RECIPES.iter()) {
+        packages.extend(chain::load(repository, file)?);
+    }
+    let builds = variants(&packages, model)?;
+    packages.extend(builds);
+    chain::keys_of(&lab, repository, &packages, Arm::F)
+}
+
 /// Builds what the model's `builds` ask for: each a recipe built under the build's name with the
 /// options it gives, which the recipe's script reads as `OPTION_<name>`, and its patches.
 fn build_variants(
@@ -1660,23 +1721,7 @@ fn build_variants(
     model: &Value,
 ) -> Result<(), String> {
     let mut sources = chain::Sources::load(repository)?;
-    for (name, build) in model["builds"].as_object().into_iter().flatten() {
-        let base = str_field(&build["package"], "build's package")?;
-        let recipe = recipes
-            .iter()
-            .find(|recipe| recipe.id == base)
-            .ok_or_else(|| {
-                format!("there's no recipe for `{base}`, which the build `{name}` starts from")
-            })?;
-        let options = build["options"].as_object().cloned().unwrap_or_default();
-        let patches: Vec<String> = build["patches"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
-        let variant = recipe.variant(name, &options, &patches)?;
+    for variant in variants(recipes, model)? {
         if let Some(prepared) =
             chain::build_one(lab, repository, &variant, Arm::F, seed, &mut sources, built)?
         {
@@ -1947,7 +1992,7 @@ pub fn closure(
 /// How many packages of `recipes` have an unresolved key that was never built: the most that
 /// could need building, known before anything is.
 pub fn bound(lab: &Lab, repository: &Path, recipes: &[&str], arm: Arm) -> Result<String, String> {
-    let keys = chain::unresolved_keys(repository, recipes, arm)?;
+    let keys = chain::unresolved_keys(lab, repository, recipes, arm)?;
     let mut db = Db::open(&db_path(lab))?;
     let tx = db.0.transaction().map_err(sql)?;
     let mut missing = Vec::new();
@@ -2583,6 +2628,14 @@ mod tests {
         let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
         assert_eq!(read("etc/distro/model.json"), kept.text);
         assert_eq!(read("etc/distro/model-hash"), kept.hash);
+        let built_from: BTreeMap<String, String> =
+            serde_json::from_str(&read(PACKAGE_KEYS)).unwrap();
+        assert_eq!(
+            built_from.get("web"),
+            Some(&packages["web"].unresolved),
+            "the generation says which key each package it uses had"
+        );
+        assert!(built_from.contains_key("systemd"));
     }
 
     #[test]

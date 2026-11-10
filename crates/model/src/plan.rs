@@ -719,3 +719,58 @@ fn unit_details(before: Option<&Unit>, after: Option<&Unit>) -> Vec<String> {
         .map(|entry| format!("+ {entry}"));
     removed.chain(added).collect()
 }
+
+/// The packages a newer distro rebuilds: those `before`, the keys a system was built from, has
+/// with another key in `after`, today's recipes. The kernel, its microcode and firmware take a
+/// reboot, what the base system runs takes a soft reboot, and the rest is live.
+pub fn rebuilt(
+    model: &Model,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Vec<Change> {
+    fn field<'a>(table: Option<&'a Value>, key: &str) -> Option<&'a Value> {
+        match table {
+            Some(Value::Table(table)) => table.get(key),
+            _ => None,
+        }
+    }
+    let kernel = model.base.get("kernel");
+    let firmware = match field(kernel, "firmware") {
+        Some(Value::List(ids)) => ids.as_slice(),
+        _ => &[],
+    };
+    let boots: Vec<&str> = [
+        field(kernel, "package"),
+        field(field(kernel, "microcode"), "package"),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(firmware)
+    .filter_map(|id| match id {
+        Value::Str(id) => Some(id.as_str()),
+        _ => None,
+    })
+    .collect();
+    before
+        .iter()
+        .filter(|(id, key)| after.get(*id).is_some_and(|now| now != *key))
+        .map(|(id, _)| {
+            let tier = if boots.contains(&id.as_str()) {
+                Tier::Reboot
+            } else if BASE_SERVICES.contains(&id.as_str()) {
+                Tier::SoftReboot
+            } else {
+                Tier::Live
+            };
+            Change {
+                kind: ChangeKind::Changed,
+                name: id.clone(),
+                details: vec!["rebuilt".to_owned()],
+                tier: Some(tier),
+            }
+        })
+        .collect()
+}
+
+/// What the base system runs from boot to shutdown, which a switch can't restart.
+const BASE_SERVICES: [&str; 2] = ["systemd", "dbus"];

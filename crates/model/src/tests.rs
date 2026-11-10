@@ -878,3 +878,51 @@ fn a_plan_for_a_terminal_is_the_same_text_with_color() {
     assert_eq!(plain, plan.to_string(), "color is all that changes");
     assert!(!plan.styled(false).contains('\x1b'));
 }
+
+#[test]
+fn a_newer_distro_rebuilds_what_its_recipes_changed_with_the_tier_each_takes() {
+    use std::collections::BTreeMap;
+    let mut model = Model::default();
+    let kernel = BTreeMap::from([
+        ("package".to_owned(), Value::Str("linux".into())),
+        (
+            "firmware".to_owned(),
+            Value::List(vec![Value::Str("linux-firmware".into())]),
+        ),
+    ]);
+    model.base.insert("kernel".into(), Value::Table(kernel));
+    let keys = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(id, key)| ((*id).to_owned(), (*key).to_owned()))
+            .collect()
+    };
+    let before = keys(&[
+        ("linux", "k1"),
+        ("linux-firmware", "f1"),
+        ("systemd", "s1"),
+        ("jq", "j1"),
+        ("gone", "g1"),
+    ]);
+    let after = keys(&[
+        ("linux", "k2"),
+        ("linux-firmware", "f1"),
+        ("systemd", "s2"),
+        ("jq", "j2"),
+    ]);
+    let changes = crate::rebuilt(&model, &before, &after);
+    let tiers: Vec<(&str, Option<crate::Tier>)> = changes
+        .iter()
+        .map(|change| (change.name.as_str(), change.tier))
+        .collect();
+    assert_eq!(
+        tiers,
+        [
+            ("jq", Some(crate::Tier::Live)),
+            ("linux", Some(crate::Tier::Reboot)),
+            ("systemd", Some(crate::Tier::SoftReboot)),
+        ],
+        "unchanged packages and ones today's recipes don't have are left out"
+    );
+    assert_eq!(changes[0].details, ["rebuilt"]);
+}

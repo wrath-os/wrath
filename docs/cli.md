@@ -124,17 +124,21 @@ The lock:
 | `distro update [SOURCE or PKG...]` | Moves sources, or single packages, to their newest versions |
 | `distro sources` | Each source with what it follows, where it's pinned and how old that is |
 
-The lock pins distro too, as the source `distro`, so a configuration is always built by the
-distro it was locked with: its modules, its evaluator and how it builds. Another distro runs that
-one instead, and says so. A checkout of a configuration from years ago builds what it described
-then. `distro update` pins the distro you're running; `[sources.distro]` says where distro is
-fetched from.
+The lock pins distro too, as the source `distro`: its modules, its evaluator and its recipes.
+`distro update` pins the distro you're running, and `[sources.distro]` says where distro is
+fetched from. A distro other than the one the lock pins says so.
+
+A newer distro can rebuild packages the configuration never mentions, such as a kernel with
+other options. Each system records which packages it was built from, and `plan` compares that
+with today's recipes, so a rebuilt package shows with the tier it takes:
 
 ```console
-$ distro plan
-using distro 266fc86 as the lock pins it
-system /etc/distro (neptune)
-...
+$ distro plan --host framework
+packages
+  ~ linux (tier: reboot)
+      rebuilt
+  + bubblewrap (tier: live)
+2 changes, tier: reboot
 ```
 
 Understanding the configuration:

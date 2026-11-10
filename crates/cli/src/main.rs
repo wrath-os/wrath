@@ -379,7 +379,7 @@ fn main() -> ExitCode {
                 (None, false, Some(host)) => Against::Host(host),
                 (None, false, None) => Against::Running,
             };
-            machine().and_then(|config| plan(&config, against, &modules, json))
+            machine().and_then(|config| plan(root, &config, against, &modules, json))
         }
         Command::Apply { system, host, yes } => match host {
             Some(host) => on_host(root, &host, Switch::Apply, yes, &machine, &modules),
@@ -1015,35 +1015,49 @@ enum Against {
     Host(String),
 }
 
-fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<ExitCode, String> {
+fn plan(
+    root: &Path,
+    config: &Path,
+    against: Against,
+    modules: &Path,
+    json: bool,
+) -> Result<ExitCode, String> {
     let Some(after) = model(config, modules) else {
         return Ok(ExitCode::FAILURE);
     };
-    let (before, compared) = match against {
-        Against::Nothing => (Model::default(), None),
+    // What the system compared against was built from, for a system that was built.
+    let (before, compared, built_from) = match against {
+        Against::Nothing => (Model::default(), None, None),
         Against::Path(path) if path.is_file() => {
-            (read_model(&path)?, Some(path.display().to_string()))
+            let keys = path.with_file_name("packages.json");
+            let built_from = Some(std::fs::read_to_string(keys).ok());
+            (
+                read_model(&path)?,
+                Some(path.display().to_string()),
+                built_from,
+            )
         }
         Against::Path(path) => match model(&path, modules) {
-            Some(before) => (before, None),
+            Some(before) => (before, None, None),
             None => return Ok(ExitCode::FAILURE),
         },
-        Against::Host(name) => (
-            host::Remote::new(&name)?
-                .running_model()?
-                .unwrap_or_default(),
-            Some(name),
-        ),
+        Against::Host(name) => {
+            let remote = host::Remote::new(&name)?;
+            let model = remote.running_model()?.unwrap_or_default();
+            (model, Some(name), Some(remote.running_built_from()?))
+        }
         Against::Running => match switching::running_model() {
             Some(path) => (
                 read_model(&path)
                     .map_err(|e| format!("{e}; plan with --against or --fresh instead"))?,
                 Some("the running system".to_owned()),
+                Some(switching::running_built_from()),
             ),
-            None => (Model::default(), None),
+            None => (Model::default(), None, None),
         },
     };
-    let plan = distro_model::plan(&before, &after);
+    let rebuilt = built_from.and_then(|text| generations::rebuilt(root, &after, text.as_deref()));
+    let plan = generations::with_rebuilt(distro_model::plan(&before, &after), rebuilt);
     if json {
         let Value::Table(mut fields) = plan.to_value() else {
             unreachable!("a plan is a table")
