@@ -11,6 +11,7 @@ PACKAGES = [
     "gawk",
     "grep",
     "gzip",
+    "hostname",
     "sed",
     "tar",
     "xz",

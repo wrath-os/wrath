@@ -73,3 +73,15 @@ make -j$NPROC
 make install DESTDIR=$DEST
 '''
 smoke = ["bin/curl --version"]
+
+[[package]]
+id = "hostname"
+scope = "runtime"
+core = true
+sources = [{ url = "https://deb.debian.org/debian/pool/main/h/hostname/hostname_3.25.tar.xz" }]
+script = '''
+# The small `hostname` program Debian keeps, which prints or sets the machine's name.
+make -j$NPROC CFLAGS="-O2"
+install -Dm755 hostname $DEST$PREFIX/bin/hostname
+'''
+smoke = ["bin/hostname --version"]
