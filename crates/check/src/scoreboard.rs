@@ -135,10 +135,9 @@ mod tests {
             reason: "unit `sshd.service` is not active (state: failed)".into(),
             logs: Some(PathBuf::from("target/distro-check/runs/m1-vm-boots")),
             reproduction: Some(Reproduction {
-                image: PathBuf::from("/nix/store/abc-fixture"),
-                command:
-                    "distro dev test acceptance/m1/vm-boots.toml --image /nix/store/abc-fixture"
-                        .into(),
+                image: PathBuf::from("build/work/abc.img"),
+                command: "distro dev test acceptance/m1/vm-boots.toml --image build/work/abc.img"
+                    .into(),
             }),
         };
 

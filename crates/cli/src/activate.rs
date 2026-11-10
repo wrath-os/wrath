@@ -51,9 +51,6 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
     }
 }
 
-/// Where a machine from Nix keeps its generations, under the root.
-const PROFILES: &str = "nix/var/nix/profiles";
-
 /// Where a machine from distro's store keeps its generations, under the root: each a link named
 /// by its number to a system in `/store`, kept beside the store so a root erased at every boot
 /// keeps them.
@@ -87,8 +84,7 @@ fn boot_entries(root: &Path) -> Result<(), String> {
                 .map_err(|e| format!("{}: {e}", system.join(part).display()))?;
             // Named after the store path, so a kernel shared by generations is copied once.
             let name = path
-                .strip_prefix("/nix/store")
-                .or_else(|_| path.strip_prefix("/store"))
+                .strip_prefix("/store")
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('/', "-");
@@ -214,23 +210,12 @@ fn cpio(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
 /// The generations of the machine at `root`, by number with the link to each, oldest first, and
 /// the current one's number.
 pub(crate) fn generations(root: &Path) -> Result<(Vec<(u32, PathBuf)>, u32), String> {
-    let store = root.join(GENERATIONS);
-    type NumberOf = fn(&str) -> Option<u32>;
-    let (dir, current, number_of): (PathBuf, PathBuf, NumberOf) = if store.is_dir() {
-        (store, root.join(CURRENT), |name| {
-            name.strip_prefix("generations/")
-                .unwrap_or(name)
-                .parse()
-                .ok()
-        })
-    } else {
-        let profiles = root.join(PROFILES);
-        (profiles.clone(), profiles.join("system"), |name| {
-            name.strip_prefix("system-")?
-                .strip_suffix("-link")?
-                .parse()
-                .ok()
-        })
+    let (dir, current) = (root.join(GENERATIONS), root.join(CURRENT));
+    let number_of = |name: &str| -> Option<u32> {
+        name.strip_prefix("generations/")
+            .unwrap_or(name)
+            .parse()
+            .ok()
     };
     let mut generations: Vec<(u32, PathBuf)> = fs::read_dir(&dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
@@ -321,7 +306,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         .ok()
         .and_then(|etc| etc.parent().map(Path::to_path_buf));
     switch_etc(root, old.as_deref(), system)?;
-    let programs = programs(system);
+    let programs = system.join("bin");
     replace_link(&programs.join("bash"), &root.join("bin/sh"))?;
     replace_link(&programs.join("env"), &root.join("usr/bin/env"))?;
     link_kernel_modules(root, system)?;
@@ -351,32 +336,12 @@ pub(crate) const BOOTED: &str = "run/system-booted";
 /// The link every file in /etc goes through to the running system's, under the root.
 const ETC_LINK: &str = "etc/.system";
 
-/// The names Nix-built systems use for the running and booted systems, kept beside ours until
-/// the Nix code is gone.
-const NIX_NAMES: [(&str, &str); 2] = [
-    (RUNNING, "run/current-system"),
-    (BOOTED, "run/booted-system"),
-];
-
-/// Points each of `links`, under `root`, at `system`, with the names Nix-built systems use too.
+/// Points each of `links`, under `root`, at `system`.
 fn point_at(root: &Path, system: &Path, links: &[&str]) -> Result<(), String> {
     for link in links {
         replace_link(system, &root.join(link))?;
-        if let Some((_, nix)) = NIX_NAMES.iter().find(|(ours, _)| ours == link) {
-            replace_link(system, &root.join(nix))?;
-        }
     }
     Ok(())
-}
-
-/// Where `system` has its programs: `bin`, or `sw/bin` in a system the Nix code built.
-pub(crate) fn programs(system: &Path) -> PathBuf {
-    let nix = system.join("sw/bin");
-    if nix.is_dir() {
-        nix
-    } else {
-        system.join("bin")
-    }
 }
 
 /// Links /lib/modules to the modules of the kernel that booted, where kmod looks for them. A
@@ -765,7 +730,7 @@ mod tests {
     fn each_generation_gets_a_boot_entry_and_the_current_one_is_the_default() {
         let work = tempfile::tempdir().unwrap();
         let root = work.path();
-        let store = root.join("nix/store");
+        let store = root.join("store");
         let system = |name: &str, kernel: &str| {
             let dir = store.join(name);
             fs::create_dir_all(&dir).unwrap();
@@ -775,18 +740,14 @@ mod tests {
                 fs::write(part.join(file), text).unwrap();
             }
             symlink(
-                format!("/nix/store/{kernel}-bzImage/bzImage"),
+                format!("/store/{kernel}-bzImage/bzImage"),
                 dir.join("kernel"),
             )
             .unwrap();
-            symlink(
-                format!("/nix/store/{kernel}-initrd/initrd"),
-                dir.join("initrd"),
-            )
-            .unwrap();
+            symlink(format!("/store/{kernel}-initrd/initrd"), dir.join("initrd")).unwrap();
             fs::write(
                 dir.join("kernel-params"),
-                format!("init=/nix/store/{name}/init\n"),
+                format!("init=/store/{name}/init\n"),
             )
             .unwrap();
         };
@@ -800,13 +761,13 @@ mod tests {
         .unwrap();
         fs::create_dir_all(root.join("etc/ssh")).unwrap();
         fs::write(root.join("etc/ssh/initrd_ed25519_key"), "key\n").unwrap();
-        let profiles = root.join(PROFILES);
-        fs::create_dir_all(&profiles).unwrap();
+        let generations = root.join(GENERATIONS);
+        fs::create_dir_all(&generations).unwrap();
         for (number, name) in [(1, "aaa"), (2, "bbb"), (3, "ccc")] {
-            let link = profiles.join(format!("system-{number}-link"));
-            symlink(format!("/nix/store/{name}-distro-system"), link).unwrap();
+            let link = generations.join(number.to_string());
+            symlink(format!("/store/{name}-distro-system"), link).unwrap();
         }
-        symlink("system-2-link", profiles.join("system")).unwrap();
+        symlink("generations/2", root.join(CURRENT)).unwrap();
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
         fs::write(root.join("boot/loader/entries/distro-9.conf"), "old").unwrap();
 
@@ -823,7 +784,7 @@ mod tests {
             "{entry}"
         );
         assert!(
-            entry.contains("options init=/nix/store/ccc-distro-system/init\n"),
+            entry.contains("options init=/store/ccc-distro-system/init\n"),
             "{entry}"
         );
         assert!(!esp.join("loader/entries/distro-9.conf").exists());

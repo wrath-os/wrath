@@ -14,17 +14,26 @@ use std::time::UNIX_EPOCH;
 
 use distro_build::store::{Lab, StorePath};
 
-use distro_backend as backend;
-
-use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, generations, programs};
+use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, generations};
 
 /// The root of the machine distro runs on.
 const ROOT: &str = "/";
 
-/// Whether this machine's generations are in distro's store. Machines from the Nix factory keep
-/// them as a Nix profile until that's gone.
+/// Whether this machine's generations are in distro's store, which its first `apply` starts.
 fn here_in_store() -> bool {
-    in_store(Path::new(ROOT))
+    Path::new(ROOT).join(GENERATIONS).is_dir()
+}
+
+/// Refuses to change generations on a machine that has none yet.
+fn require_generations() -> Result<(), String> {
+    if here_in_store() {
+        Ok(())
+    } else {
+        Err(
+            "this machine has no generations in distro's store yet; `distro apply` makes the first"
+                .into(),
+        )
+    }
 }
 
 /// A system being tried, kept from collection while no generation has it.
@@ -58,24 +67,25 @@ impl std::fmt::Display for Generation {
     }
 }
 
-/// Whether the machine at `root` keeps its generations in distro's store.
-pub fn in_store(root: &Path) -> bool {
-    root.join(GENERATIONS).is_dir()
+/// The hash of the running system's model, when distro built the running system.
+pub fn running_model_hash() -> Option<String> {
+    fs::read_to_string(Path::new(ROOT).join(RUNNING).join(MODEL_HASH)).ok()
 }
+
+/// The running system's model file, when distro built the running system.
+pub fn running_model() -> Option<PathBuf> {
+    let path = Path::new(ROOT).join(RUNNING).join(MODEL);
+    path.exists().then_some(path)
+}
+
+/// Where a system keeps its model and the model's hash.
+const MODEL: &str = "etc/distro/model.json";
+const MODEL_HASH: &str = "etc/distro/model-hash";
 
 /// Every generation of this machine, oldest first.
 pub fn history() -> Result<Vec<Generation>, String> {
     if !here_in_store() {
-        let listed = backend::history()?;
-        return Ok(listed
-            .into_iter()
-            .map(|g| Generation {
-                number: g.number,
-                created: g.created,
-                current: g.current,
-                model_hash: g.model_hash,
-            })
-            .collect());
+        return Ok(Vec::new());
     }
     history_at(Path::new(ROOT))
 }
@@ -97,7 +107,7 @@ fn history_at(root: &Path) -> Result<Vec<Generation>, String> {
                 number,
                 created: utc(seconds),
                 current: number == current,
-                model_hash: fs::read_to_string(system.join("etc/distro/model-hash")).ok(),
+                model_hash: fs::read_to_string(system.join(MODEL_HASH)).ok(),
             })
         })
         .collect()
@@ -105,12 +115,10 @@ fn history_at(root: &Path) -> Result<Vec<Generation>, String> {
 
 /// Where generation `number` of this machine keeps its model.
 pub fn generation_model(number: u32) -> Result<PathBuf, String> {
-    if !here_in_store() {
-        return Ok(backend::generation_model(number));
-    }
+    require_generations()?;
     let root = Path::new(ROOT);
     let link = root.join(GENERATIONS).join(number.to_string());
-    Ok(system_of(root, &link)?.join("etc/distro/model.json"))
+    Ok(system_of(root, &link)?.join(MODEL))
 }
 
 /// The system `link` names, under `root`.
@@ -163,18 +171,13 @@ fn previous(root: &Path) -> Result<u32, String> {
 
 /// Makes `system` the current generation and switches to it. Needs root.
 pub fn activate(system: &Path) -> Result<(), String> {
-    if !here_in_store() {
-        return backend::activate(system);
-    }
     add(Path::new(ROOT), system)?;
     switch(system, "switch")
 }
 
 /// Goes back to the generation before the current one and switches to it. Needs root.
 pub fn rollback() -> Result<u32, String> {
-    if !here_in_store() {
-        return backend::rollback().map(|g| g.number);
-    }
+    require_generations()?;
     let root = Path::new(ROOT);
     let number = previous(root)?;
     make_current(root, number)?;
@@ -185,9 +188,7 @@ pub fn rollback() -> Result<u32, String> {
 /// Switches to `system` without making it a generation, so a timer switching back after
 /// `seconds`, `rollback`, or a reboot all return to the current generation. Needs root.
 pub fn try_system(system: &Path, seconds: u64) -> Result<(), String> {
-    if !here_in_store() {
-        return backend::try_system(system, seconds);
-    }
+    require_generations()?;
     if trying() {
         return Err("a system is already being tried; keep it or roll back first".into());
     }
@@ -222,15 +223,6 @@ pub fn trying() -> bool {
 
 /// Makes the system being tried the current generation and the boot default. Returns its number.
 pub fn keep_trial() -> Result<u32, String> {
-    if !here_in_store() {
-        backend::keep_trial()?;
-        let listed = history()?;
-        return listed
-            .into_iter()
-            .find(|g| g.current)
-            .map(|g| g.number)
-            .ok_or_else(|| "there's no current generation".to_owned());
-    }
     if !trying() {
         return Err("no system is being tried".into());
     }
@@ -245,9 +237,7 @@ pub fn keep_trial() -> Result<u32, String> {
 
 /// Switches back from the system being tried to the current generation. Returns its number.
 pub fn end_trial() -> Result<u32, String> {
-    if !here_in_store() {
-        return backend::end_trial().map(|g| g.number);
-    }
+    require_generations()?;
     stop_trial();
     let root = Path::new(ROOT);
     switch(&root.join(CURRENT), "switch")?;
@@ -336,9 +326,7 @@ fn make_writable(path: &Path) {
 /// Removes generations `numbers` from this machine, writes the boot entries again and collects
 /// what nothing uses. Needs root.
 pub fn clean(numbers: &[u32]) -> Result<String, String> {
-    if !here_in_store() {
-        return backend::clean(numbers);
-    }
+    require_generations()?;
     let root = Path::new(ROOT);
     let removed = remove(root, numbers)?;
     if !numbers.is_empty() {
@@ -352,10 +340,13 @@ pub fn clean(numbers: &[u32]) -> Result<String, String> {
 /// own distro put the boot loader and its entries in place. Needs root.
 pub fn install(system: &Path, target: &Path) -> Result<(), String> {
     if !system.starts_with("/store") {
-        return backend::install(system, target);
+        return Err(format!(
+            "{} isn't in /store; build it with distro first",
+            system.display()
+        ));
     }
     copy_onto(Path::new(ROOT), system, target)?;
-    run(Command::new(programs(system).join("distro"))
+    run(Command::new(system.join("bin/distro"))
         .args(["activate", "--mode", "install", "--root"])
         .arg(target)
         .arg(system))

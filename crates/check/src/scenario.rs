@@ -175,7 +175,28 @@ pub fn parse_scenario(
     })
 }
 
+/// Why a `[vm]` table can't run now that distro builds without Nix, if it can't: it names a Nix
+/// image, the host's Nix store, or no store, which meant a prebuilt Nix image.
+fn needs_nix(table: &toml::Table) -> Option<String> {
+    let store = table.get("store");
+    let what = if table.contains_key("image") {
+        "a Nix image"
+    } else if store.and_then(toml::Value::as_str) == Some("host") {
+        "`store = \"host\"`"
+    } else if store.is_none() {
+        "a `[vm]` without `store = \"distro\"`"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "{what} needs the Nix store, which distro no longer uses"
+    ))
+}
+
 fn vm_runner(path: &Path, table: toml::Table) -> Result<Runner, LoadError> {
+    if let Some(reason) = needs_nix(&table) {
+        return Ok(Runner::Pending { reason });
+    }
     // Scenarios for later milestones use steps that don't exist yet; they wait for them.
     let steps = table.get("steps").and_then(toml::Value::as_array);
     let unknown = steps
@@ -280,7 +301,6 @@ fn file_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::System;
 
     fn parse(text: &str) -> Result<Scenario, LoadError> {
         parse_scenario(Path::new("m1/example.toml"), "example", "m1", text)
@@ -329,23 +349,14 @@ mod tests {
     }
 
     #[test]
-    fn vm_with_image_gets_the_vm_runner() {
-        let scenario = parse("title = \"t\"\n[vm]\nimage = \"factory/nix#fixture\"\n").unwrap();
-
-        let Runner::Vm(spec) = scenario.runner else {
-            panic!("expected a vm runner");
-        };
-        assert_eq!(spec.system, System::Image("factory/nix#fixture".into()));
-        assert_eq!(scenario.source, Path::new("m1/example.toml"));
-    }
-
-    #[test]
-    fn vm_with_config_gets_the_vm_runner_and_nspawn_is_pending() {
-        let vm = parse("title = \"t\"\n[vm]\nconfig = \"x\"\nsteps = []\n").unwrap();
+    fn vm_on_distros_store_gets_the_vm_runner_and_nspawn_is_pending() {
+        let vm =
+            parse("title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"distro\"\nsteps = []\n").unwrap();
         let Runner::Vm(spec) = vm.runner else {
             panic!("expected a vm runner");
         };
-        assert_eq!(spec.system, System::Config("x".into()));
+        assert_eq!(spec.config, "x");
+        assert_eq!(vm.source, Path::new("m1/example.toml"));
 
         let nspawn = parse("title = \"t\"\n[nspawn]\n").unwrap();
         assert_eq!(
@@ -357,9 +368,45 @@ mod tests {
     }
 
     #[test]
+    fn vm_that_needs_nix_is_pending() {
+        let cases = [
+            (
+                "image = \"factory/nix#fixture\"\n",
+                "a Nix image needs the Nix store, which distro no longer uses",
+            ),
+            (
+                "config = \"x\"\nstore = \"host\"\nsteps = [{ run = \"a\" }]\n",
+                "`store = \"host\"` needs the Nix store, which distro no longer uses",
+            ),
+            (
+                "config = \"x\"\n",
+                "a `[vm]` without `store = \"distro\"` needs the Nix store, \
+                 which distro no longer uses",
+            ),
+        ];
+        for (vm, reason) in cases {
+            let scenario = parse(&format!("title = \"t\"\n[vm]\n{vm}")).unwrap();
+            assert_eq!(
+                scenario.runner,
+                Runner::Pending {
+                    reason: reason.into()
+                },
+                "{vm}"
+            );
+        }
+    }
+
+    #[test]
+    fn vm_with_an_unknown_store_is_an_error() {
+        let err = parse("title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"nfs\"\n").unwrap_err();
+        assert!(err.to_string().contains("unknown variant `nfs`"), "{err}");
+    }
+
+    #[test]
     fn vm_steps_no_runner_supports_yet_are_pending() {
         let vm = parse(
-            "title = \"t\"\n[vm]\nconfig = \"x\"\nsteps = [{ run = \"a\" }, { apply_user_config = \"y\", user = \"demo\" }]\n",
+            "title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"distro\"\nsteps = [{ run = \"a\" }, \
+             { apply_user_config = \"y\", user = \"demo\" }]\n",
         )
         .unwrap();
 
@@ -396,7 +443,7 @@ mod tests {
             ("missing_title", "[manual]\nconfirm = \"x\"\n"),
             (
                 "vm_unknown_key",
-                "title = \"t\"\n[vm]\nimage = \"x\"\nram = 4\n",
+                "title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"distro\"\nram = 4\n",
             ),
         ];
         for (name, text) in cases {

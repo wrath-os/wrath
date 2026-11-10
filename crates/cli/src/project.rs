@@ -129,9 +129,10 @@ fn resolved(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// The version in a store path such as `/nix/store/<hash>-jq-1.8.2-bin/bin/jq`: `1.8.2`.
+/// The version in a store path such as `/store/<hash>-jq-1.8.2-bin/bin/jq`: `1.8.2`, once
+/// store paths carry names.
 fn store_version(path: &Path) -> Option<String> {
-    let entry = path.strip_prefix("/nix/store").ok()?.components().next()?;
+    let entry = path.strip_prefix("/store").ok()?.components().next()?;
     let entry = entry.as_os_str().to_str()?;
     let (_, name) = entry.split_once('-')?;
     let (dash, _) = name
@@ -375,18 +376,18 @@ mod tests {
     fn versions_come_from_store_paths() {
         let version = |path: &str| store_version(Path::new(path));
         assert_eq!(
-            version("/nix/store/abc-jq-1.8.2-bin/bin/jq").as_deref(),
+            version("/store/abc-jq-1.8.2-bin/bin/jq").as_deref(),
             Some("1.8.2")
         );
         assert_eq!(
-            version("/nix/store/abc-ripgrep-15.2.0/bin/rg").as_deref(),
+            version("/store/abc-ripgrep-15.2.0/bin/rg").as_deref(),
             Some("15.2.0")
         );
         assert_eq!(
-            version("/nix/store/abc-python3-3.13.1/bin/python").as_deref(),
+            version("/store/abc-python3-3.13.1/bin/python").as_deref(),
             Some("3.13.1")
         );
-        assert_eq!(version("/nix/store/abc-hello/bin/hello"), None);
+        assert_eq!(version("/store/abc-hello/bin/hello"), None);
         assert_eq!(version("/usr/bin/jq"), None);
     }
 

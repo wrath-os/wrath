@@ -4,22 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use distro_backend::{self as backend, Target};
 use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
 
 use crate::switching::{self as here, Generation};
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum BuildTarget {
-    /// The system, to switch to
-    System,
-    /// The test system for VMs that boot from the host's store
-    TestVmSystem,
-    /// A VM that boots the test system from the host's store, without a disk image
-    TestVm,
-    /// The test system as `distro install` puts it on a VM's disk
-    TestInstalledSystem,
-    /// The system as a generation from distro's own builder, which is replacing Nix
+    /// The system as a generation, to switch to
     Generation,
     /// A disk image that boots the generation, to write to a USB stick or boot in a VM
     Image,
@@ -27,25 +18,6 @@ pub enum BuildTarget {
     TestGeneration,
     /// A disk image of the test generation, for the VM tests
     TestImage,
-}
-
-impl TryFrom<BuildTarget> for Target {
-    type Error = String;
-
-    fn try_from(target: BuildTarget) -> Result<Self, String> {
-        match target {
-            BuildTarget::System => Ok(Self::System),
-            BuildTarget::TestVmSystem => Ok(Self::TestVmSystem),
-            BuildTarget::TestVm => Ok(Self::TestVm),
-            BuildTarget::TestInstalledSystem => Ok(Self::TestInstalledSystem),
-            BuildTarget::Generation
-            | BuildTarget::Image
-            | BuildTarget::TestGeneration
-            | BuildTarget::TestImage => {
-                Err("a generation is built by `distro build --target generation`".to_owned())
-            }
-        }
-    }
 }
 
 /// Builds `model` into a generation with distro's own builder, from the recipes in `build/` under
@@ -169,17 +141,6 @@ pub fn build_image(
     Ok(out)
 }
 
-/// Builds `target` from `model` with the factory under `root` and returns its store path. The
-/// backend's warnings go to stderr.
-pub fn build(root: &Path, model: &Model, target: Target) -> Result<PathBuf, String> {
-    let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
-    let built = backend::build(model, &factory(root)?, target, work.path())?;
-    for warning in &built.warnings {
-        eprintln!("warning: {warning}");
-    }
-    Ok(built.path)
-}
-
 /// How to switch to a system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Switch {
@@ -204,14 +165,14 @@ pub fn apply(
 ) -> Result<ExitCode, String> {
     let model = locked(root, config, model)?;
     let hash = model.hash();
-    if record.is_none() && backend::current_model_hash().as_deref() == Some(hash.as_str()) {
+    if record.is_none() && here::running_model_hash().as_deref() == Some(hash.as_str()) {
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(record) = &record {
         println!("{record}");
     }
-    let running = backend::current_model().and_then(|path| crate::read_model(Path::new(path)).ok());
+    let running = here::running_model().and_then(|path| crate::read_model(&path).ok());
     let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
     match &running {
         Some(_) => print!("{plan}"),
@@ -224,7 +185,7 @@ pub fn apply(
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     }
-    let system = build(root, &model, Target::System)?;
+    let system = build_generation(root, &model, false)?;
     if let Some(record) = record {
         record.write()?;
     }
@@ -335,7 +296,7 @@ pub fn status_json(model: &Model) -> serde_json::Value {
     let current = here::history()
         .ok()
         .and_then(|generations| generations.into_iter().find(|g| g.current));
-    let running = backend::current_model_hash();
+    let running = here::running_model_hash();
     let hash = model.hash();
     serde_json::json!({
         "generation": current.map(|g| g.number),
@@ -385,10 +346,7 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
             generation.number, generation.created
         );
     }
-    println!(
-        "{}",
-        matching(backend::current_model_hash().as_deref(), model)
-    );
+    println!("{}", matching(here::running_model_hash().as_deref(), model));
     if !model.is_locked() {
         println!("the lock doesn't pin every source yet; `distro apply` pins them first");
     }
@@ -715,12 +673,12 @@ fn sources_table(model: &Model, today: i64) -> String {
         .map(|(name, source)| [name.clone(), source.url.clone(), pin(source, today)])
         .collect();
     if !model.sources.contains_key(DISTRO_SOURCE) {
-        let factory = [
+        let running = [
             DISTRO_SOURCE.to_owned(),
             "the running distro's".to_owned(),
             String::new(),
         ];
-        rows.insert(0, factory);
+        rows.insert(0, running);
     }
     let width = |column: usize| rows.iter().map(|row| row[column].len()).max().unwrap_or(0);
     let (names, urls) = (width(0), width(1));
@@ -774,20 +732,6 @@ fn days_since_epoch(date: &str) -> Option<i64> {
     let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     Some(era * 146_097 + day_of_era - 719_468)
-}
-
-/// The factory under `root`, the flake that builds systems.
-fn factory(root: &Path) -> Result<PathBuf, String> {
-    let factory = root.join("factory/nix");
-    if factory.join("flake.nix").is_file() {
-        Ok(factory)
-    } else {
-        Err(format!(
-            "can't find distro's factory in {}; run distro from its repository, or set \
-             DISTRO_ROOT to where `factory/nix` is",
-            root.display()
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -844,16 +788,6 @@ mod tests {
             assert!(text.contains(&format!("\"Where\",\"{at}\"")), "{text}");
             assert!(text.contains("\"WantedBy\",\"local-fs.target\""), "{text}");
         }
-    }
-
-    #[test]
-    fn only_nix_targets_map_to_the_nix_backend() {
-        assert!(matches!(
-            Target::try_from(BuildTarget::System),
-            Ok(Target::System)
-        ));
-        let error = Target::try_from(BuildTarget::Generation).unwrap_err();
-        assert!(error.contains("--target generation"), "{error}");
     }
 
     #[test]

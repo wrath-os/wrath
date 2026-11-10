@@ -2,13 +2,12 @@
 //! renders, then putting the system on them.
 
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
-use std::time::Duration;
+use std::process::{Command, ExitCode, Stdio};
+use std::time::{Duration, Instant};
 
-use distro_backend::{self as backend, Target};
 use distro_eval::Value;
 use distro_model::Model;
 
@@ -112,8 +111,6 @@ pub struct Install<'a> {
     /// Lay out disks that have partitions already, destroying them.
     pub wipe: bool,
     pub yes: bool,
-    /// What to build and install: the system, or a test system.
-    pub system: Target,
     /// A system already built and in the store, installed instead of building one.
     pub prebuilt: Option<&'a Path>,
 }
@@ -186,7 +183,7 @@ pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, Str
         .map_err(|e| format!("cannot keep the passphrase: {e}"))?;
     let system = match how.prebuilt {
         Some(system) => system.to_path_buf(),
-        None => generations::build(root, &model, how.system)?,
+        None => generations::build_generation(root, &model, false)?,
     };
     let result = lay_out(&partitions, storage, how, &key, work.path())
         // Before the boot loader: it copies the initrd's SSH key into the initrd.
@@ -646,7 +643,7 @@ fn close(partitions: &[Partition], target: &Path) -> Result<(), String> {
 const TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 
 fn run(command: &mut Command) -> Result<(), String> {
-    backend::run_within(command, TOOL_TIMEOUT)
+    run_within(command, TOOL_TIMEOUT)
 }
 
 fn list<'v>(value: &'v Value, key: &str) -> &'v [Value] {
@@ -684,6 +681,48 @@ fn strings(value: &Value) -> Vec<String> {
     }
 }
 
+/// Runs `command` to completion within `timeout`, stopping it after that, so a program waiting for
+/// something that never comes fails instead of hanging. What it prints goes to a file rather than
+/// a pipe, so a process it leaves running can't hold things up either.
+fn run_within(command: &mut Command, timeout: Duration) -> Result<(), String> {
+    let shown = std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|part| part.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let program = command.get_program().to_string_lossy().into_owned();
+    let cannot_run = |e: std::io::Error| format!("cannot run {program}: {e}");
+    let mut errors = tempfile::tempfile().map_err(cannot_run)?;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(errors.try_clone().map_err(cannot_run)?)
+        .spawn()
+        .map_err(cannot_run)?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| format!("{program}: {e}"))? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "`{shown}` didn't finish within {} seconds, so distro stopped it",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    if status.success() {
+        return Ok(());
+    }
+    let mut message = String::new();
+    let _ = errors.seek(SeekFrom::Start(0));
+    let _ = errors.read_to_string(&mut message);
+    Err(format!("{program} failed: {}", message.trim()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,8 +730,7 @@ mod tests {
     #[test]
     fn a_tool_that_hangs_is_stopped_and_one_that_fails_says_why() {
         let started = std::time::Instant::now();
-        let err = backend::run_within(Command::new("sleep").arg("30"), Duration::from_secs(1))
-            .unwrap_err();
+        let err = run_within(Command::new("sleep").arg("30"), Duration::from_secs(1)).unwrap_err();
         assert_eq!(
             err,
             "`sleep 30` didn't finish within 1 seconds, so distro stopped it"
@@ -700,7 +738,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(10));
         // A process the tool leaves running doesn't hold up the install.
         let script = "sleep 30 & echo nope >&2; exit 3";
-        let err = backend::run_within(
+        let err = run_within(
             Command::new("sh").args(["-c", script]),
             Duration::from_secs(5),
         );
@@ -783,7 +821,6 @@ mod tests {
             target: dir.path(),
             wipe: false,
             yes: true,
-            system: Target::System,
             prebuilt: None,
         };
 

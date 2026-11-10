@@ -5,4 +5,4 @@ expression: "render_list(&[(&vm, Outcome::Fail(failure))])"
   FAIL  vm-boots  A VM boots
                   unit `sshd.service` is not active (state: failed)
                   logs: target/distro-check/runs/m1-vm-boots
-                  reproduce: distro dev test acceptance/m1/vm-boots.toml --image /nix/store/abc-fixture
+                  reproduce: distro dev test acceptance/m1/vm-boots.toml --image build/work/abc.img

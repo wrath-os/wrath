@@ -1,18 +1,13 @@
-//! distro pinned in the lock like a source, so a configuration is always built by the distro it
-//! was locked with: its evaluator, modules and factory. A distro that isn't the locked one runs
-//! the locked one instead.
+//! distro pinned in the lock like a source, so a configuration is built by the distro it was
+//! locked with: its evaluator, modules and recipes. Running another distro than the locked one
+//! needs a builder for it, which only a checkout has so far, so for now a distro that isn't the
+//! locked one says so and goes on.
 
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
 
-use distro_backend as backend;
 use distro_model::{DISTRO_SOURCE, Lock, Source};
 
-/// Set on the distro run in place of another, to the hash it was run for.
-const GUARD: &str = "DISTRO_PINNED";
-
-/// Says where a packaged distro was built from, beside its modules and factory: its `rev`, its
+/// Says where a packaged distro was built from, beside its modules: its `rev`, its
 /// `hash` and the `url` it lives at, when it has a home.
 const SOURCE_FILE: &str = "source.toml";
 
@@ -57,29 +52,23 @@ pub fn for_lock(running: Option<Source>, current: Option<&Source>, moving: bool)
     })
 }
 
-/// What to do about the distro `lock` pins, running as `running`.
-#[derive(Debug, PartialEq)]
-enum Pick {
-    Run,
-    /// A development build runs whatever the lock says, and says so.
-    Development(String),
-    Pinned(Source),
-}
-
-fn pick(lock: Option<&Lock>, running: Option<&Source>, guard: Option<&str>) -> Pick {
-    let Some(pinned) = lock
+/// What to say about the distro `lock` pins, running as `running`: nothing when it's this one.
+fn note(lock: Option<&Lock>, running: Option<&Source>) -> Option<String> {
+    let pinned = lock
         .and_then(|lock| lock.sources.get(DISTRO_SOURCE))
-        .filter(|source| source.is_locked())
-    else {
-        return Pick::Run;
-    };
-    if guard == Some(pinned.hash.as_str()) {
-        return Pick::Run;
-    }
+        .filter(|source| source.is_locked())?;
     match running {
-        Some(running) if running.hash == pinned.hash => Pick::Run,
-        Some(_) => Pick::Pinned(pinned.clone()),
-        None => Pick::Development(describe(pinned)),
+        Some(running) if running.hash == pinned.hash => None,
+        Some(running) => Some(format!(
+            "note: the lock pins {}, and this is {}; running another distro needs a builder, \
+             so this one goes on, and `distro update distro` pins it",
+            describe(pinned),
+            describe(running)
+        )),
+        None => Some(format!(
+            "note: this distro is a development build; the lock pins {}",
+            describe(pinned)
+        )),
     }
 }
 
@@ -91,32 +80,10 @@ fn describe(source: &Source) -> String {
     }
 }
 
-/// Runs the distro `lock` pins in place of this one, when it's another. Returns only when this
-/// one is the one to run.
-pub fn defer(root: &Path, lock: Option<&Lock>) -> Result<(), String> {
-    let guard = std::env::var(GUARD).ok();
-    match pick(lock, running(root).as_ref(), guard.as_deref()) {
-        Pick::Run => Ok(()),
-        Pick::Development(pinned) => {
-            eprintln!("note: this distro is a development build; the lock pins {pinned}");
-            Ok(())
-        }
-        Pick::Pinned(pinned) => {
-            if pinned.url.is_empty() {
-                return Err(format!(
-                    "the lock pins {}, but not where to get it; declare `[sources.distro]` \
-                     with its url, or `distro update distro` pins this one",
-                    describe(&pinned)
-                ));
-            }
-            eprintln!("using {} as the lock pins it", describe(&pinned));
-            let program = backend::distro_at(&pinned)?;
-            let error = Command::new(program)
-                .args(std::env::args_os().skip(1))
-                .env(GUARD, &pinned.hash)
-                .exec();
-            Err(format!("cannot run {}: {error}", describe(&pinned)))
-        }
+/// Says on stderr when the distro `lock` pins isn't the one running.
+pub fn warn_if_other(root: &Path, lock: Option<&Lock>) {
+    if let Some(note) = note(lock, running(root).as_ref()) {
+        eprintln!("{note}");
     }
 }
 
@@ -183,25 +150,20 @@ mod tests {
     }
 
     #[test]
-    fn a_distro_that_isnt_the_locked_one_runs_it() {
-        let pinned = at("old", "git+https://x/distro");
-        let lock = lock_with(pinned.clone());
-        assert_eq!(pick(None, Some(&at("new", "")), None), Pick::Run);
-        assert_eq!(pick(Some(&lock), Some(&at("old", "")), None), Pick::Run);
-        assert_eq!(
-            pick(Some(&lock), Some(&at("new", "")), None),
-            Pick::Pinned(pinned.clone())
+    fn a_distro_that_isnt_the_locked_one_says_so() {
+        let lock = lock_with(at("old", "git+https://x/distro"));
+        assert_eq!(note(None, Some(&at("new", ""))), None);
+        assert_eq!(note(Some(&lock), Some(&at("old", ""))), None);
+        let other = note(Some(&lock), Some(&at("new", ""))).unwrap();
+        assert!(
+            other.contains("pins distro old, and this is distro new"),
+            "{other}"
         );
         assert_eq!(
-            pick(Some(&lock), None, None),
-            Pick::Development("distro old".into())
-        );
-        // Once run for that pin, it doesn't run another, whatever it says it is.
-        assert_eq!(
-            pick(Some(&lock), Some(&at("new", "")), Some("sha256-old")),
-            Pick::Run
+            note(Some(&lock), None).unwrap(),
+            "note: this distro is a development build; the lock pins distro old"
         );
         let unlocked = lock_with(Source::follow("git+https://x/distro"));
-        assert_eq!(pick(Some(&unlocked), Some(&at("new", "")), None), Pick::Run);
+        assert_eq!(note(Some(&unlocked), Some(&at("new", ""))), None);
     }
 }

@@ -220,8 +220,8 @@ fn package_name(
     Ok(format!("{name}#{attribute}"))
 }
 
-/// A name for a source from its URL: its last path segment, as `nixos-25.05` for
-/// `github:NixOS/nixpkgs/nixos-25.05`, numbered when `taken` already has it.
+/// A name for a source from its URL: its last path segment, as `recipes` for
+/// `github:acme/recipes`, numbered when `taken` already has it.
 fn source_name(url: &str, taken: impl Fn(&str) -> bool) -> String {
     let last = url
         .split(['?', '#'])

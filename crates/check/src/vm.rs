@@ -1,10 +1,10 @@
 //! Running scenarios in QEMU virtual machines.
 //!
-//! A scenario names a test image from `factory/nix` or a configuration to build. A test image
-//! output contains `disk.qcow2`, a UEFI-bootable disk whose system runs the guest agent; a built
-//! configuration boots its kernel directly from the host's store. Each run gets its own
-//! directory with a copy-on-write overlay of the disk, writable UEFI variables, an optional
-//! software TPM, logs, and a script that boots the same VM interactively.
+//! A scenario names a configuration, which `distro build` makes into a UEFI-bootable disk image
+//! from distro's own store whose system runs the guest agent. Later systems are copied into the
+//! guest from the host's store. Each run gets its own directory with a copy-on-write overlay of
+//! the disk, writable UEFI variables, an optional software TPM, logs, and a script that boots the
+//! same VM interactively.
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
@@ -25,7 +25,8 @@ use vsock::VsockStream;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "RawVmSpec")]
 pub struct VmSpec {
-    pub system: System,
+    /// The configuration directory the VM boots, relative to the repository root.
+    pub config: String,
     pub firmware: Firmware,
     pub tpm: bool,
     /// Conditions to wait for, in order, before the expectations run.
@@ -33,21 +34,10 @@ pub struct VmSpec {
     pub expect: Vec<Expect>,
     /// Run in order after the expectations.
     pub steps: Vec<Step>,
-    /// Where the guest's store comes from.
-    pub store: Store,
     /// Sizes of empty disks attached to the VM, such as `8G`, for `distro install` to lay out.
     pub blank_disks: Vec<String>,
     /// Limit for booting and checking. Building the image and systems is not counted.
     pub timeout_secs: u64,
-}
-
-/// What the VM boots.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum System {
-    /// A flake reference to a test image, relative to the repository root.
-    Image(String),
-    /// A configuration directory, built by `distro build` to boot from the host's store.
-    Config(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,16 +50,16 @@ pub enum Step {
         expect_plan: Vec<String>,
         try_for: Option<String>,
     },
-    /// Builds a user's own configuration on the host, copies it into the VM, and applies it there
-    /// as `user`, without root.
+    /// Applies a user's own configuration in the VM as `user`, without root. Distro's own store
+    /// can't do this yet, so the step fails with a reason.
     ApplyHome {
         config: String,
         user: String,
         try_for: Option<String>,
     },
-    /// Lets the guest build `config` itself: the host builds it, and the guest gets what that
-    /// used, the factory at `/run/distro-share/root` and the configuration at
-    /// `/run/distro-share/configs/<name>`.
+    /// Builds `config` on the host and copies it into the guest's store, leaving its path in
+    /// `/run/distro-share/system` and the configuration in `/run/distro-share/configs/<name>`,
+    /// for a step that installs it.
     PrepareBuild {
         config: String,
         /// What to build, as `distro build --target` takes it.
@@ -96,8 +86,7 @@ pub enum Step {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawVmSpec {
-    image: Option<String>,
-    config: Option<String>,
+    config: String,
     #[serde(default)]
     firmware: Firmware,
     #[serde(default)]
@@ -108,8 +97,9 @@ struct RawVmSpec {
     expect: Vec<Expect>,
     #[serde(default)]
     steps: Vec<RawStep>,
-    #[serde(default)]
-    store: Store,
+    /// Accepted for scenarios that still say `store = "distro"`, the only store.
+    #[serde(default, rename = "store")]
+    _store: Option<Store>,
     #[serde(default)]
     blank_disks: Vec<String>,
     #[serde(default = "default_timeout_secs")]
@@ -120,13 +110,8 @@ impl TryFrom<RawVmSpec> for VmSpec {
     type Error = String;
 
     fn try_from(raw: RawVmSpec) -> Result<Self, Self::Error> {
-        let system = match (raw.image, raw.config) {
-            (Some(image), None) => System::Image(image),
-            (None, Some(config)) => System::Config(config),
-            _ => return Err("name exactly one of `image` or `config`".into()),
-        };
         Ok(Self {
-            system,
+            config: raw.config,
             firmware: raw.firmware,
             tpm: raw.tpm,
             wait_for: raw.wait_for,
@@ -136,7 +121,6 @@ impl TryFrom<RawVmSpec> for VmSpec {
                 .into_iter()
                 .map(Step::try_from)
                 .collect::<Result<_, _>>()?,
-            store: raw.store,
             blank_disks: raw.blank_disks,
             timeout_secs: raw.timeout_secs,
         })
@@ -249,64 +233,35 @@ pub enum Firmware {
     Uefi,
 }
 
-/// Where the guest's store comes from.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+/// The only store a scenario may name: distro's own. The guest boots a disk image from it and
+/// sees the host's store read-only at `/run/distro-store`, from which later systems are copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Store {
-    /// A prebuilt disk image holding the system's whole closure, booted with UEFI. Configurations
-    /// can't be built into one.
-    #[default]
-    Image,
-    /// The host's store, mounted read-only with the kernel booted directly. For systems too
-    /// large to copy into an image.
-    Host,
-    /// A disk image from distro's own store, booted with UEFI. Later systems are copied in from
-    /// the host's store, which the guest sees read-only at `/run/distro-store`.
+enum Store {
     Distro,
 }
 
-impl Store {
-    /// The build targets for booting and for switching to a system built from a configuration.
-    fn targets(self) -> Result<(&'static str, &'static str), String> {
-        match self {
-            Self::Image => Err(
-                "systems built from a configuration can't be made into disk images; \
-                 add `store = \"host\"` to the scenario's `[vm]` table"
-                    .into(),
-            ),
-            Self::Host => Ok(("test-vm", "test-vm-system")),
-            Self::Distro => Ok(("test-image", "test-generation")),
-        }
-    }
-}
+/// The build target for the disk image a configuration boots.
+const IMAGE_TARGET: &str = "test-image";
 
-/// How an image output directory boots, from what it contains.
+/// The build target for a system the VM switches to or installs.
+const GENERATION_TARGET: &str = "test-generation";
+
+/// How the VM boots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Boot {
-    /// `disk.qcow2`, a UEFI-bootable disk.
-    Disk,
-    /// `kernel`, `initrd` and `kernel-params`, for a system in the host's store.
-    Kernel,
+enum Boot {
+    /// The raw disk image the configuration was built into, with UEFI.
+    Image,
     /// What `distro install` put on the VM's blank disks, with UEFI.
     Installed,
-    /// A raw disk image file, booted with UEFI.
-    Image,
 }
 
-impl Boot {
-    pub fn of(image: &Path) -> Result<Self, String> {
-        if image.is_file() {
-            Ok(Self::Image)
-        } else if image.join("disk.qcow2").is_file() {
-            Ok(Self::Disk)
-        } else if image.join("kernel").is_file() {
-            Ok(Self::Kernel)
-        } else {
-            Err(format!(
-                "{} has neither disk.qcow2 nor kernel",
-                image.display()
-            ))
-        }
+/// Checks that `image` is a disk image file to boot.
+fn check_image(image: &Path) -> Result<(), String> {
+    if image.is_file() {
+        Ok(())
+    } else {
+        Err(format!("{} is not a disk image", image.display()))
     }
 }
 
@@ -371,7 +326,7 @@ pub struct Reproduction {
 /// Where a VM run happens and what it leaves behind.
 pub struct VmRun<'a> {
     pub spec: &'a VmSpec,
-    /// The image output directory, already built.
+    /// The disk image to boot, already built.
     pub image: &'a Path,
     /// Directory for this run's state and logs. Emptied before the run.
     pub dir: &'a Path,
@@ -388,48 +343,14 @@ pub struct Host<'a> {
     pub workdir: &'a Path,
 }
 
-/// Builds a test image and returns its output directory.
-pub fn build_image(reference: &str, workdir: &Path) -> Result<PathBuf, String> {
-    let installable = installable(reference);
-    let output = Command::new("nix")
-        .args(["build", &installable, "--no-link", "--print-out-paths"])
-        .current_dir(workdir)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("could not run nix: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let lines: Vec<_> = stderr.lines().collect();
-        let tail = &lines[lines.len().saturating_sub(5)..];
-        return Err(format!(
-            "building image `{reference}` failed: {}",
-            tail.join(" | ")
-        ));
-    }
-    let out = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    Boot::of(&out)?;
-    Ok(out)
-}
-
-/// Builds the VM that boots a configuration, with `distro build`.
-pub fn build_config_image(host: Host<'_>, config: &str, store: Store) -> Result<PathBuf, String> {
-    let (vm, _) = store.targets()?;
+/// Builds the disk image that boots a configuration, with `distro build`.
+pub fn build_config_image(host: Host<'_>, config: &str) -> Result<PathBuf, String> {
     let out = PathBuf::from(
-        host.distro(&["build", "--config", config, "--target", vm])?
+        host.distro(&["build", "--config", config, "--target", IMAGE_TARGET])?
             .trim(),
     );
-    Boot::of(&out)?;
+    check_image(&out)?;
     Ok(out)
-}
-
-/// Turns a repository-relative flake reference into something `nix build` reads as a path.
-fn installable(reference: &str) -> String {
-    let flake = reference.split('#').next().unwrap_or_default();
-    if flake.contains(':') || flake.starts_with('/') || flake.starts_with('.') {
-        reference.to_owned()
-    } else {
-        format!("./{reference}")
-    }
 }
 
 impl VmRun<'_> {
@@ -439,11 +360,11 @@ impl VmRun<'_> {
     pub fn execute(&self) -> Result<(), String> {
         let firmware = FirmwarePaths::from_env()?;
         check_kvm()?;
-        let boot = Boot::of(self.image)?;
-        self.prepare_dir(boot, &firmware)?;
+        check_image(self.image)?;
+        self.prepare_dir(&firmware)?;
 
         let _tpm = self.spec.tpm.then(|| self.start_swtpm()).transpose()?;
-        let args = self.qemu_args(boot, &firmware, pick_cid(), &[])?;
+        let args = self.qemu_args(Boot::Image, &firmware, pick_cid(), &[])?;
         self.write_interactive_script(&args)?;
 
         let mut qemu = self.spawn(&args)?;
@@ -482,7 +403,7 @@ impl VmRun<'_> {
         Ok(KillOnDrop(qemu))
     }
 
-    fn prepare_dir(&self, boot: Boot, firmware: &FirmwarePaths) -> Result<(), String> {
+    fn prepare_dir(&self, firmware: &FirmwarePaths) -> Result<(), String> {
         if self.dir.exists() {
             fs::remove_dir_all(self.dir).map_err(io_err("the old run directory"))?;
         }
@@ -499,27 +420,17 @@ impl VmRun<'_> {
                 return Err(format!("qemu-img could not create a {size} disk"));
             }
         }
-        if boot != Boot::Kernel {
-            let (backing, format) = match boot {
-                Boot::Image => (self.image.to_path_buf(), "raw"),
-                _ => (self.image.join("disk.qcow2"), "qcow2"),
-            };
-            let status = Command::new("qemu-img")
-                .args(["create", "-q", "-f", "qcow2", "-F", format, "-b"])
-                .arg(&backing)
-                .arg(self.dir.join("disk.qcow2"))
-                .status()
-                .map_err(|e| format!("could not run qemu-img: {e}"))?;
-            if !status.success() {
-                return Err(format!(
-                    "qemu-img could not create an overlay for {}",
-                    backing.display()
-                ));
-            }
-        }
-        // What's installed on blank disks boots with UEFI, even when the VM starts without it.
-        if boot == Boot::Kernel && self.spec.blank_disks.is_empty() {
-            return Ok(());
+        let status = Command::new("qemu-img")
+            .args(["create", "-q", "-f", "qcow2", "-F", "raw", "-b"])
+            .arg(self.image)
+            .arg(self.dir.join("disk.qcow2"))
+            .status()
+            .map_err(|e| format!("could not run qemu-img: {e}"))?;
+        if !status.success() {
+            return Err(format!(
+                "qemu-img could not create an overlay for {}",
+                self.image.display()
+            ));
         }
 
         let vars = self.dir.join("ovmf-vars.fd");
@@ -579,7 +490,7 @@ impl VmRun<'_> {
         .map(str::to_owned)
         .into();
         match boot {
-            Boot::Disk | Boot::Image => {
+            Boot::Image => {
                 argv.extend([
                     "-m".into(),
                     "2048".into(),
@@ -587,16 +498,14 @@ impl VmRun<'_> {
                     "if=virtio,format=qcow2,file=disk.qcow2".into(),
                 ]);
                 argv.extend(uefi_drives(firmware));
-                if boot == Boot::Image {
-                    let store = self.host.store()?;
-                    argv.extend([
-                        "-virtfs".into(),
-                        format!(
-                            "local,path={},mount_tag=distro-store,security_model=none,readonly=on",
-                            store.display()
-                        ),
-                    ]);
-                }
+                let store = self.host.store()?;
+                argv.extend([
+                    "-virtfs".into(),
+                    format!(
+                        "local,path={},mount_tag=distro-store,security_model=none,readonly=on",
+                        store.display()
+                    ),
+                ]);
             }
             Boot::Installed => {
                 // The console takes input, so a passphrase can be typed at it.
@@ -616,24 +525,6 @@ impl VmRun<'_> {
                 }
                 argv.extend(["-m".into(), "2048".into()]);
                 argv.extend(uefi_drives(firmware));
-            }
-            Boot::Kernel => {
-                let params = fs::read_to_string(self.image.join("kernel-params"))
-                    .map_err(io_err("kernel-params"))?;
-                argv.extend([
-                    // The root filesystem and the store's writable layer are in memory.
-                    "-m".into(),
-                    "4096".into(),
-                    "-kernel".into(),
-                    self.image.join("kernel").display().to_string(),
-                    "-initrd".into(),
-                    self.image.join("initrd").display().to_string(),
-                    "-append".into(),
-                    params.trim().to_owned(),
-                    "-virtfs".into(),
-                    "local,path=/nix/store,mount_tag=nix-store,security_model=none,readonly=on"
-                        .into(),
-                ]);
             }
         }
         for n in (0..self.spec.blank_disks.len()).filter(|n| !missing.contains(n)) {
@@ -789,14 +680,8 @@ struct Unlock<'a> {
 /// The port the initrd's SSH listens on, as `unlock.ssh.port` defaults to.
 const INITRD_SSH: u16 = 2222;
 
-/// The directory in a run that the guest mounts read-only at [`GUEST_SHARE`].
+/// The directory in a run that the guest mounts read-only at `/run/distro-share`.
 const SHARE: &str = "share";
-
-/// Where the guest sees the share.
-const GUEST_SHARE: &str = "/run/distro-share";
-
-/// The file in the share holding store paths for the guest to import.
-const EXPORT: &str = "paths.nar";
 
 impl VmRun<'_> {
     fn run_steps(
@@ -807,10 +692,7 @@ impl VmRun<'_> {
         deadline: Instant,
     ) -> Result<(), String> {
         let mut booted = boot_id(agent, deadline)?;
-        let System::Config(initial) = &self.spec.system else {
-            return Err("steps need a scenario with `config`".into());
-        };
-        let mut current = initial.as_str();
+        let mut current = self.spec.config.as_str();
         for step in &self.spec.steps {
             match step {
                 Step::ApplyConfig {
@@ -822,11 +704,9 @@ impl VmRun<'_> {
                     self.apply_config(agent, current, config, expect_plan, try_for, deadline)?;
                     current = config;
                 }
-                Step::ApplyHome {
-                    config,
-                    user,
-                    try_for,
-                } => self.apply_home(agent, config, user, try_for.as_deref(), deadline)?,
+                Step::ApplyHome { .. } => {
+                    return Err("homes in the guest don't work with distro's own store yet".into());
+                }
                 Step::PrepareBuild { config, target } => {
                     self.prepare_build(agent, config, target.as_deref(), deadline)?;
                 }
@@ -877,23 +757,8 @@ impl VmRun<'_> {
                 "the plan for `{config}` does not contain {missing:?}:\n{plan}"
             ));
         }
-        let (_, target) = self.spec.store.targets()?;
-        let built = self
-            .host
-            .distro(&["build", "--config", config, "--target", target])?;
-        let built = built.trim();
-        let system = if self.spec.store == Store::Distro {
-            let name = Path::new(built)
-                .file_name()
-                .ok_or("a generation has a name")?
-                .to_string_lossy()
-                .into_owned();
-            self.copy_from_store(agent, &name, deadline)?;
-            format!("/store/{name}")
-        } else {
-            self.copy_in(agent, built, deadline)?;
-            built.to_owned()
-        };
+        let name = self.copy_generation(agent, config, GENERATION_TARGET, deadline)?;
+        let system = format!("/store/{name}");
         let system = system.as_str();
         let switch = match try_for {
             Some(duration) => argv(&["distro", "try", "--for", duration, system]),
@@ -902,35 +767,6 @@ impl VmRun<'_> {
         let (code, _, stderr) = run_shell(agent, switch, deadline)?;
         if code != Some(0) {
             return Err(format!("switching to `{config}` failed: {}", stderr.trim()));
-        }
-        Ok(())
-    }
-
-    fn apply_home(
-        &self,
-        agent: &mut Client<VsockStream>,
-        config: &str,
-        user: &str,
-        try_for: Option<&str>,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        let home = self.host.distro(&["build", "--config", config])?;
-        let home = home.trim();
-        self.copy_in(agent, home, deadline)?;
-        let apply = match try_for {
-            Some(duration) => format!("distro try --for {duration} {home}"),
-            None => format!("distro apply {home}"),
-        };
-        let (code, _, stderr) = run_shell(
-            agent,
-            argv(&["runuser", "-l", user, "-c", &apply]),
-            deadline,
-        )?;
-        if code != Some(0) {
-            return Err(format!(
-                "applying the home `{config}` failed: {}",
-                stderr.trim()
-            ));
         }
         Ok(())
     }
@@ -1054,6 +890,9 @@ impl VmRun<'_> {
         Ok(())
     }
 
+    /// Builds `config` on the host as `target`, a test generation unless said, copies it into the
+    /// guest's store and leaves its path in `/run/distro-share/system` and the configuration in
+    /// `/run/distro-share/configs/<name>`, for a step that installs it.
     fn prepare_build(
         &self,
         agent: &mut Client<VsockStream>,
@@ -1061,71 +900,8 @@ impl VmRun<'_> {
         target: Option<&str>,
         deadline: Instant,
     ) -> Result<(), String> {
-        if self.spec.store == Store::Distro {
-            return self.prepare_system(agent, config, target, deadline);
-        }
-        let mut build = vec!["build", "--config", config];
-        if let Some(target) = target {
-            build.extend(["--target", target]);
-        }
-        let built = self.host.distro(&build)?;
-        let derivation =
-            host_command(Command::new("nix-store").args(["--query", "--deriver", built.trim()]))?;
-        let used = host_command(Command::new("nix-store").args([
-            "--query",
-            "--requisites",
-            "--include-outputs",
-            derivation.trim(),
-        ]))?;
-        // The factory as the host evaluates it, with the inputs it pins, such as nixpkgs.
-        let workdir = self.host.workdir;
-        let repo = (workdir.canonicalize()).map_err(|e| format!("{}: {e}", workdir.display()))?;
-        let flake = format!("git+file://{}?dir=factory/nix", repo.display());
-        let archive =
-            host_command(Command::new("nix").args(["flake", "archive", "--json", &flake]))?;
-        let archive: serde_json::Value =
-            serde_json::from_str(&archive).map_err(|e| format!("the factory's archive: {e}"))?;
-        let mut paths: Vec<String> = used.lines().map(str::to_owned).collect();
-        archived_paths(&archive, &mut paths);
-        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-        self.copy_paths_in(agent, &paths, deadline)?;
-        let share = self.dir.join(SHARE);
-        let source = archive["path"]
-            .as_str()
-            .ok_or("the factory's archive has no path")?;
-        let root = share.join("root");
-        if !root.exists() {
-            std::os::unix::fs::symlink(source, &root).map_err(io_err("the factory link"))?;
-        }
-        let name = Path::new(config)
-            .file_name()
-            .ok_or("a configuration needs a name")?;
-        copy_dir(
-            &self.host.workdir.join(config),
-            &share.join("configs").join(name),
-        )
-    }
-
-    /// Builds `config` on the host as `target`, a test generation unless said, copies it into the
-    /// guest's store and leaves its path in `/run/distro-share/system` and the configuration in
-    /// `/run/distro-share/configs/<name>`, for a step that installs it.
-    fn prepare_system(
-        &self,
-        agent: &mut Client<VsockStream>,
-        config: &str,
-        target: Option<&str>,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        let target = target.unwrap_or("test-generation");
-        let built = self
-            .host
-            .distro(&["build", "--config", config, "--target", target])?;
-        let name = Path::new(built.trim())
-            .file_name()
-            .ok_or("a generation has a name")?
-            .to_string_lossy()
-            .into_owned();
-        self.copy_from_store(agent, &name, deadline)?;
+        let target = target.unwrap_or(GENERATION_TARGET);
+        let name = self.copy_generation(agent, config, target, deadline)?;
         let share = self.dir.join(SHARE);
         fs::write(share.join("system"), format!("/store/{name}\n"))
             .map_err(io_err("the system's path"))?;
@@ -1136,6 +912,27 @@ impl VmRun<'_> {
             &self.host.workdir.join(config),
             &share.join("configs").join(config_name),
         )
+    }
+
+    /// Builds `config` on the host as `target`, copies the generation into the guest's store and
+    /// returns its name there.
+    fn copy_generation(
+        &self,
+        agent: &mut Client<VsockStream>,
+        config: &str,
+        target: &str,
+        deadline: Instant,
+    ) -> Result<String, String> {
+        let built = self
+            .host
+            .distro(&["build", "--config", config, "--target", target])?;
+        let name = Path::new(built.trim())
+            .file_name()
+            .ok_or("a generation has a name")?
+            .to_string_lossy()
+            .into_owned();
+        self.copy_from_store(agent, &name, deadline)?;
+        Ok(name)
     }
 
     /// Copies generation `name` and what it needs from the host's store into the guest's, where
@@ -1155,63 +952,6 @@ impl VmRun<'_> {
             return Ok(());
         };
         let (code, _, stderr) = run_shell(agent, argv(&["/bin/sh", "-c", &copy]), deadline)?;
-        if code != Some(0) {
-            return Err(format!("copying into the VM failed: {}", stderr.trim()));
-        }
-        Ok(())
-    }
-
-    /// Copies the store paths of `system` that the guest lacks into the guest's store, as an
-    /// export in the share. The guest already has everything else they refer to.
-    fn copy_in(
-        &self,
-        agent: &mut Client<VsockStream>,
-        system: &str,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        self.copy_paths_in(agent, &[system], deadline)
-    }
-
-    /// Copies `paths` and everything they refer to into the guest's store, as [`Self::copy_in`]
-    /// does.
-    fn copy_paths_in(
-        &self,
-        agent: &mut Client<VsockStream>,
-        paths: &[&str],
-        deadline: Instant,
-    ) -> Result<(), String> {
-        // Dependencies come before the paths that refer to them, as importing needs.
-        let closure = host_command(
-            Command::new("nix-store")
-                .args(["--query", "--requisites"])
-                .args(paths),
-        )?;
-        let mut check = argv(&["nix-store", "--check-validity", "--print-invalid"]);
-        check.extend(closure.lines().map(str::to_owned));
-        let (_, missing, _) = run_shell(agent, check, deadline)?;
-        if missing.trim().is_empty() {
-            return Ok(());
-        }
-        // A guest on the host's store already sees the paths and only needs them registered.
-        let (export, import) = match self.spec.store {
-            Store::Image => ("--export", "--import"),
-            Store::Host => ("--dump-db", "--load-db"),
-            Store::Distro => {
-                return Err(
-                    "homes and builds in the guest don't work with `store = \"distro\"` yet".into(),
-                );
-            }
-        };
-        let file =
-            fs::File::create(self.dir.join(SHARE).join(EXPORT)).map_err(io_err("the export"))?;
-        host_command(
-            Command::new("nix-store")
-                .arg(export)
-                .args(missing.lines())
-                .stdout(file),
-        )?;
-        let import = format!("nix-store {import} < {GUEST_SHARE}/{EXPORT}");
-        let (code, _, stderr) = run_shell(agent, argv(&["/bin/sh", "-c", &import]), deadline)?;
         if code != Some(0) {
             return Err(format!("copying into the VM failed: {}", stderr.trim()));
         }
@@ -1254,18 +994,6 @@ impl Host<'_> {
                 .args(args)
                 .current_dir(self.workdir),
         )
-    }
-}
-
-/// The store paths in `archive`, what `nix flake archive --json` prints, into `paths`.
-fn archived_paths(archive: &serde_json::Value, paths: &mut Vec<String>) {
-    if let Some(path) = archive["path"].as_str() {
-        paths.push(path.to_owned());
-    }
-    if let Some(inputs) = archive["inputs"].as_object() {
-        for input in inputs.values() {
-            archived_paths(input, paths);
-        }
     }
 }
 
@@ -1560,54 +1288,45 @@ mod tests {
 
     #[test]
     fn parses_spec_with_defaults() {
-        let spec = spec("image = \"factory/nix#fixture\"\n").unwrap();
+        let spec = spec("config = \"x\"\n").unwrap();
 
+        assert_eq!(spec.config, "x");
         assert_eq!(spec.firmware, Firmware::Uefi);
         assert!(!spec.tpm);
         assert!(spec.wait_for.is_empty());
         assert!(spec.expect.is_empty());
         assert_eq!(spec.timeout_secs, 300);
-        assert_eq!(spec.store, Store::Image);
     }
 
     #[test]
-    fn a_config_scenario_can_boot_from_the_host_store() {
-        let spec = spec("config = \"local/configs/x\"\nstore = \"host\"\n").unwrap();
-        assert_eq!(spec.store, Store::Host);
-
-        let err = spec_err("config = \"x\"\nstore = \"nfs\"\n");
-        assert!(err.contains("unknown variant `nfs`"), "{err}");
-    }
-
-    #[test]
-    fn an_image_directory_says_how_it_boots() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = Boot::of(dir.path()).unwrap_err();
-        assert!(err.contains("neither disk.qcow2 nor kernel"), "{err}");
-
-        fs::write(dir.path().join("kernel"), "").unwrap();
-        assert_eq!(Boot::of(dir.path()), Ok(Boot::Kernel));
-
-        fs::write(dir.path().join("disk.qcow2"), "").unwrap();
-        assert_eq!(Boot::of(dir.path()), Ok(Boot::Disk));
-    }
-
-    #[test]
-    fn a_config_scenario_can_boot_an_image_from_distros_own_store() {
-        let spec = spec("config = \"x\"\nstore = \"distro\"\n").unwrap();
-        assert_eq!(spec.store, Store::Distro);
+    fn distro_is_the_only_store_a_scenario_may_name() {
         assert_eq!(
-            Store::Distro.targets(),
-            Ok(("test-image", "test-generation"))
+            spec("config = \"x\"\nstore = \"distro\"\n").unwrap().config,
+            "x"
         );
+
+        for other in ["host", "image", "nfs"] {
+            let err = spec_err(&format!("config = \"x\"\nstore = \"{other}\"\n"));
+            assert!(err.contains(&format!("unknown variant `{other}`")), "{err}");
+        }
     }
 
     #[test]
-    fn a_disk_image_file_boots_as_a_disk() {
+    fn a_scenario_needs_a_config() {
+        assert!(spec_err("").contains("missing field `config`"));
+        let err = spec_err("image = \"x\"\nconfig = \"y\"\n");
+        assert!(err.contains("unknown field `image`"), "{err}");
+    }
+
+    #[test]
+    fn only_a_disk_image_file_boots() {
         let dir = tempfile::tempdir().unwrap();
+        let err = check_image(dir.path()).unwrap_err();
+        assert!(err.ends_with("is not a disk image"), "{err}");
+
         let image = dir.path().join("system.img");
         fs::write(&image, "").unwrap();
-        assert_eq!(Boot::of(&image), Ok(Boot::Image));
+        assert_eq!(check_image(&image), Ok(()));
     }
 
     #[test]
@@ -1629,7 +1348,7 @@ mod tests {
     fn parses_wait_conditions_and_expectations() {
         let spec = spec(
             r#"
-            image = "factory/nix#fixture"
+            config = "x"
             tpm = true
             wait_for = ["agent", "unit:multi-user.target"]
             expect = [{ run = "uname", stdout_contains = "Linux" }]
@@ -1654,30 +1373,15 @@ mod tests {
     #[test]
     fn rejects_unknown_wait_condition_and_firmware() {
         for bad in [
-            "image = \"x\"\nwait_for = [\"port:80\"]\n",
-            "image = \"x\"\nwait_for = [\"unit:\"]\n",
+            "config = \"x\"\nwait_for = [\"port:80\"]\n",
+            "config = \"x\"\nwait_for = [\"unit:\"]\n",
         ] {
             let err = spec(bad).unwrap_err();
             assert!(err.message().starts_with("unknown wait condition"), "{err}");
         }
 
-        let err = spec("image = \"x\"\nfirmware = \"bios\"\n").unwrap_err();
+        let err = spec("config = \"x\"\nfirmware = \"bios\"\n").unwrap_err();
         assert!(err.message().contains("unknown variant `bios`"), "{err}");
-    }
-
-    #[test]
-    fn only_the_host_store_builds_a_configuration_and_the_error_says_so() {
-        assert_eq!(Store::Host.targets(), Ok(("test-vm", "test-vm-system")));
-        let err = Store::Image.targets().unwrap_err();
-        assert!(err.contains("store = \"host\""), "{err}");
-    }
-
-    #[test]
-    fn installable_prefixes_relative_references() {
-        assert_eq!(installable("factory/nix#fixture"), "./factory/nix#fixture");
-        assert_eq!(installable("./factory/nix#x"), "./factory/nix#x");
-        assert_eq!(installable("/abs/flake#x"), "/abs/flake#x");
-        assert_eq!(installable("github:o/r#x"), "github:o/r#x");
     }
 
     #[test]
@@ -1719,7 +1423,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(spec.system, System::Config("fixtures/configs/basic".into()));
+        assert_eq!(spec.config, "fixtures/configs/basic");
         assert_eq!(
             spec.wait_for,
             [WaitFor::UserUnit {
@@ -1751,17 +1455,6 @@ mod tests {
     }
 
     #[test]
-    fn a_scenario_names_an_image_or_a_config() {
-        for bad in ["", "image = \"x\"\nconfig = \"y\"\n"] {
-            let err = spec(bad).unwrap_err();
-            assert!(
-                err.message().contains("exactly one of `image` or `config`"),
-                "{err}"
-            );
-        }
-    }
-
-    #[test]
     fn a_step_does_one_thing() {
         for bad in [
             "config = \"c\"\nsteps = [{ run = \"x\", apply_config = \"y\" }]\n",
@@ -1776,7 +1469,7 @@ mod tests {
 
     #[test]
     fn user_units_name_the_user() {
-        let err = spec("image = \"x\"\nwait_for = [\"user-unit:niri.service\"]\n").unwrap_err();
+        let err = spec("config = \"x\"\nwait_for = [\"user-unit:niri.service\"]\n").unwrap_err();
         assert!(err.message().starts_with("unknown wait condition"), "{err}");
     }
 }

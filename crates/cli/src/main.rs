@@ -4,7 +4,6 @@ use std::process::ExitCode;
 use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
-use distro_backend as backend;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{Evaluation, OptionPath, Value};
 use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};
@@ -53,7 +52,7 @@ struct Cli {
     /// Directory of modules [default: modules under the root]
     #[arg(long, global = true, hide = true)]
     modules: Option<PathBuf>,
-    /// Repository root containing `acceptance/` and `factory/` [default: found, see `find_root`]
+    /// Repository root containing `acceptance/` and `build/` [default: found, see `find_root`]
     #[arg(long, global = true, hide = true)]
     root: Option<PathBuf>,
     #[command(subcommand)]
@@ -96,7 +95,7 @@ enum Command {
     Keep,
     /// Build the system without switching to it, and print where it is
     Build {
-        #[arg(long, value_enum, default_value = "system")]
+        #[arg(long, value_enum, default_value = "generation")]
         target: generations::BuildTarget,
         /// A kernel option for an image's boot entry, instead of the screen and serial consoles
         #[arg(long = "kernel-option")]
@@ -181,9 +180,6 @@ enum Command {
         /// Erase disks that have partitions already
         #[arg(long)]
         wipe: bool,
-        /// What to install, for the test harness
-        #[arg(long, value_enum, default_value = "system", hide = true)]
-        system_target: generations::BuildTarget,
         /// A system already built and in /store, to install instead of building one
         #[arg(long, value_name = "PATH")]
         system: Option<PathBuf>,
@@ -195,7 +191,7 @@ enum Command {
     Lock,
     /// Move sources to their newest versions and lock them
     Update {
-        /// Sources to update, such as `nixpkgs` [default: all of them]
+        /// Sources to update, such as `distro` [default: all of them]
         sources: Vec<String>,
     },
     /// Show each source: what it follows, where it's pinned and how old that is
@@ -331,10 +327,12 @@ fn main() -> ExitCode {
         && runs_pinned(&cli.command)
         && let Ok(config) = find_config(cli.config.as_deref())
     {
-        let deferred = read_lock(&config).and_then(|lock| pinned::defer(&root, lock.as_ref()));
-        if let Err(message) = deferred {
-            eprintln!("error: {message}");
-            return ExitCode::FAILURE;
+        match read_lock(&config) {
+            Ok(lock) => pinned::warn_if_other(&root, lock.as_ref()),
+            Err(message) => {
+                eprintln!("error: {message}");
+                return ExitCode::FAILURE;
+            }
         }
     }
     let modules = modules_dir(&root, cli.modules);
@@ -377,15 +375,16 @@ fn main() -> ExitCode {
         } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => {
                 use generations::BuildTarget as T;
-                let path = if let T::Generation | T::TestGeneration = target {
-                    let test = matches!(target, T::TestGeneration);
-                    generations::build_generation(root, &model, test)?
-                } else if let T::Image | T::TestImage = target {
-                    let test = matches!(target, T::TestImage);
-                    let keep = with_configuration.then_some(config.as_path());
-                    generations::build_image(root, keep, &model, &kernel_options, test)?
-                } else {
-                    generations::build(root, &model, target.try_into()?)?
+                let path = match target {
+                    T::Generation | T::TestGeneration => {
+                        let test = matches!(target, T::TestGeneration);
+                        generations::build_generation(root, &model, test)?
+                    }
+                    T::Image | T::TestImage => {
+                        let test = matches!(target, T::TestImage);
+                        let keep = with_configuration.then_some(config.as_path());
+                        generations::build_image(root, keep, &model, &kernel_options, test)?
+                    }
                 };
                 println!("{}", path.display());
                 Ok(ExitCode::SUCCESS)
@@ -420,7 +419,6 @@ fn main() -> ExitCode {
             target,
             wipe,
             yes,
-            system_target,
             system,
         } => machine().and_then(|config| {
             let Some(model) = model(&config, &modules) else {
@@ -444,7 +442,6 @@ fn main() -> ExitCode {
                     target: &target,
                     wipe,
                     yes,
-                    system: system_target.try_into()?,
                     prebuilt: system.as_deref(),
                 },
             )
@@ -532,8 +529,8 @@ fn machine_role(config: &Path) -> Option<String> {
     Some(role)
 }
 
-/// Whether `command` reads the configuration, so the distro its lock pins runs it. Commands on
-/// built generations, and updates that move distro's own pin, run as they are.
+/// Whether `command` reads the configuration, so it says when the lock pins another distro.
+/// Commands on built generations, and updates that move distro's own pin, don't.
 fn runs_pinned(command: &Command) -> bool {
     match command {
         Command::Update { sources } => {
@@ -633,8 +630,7 @@ fn refuse_project(config: &Path) -> Result<(), String> {
 }
 
 /// The model packages come from for `run` and `shell`, and the project when the context is one:
-/// the configuration's, or with none, an empty one, whose packages come from the factory's
-/// nixpkgs.
+/// the configuration's, or with none, an empty one, whose packages come from this distro.
 fn package_context(
     given: Option<&Path>,
     modules: &Path,
@@ -992,9 +988,9 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
             Some(before) => (before, None),
             None => return Ok(ExitCode::FAILURE),
         },
-        Against::Running => match backend::current_model() {
+        Against::Running => match switching::running_model() {
             Some(path) => (
-                read_model(Path::new(path))
+                read_model(&path)
                     .map_err(|e| format!("{e}; plan with --against or --fresh instead"))?,
                 Some("the running system".to_owned()),
             ),

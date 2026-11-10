@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::scenario::{CommandSpec, Runner, Scenario};
-use crate::vm::{self, Host, Reproduction, System, VmRun, VmSpec};
+use crate::vm::{self, Host, Reproduction, VmRun, VmSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -59,7 +59,7 @@ pub struct RunContext {
     pub signoff_dir: PathBuf,
     /// Parent directory for VM run directories.
     pub run_root: PathBuf,
-    /// Use this already-built image output instead of building the scenario's image.
+    /// Use this already-built disk image instead of building the scenario's image.
     pub image_override: Option<PathBuf>,
 }
 
@@ -86,10 +86,9 @@ fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
         distro: &ctx.distro_exe,
         workdir: &ctx.workdir,
     };
-    let built = match (&ctx.image_override, &spec.system) {
-        (Some(image), _) => Ok(image.clone()),
-        (None, System::Image(reference)) => vm::build_image(reference, &ctx.workdir),
-        (None, System::Config(config)) => vm::build_config_image(host, config, spec.store),
+    let built = match &ctx.image_override {
+        Some(image) => Ok(image.clone()),
+        None => vm::build_config_image(host, &spec.config),
     };
     let image = match built {
         Ok(image) => image,
@@ -377,18 +376,19 @@ mod tests {
     fn vm_scenario_fails_with_the_build_error_when_the_image_cannot_be_built() {
         let workdir = tempfile::tempdir().unwrap();
         let vm = scenario(Runner::Vm(
-            toml::from_str("image = \"missing/flake#image\"").unwrap(),
+            toml::from_str("config = \"configs/x\"\nstore = \"distro\"\n").unwrap(),
         ));
         let mut ctx = ctx(PathBuf::from("/nonexistent"));
         ctx.workdir = workdir.path().to_path_buf();
+        ctx.distro_exe = PathBuf::from("/nonexistent/distro");
 
         let Outcome::Fail(failure) = run(&vm, &ctx) else {
             panic!("expected a failure");
         };
         assert!(
-            failure
-                .reason
-                .starts_with("building image `missing/flake#image` failed"),
+            failure.reason.starts_with(
+                "could not run `/nonexistent/distro build --config configs/x --target test-image`"
+            ),
             "{}",
             failure.reason
         );

@@ -15,4 +15,4 @@ pub use scenario::{
     parse_scenario,
 };
 pub use scoreboard::{render, render_list};
-pub use vm::{Expect, Firmware, Reproduction, Step, System, VmSpec, WaitFor};
+pub use vm::{Expect, Firmware, Reproduction, Step, VmSpec, WaitFor};

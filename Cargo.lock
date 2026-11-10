@@ -552,19 +552,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "distro-backend"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "distro-eval",
- "distro-model",
- "insta",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "distro-build"
 version = "0.0.0"
 dependencies = [
@@ -586,7 +573,6 @@ dependencies = [
  "distro-build",
  "insta",
  "serde",
- "serde_json",
  "tempfile",
  "thiserror",
  "toml",
@@ -598,7 +584,6 @@ name = "distro-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
- "distro-backend",
  "distro-build",
  "distro-check",
  "distro-eval",
