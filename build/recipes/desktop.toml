@@ -66,7 +66,7 @@ id = "libxkbcommon"
 version = "1.13.2"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "bison-final", "xkeyboard-config", "libxml2"]
+extra_deps = ["meson", "ninja", "pkgconf", "bison-final", "m4-final", "xkeyboard-config", "libxml2"]
 sources = [{ url = "https://github.com/xkbcommon/libxkbcommon/archive/xkbcommon-{version}/libxkbcommon-xkbcommon-{version}.tar.gz" }]
 script = '''
 # Keymaps from keyboard layouts, read from xkeyboard-config where it is in the store.
@@ -143,7 +143,7 @@ id = "seatd"
 version = "0.9.1"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "libudev", "systemd"]
+extra_deps = ["meson", "ninja", "pkgconf", "systemd"]
 sources = [{ url = "https://git.sr.ht/~kennylevinsen/seatd/archive/{version}.tar.gz" }]
 script = '''
 # libseat, which the compositor opens displays and input devices through, with logind.
@@ -168,7 +168,8 @@ make install DESTDIR=$DEST
 
 [[package]]
 id = "libdisplay-info"
-version = "0.4.0"
+version = "0.3.0"
+# Smithay, in niri, takes versions below 0.4.
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "hwdata", "python3"]
@@ -258,3 +259,174 @@ ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
 probes = ["egl", "gbm"]
+
+# Drawing text and shapes: images, fonts and their shaping, and the 2D libraries on top.
+
+[[package]]
+id = "libpng"
+version = "1.6.59"
+scope = "runtime"
+core = true
+extra_deps = ["cmake", "ninja", "zlib"]
+sources = [{ url = "https://github.com/pnggroup/libpng/archive/v{version}/libpng-{version}.tar.gz" }]
+script = '''
+cmake -S . -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_BUILD_TYPE=Release -DPNG_STATIC=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["libpng"]
+
+[[package]]
+id = "freetype"
+version = "2.15.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "zlib", "libpng"]
+sources = [{ url = "https://download.savannah.gnu.org/releases/freetype/freetype-{version}.tar.xz" }]
+script = '''
+# Without HarfBuzz, which is built on FreeType.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D harfbuzz=disabled \
+    -D png=enabled -D zlib=system -D brotli=disabled -D bzip2=disabled -D tests=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["freetype2"]
+
+[[package]]
+id = "harfbuzz"
+version = "15.1.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "freetype", "glib", "libpng", "zlib", "pcre2"]
+sources = [{ url = "https://github.com/harfbuzz/harfbuzz/releases/download/{version}/harfbuzz-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D freetype=enabled \
+    -D glib=enabled -D gobject=disabled -D cairo=disabled -D icu=disabled -D chafa=disabled \
+    -D introspection=disabled -D tests=disabled -D docs=disabled -D utilities=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["harfbuzz"]
+
+[[package]]
+id = "fribidi"
+version = "1.0.18"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf"]
+sources = [{ url = "https://github.com/fribidi/fribidi/releases/download/v{version}/fribidi-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D docs=false -D bin=false \
+    -D tests=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["fribidi"]
+
+[[package]]
+id = "fontconfig"
+version = "2.17.1"
+# 2.18 needs Meson 1.11.
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "gperf", "freetype", "expat", "libpng", "zlib",
+]
+sources = [{ url = "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/{version}/fontconfig-{version}.tar.xz" }]
+script = '''
+# Finds fonts by name. The configuration and cache are in /etc and /var, where the system keeps
+# them.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release --sysconfdir=/etc \
+    --localstatedir=/var -D doc=disabled -D tests=disabled -D tools=enabled -D nls=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["fontconfig"]
+
+[[package]]
+id = "cairo"
+version = "1.18.6"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "pixman", "freetype", "fontconfig", "libpng", "zlib",
+  "glib", "expat", "pcre2", "libffi",
+]
+sources = [{ url = "https://cairographics.org/releases/cairo-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D xlib=disabled \
+    -D xcb=disabled -D lzo=disabled -D tests=disabled -D spectre=disabled -D symbol-lookup=disabled \
+    -D glib=enabled -D png=enabled -D freetype=enabled -D fontconfig=enabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["cairo"]
+
+[[package]]
+id = "pango"
+version = "1.56.4"
+# 1.58 needs glib 2.88.
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "harfbuzz", "fribidi", "fontconfig", "freetype",
+  "cairo", "libpng", "zlib", "expat", "pixman", "pcre2", "libffi", "util-linux",
+]
+sources = [{ url = "https://download.gnome.org/sources/pango/1.56/pango-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
+    -D documentation=false -D build-testsuite=false -D build-examples=false -D libthai=disabled \
+    -D xft=disabled -D cairo=enabled -D fontconfig=enabled -D freetype=enabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["pango", "pangocairo"]
+
+# The compositor.
+
+[[package]]
+id = "niri"
+version = "26.04"
+scope = "runtime"
+core = true
+extra_deps = [
+  "rust-bin", "pkgconf", "systemd", "libinput", "libxkbcommon", "mesa", "seatd", "libdisplay-info",
+  "pango", "cairo", "glib", "pixman", "libdrm",
+  "harfbuzz", "fribidi", "fontconfig", "freetype", "libpng", "zlib", "expat", "pcre2", "libffi",
+  "libxml2", "libevdev", "mtdev", "wayland", "util-linux",
+]
+crates = "Cargo.lock"
+sources = [{ url = "https://github.com/niri-wm/niri/archive/v{version}/niri-{version}.tar.gz" }]
+script = '''
+# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
+awk -F'"' '
+    /^name = / { name = $2 }
+    /^version = / { version = $2 }
+    /^checksum = / {
+        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
+    }
+' Cargo.lock
+# The lock takes Smithay from git, which is unpacked in git/smithay at the commit it pins. The patch
+# changes its source in the lock, so the build can't be --locked, but every other crate is the lock's.
+mkdir -p .cargo
+cat > .cargo/config.toml <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+[patch."https://github.com/Smithay/smithay.git"]
+smithay = { path = "git/smithay" }
+smithay-drm-extras = { path = "git/smithay/smithay-drm-extras" }
+CONFIG
+export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
+# Without screen casting, which needs PipeWire and the GNOME portal.
+cargo build --release --offline -j $NPROC --no-default-features --features systemd
+mkdir -p $DEST$PREFIX/bin $DEST$PREFIX/lib/systemd/user $DEST$PREFIX/share/wayland-sessions \
+    $DEST$PREFIX/share/xdg-desktop-portal
+cp target/release/niri resources/niri-session $DEST$PREFIX/bin/
+cp resources/niri.service resources/niri-shutdown.target $DEST$PREFIX/lib/systemd/user/
+cp resources/niri.desktop $DEST$PREFIX/share/wayland-sessions/
+cp resources/niri-portals.conf $DEST$PREFIX/share/xdg-desktop-portal/
+'''
+smoke = ["bin/niri --version"]
