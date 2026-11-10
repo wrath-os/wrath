@@ -430,3 +430,188 @@ cp resources/niri.desktop $DEST$PREFIX/share/wayland-sessions/
 cp resources/niri-portals.conf $DEST$PREFIX/share/xdg-desktop-portal/
 '''
 smoke = ["bin/niri --version"]
+
+# Logging in, fonts and sound.
+
+[[package]]
+id = "dejavu-fonts"
+version = "2.37"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-{version}.tar.bz2" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/dejavu
+cp ttf/*.ttf $DEST$PREFIX/share/fonts/dejavu/
+'''
+
+[[package]]
+id = "greetd"
+version = "0.10.3"
+scope = "runtime"
+core = true
+extra_deps = ["rust-bin", "linux-pam"]
+crates = "Cargo.lock"
+sources = [{ url = "https://git.sr.ht/~kennylevinsen/greetd/archive/{version}.tar.gz" }]
+script = '''
+# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
+awk -F'"' '
+    /^name = / { name = $2 }
+    /^version = / { version = $2 }
+    /^checksum = / {
+        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
+    }
+' Cargo.lock
+mkdir -p .cargo
+cat > .cargo/config.toml <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+CONFIG
+export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
+cargo build --release --offline --locked -j $NPROC
+mkdir -p $DEST$PREFIX/bin
+cp target/release/greetd target/release/agreety $DEST$PREFIX/bin/
+'''
+smoke = ["bin/greetd --help"]
+
+[[package]]
+id = "tuigreet"
+version = "0.9.1"
+# Newer ones need Rust 1.91.
+scope = "runtime"
+core = true
+extra_deps = ["rust-bin"]
+crates = "Cargo.lock"
+sources = [{ url = "https://github.com/tuigreet/tuigreet/archive/{version}/tuigreet-{version}.tar.gz" }]
+script = '''
+# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
+awk -F'"' '
+    /^name = / { name = $2 }
+    /^version = / { version = $2 }
+    /^checksum = / {
+        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
+    }
+' Cargo.lock
+mkdir -p .cargo
+cat > .cargo/config.toml <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+CONFIG
+export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
+cargo build --release --offline --locked -j $NPROC
+mkdir -p $DEST$PREFIX/bin
+cp target/release/tuigreet $DEST$PREFIX/bin/
+'''
+smoke = ["bin/tuigreet --version"]
+
+[[package]]
+id = "alsa-lib"
+version = "1.2.16.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://www.alsa-project.org/files/pub/lib/alsa-lib-{version}.tar.bz2" }]
+script = '''
+./configure --prefix=$PREFIX --disable-python --disable-static --without-debug
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["alsa"]
+
+[[package]]
+id = "lua"
+version = "5.4.9"
+scope = "runtime"
+core = true
+sources = [{ url = "https://www.lua.org/ftp/lua-{version}.tar.gz" }]
+script = '''
+# Lua builds with a plain Makefile and has no pkg-config file, so one is written here. Programs
+# embed it as a static library.
+make linux MYCFLAGS=-fPIC -j$NPROC
+make install INSTALL_TOP=$DEST$PREFIX
+mkdir -p $DEST$PREFIX/lib/pkgconfig
+cat > $DEST$PREFIX/lib/pkgconfig/lua.pc <<PC
+prefix=$PREFIX
+includedir=\${prefix}/include
+libdir=\${prefix}/lib
+
+Name: Lua
+Description: An embeddable scripting language
+Version: 5.4
+Libs: -L\${libdir} -llua -lm
+Cflags: -I\${includedir}
+PC
+'''
+smoke = ["bin/lua -v"]
+probes = ["lua"]
+
+[[package]]
+id = "pipewire"
+version = "1.6.11"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "alsa-lib", "systemd", "dbus", "glib"]
+sources = [{ url = "https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/{version}/pipewire-{version}.tar.gz" }]
+script = '''
+# Audio through ALSA, with the PulseAudio server for programs that speak it, run as each user's
+# service. Every optional feature is off unless named, and the session manager is WirePlumber,
+# built on its own.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D auto_features=disabled \
+    -D session-managers=[] -D alsa=enabled -D pipewire-alsa=enabled -D dbus=enabled \
+    -D libsystemd=enabled -D systemd-user-service=enabled -D systemd-system-service=disabled \
+    -D udevrulesdir=$PREFIX/lib/udev/rules.d -D udev=enabled -D spa-plugins=enabled \
+    -D support=enabled -D audioconvert=enabled -D audiomixer=enabled -D control=enabled \
+    -D volume=enabled -D flatpak=disabled \
+    -D examples=disabled -D tests=disabled -D man=disabled -D docs=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/pipewire --version"]
+probes = ["libpipewire-0.3"]
+
+[[package]]
+id = "wireplumber"
+version = "0.5.19"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "pipewire", "glib", "lua", "systemd", "pcre2", "libffi",
+  "util-linux", "zlib",
+]
+sources = [{ url = "https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/{version}/wireplumber-{version}.tar.gz" }]
+script = '''
+# The session manager: it links PipeWire's devices and streams, by its Lua scripts.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D system-lua=true \
+    -D introspection=disabled -D doc=disabled -D tests=false -D dbus-tests=false \
+    -D elogind=disabled -D systemd=enabled -D systemd-user-service=true \
+    -D systemd-system-service=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/wireplumber --version"]
+
+[[package]]
+id = "rtkit"
+version = "0.14"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "dbus", "libcap", "systemd", "polkit"]
+sources = [{ url = "https://gitlab.freedesktop.org/pipewire/rtkit/-/archive/v{version}/rtkit-v{version}.tar.gz" }]
+script = '''
+# Gives processes that ask, such as PipeWire, realtime priority within limits.
+# Its D-Bus description goes into the program as bytes, which it would make with xxd.
+od -An -v -tx1 org.freedesktop.RealtimeKit1.xml | tr -s ' \n' '\n' | sed '/^$/d; s/^/0x/' \
+    | paste -sd, > xml-introspection.h
+# Its users file goes with its own files, instead of where systemd keeps its own.
+sed -i "s|^sysusersdir = ''|sysusersdir = '$PREFIX/lib/sysusers.d'|" meson.build
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D installed_tests=false \
+    -D libsystemd=enabled -D dbus_interfacedir=$PREFIX/share/dbus-1/interfaces \
+    -D dbus_rulesdir=$PREFIX/share/dbus-1/system.d \
+    -D dbus_systemservicedir=$PREFIX/share/dbus-1/system-services \
+    -D polkit_actiondir=$PREFIX/share/polkit-1/actions \
+    -D systemd_systemunitdir=$PREFIX/lib/systemd/system
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
