@@ -1,0 +1,30 @@
+[package]
+name = "distro-build"
+description = "The store, the sandbox, the seed and the action graph systems are built with"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "distro_build"
+
+# Run from `build/`, where the recipes, pins and work directory are.
+[[bin]]
+name = "lab"
+path = "src/main.rs"
+
+[dependencies]
+memchr = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+toml.workspace = true
+zstd = "0.13"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

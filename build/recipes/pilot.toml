@@ -1,0 +1,228 @@
+# The pilot: twelve packages that between them have most of the shapes a leak can take. Built on
+# the final toolchain. `smoke` runs from the final location with no /usr, `probes` link a program
+# against a library in a view and run it with no /usr, and `check` is the package's own tests.
+
+[[package]]
+id = "xz"
+scope = "runtime"
+toolset = true
+sources = [{ url = "https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-nls
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/xz --version"]
+probes = ["lzma"]
+check_build = "make -j$NPROC check TESTS="
+check = "make -j$NPROC check"
+check_in_view = true
+
+[[package]]
+id = "zlib"
+scope = "runtime"
+toolset = true
+sources = [{ url = "https://zlib.net/fossils/zlib-1.3.1.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX
+make -j$NPROC
+make install DESTDIR=$DEST
+rm -f $DEST$PREFIX/lib/libz.a
+'''
+probes = ["z"]
+check = "make test"
+
+[[package]]
+id = "bzip2"
+scope = "runtime"
+toolset = true
+sources = [{ url = "https://www.sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz" }]
+script = '''
+sed -i 's@\(ln -s -f \)$(PREFIX)/bin/@\1@' Makefile
+sed -i "s@(PREFIX)/man@(PREFIX)/share/man@g" Makefile
+make -f Makefile-libbz2_so
+make clean
+make -j$NPROC
+make PREFIX=$DEST$PREFIX install
+cp -a libbz2.so.* $DEST$PREFIX/lib
+ln -s libbz2.so.1.0.8 $DEST$PREFIX/lib/libbz2.so
+cp bzip2-shared $DEST$PREFIX/bin/bzip2
+rm -f $DEST$PREFIX/lib/libbz2.a
+'''
+smoke = ["bin/bzip2 --help"]
+probes = ["bz2"]
+check = "make test"
+
+[[package]]
+id = "ncurses"
+scope = "runtime"
+toolset = true
+sources = [{ url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.5.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX --mandir=$PREFIX/share/man --with-shared --without-debug \
+    --without-normal --without-cxx-binding --enable-pc-files --enable-widec --enable-overwrite \
+    --with-pkg-config-libdir=$PREFIX/lib/pkgconfig
+make -j$NPROC
+make install DESTDIR=$DEST
+ln -s libncursesw.so $DEST$PREFIX/lib/libncurses.so
+'''
+smoke = ["bin/clear -V", "bin/infocmp -V"]
+probes = ["ncursesw"]
+
+[[package]]
+id = "readline"
+scope = "runtime"
+toolset = true
+extra_deps = ["ncurses"]
+sources = [{ url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz" }]
+script = '''
+sed -i '/MV.*old/d' Makefile.in
+sed -i '/{OLDSUFF}/c:' support/shlib-install
+./configure --prefix=$PREFIX --disable-static --with-curses
+make -j$NPROC SHLIB_LIBS="-lncursesw"
+make SHLIB_LIBS="-lncursesw" install DESTDIR=$DEST
+'''
+probes = ["readline"]
+
+[[package]]
+id = "expat"
+scope = "runtime"
+toolset = true
+sources = [{ url = "https://github.com/libexpat/libexpat/releases/download/R_2_7_1/expat-2.7.1.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/xmlwf -v"]
+probes = ["expat"]
+check_build = "make -j$NPROC check TESTS="
+check = "make -j$NPROC check"
+
+[[package]]
+id = "gmp-lib"
+scope = "runtime"
+toolset = true
+extra_deps = ["m4"]
+sources = [{ url = "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz" }]
+script = '''
+# gcc 15 defaults to C23, where an empty parameter list means no parameters.
+sed -i '/long long t1;/,+1s/()/(...)/' configure
+./configure --prefix=$PREFIX --enable-cxx --disable-static
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+probes = ["gmp"]
+check_build = "make -j$NPROC check TESTS="
+check = "make -j$NPROC check"
+
+[[package]]
+id = "perl"
+scope = "runtime"
+toolset = true
+toolchain_limits = true
+extra_deps = ["zlib", "bzip2"]
+sources = [{ url = "https://www.cpan.org/src/5.0/perl-5.42.0.tar.xz" }]
+script = '''
+export BUILD_ZLIB=False BUILD_BZIP2=0
+sh Configure -des -Dprefix=$PREFIX -Dvendorprefix=$PREFIX -Dman1dir=$PREFIX/share/man/man1 \
+    -Dman3dir=$PREFIX/share/man/man3 -Dpager=/bin/less -Duseshrplib -Dusethreads -Dcc=gcc \
+    -Dinstallprefix=$DEST$PREFIX
+# Configure records when and where it ran, and the kernel it ran on.
+sed -i -E "s/^(cf_by|cf_time|cf_email|perladmin|myhostname|myuname|osvers)=.*/\1='lab'/" config.sh
+sed -i -E "s/^# (Configuration time|Target system).*/# \1: lab/" config.sh
+# Only a record of the compiler's search path, which would keep all of gcc referenced.
+sed -i -E "s/^incpth=.*/incpth=''/" config.sh
+sh Configure -S
+make -j$NPROC
+make install
+'''
+smoke = ["bin/perl -e 'print 1+1'", "bin/perl -MCompress::Zlib -e 1"]
+check = '''
+ln -sf ../perl t/perl
+cd t
+TEST_JOBS=$NPROC LD_LIBRARY_PATH=/build/src ./perl -I../lib harness > /build/perl-tests.out 2>&1 || true
+sed -n '/^Test Summary/,$p' /build/perl-tests.out | grep 'Failed: [1-9]' | cut -d' ' -f1 | sort > /build/failed
+cat /build/failed
+printf '%s\n' ../cpan/ExtUtils-Constant/t/Constant.t ../cpan/ExtUtils-MakeMaker/t/02-xsdynamic.t \
+    ../lib/ExtUtils/t/Embed.t op/stat.t porting/extrefs.t | sort > /build/waived
+diff /build/waived /build/failed
+'''
+
+[[package]]
+id = "openssl"
+scope = "runtime"
+toolset = true
+toolchain_limits = true
+extra_deps = ["perl", "zlib"]
+sources = [{ url = "https://github.com/openssl/openssl/releases/download/openssl-3.5.2/openssl-3.5.2.tar.gz" }]
+script = '''
+./config --prefix=$PREFIX --openssldir=$PREFIX/etc/ssl --libdir=lib shared zlib-dynamic
+make -j$NPROC
+make install_sw install_ssldirs DESTDIR=$DEST
+# The library names this directory, and these Perl scripts would take perl along with it.
+rm -r $DEST$PREFIX/etc/ssl/misc
+'''
+smoke = ["bin/openssl version -a", "bin/openssl dgst -sha256 /proc/self/status"]
+probes = ["ssl", "crypto"]
+check = "make -j$NPROC test HARNESS_JOBS=$NPROC TESTS='-test_afalg'"
+
+[[package]]
+id = "libffi"
+scope = "runtime"
+toolset = true
+sources = [{ url = "https://github.com/libffi/libffi/releases/download/v3.5.2/libffi-3.5.2.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --with-gcc-arch=x86-64
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+probes = ["ffi"]
+
+[[package]]
+id = "python3"
+scope = "runtime"
+toolset = true
+toolchain_limits = true
+extra_deps = ["libffi", "zlib", "bzip2", "xz", "expat", "openssl", "ncurses", "readline"]
+sources = [{ url = "https://www.python.org/ftp/python/3.13.7/Python-3.13.7.tar.xz" }]
+script = '''
+# The pilot has no pkg-config, without which configure can't work out how to use ncurses.
+py_cv_module__curses=n/a py_cv_module__curses_panel=n/a \
+./configure --prefix=$PREFIX --enable-shared --without-ensurepip --with-system-expat
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = [
+  "bin/python3 -c 'import ssl, zlib, bz2, lzma, readline, pyexpat'",
+]
+check = "make test TESTOPTS='-j32 test_zlib test_bz2 test_lzma test_ssl test_xml_etree'"
+
+[[package]]
+id = "libxml2"
+scope = "runtime"
+toolset = true
+extra_deps = ["zlib", "xz"]
+sources = [{ url = "https://download.gnome.org/sources/libxml2/2.14/libxml2-2.14.5.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --without-python --with-history=no
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/xmllint --version"]
+probes = ["xml2"]
+check_build = "make -j$NPROC check TESTS="
+check = "make -j$NPROC check"
+
+[[package]]
+id = "cmake"
+scope = "runtime"
+toolset = true
+toolchain_limits = true
+sources = [{ url = "https://cmake.org/files/v4.1/cmake-4.1.0.tar.gz" }]
+script = '''
+./bootstrap --prefix=$PREFIX --parallel=$NPROC --no-qt-gui -- -DCMAKE_USE_OPENSSL=OFF
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/cmake --version", "bin/ctest --version"]

@@ -8,3 +8,4 @@ devenv.local.yaml
 .direnv
 *.pending-snap
 *.snap.new
+/build/work

@@ -1,0 +1,211 @@
+# What it takes to boot: a kernel, an init and a message bus.
+
+[[package]]
+id = "linux"
+scope = "runtime"
+core = true
+extra_deps = ["flex", "bison-final", "m4-final", "bc", "openssl", "elfutils", "perl", "pkgconf", "kmod"]
+sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.1.tar.xz" }]
+script = '''
+export KBUILD_BUILD_TIMESTAMP=@1 KBUILD_BUILD_USER=lab KBUILD_BUILD_HOST=lab
+make x86_64_defconfig
+make kvm_guest.config
+scripts/config --enable DEVTMPFS --enable DEVTMPFS_MOUNT --enable EXT4_FS --enable VIRTIO_BLK \
+    --enable VIRTIO_PCI --enable AUTOFS_FS --enable FHANDLE --enable CGROUPS --enable CGROUP_BPF \
+    --enable BPF_SYSCALL --enable TMPFS --enable TMPFS_POSIX_ACL --enable TMPFS_XATTR \
+    --enable INOTIFY_USER --enable SIGNALFD --enable TIMERFD --enable EPOLL --enable UNIX \
+    --enable NAMESPACES --enable SECCOMP --enable DMIID --enable SERIAL_8250_CONSOLE \
+    --enable OVERLAY_FS --enable OVERLAY_FS_METACOPY --enable OVERLAY_FS_REDIRECT_DIR \
+    --enable SQUASHFS --enable BLK_DEV_LOOP --enable EROFS_FS --enable EROFS_FS_XATTR \
+    --enable EROFS_FS_POSIX_ACL --enable EROFS_FS_ZIP --enable EROFS_FS_ZIP_ZSTD \
+    --enable FS_VERITY --enable NETFILTER --enable NF_CONNTRACK --enable NF_TABLES \
+    --enable NF_TABLES_INET --enable NFT_CT --enable MODULES --enable EFI --enable EFI_STUB \
+    --enable BLK_DEV_INITRD --enable RD_ZSTD --module VIRTIO_BLK --disable DEBUG_INFO --disable DEBUG_INFO_BTF
+# What a PC needs to boot from USB or NVMe and log in at its screen, with no GPU driver.
+scripts/config --enable PCI --enable BLK_DEV_NVME --enable USB_SUPPORT --enable USB \
+    --enable USB_PCI --enable USB_XHCI_HCD --enable USB_XHCI_PCI --enable USB_STORAGE --enable USB_UAS \
+    --enable SCSI --enable BLK_DEV_SD --enable HID --enable HID_GENERIC --enable USB_HID \
+    --enable KEYBOARD_ATKBD --enable VT --enable VT_CONSOLE --enable DRM --enable DRM_SIMPLEDRM \
+    --enable DRM_FBDEV_EMULATION --enable SYSFB_SIMPLEFB --enable FB --enable FRAMEBUFFER_CONSOLE \
+    --enable FAT_FS --enable VFAT_FS --enable NLS_CODEPAGE_437 --enable NLS_ISO8859_1 \
+    --enable EFI_PARTITION --enable R8169 --enable REALTEK_PHY --disable DRM_AMDGPU --disable DRM_RADEON
+make olddefconfig
+make -j$NPROC bzImage modules
+mkdir -p $DEST$PREFIX /build/tools
+cp arch/x86/boot/bzImage .config $DEST$PREFIX/
+# kmod is one program that behaves by the name it's called.
+ln -s $LAB_DEP_kmod/bin/kmod /build/tools/depmod
+make modules_install INSTALL_MOD_PATH=$DEST$PREFIX INSTALL_MOD_STRIP=1 DEPMOD=/build/tools/depmod
+rm -f $DEST$PREFIX/lib/modules/*/build
+'''
+
+[[package]]
+id = "markupsafe"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/m/markupsafe/markupsafe-3.0.2.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r src/markupsafe $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "jinja2"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/j/jinja2/jinja2-3.1.6.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r src/jinja2 $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "pyelftools"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/p/pyelftools/pyelftools-0.32.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r elftools $DEST$PREFIX/site/
+'''
+
+[[package]]
+id = "linux-pam"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "python3", "pkgconf", "libxcrypt", "flex", "bison-final", "m4-final"]
+sources = [{ url = "https://github.com/linux-pam/linux-pam/releases/download/v1.7.1/Linux-PAM-1.7.1.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --buildtype=release --sysconfdir=/etc --libdir=lib \
+    --sbindir=bin -D i18n=disabled -D docs=disabled -D audit=disabled -D econf=disabled \
+    -D logind=disabled -D elogind=disabled -D selinux=disabled -D nis=disabled \
+    -D pam_userdb=disabled -D examples=false -D xtests=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["pam"]
+
+[[package]]
+id = "shadow"
+scope = "runtime"
+core = true
+extra_deps = ["linux-pam", "libxcrypt", "pkgconf"]
+sources = [{ url = "https://github.com/shadow-maint/shadow/releases/download/4.18.0/shadow-4.18.0.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --bindir=$PREFIX/bin --sbindir=$PREFIX/bin --sysconfdir=/etc \
+    --disable-static --disable-nls --disable-man --disable-account-tools-setuid \
+    --disable-subordinate-ids --disable-lastlog --disable-logind --with-libpam --with-yescrypt \
+    --without-libbsd --without-selinux --without-audit --without-acl --without-attr \
+    --without-tcb --without-nscd --without-sssd --without-btrfs --without-group-name-max-length
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/passwd --help"]
+
+[[package]]
+id = "sudo"
+scope = "runtime"
+core = true
+extra_deps = ["linux-pam", "zlib"]
+sources = [{ url = "https://www.sudo.ws/dist/sudo-1.9.17p2.tar.gz" }]
+# sudoers, the run and state directories are paths on the running system. They're installed into
+# the package instead, where nothing reads them, and wrappers give sudo its setuid bit.
+script = '''
+# configure looks for a compiler named after the host, which our toolchain doesn't have.
+mkdir -p /build/bin
+printf '#!/bin/sh\nexec gcc "$@"\n' > /build/bin/x86_64-pc-linux-gnu-gcc
+chmod +x /build/bin/x86_64-pc-linux-gnu-gcc
+export PATH=/build/bin:$PATH
+./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --libexecdir=$PREFIX/libexec \
+    --sysconfdir=/etc --with-rundir=/run/sudo --with-vardir=/var/db/sudo \
+    --with-logpath=/var/log/sudo.log --with-pam --without-sendmail --disable-nls \
+    --disable-static --enable-tmpfiles.d=no --with-sssd=no --without-lecture \
+    --with-env-editor --with-secure-path=no
+make -j$NPROC
+make install DESTDIR=$DEST INSTALL_OWNER= sysconfdir=$PREFIX/etc rundir=$PREFIX/run \
+    vardir=$PREFIX/var
+'''
+smoke = ["bin/sudo --version"]
+
+[[package]]
+id = "systemd"
+scope = "runtime"
+core = true
+toolchain_limits = true
+extra_deps = [
+    "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap", "util-linux",
+    "libxcrypt", "acl", "kmod", "xz", "lz4", "zstd", "openssl", "kbd", "gettext", "m4-final", "zlib",
+    "linux-pam",
+]
+sources = [{ url = "https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz" }]
+script = '''
+export PYTHONPATH=$LAB_DEP_jinja2/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyelftools/site
+meson setup /build/b --prefix=$PREFIX --buildtype=release --auto-features=disabled \
+    --sysconfdir=/etc --localstatedir=/var \
+    -D c_link_args=-Wl,-rpath,$PREFIX/lib/systemd \
+    -D mode=release -D man=disabled -D html=disabled -D install-tests=false -D tests=false \
+    -D bootloader=enabled -D sbat-distro= -D acl=enabled -D kmod=enabled -D blkid=enabled -D xz=enabled -D lz4=enabled -D zstd=enabled \
+    -D openssl=enabled -D libcryptsetup=disabled -D pam=enabled -D sysusers=true \
+    -D firstboot=false -D homed=disabled -D userdb=false -D sysupdate=disabled -D ukify=disabled \
+    -D ldconfig=false -D rpmmacrosdir=no -D pamconfdir=no -D bashcompletiondir=no \
+    -D zshcompletiondir=no -D default-dnssec=no -D dev-kvm-mode=0660 -D nobody-group=nogroup \
+    -D create-log-dirs=false -D install-sysconfdir=false \
+    -D mount-path=$LAB_DEP_util_linux/bin/mount -D umount-path=$LAB_DEP_util_linux/bin/umount \
+    -D sulogin-path=$LAB_DEP_util_linux/bin/sulogin -D kmod-path=$LAB_DEP_kmod/bin/kmod \
+    -D loadkeys-path=$LAB_DEP_kbd/bin/loadkeys -D setfont-path=$LAB_DEP_kbd/bin/setfont \
+    -D nologin-path=$LAB_DEP_coreutils/bin/false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+# Units name helpers bare, and systemd looks those up in a compiled-in /usr/bin.
+for unit in $(grep -rlE '^Exec[A-Za-z]*=[-@:+!]*[a-z]' $DEST$PREFIX/lib/systemd --include='*.service'); do
+    for name in $(ls $DEST$PREFIX/bin); do
+        sed -Ei "s#^(Exec[A-Za-z]*=[-@:+!]*)$name( |\$)#\1$PREFIX/bin/$name\2#" $unit
+    done
+    sed -Ei "s#^(Exec[A-Za-z]*=[-@:+!]*)rm( |\$)#\1$LAB_DEP_coreutils/bin/rm\2#" $unit
+done
+sed -i "s#/sbin/agetty#$LAB_DEP_util_linux/bin/agetty#" $DEST$PREFIX/lib/systemd/system/*getty*.service
+'''
+smoke = ["bin/systemctl --version"
+, "lib/systemd/systemd --version", "bin/udevadm --version"]
+probes = ["systemd"]
+
+[[package]]
+id = "dbus"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "python3", "pkgconf", "expat", "systemd", "libcap"]
+sources = [{ url = "https://dbus.freedesktop.org/releases/dbus/dbus-1.16.2.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --buildtype=release --auto-features=disabled \
+    --sysconfdir=/etc --localstatedir=/var \
+    -D systemd=enabled -D systemd_system_unitdir=$PREFIX/lib/systemd/system \
+    -D systemd_user_unitdir=$PREFIX/lib/systemd/user -D runtime_dir=/run \
+    -D system_socket=/run/dbus/system_bus_socket -D system_pid_file=/run/dbus/pid \
+    -D message_bus=true -D tools=true -D modular_tests=disabled -D xml_docs=disabled \
+    -D doxygen_docs=disabled -D ducktype_docs=disabled -D qt_help=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/dbus-daemon --version"]
+
+[[package]]
+id = "zlib-version"
+scope = "runtime"
+core = true
+extra_deps = ["zlib"]
+script = '''
+mkdir -p $DEST$PREFIX/bin
+cat > v.c <<'C'
+#include <stdio.h>
+#include <unistd.h>
+#include <zlib.h>
+int main(int argc, char **argv) {
+    printf("%s\n", zlibVersion());
+    fflush(stdout);
+    if (argc > 1) { sleep(2); printf("%s\n", zlibVersion()); }
+    return 0;
+}
+C
+gcc -O2 v.c -o $DEST$PREFIX/bin/zlib-version -lz
+'''
+smoke = ["bin/zlib-version"]

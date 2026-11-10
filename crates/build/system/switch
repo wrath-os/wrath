@@ -1,0 +1,34 @@
+#!@bash@/bin/bash
+# switch <number>: makes a generation current, atomically, and moves the running system onto it.
+set -euo pipefail
+export PATH=/system/current/sw/bin
+start=$EPOCHREALTIME
+new=$(readlink -f "/system/generations/$1")
+old=$(readlink -f /system/current)
+
+ln -s "$new" /system/.next
+mv -T /system/.next /system/current
+sync -f /system
+
+upper=/run/etc/${new##*/}.$$
+mkdir -p "$upper/upper" "$upper/work"
+cp -p /etc/passwd /etc/group /etc/shadow /etc/machine-id "$upper/upper/"
+mount -t overlay overlay -o "lowerdir=$new/etc,upperdir=$upper/upper,workdir=$upper/work" /etc
+systemctl daemon-reload
+"$new/wrappers"
+
+changed=()
+for unit in "$new"/etc/systemd/system/*.service; do
+    name=${unit##*/}
+    [[ -f $old/etc/systemd/system/$name ]] || continue
+    cmp -s "$unit" "$old/etc/systemd/system/$name" || changed+=("$name")
+done
+while read -r unit file; do
+    file=${file#/etc/}
+    cmp -s "$new/etc/$file" "$old/etc/$file" || changed+=("$unit")
+done < "$new/restart-on"
+if ((${#changed[@]})); then
+    systemctl try-restart "${changed[@]}"
+fi
+elapsed=$(bc <<< "$EPOCHREALTIME - $start")
+echo "switched from ${old##*/} to ${new##*/} in ${elapsed}s, restarted: ${changed[*]:-nothing}"

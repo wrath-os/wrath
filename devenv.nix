@@ -9,11 +9,23 @@
     pkgs.qemu_kvm
     pkgs.swtpm
     pkgs.taplo
+    # The builder: its sandbox, fetching sources, and making disk images.
+    pkgs.bubblewrap
+    pkgs.composefs
+    pkgs.cpio
+    pkgs.curl
+    pkgs.dosfstools
+    pkgs.e2fsprogs
+    pkgs.erofs-utils
+    pkgs.gnutar
+    pkgs.mtools
+    pkgs.xz
   ];
 
   # UEFI firmware for the VM harness.
   env.OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
   env.OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
+  env.OVMF = "${pkgs.OVMF.fd}/FV/OVMF.fd";
 
   enterTest = ''
     set -euo pipefail

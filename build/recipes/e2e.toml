@@ -1,0 +1,59 @@
+# What the `native-web` configuration of distro asks for.
+
+[[package]]
+id = "libmnl"
+scope = "runtime"
+core = true
+sources = [{ url = "https://www.netfilter.org/pub/libmnl/libmnl-1.0.5.tar.bz2" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+
+[[package]]
+id = "libnftnl"
+scope = "runtime"
+core = true
+extra_deps = ["libmnl", "pkgconf"]
+sources = [{ url = "https://www.netfilter.org/pub/libnftnl/libnftnl-1.2.9.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+
+[[package]]
+id = "nftables"
+scope = "runtime"
+core = true
+extra_deps = ["libmnl", "libnftnl", "pkgconf"]
+sources = [{ url = "https://www.netfilter.org/pub/nftables/nftables-1.1.3.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --disable-static --disable-man-doc \
+    --with-mini-gmp --without-cli --without-xtables --with-json=no
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/nft --version"]
+
+[[package]]
+id = "nginx"
+scope = "runtime"
+core = true
+extra_deps = ["pcre2", "zlib"]
+sources = [{ url = "https://nginx.org/download/nginx-1.28.0.tar.gz" }]
+script = '''
+# The store is read-only, so everything nginx writes on its own goes under its runtime directory.
+./configure --prefix=$PREFIX --sbin-path=$PREFIX/bin/nginx --error-log-path=stderr --user=nobody --group=nogroup \
+    --http-log-path=/var/log/nginx/access.log --pid-path=/run/nginx.pid \
+    --lock-path=/run/nginx.lock \
+    --http-client-body-temp-path=/run/nginx-main/client_body \
+    --http-proxy-temp-path=/run/nginx-main/proxy \
+    --http-fastcgi-temp-path=/run/nginx-main/fastcgi \
+    --http-uwsgi-temp-path=/run/nginx-main/uwsgi \
+    --http-scgi-temp-path=/run/nginx-main/scgi
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/nginx -v"]

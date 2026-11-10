@@ -1,0 +1,48 @@
+/* In front of gcc and g++: finds the real compiler and, when linking, adds the interpreter and
+ * library paths a program needs to run from the store. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static int links(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        if (!strcmp(a, "-c") || !strcmp(a, "-S") || !strcmp(a, "-E") || !strcmp(a, "-M") ||
+            !strcmp(a, "-MM") || !strcmp(a, "--version") || !strcmp(a, "-v") ||
+            !strncmp(a, "-print-", 7) || !strncmp(a, "-dump", 5))
+            return 0;
+    }
+    return 1;
+}
+
+int main(int argc, char **argv) {
+    const char *name = strrchr(argv[0], '/');
+    name = name ? name + 1 : argv[0];
+    if (!strcmp(name, "cc"))
+        name = "gcc";
+    else if (!strcmp(name, "c++"))
+        name = "g++";
+
+    const char *bin = getenv("LAB_REAL_BIN");
+    if (!bin) {
+        fprintf(stderr, "lab-cc: LAB_REAL_BIN is not set\n");
+        return 127;
+    }
+    char real[4096];
+    snprintf(real, sizeof real, "%s/%s", bin, name);
+
+    const char *flags = getenv("LAB_LINK_FLAGS");
+    char *copy = strdup(flags && links(argc, argv) ? flags : "");
+    char **args = calloc(argc + strlen(copy) / 2 + 2, sizeof *args);
+    int n = 0;
+    args[n++] = real;
+    for (char *flag = strtok(copy, " "); flag; flag = strtok(NULL, " "))
+        args[n++] = flag;
+    for (int i = 1; i < argc; i++)
+        args[n++] = argv[i];
+    args[n] = NULL;
+    execv(real, args);
+    perror(real);
+    return 127;
+}

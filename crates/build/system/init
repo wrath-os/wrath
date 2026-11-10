@@ -1,0 +1,28 @@
+#!@bash@/bin/bash
+# PID 1 until systemd takes over: makes the root read-only and /etc a view of this generation.
+self=${0%/init}
+export PATH=$self/sw/bin
+self=$(readlink -f "$self")
+# Booting an entry for another generation makes that one current, and it stays so.
+if [[ $(readlink -f /system/current) != "$self" ]]; then
+    ln -s "$self" /system/.next
+    mv -T /system/.next /system/current
+fi
+export PATH=/system/current/sw/bin
+mount -t proc proc /proc
+mount -t tmpfs -o mode=0755 tmpfs /run
+ln -s /system/current /run/current-system
+mount -o remount,bind,ro /
+for dir in /var /system /root /home /srv; do
+    mount --bind "$dir" "$dir"
+    mount -o remount,bind,rw "$dir"
+done
+generation=$(readlink -f /system/current)
+upper=/run/etc/${generation##*/}
+mkdir -p "$upper/upper" "$upper/work"
+mount -t overlay overlay \
+    -o "lowerdir=$generation/etc,upperdir=$upper/upper,workdir=$upper/work" /etc
+[[ -s /var/lib/machine-id ]] || tr -d - < /proc/sys/kernel/random/uuid > /var/lib/machine-id
+cp /var/lib/machine-id /etc/machine-id
+"$generation/wrappers"
+exec @systemd@/lib/systemd/systemd
