@@ -1,3 +1,4 @@
+c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9  http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz
 c9cc77c7c560c543135edc555af609d5619dbef011997e988ce40a3d75d86088  https://astron.com/pub/file/file-5.46.tar.gz
 ea43491bc7ace1e414b3b2d957f8cf96e7049155123f0acce798accf8da1acba  https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.1.tar.xz
 81ee8170028865581a8e10eaf055afb620fa4baa0beb6387241241a975033508  https://cmake.org/files/v4.1/cmake-4.1.0.tar.gz
@@ -59,9 +60,11 @@ f280278161446fe3838bedb970c7b3998043ad107f7627735a81483218c6f6f9  https://github
 0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e  https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz
 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
 c6b5c6b086c0df9d3ca3ff5e084c1d0ef909e6038279c71c1c3e985f576ff76a  https://nginx.org/download/nginx-1.28.0.tar.gz
+876ab046479166b869afc6896d288183bbc0e5843f141200c677b3e8dfb11724  https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz
 c2e6d193cc78f84cd6ddb72aaf6d5c6a9162f0470e5992092057f5ff518562fa  https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-4.0.5.tar.xz/download
 58c55d9c1402474065adae669511c191de374b0871eec781239ab400b907c327  https://sourceforge.net/projects/psmisc/files/psmisc/psmisc-23.7.tar.xz/download
 7857f44b624f4d8d421df851aaae7b1402cfe6bcdd2d8049f15fc07d3dde7635  https://sourceware.org/ftp/elfutils/0.193/elfutils-0.193.tar.bz2
+ad76abecb8dc887733e06c449cb9add04a3506f9f0780c128817a6e1a17cec05  https://sourceware.org/pub/lvm2/LVM2.2.03.30.tgz
 8e60d3430d3a69478ad0993f19238d2df97c507009a52b3c10addcd7f6bcb916  https://static.crates.io/crates/aho-corasick/aho-corasick-1.1.3.crate
 10f00e1f6e58a40e807377c75c6a7f97bf9044fab57816f2414e6f5f4499d7b8  https://static.crates.io/crates/anyhow/anyhow-1.0.87.crate
 40723b8fb387abc38f4f4a37c09073622e41dd12327033091ef8950659e6dc0c  https://static.crates.io/crates/bstr/bstr-1.10.0.crate
@@ -116,7 +119,9 @@ cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb  https://static
 c4f2796b10ee886001f0799bc40caea38746403a33c379d77878c4f4683f9b51  https://static.rust-lang.org/dist/rust-1.89.0-x86_64-unknown-linux-gnu.tar.xz
 73cf6cc1ea2b2b1c110a18c14bbbc73a362073003893ffcedc26d22ebdbdd0c3  https://www.cpan.org/src/5.0/perl-5.42.0.tar.xz
 9b68820c34fa8a0af6b0e01b74f0298bcdd40a0489c61649b47058908a153d78  https://www.greenwoodsoftware.com/less/less-679.tar.gz
+df5ab804fcb36e291c42ad8361f801ad1e10241b43bd304fe50ce3df9e7e3da1  https://www.kernel.org/pub/linux/kernel/people/kdave/btrfs-progs/btrfs-progs-v6.14.tar.xz
 629da4ab29900d0f7fcc36227073743119925fd711c99a1689bbf5c9b40c8e6f  https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.76.tar.xz
+d2be4395b8f503b0ebf4b2d81db90c35a97050a358ee21fe62a0dfb66e5d5522  https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-2.7.5.tar.xz
 01f5806da7d1d34f594b7b2a6ae1ab23215344cf1064e8edcd3a90fef9776a11  https://www.kernel.org/pub/linux/utils/kbd/kbd-2.8.0.tar.xz
 5a5d5073070cc7e0c7a7a3c6ec2a0e1780850c8b47b3e3892226b93ffcb9cb54  https://www.kernel.org/pub/linux/utils/kernel/kmod/kmod-34.2.tar.xz
 5900ccc15f9ac3bf7b7eae81deb5937123df35e99347a7f11a22818482f0a8d0  https://www.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.16.0.tar.xz

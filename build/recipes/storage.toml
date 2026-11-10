@@ -1,0 +1,76 @@
+# What installing onto encrypted disks needs: device-mapper and cryptsetup to unlock them,
+# btrfs-progs for subvolumes, and what those use.
+
+[[package]]
+id = "json-c"
+scope = "runtime"
+core = true
+extra_deps = ["cmake", "ninja"]
+sources = [{ url = "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz" }]
+script = '''
+cmake -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_STATIC_LIBS=OFF -DDISABLE_WERROR=ON -DBUILD_APPS=OFF \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["json-c"]
+
+[[package]]
+id = "popt"
+scope = "runtime"
+core = true
+sources = [{ url = "http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static --disable-nls
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+probes = ["popt"]
+
+[[package]]
+id = "device-mapper"
+scope = "runtime"
+core = true
+extra_deps = ["util-linux", "pkgconf"]
+sources = [{ url = "https://sourceware.org/pub/lvm2/LVM2.2.03.30.tgz" }]
+script = '''
+./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --libdir=$PREFIX/lib --disable-static_link \
+    --enable-pkgconfig --disable-selinux --disable-readline --disable-udev_sync \
+    --with-udev-prefix=$PREFIX --with-systemdsystemunitdir=$PREFIX/lib/systemd/system \
+    --with-default-dm-run-dir=/run --with-default-run-dir=/run/lvm --with-default-locking-dir=/run/lock/lvm
+make -j$NPROC device-mapper
+make install_device-mapper DESTDIR=$DEST
+'''
+smoke = ["bin/dmsetup --version"]
+probes = ["devmapper"]
+
+[[package]]
+id = "cryptsetup"
+scope = "runtime"
+core = true
+extra_deps = ["json-c", "popt", "device-mapper", "openssl", "util-linux", "pkgconf"]
+sources = [{ url = "https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-2.7.5.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --disable-static --disable-nls --disable-asciidoc \
+    --disable-ssh-token --disable-selinux --with-crypto_backend=openssl --disable-internal-argon2 \
+    --disable-libargon2 --with-tmpfilesdir=$PREFIX/lib/tmpfiles.d
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/cryptsetup --version"]
+probes = ["cryptsetup"]
+
+[[package]]
+id = "btrfs-progs"
+scope = "runtime"
+core = true
+extra_deps = ["util-linux", "zlib", "zstd", "pkgconf"]
+sources = [{ url = "https://www.kernel.org/pub/linux/kernel/people/kdave/btrfs-progs/btrfs-progs-v6.14.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --bindir=$PREFIX/bin --disable-documentation --disable-python \
+    --disable-convert --disable-zoned --disable-lzo --disable-libudev --disable-backtrace
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/btrfs --version", "bin/mkfs.btrfs --version"]
