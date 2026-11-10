@@ -98,6 +98,9 @@ enum Command {
     Build {
         #[arg(long, value_enum, default_value = "system")]
         target: generations::BuildTarget,
+        /// A kernel option for an image's boot entry, instead of the screen and serial consoles
+        #[arg(long = "kernel-option")]
+        kernel_options: Vec<String>,
     },
     /// Show the system's generations
     History,
@@ -363,10 +366,15 @@ fn main() -> ExitCode {
         }),
         Command::Keep if home::is_context() => home::keep(),
         Command::Keep => generations::keep(),
-        Command::Build { target } => machine().and_then(|config| match model(&config, &modules) {
+        Command::Build {
+            target,
+            kernel_options,
+        } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => {
                 let path = if matches!(target, generations::BuildTarget::Generation) {
                     generations::build_generation(root, &model)?
+                } else if matches!(target, generations::BuildTarget::Image) {
+                    generations::build_image(root, &model, &kernel_options)?
                 } else if is_home(&config) {
                     generations::build(root, &model, backend::Target::Home)?
                 } else {

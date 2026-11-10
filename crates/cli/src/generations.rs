@@ -21,6 +21,8 @@ pub enum BuildTarget {
     TestInstalledSystem,
     /// The system as a generation from distro's own builder, which is replacing Nix
     Generation,
+    /// A disk image that boots the generation, to write to a USB stick or boot in a VM
+    Image,
 }
 
 impl TryFrom<BuildTarget> for Target {
@@ -32,7 +34,7 @@ impl TryFrom<BuildTarget> for Target {
             BuildTarget::TestVmSystem => Ok(Self::TestVmSystem),
             BuildTarget::TestVm => Ok(Self::TestVm),
             BuildTarget::TestInstalledSystem => Ok(Self::TestInstalledSystem),
-            BuildTarget::Generation => {
+            BuildTarget::Generation | BuildTarget::Image => {
                 Err("a generation is built by `distro build --target generation`".to_owned())
             }
         }
@@ -59,6 +61,38 @@ pub fn build_generation(root: &Path, model: &Model) -> Result<PathBuf, String> {
         eprintln!("warning: `{unit}` is enabled, but nothing the system has provides it yet");
     }
     Ok(system.path)
+}
+
+/// The kernel options an image gets when it's given none: a shell when the initrd can't find the
+/// root, and the console on the screen with the serial port as well.
+const IMAGE_OPTIONS: &str = "distro.rescue console=ttyS0,115200 console=tty0";
+
+/// Builds `model` into a generation and a disk image that boots it, with `options` added to the
+/// kernel's own, and returns where the image is: in `build/work/images`, named by the generation.
+pub fn build_image(root: &Path, model: &Model, options: &[String]) -> Result<PathBuf, String> {
+    let generation = build_generation(root, model)?;
+    let name = generation
+        .file_name()
+        .ok_or("a generation has a name")?
+        .to_string_lossy()
+        .into_owned();
+    let work = std::path::absolute(root.join("build/work")).map_err(|e| e.to_string())?;
+    let images = work.join("images");
+    std::fs::create_dir_all(&images).map_err(|e| format!("{}: {e}", images.display()))?;
+    let out = images.join(format!("{name}.img"));
+    let options = if options.is_empty() {
+        IMAGE_OPTIONS.to_owned()
+    } else {
+        options.join(" ")
+    };
+    distro_build::image::image(
+        &distro_build::store::Lab::new(&work),
+        &distro_build::store::StorePath::from_hash(&name),
+        &options,
+        &work.join("image"),
+        &out,
+    )?;
+    Ok(out)
 }
 
 /// Builds `target` from `model` with the factory under `root` and returns its store path. The

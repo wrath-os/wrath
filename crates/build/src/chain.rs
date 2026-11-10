@@ -521,7 +521,7 @@ pub(crate) fn remove(path: &Path) -> Result<(), String> {
     fs::remove_dir_all(path).map_err(with_path(path))
 }
 
-fn fresh(path: &Path) -> Result<(), String> {
+pub(crate) fn fresh(path: &Path) -> Result<(), String> {
     remove(path)?;
     fs::create_dir_all(path).map_err(with_path(path))
 }
@@ -993,18 +993,18 @@ pub(crate) fn build_one(
     let done = done_dir.join(out.hash());
     if done.exists() {
         if !content_addressed(package, arm) {
-            println!("  have   {}", package.id);
+            eprintln!("  have   {}", package.id);
             return Ok(None);
         }
         let address = fs::read_to_string(&done).map_err(with_path(&done))?;
         // An empty record means the build stopped before the package was moved.
         if !address.is_empty() {
-            println!("  have   {}", package.id);
+            eprintln!("  have   {}", package.id);
             remember_outputs(built, package, arm, &address);
             return Ok(None);
         }
     }
-    println!("  build  {}", package.id);
+    eprintln!("  build  {}", package.id);
 
     let build_dir = lab.work.join("build").join(out.hash());
     fresh(&build_dir)?;

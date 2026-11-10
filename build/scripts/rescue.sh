@@ -14,9 +14,9 @@ source scripts/vm.sh
 scripts/image.sh "$configuration" "$image" "console=tty0 console=ttyS0,115200"
 # The EFI partition starts at 1 MiB. Point its boot entry at a label no disk has.
 entry=$work/entry.conf
-mcopy -o -i "$image@@1M" ::/loader/entries/distro.conf "$entry"
+mcopy -o -i "$image@@1M" ::/loader/entries/distro-1.conf "$entry"
 sed -i 's/root=LABEL=[^ ]*/root=LABEL=nowhere/' "$entry"
-mcopy -o -i "$image@@1M" "$entry" ::/loader/entries/distro.conf
+mcopy -o -i "$image@@1M" "$entry" ::/loader/entries/distro-1.conf
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-120} vm_start
 
 result=failed
