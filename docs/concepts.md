@@ -109,7 +109,8 @@ A **generation** is a built configuration that can be switched to. `apply` makes
 `rollback` goes back to an earlier one, and `history` lists them.
 
 A **backend** turns a model into a running system. Today it assembles the system from packages
-in nixpkgs and builds it with Nix. Nothing above this line depends on how it works.
+in nixpkgs and builds it with Nix. distro's own builder, which builds every package from source,
+is replacing it (decision 0014). Nothing above this line depends on how it works.
 
 ## Words we keep out of sight
 
