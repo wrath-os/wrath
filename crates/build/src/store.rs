@@ -15,8 +15,9 @@ pub(crate) fn with_path(path: &Path) -> impl FnOnce(std::io::Error) -> String {
     move |e| format!("{}: {e}", path.display())
 }
 
-/// A path under `/store`. Every one has the same length, and none has a name in it, so one can be
-/// rewritten to another in place.
+/// A path under `/store`: a hash of the same length for every path, then for a package a name,
+/// as `<hash>-jq-1.8.1`. A package keeps its name while it moves from where it was built to where
+/// its contents put it, so one path can be rewritten to the other in place.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StorePath(String);
 
@@ -37,14 +38,61 @@ impl StorePath {
         Self(hash.to_owned())
     }
 
+    /// The path's entry in `/store`: its hash, and its name when it has one.
     pub fn hash(&self) -> &str {
         &self.0
+    }
+
+    /// This path's hash with `name` after it.
+    pub fn named(&self, name: &str) -> Self {
+        Self(format!("{}-{name}", self.digest()))
+    }
+
+    /// The hash the path starts with.
+    pub fn digest(&self) -> &str {
+        &self.0[..HASH_LENGTH.min(self.0.len())]
+    }
+
+    /// The name after the hash, when the path has one.
+    pub fn name(&self) -> Option<&str> {
+        self.0.get(HASH_LENGTH + 1..)
     }
 
     /// The path as builds see it.
     pub fn inside(&self) -> String {
         format!("/store/{}", self.0)
     }
+}
+
+/// The length of the store entry `bytes` start with: a hash, and a name after it when there is
+/// one, up to the first byte a name can't have. `None` when they don't start with a hash.
+pub fn entry_length(bytes: &[u8]) -> Option<usize> {
+    let hash = bytes.get(..HASH_LENGTH)?;
+    if !hash.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    let name = match bytes.get(HASH_LENGTH) {
+        Some(b'-') => bytes[HASH_LENGTH + 1..]
+            .iter()
+            .take_while(|b| name_byte(**b))
+            .count(),
+        _ => 0,
+    };
+    Some(if name == 0 {
+        HASH_LENGTH
+    } else {
+        HASH_LENGTH + 1 + name
+    })
+}
+
+/// Whether `byte` can be in a store path's name.
+pub(crate) fn name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"._+-".contains(&byte)
+}
+
+/// Whether `name` is a whole store entry, such as a directory in `/store`.
+pub fn is_entry(name: &str) -> bool {
+    entry_length(name.as_bytes()) == Some(name.len())
 }
 
 /// The harness's working directory on the host.
@@ -69,6 +117,27 @@ impl Lab {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_entry_is_a_hash_and_maybe_a_name() {
+        let hash = "a".repeat(HASH_LENGTH);
+        assert_eq!(
+            entry_length(format!("{hash}/bin").as_bytes()),
+            Some(HASH_LENGTH)
+        );
+        let named = format!("{hash}-jq-1.8.1");
+        assert_eq!(
+            entry_length(format!("{named}/bin/jq").as_bytes()),
+            Some(named.len())
+        );
+        assert_eq!(
+            entry_length(format!("{hash}-/x").as_bytes()),
+            Some(HASH_LENGTH)
+        );
+        assert_eq!(entry_length(b"not a hash"), None);
+        assert!(is_entry(&named) && is_entry(&hash));
+        assert!(!is_entry(".system") && !is_entry(&format!("{named}/bin")));
+    }
 
     #[test]
     fn every_path_has_the_same_length() {

@@ -3,9 +3,10 @@
 
 [[package]]
 id = "markupsafe"
+version = "3.0.2"
 scope = "runtime"
 core = true
-sources = [{ url = "https://files.pythonhosted.org/packages/source/m/markupsafe/markupsafe-3.0.2.tar.gz" }]
+sources = [{ url = "https://files.pythonhosted.org/packages/source/m/markupsafe/markupsafe-{version}.tar.gz" }]
 script = '''
 mkdir -p $DEST$PREFIX/site
 cp -r src/markupsafe $DEST$PREFIX/site/
@@ -13,9 +14,10 @@ cp -r src/markupsafe $DEST$PREFIX/site/
 
 [[package]]
 id = "jinja2"
+version = "3.1.6"
 scope = "runtime"
 core = true
-sources = [{ url = "https://files.pythonhosted.org/packages/source/j/jinja2/jinja2-3.1.6.tar.gz" }]
+sources = [{ url = "https://files.pythonhosted.org/packages/source/j/jinja2/jinja2-{version}.tar.gz" }]
 script = '''
 mkdir -p $DEST$PREFIX/site
 cp -r src/jinja2 $DEST$PREFIX/site/
@@ -23,9 +25,10 @@ cp -r src/jinja2 $DEST$PREFIX/site/
 
 [[package]]
 id = "pyelftools"
+version = "0.32"
 scope = "runtime"
 core = true
-sources = [{ url = "https://files.pythonhosted.org/packages/source/p/pyelftools/pyelftools-0.32.tar.gz" }]
+sources = [{ url = "https://files.pythonhosted.org/packages/source/p/pyelftools/pyelftools-{version}.tar.gz" }]
 script = '''
 mkdir -p $DEST$PREFIX/site
 cp -r elftools $DEST$PREFIX/site/
@@ -33,10 +36,11 @@ cp -r elftools $DEST$PREFIX/site/
 
 [[package]]
 id = "json-c"
+version = "0.18"
 scope = "runtime"
 core = true
 extra_deps = ["cmake", "ninja"]
-sources = [{ url = "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz" }]
+sources = [{ url = "https://s3.amazonaws.com/json-c_releases/releases/json-c-{version}.tar.gz" }]
 script = '''
 cmake -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_STATIC_LIBS=OFF -DDISABLE_WERROR=ON -DBUILD_APPS=OFF \
@@ -48,9 +52,10 @@ probes = ["json-c"]
 
 [[package]]
 id = "popt"
+version = "1.19"
 scope = "runtime"
 core = true
-sources = [{ url = "http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz" }]
+sources = [{ url = "http://ftp.rpm.org/popt/releases/popt-1.x/popt-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --disable-nls
 make -j$NPROC
@@ -60,13 +65,14 @@ probes = ["popt"]
 
 [[package]]
 id = "libudev"
+version = "257.8"
 scope = "runtime"
 core = true
 extra_deps = [
     "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap", "util-linux",
     "libxcrypt", "m4-final",
 ]
-sources = [{ url = "https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz" }]
+sources = [{ url = "https://github.com/systemd/systemd/archive/v{version}/systemd-{version}.tar.gz" }]
 script = '''
 # Only systemd's udev library, for device-mapper, which systemd itself builds on through cryptsetup.
 export PYTHONPATH=$LAB_DEP_jinja2/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyelftools/site
@@ -87,10 +93,11 @@ probes = ["udev"]
 
 [[package]]
 id = "device-mapper"
+version = "2.03.30"
 scope = "runtime"
 core = true
 extra_deps = ["util-linux", "pkgconf", "libudev"]
-sources = [{ url = "https://sourceware.org/pub/lvm2/LVM2.2.03.30.tgz" }]
+sources = [{ url = "https://sourceware.org/pub/lvm2/LVM2.{version}.tgz" }]
 script = '''
 ./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --libdir=$PREFIX/lib --disable-static_link \
     --enable-pkgconfig --disable-selinux --disable-readline --enable-udev_sync \
@@ -104,10 +111,11 @@ probes = ["devmapper"]
 
 [[package]]
 id = "cryptsetup"
+version = "2.7.5"
 scope = "runtime"
 core = true
 extra_deps = ["json-c", "popt", "device-mapper", "openssl", "util-linux", "pkgconf"]
-sources = [{ url = "https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-2.7.5.tar.xz" }]
+sources = [{ url = "https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --disable-static --disable-nls --disable-asciidoc \
     --disable-ssh-token --disable-selinux --with-crypto_backend=openssl --disable-internal-argon2 \
@@ -120,10 +128,11 @@ probes = ["cryptsetup"]
 
 [[package]]
 id = "btrfs-progs"
+version = "6.14"
 scope = "runtime"
 core = true
 extra_deps = ["util-linux", "zlib", "zstd", "pkgconf"]
-sources = [{ url = "https://www.kernel.org/pub/linux/kernel/people/kdave/btrfs-progs/btrfs-progs-v6.14.tar.xz" }]
+sources = [{ url = "https://www.kernel.org/pub/linux/kernel/people/kdave/btrfs-progs/btrfs-progs-v{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --bindir=$PREFIX/bin --disable-documentation --disable-python \
     --disable-convert --disable-zoned --disable-lzo --disable-libudev --disable-backtrace
@@ -134,9 +143,10 @@ smoke = ["bin/btrfs --version", "bin/mkfs.btrfs --version"]
 
 [[package]]
 id = "dosfstools"
+version = "4.2"
 scope = "runtime"
 core = true
-sources = [{ url = "https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz" }]
+sources = [{ url = "https://github.com/dosfstools/dosfstools/releases/download/v{version}/dosfstools-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --enable-compat-symlinks --without-udev
 make -j$NPROC

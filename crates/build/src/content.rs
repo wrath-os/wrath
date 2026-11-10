@@ -48,12 +48,14 @@ fn sorted_files(root: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// The address of the tree at `root`, built at temporary path `own`.
 fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
-    let zeros = vec![b'0'; HASH_LENGTH];
+    let zeros = vec![b'0'; own.len()];
+    let name = own.get(HASH_LENGTH + 1..);
     let mut hasher = Sha256::new();
     let mut add = |bytes: &[u8]| {
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
     };
+    add(name.unwrap_or_default().as_bytes());
     for file in sorted_files(root)? {
         let mut name = relative(root, &file)?.into_bytes();
         let in_name = replace(&mut name, own.as_bytes(), &zeros);
@@ -73,9 +75,11 @@ fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
         add(&bytes);
         add(&offsets(&in_file));
     }
-    Ok(StorePath::from_hash(
-        &hex(&hasher.finalize())[..HASH_LENGTH],
-    ))
+    let address = StorePath::from_hash(&hex(&hasher.finalize())[..HASH_LENGTH]);
+    Ok(match name {
+        Some(name) => address.named(name),
+        None => address,
+    })
 }
 
 pub(crate) fn rewrite_contents(root: &Path, own: &str, new: &str) -> Result<(), String> {
@@ -213,6 +217,31 @@ mod tests {
                 .exists()
         );
         assert!(!root.join(format!("share/{}", out.hash())).exists());
+    }
+
+    #[test]
+    fn a_named_package_keeps_its_name_and_its_address_needs_the_same_contents() {
+        let (_dir, lab) = lab();
+        let built = |seed: &[u8], name: &str| {
+            let out = StorePath::derive("test", &[seed]).named(name);
+            let root = lab.on_host(&out);
+            fs::create_dir_all(root.join("bin")).unwrap();
+            fs::write(root.join("bin/tool"), format!("{}/lib", out.inside())).unwrap();
+            out
+        };
+        let one = address(&lab, &built(b"first", "jq-1.8.1")).unwrap();
+        let two = address(&lab, &built(b"second", "jq-1.8.1")).unwrap();
+        assert_eq!(one, two, "where it was built doesn't matter");
+        assert_eq!(one.name(), Some("jq-1.8.1"));
+        assert_eq!(one.hash().len(), HASH_LENGTH + "-jq-1.8.1".len());
+        let text = fs::read_to_string(lab.on_host(&one).join("bin/tool")).unwrap();
+        assert_eq!(text, format!("{}/lib", one.inside()));
+        let other = address(&lab, &built(b"third", "jq-1.8.2")).unwrap();
+        assert_ne!(
+            one.digest(),
+            other.digest(),
+            "the name is part of what's hashed"
+        );
     }
 
     #[test]

@@ -3,9 +3,10 @@
 
 [[package]]
 id = "gnu-hello"
+version = "2.12.2"
 scope = "runtime"
 core = true
-sources = [{ url = "https://ftp.gnu.org/gnu/hello/hello-2.12.2.tar.gz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/hello/hello-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -15,10 +16,11 @@ smoke = ["bin/hello --version"]
 
 [[package]]
 id = "nano"
+version = "8.4"
 scope = "runtime"
 core = true
 deps = ["ncurses"]
-sources = [{ url = "https://www.nano-editor.org/dist/v8/nano-8.4.tar.xz" }]
+sources = [{ url = "https://www.nano-editor.org/dist/v8/nano-{version}.tar.xz" }]
 script = '''
 # OPTION_enableTiny leaves out everything but editing, for rescue systems.
 tiny=
@@ -33,9 +35,10 @@ smoke = ["bin/nano --version"]
 
 [[package]]
 id = "jq"
+version = "1.8.1"
 scope = "runtime"
 core = true
-sources = [{ url = "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz" }]
+sources = [{ url = "https://github.com/jqlang/jq/releases/download/jq-{version}/jq-{version}.tar.gz" }]
 script = '''
 # The release carries oniguruma, the regular expression library, and builds it in.
 ./configure --prefix=$PREFIX --with-oniguruma=builtin --disable-docs --disable-static
@@ -46,10 +49,11 @@ smoke = ["bin/jq --version", "echo '{\"a\":1}' | bin/jq -e .a"]
 
 [[package]]
 id = "process-compose"
+version = "1.75.1"
 scope = "runtime"
 core = true
 extra_deps = ["go"]
-sources = [{ url = "https://github.com/F1bonacc1/process-compose/archive/v1.75.1/process-compose-1.75.1.tar.gz" }]
+sources = [{ url = "https://github.com/F1bonacc1/process-compose/archive/v{version}/process-compose-{version}.tar.gz" }]
 go = "go.sum"
 script = '''
 export GOPROXY=file://$PWD/goproxy GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=0
@@ -61,10 +65,11 @@ smoke = ["bin/process-compose version"]
 
 [[package]]
 id = "curl"
+version = "8.15.0"
 scope = "runtime"
 core = true
 extra_deps = ["openssl", "zlib", "perl"]
-sources = [{ url = "https://curl.se/download/curl-8.15.0.tar.xz" }]
+sources = [{ url = "https://curl.se/download/curl-{version}.tar.xz" }]
 script = '''
 # Certificates come from the system's bundle, which the system puts in /etc/ssl.
 ./configure --prefix=$PREFIX --with-openssl --with-zlib --without-libpsl --disable-static \
@@ -76,9 +81,10 @@ smoke = ["bin/curl --version"]
 
 [[package]]
 id = "hostname"
+version = "3.25"
 scope = "runtime"
 core = true
-sources = [{ url = "https://deb.debian.org/debian/pool/main/h/hostname/hostname_3.25.tar.xz" }]
+sources = [{ url = "https://deb.debian.org/debian/pool/main/h/hostname/hostname_{version}.tar.xz" }]
 script = '''
 # The small `hostname` program Debian keeps, which prints or sets the machine's name.
 make -j$NPROC CFLAGS="-O2"
@@ -88,10 +94,11 @@ smoke = ["bin/hostname --version"]
 
 [[package]]
 id = "bubblewrap"
+version = "0.11.0"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libcap"]
-sources = [{ url = "https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz" }]
+sources = [{ url = "https://github.com/containers/bubblewrap/releases/download/v{version}/bubblewrap-{version}.tar.xz" }]
 script = '''
 # The sandbox every build runs in, and `run` and `shell` in a checkout.
 meson setup /build/b --prefix=$PREFIX --buildtype=release -D man=disabled -D selinux=disabled \

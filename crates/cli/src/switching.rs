@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::UNIX_EPOCH;
 
-use distro_build::store::{Lab, StorePath};
+use distro_build::store::{Lab, StorePath, is_entry};
 
 use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, generations};
 
@@ -290,7 +290,7 @@ pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
         let entry = entry.map_err(|e| format!("{}: {e}", store.display()))?;
         let name = entry.file_name().to_string_lossy().into_owned();
         // Only store paths are collected; the machine's records in `.system` stay.
-        if !is_hash(&name) || used.contains(&StorePath::from_hash(&name)) {
+        if !is_entry(&name) || used.contains(&StorePath::from_hash(&name)) {
             continue;
         }
         let path = entry.path();
@@ -307,12 +307,7 @@ pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
 fn store_path(target: &Path) -> Option<StorePath> {
     let mut parts = target.strip_prefix("/store").ok()?.components();
     let hash = parts.next()?.as_os_str().to_str()?;
-    is_hash(hash).then(|| StorePath::from_hash(hash))
-}
-
-/// Whether `name` is a store path's, 40 hex digits.
-fn is_hash(name: &str) -> bool {
-    name.len() == 40 && name.bytes().all(|b| b.is_ascii_hexdigit())
+    is_entry(hash).then(|| StorePath::from_hash(hash))
 }
 
 /// Store paths are read-only, so their directories are made writable before they're removed.

@@ -3,10 +3,11 @@
 
 [[package]]
 id = "go"
+version = "1.25.1"
 scope = "runtime"
 core = true
 whole = true
-sources = [{ url = "https://go.dev/dl/go1.25.1.linux-amd64.tar.gz" }]
+sources = [{ url = "https://go.dev/dl/go{version}.linux-amd64.tar.gz" }]
 script = '''
 mkdir -p $DEST$PREFIX
 cp -a . $DEST$PREFIX/
@@ -15,10 +16,11 @@ smoke = ["bin/go version"]
 
 [[package]]
 id = "age"
+version = "1.2.1"
 scope = "runtime"
 core = true
 extra_deps = ["go"]
-sources = [{ url = "https://github.com/FiloSottile/age/archive/v1.2.1/age-1.2.1.tar.gz" }]
+sources = [{ url = "https://github.com/FiloSottile/age/archive/v{version}/age-{version}.tar.gz" }]
 go = "go.sum"
 script = '''
 # Modules come from the proxy of files the sources were put in, and from nowhere else.
@@ -30,10 +32,11 @@ smoke = ["bin/age --version", "bin/age-keygen -o /tmp/key"]
 
 [[package]]
 id = "tailscale"
+version = "1.86.2"
 scope = "runtime"
 core = true
 extra_deps = ["go"]
-sources = [{ url = "https://github.com/tailscale/tailscale/archive/v1.86.2/tailscale-1.86.2.tar.gz" }]
+sources = [{ url = "https://github.com/tailscale/tailscale/archive/v{version}/tailscale-{version}.tar.gz" }]
 go = "go.sum"
 script = '''
 export GOPROXY=file://$PWD/goproxy GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=0

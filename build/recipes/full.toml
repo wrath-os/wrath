@@ -4,9 +4,10 @@
 
 [[package]]
 id = "coreutils"
+version = "9.7"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/coreutils/coreutils-{version}.tar.xz" }]
 script = '''
 FORCE_UNSAFE_CONFIGURE=1 ./configure --prefix=$PREFIX --disable-nls --enable-no-install-program=kill,uptime
 make -j$NPROC
@@ -18,9 +19,10 @@ check = "make -j$NPROC check XFAIL_TESTS='test-chown test-fchownat test-lchown t
 
 [[package]]
 id = "sed"
+version = "4.9"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/sed/sed-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -32,9 +34,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "grep"
+version = "3.12"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/grep/grep-3.12.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/grep/grep-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -46,9 +49,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "gawk"
+version = "5.3.2"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/gawk/gawk-5.3.2.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/gawk/gawk-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -60,9 +64,10 @@ check = "mkdir -p /build/locale; localedef -i en_US -f UTF-8 /build/locale/en_US
 
 [[package]]
 id = "findutils"
+version = "4.10.0"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/findutils/findutils-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls --localstatedir=/var/lib/locate
 make -j$NPROC
@@ -74,9 +79,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "diffutils"
+version = "3.12"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/diffutils/diffutils-3.12.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/diffutils/diffutils-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -88,9 +94,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "patch"
+version = "2.8"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/patch/patch-2.8.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/patch/patch-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX
 make -j$NPROC
@@ -102,9 +109,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "make"
+version = "4.4.1"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/make/make-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -116,9 +124,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "tar"
+version = "1.35"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/tar/tar-{version}.tar.xz" }]
 script = '''
 FORCE_UNSAFE_CONFIGURE=1 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -130,9 +139,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "gzip"
+version = "1.14"
 scope = "runtime"
 toolset = true
-sources = [{ url = "https://ftp.gnu.org/gnu/gzip/gzip-1.14.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/gzip/gzip-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX
 make -j$NPROC
@@ -144,10 +154,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "bash"
+version = "5.3"
 scope = "runtime"
 toolset = true
 extra_deps = ["ncurses", "readline"]
-sources = [{ url = "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/bash/bash-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --without-bash-malloc --with-installed-readline
 make -j$NPROC
@@ -160,9 +171,10 @@ check_in_view = true
 
 [[package]]
 id = "m4-final"
+version = "1.4.20"
 scope = "runtime"
 core = true
-sources = [{ url = "https://ftp.gnu.org/gnu/m4/m4-1.4.20.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/m4/m4-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -174,10 +186,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "bison-final"
+version = "3.8.2"
 scope = "runtime"
 core = true
 extra_deps = ["m4-final"]
-sources = [{ url = "https://ftp.gnu.org/gnu/bison/bison-3.8.2.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/bison/bison-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -190,10 +203,11 @@ check_in_view = true
 
 [[package]]
 id = "flex"
+version = "2.6.4"
 scope = "runtime"
 core = true
 extra_deps = ["m4-final"]
-sources = [{ url = "https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz" }]
+sources = [{ url = "https://github.com/westes/flex/releases/download/v{version}/flex-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls --disable-static
 make -j$NPROC
@@ -206,9 +220,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "pkgconf"
+version = "2.5.1"
 scope = "runtime"
 core = true
-sources = [{ url = "https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz" }]
+sources = [{ url = "https://distfiles.ariadne.space/pkgconf/pkgconf-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --with-pkg-config-dir=/usr/lib/pkgconfig:/usr/share/pkgconfig
 make -j$NPROC
@@ -219,10 +234,11 @@ smoke = ["bin/pkgconf --version"]
 
 [[package]]
 id = "autoconf"
+version = "2.72"
 scope = "runtime"
 core = true
 extra_deps = ["m4-final", "perl"]
-sources = [{ url = "https://ftp.gnu.org/gnu/autoconf/autoconf-2.72.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/autoconf/autoconf-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX
 make -j$NPROC
@@ -234,10 +250,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "automake"
+version = "1.18.1"
 scope = "runtime"
 core = true
 extra_deps = ["autoconf", "m4-final", "perl"]
-sources = [{ url = "https://ftp.gnu.org/gnu/automake/automake-1.18.1.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/automake/automake-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX
 make -j$NPROC
@@ -249,10 +266,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "libtool"
+version = "2.5.4"
 scope = "runtime"
 core = true
 extra_deps = ["m4-final"]
-sources = [{ url = "https://ftp.gnu.org/gnu/libtool/libtool-2.5.4.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/libtool/libtool-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static
 make -j$NPROC
@@ -265,10 +283,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "gettext"
+version = "0.26"
 scope = "runtime"
 core = true
 extra_deps = ["ncurses", "libxml2", "expat"]
-sources = [{ url = "https://ftp.gnu.org/gnu/gettext/gettext-0.26.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/gettext/gettext-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --disable-java --without-emacs
 make -j$NPROC
@@ -280,9 +299,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "gperf"
+version = "3.3"
 scope = "runtime"
 core = true
-sources = [{ url = "https://ftp.gnu.org/gnu/gperf/gperf-3.3.tar.gz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/gperf/gperf-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX
 make -j$NPROC
@@ -294,10 +314,11 @@ check = "make -j1 check"
 
 [[package]]
 id = "texinfo"
+version = "7.2"
 scope = "runtime"
 core = true
 extra_deps = ["perl", "ncurses"]
-sources = [{ url = "https://ftp.gnu.org/gnu/texinfo/texinfo-7.2.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/texinfo/texinfo-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -309,9 +330,10 @@ check = "mkdir -p /build/locale; localedef -i en_US -f UTF-8 /build/locale/en_US
 
 [[package]]
 id = "lz4"
+version = "1.10.0"
 scope = "runtime"
 core = true
-sources = [{ url = "https://github.com/lz4/lz4/releases/download/v1.10.0/lz4-1.10.0.tar.gz" }]
+sources = [{ url = "https://github.com/lz4/lz4/releases/download/v{version}/lz4-{version}.tar.gz" }]
 script = '''
 make -j$NPROC BUILD_STATIC=no PREFIX=$PREFIX
 make install BUILD_STATIC=no PREFIX=$PREFIX DESTDIR=$DEST
@@ -324,10 +346,11 @@ check_deps = ["python3"]
 
 [[package]]
 id = "zstd"
+version = "1.5.7"
 scope = "runtime"
 core = true
 extra_deps = ["zlib", "xz", "lz4"]
-sources = [{ url = "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz" }]
+sources = [{ url = "https://github.com/facebook/zstd/releases/download/v{version}/zstd-{version}.tar.gz" }]
 script = '''
 make -j$NPROC prefix=$PREFIX
 make install prefix=$PREFIX DESTDIR=$DEST
@@ -340,10 +363,11 @@ check = "mkdir -p /build/shim; printf '#!/bin/sh\nexit 0\n' > /build/shim/file; 
 
 [[package]]
 id = "zstd-cmake"
+version = "1.5.7"
 scope = "runtime"
 core = true
 extra_deps = ["cmake"]
-sources = [{ url = "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz" }]
+sources = [{ url = "https://github.com/facebook/zstd/releases/download/v{version}/zstd-{version}.tar.gz" }]
 script = '''
 cmake -S build/cmake -B /build/b -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_BUILD_TYPE=Release \
     -DZSTD_BUILD_TESTS=OFF
@@ -354,10 +378,11 @@ smoke = ["bin/zstd --version"]
 
 [[package]]
 id = "file"
+version = "5.46"
 scope = "runtime"
 core = true
 extra_deps = ["zlib", "bzip2", "xz", "zstd"]
-sources = [{ url = "https://astron.com/pub/file/file-5.46.tar.gz" }]
+sources = [{ url = "https://astron.com/pub/file/file-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static
 make -j$NPROC
@@ -370,9 +395,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "bc"
+version = "7.0.3"
 scope = "runtime"
 core = true
-sources = [{ url = "https://github.com/gavinhoward/bc/releases/download/7.0.3/bc-7.0.3.tar.xz" }]
+sources = [{ url = "https://github.com/gavinhoward/bc/releases/download/{version}/bc-{version}.tar.xz" }]
 script = '''
 CC='gcc -std=c99' ./configure --prefix=$PREFIX -G -O3 -r
 make -j$NPROC
@@ -383,10 +409,11 @@ check = "make test"
 
 [[package]]
 id = "mpfr"
+version = "4.2.2"
 scope = "runtime"
 core = true
 extra_deps = ["gmp-lib"]
-sources = [{ url = "https://ftp.gnu.org/gnu/mpfr/mpfr-4.2.2.tar.xz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/mpfr/mpfr-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --enable-thread-safe
 make -j$NPROC
@@ -398,10 +425,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "mpc"
+version = "1.3.1"
 scope = "runtime"
 core = true
 extra_deps = ["gmp-lib", "mpfr"]
-sources = [{ url = "https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/mpc/mpc-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static
 make -j$NPROC
@@ -413,9 +441,10 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "attr"
+version = "2.5.2"
 scope = "runtime"
 core = true
-sources = [{ url = "https://download.savannah.gnu.org/releases/attr/attr-2.5.2.tar.gz" }]
+sources = [{ url = "https://download.savannah.gnu.org/releases/attr/attr-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --disable-nls --sysconfdir=$PREFIX/etc
 make -j$NPROC
@@ -429,10 +458,11 @@ check_deps = ["perl"]
 
 [[package]]
 id = "acl"
+version = "2.3.2"
 scope = "runtime"
 core = true
 extra_deps = ["attr"]
-sources = [{ url = "https://download.savannah.gnu.org/releases/acl/acl-2.3.2.tar.xz" }]
+sources = [{ url = "https://download.savannah.gnu.org/releases/acl/acl-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --disable-nls
 make -j$NPROC
@@ -446,10 +476,11 @@ check_deps = ["perl"]
 
 [[package]]
 id = "libcap"
+version = "2.76"
 scope = "runtime"
 core = true
 extra_deps = ["attr", "perl"]
-sources = [{ url = "https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.76.tar.xz" }]
+sources = [{ url = "https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-{version}.tar.xz" }]
 script = '''
 sed -i '/install -m.*STA/d' libcap/Makefile
 make -j$NPROC prefix=$PREFIX lib=lib GOLANG=no
@@ -461,10 +492,11 @@ check = "make -C libcap test"
 
 [[package]]
 id = "libxcrypt"
+version = "4.4.38"
 scope = "runtime"
 core = true
 extra_deps = ["perl"]
-sources = [{ url = "https://github.com/besser82/libxcrypt/releases/download/v4.4.38/libxcrypt-4.4.38.tar.xz" }]
+sources = [{ url = "https://github.com/besser82/libxcrypt/releases/download/v{version}/libxcrypt-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --enable-hashes=strong,glibc \
     --enable-obsolete-api=no --disable-failure-tokens
@@ -478,10 +510,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "pcre2"
+version = "10.45"
 scope = "runtime"
 core = true
 extra_deps = ["zlib", "bzip2"]
-sources = [{ url = "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.45/pcre2-10.45.tar.bz2" }]
+sources = [{ url = "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-{version}/pcre2-{version}.tar.bz2" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --enable-unicode --enable-pcre2-16 --enable-pcre2-32 \
     --enable-pcre2grep-libz --enable-pcre2grep-libbz2
@@ -496,10 +529,11 @@ check_in_view = true
 
 [[package]]
 id = "gdbm"
+version = "1.26"
 scope = "runtime"
 core = true
 extra_deps = ["readline", "ncurses"]
-sources = [{ url = "https://ftp.gnu.org/gnu/gdbm/gdbm-1.26.tar.gz" }]
+sources = [{ url = "https://ftp.gnu.org/gnu/gdbm/gdbm-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --enable-libgdbm-compat --disable-nls
 make -j$NPROC
@@ -512,10 +546,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "less"
+version = "679"
 scope = "runtime"
 core = true
 extra_deps = ["ncurses"]
-sources = [{ url = "https://www.greenwoodsoftware.com/less/less-679.tar.gz" }]
+sources = [{ url = "https://www.greenwoodsoftware.com/less/less-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --sysconfdir=/etc
 make -j$NPROC
@@ -525,10 +560,11 @@ smoke = ["bin/less --version"]
 
 [[package]]
 id = "psmisc"
+version = "23.7"
 scope = "runtime"
 core = true
 extra_deps = ["ncurses"]
-sources = [{ url = "https://sourceforge.net/projects/psmisc/files/psmisc/psmisc-23.7.tar.xz/download" }]
+sources = [{ url = "https://sourceforge.net/projects/psmisc/files/psmisc/psmisc-{version}.tar.xz/download" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-nls
 make -j$NPROC
@@ -538,9 +574,10 @@ smoke = ["bin/pstree --version"]
 
 [[package]]
 id = "libpipeline"
+version = "1.5.8"
 scope = "runtime"
 core = true
-sources = [{ url = "https://download.savannah.gnu.org/releases/libpipeline/libpipeline-1.5.8.tar.gz" }]
+sources = [{ url = "https://download.savannah.gnu.org/releases/libpipeline/libpipeline-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static
 make -j$NPROC
@@ -550,10 +587,11 @@ probes = ["pipeline"]
 
 [[package]]
 id = "ninja"
+version = "1.13.1"
 scope = "runtime"
 core = true
 extra_deps = ["python3"]
-sources = [{ url = "https://github.com/ninja-build/ninja/archive/v1.13.1/ninja-1.13.1.tar.gz" }]
+sources = [{ url = "https://github.com/ninja-build/ninja/archive/v{version}/ninja-{version}.tar.gz" }]
 script = '''
 python3 configure.py --bootstrap
 install -D ninja $DEST$PREFIX/bin/ninja
@@ -562,10 +600,11 @@ smoke = ["bin/ninja --version"]
 
 [[package]]
 id = "meson"
+version = "1.8.3"
 scope = "runtime"
 core = true
 extra_deps = ["python3", "ninja"]
-sources = [{ url = "https://github.com/mesonbuild/meson/releases/download/1.8.3/meson-1.8.3.tar.gz" }]
+sources = [{ url = "https://github.com/mesonbuild/meson/releases/download/{version}/meson-{version}.tar.gz" }]
 script = '''
 mkdir -p $DEST$PREFIX/bin
 # meson rewrites RPATHs when it installs, and would drop what the compiler wrapper put there.
@@ -578,10 +617,11 @@ smoke = ["bin/meson --version"]
 
 [[package]]
 id = "kmod"
+version = "34.2"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "zlib", "xz", "zstd", "openssl"]
-sources = [{ url = "https://www.kernel.org/pub/linux/utils/kernel/kmod/kmod-34.2.tar.xz" }]
+sources = [{ url = "https://www.kernel.org/pub/linux/utils/kernel/kmod/kmod-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --buildtype=release -D manpages=false -D bashcompletiondir=no \
     -D fishcompletiondir=no -D zshcompletiondir=no
@@ -593,10 +633,11 @@ probes = ["kmod"]
 
 [[package]]
 id = "util-linux"
+version = "2.41.1"
 scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "ncurses", "zlib"]
-sources = [{ url = "https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-2.41.1.tar.xz" }]
+sources = [{ url = "https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --bindir=$PREFIX/bin --sbindir=$PREFIX/bin --libdir=$PREFIX/lib \
     --runstatedir=/run --disable-static --disable-nls --disable-liblastlog2 --disable-chfn-chsh \
@@ -614,10 +655,11 @@ check_in_view = true
 
 [[package]]
 id = "e2fsprogs"
+version = "1.47.3"
 scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "util-linux"]
-sources = [{ url = "https://downloads.sourceforge.net/project/e2fsprogs/e2fsprogs/v1.47.3/e2fsprogs-1.47.3.tar.gz" }]
+sources = [{ url = "https://downloads.sourceforge.net/project/e2fsprogs/e2fsprogs/v{version}/e2fsprogs-{version}.tar.gz" }]
 script = '''
 mkdir ../b && cd ../b
 ../src/configure --prefix=$PREFIX --sysconfdir=/etc --enable-elf-shlibs --disable-libblkid \
@@ -632,10 +674,11 @@ check_deps = ["perl"]
 
 [[package]]
 id = "procps"
+version = "4.0.5"
 scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "ncurses"]
-sources = [{ url = "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-4.0.5.tar.xz/download" }]
+sources = [{ url = "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-{version}.tar.xz/download" }]
 script = '''
 CFLAGS='-O2 -include stdbool.h' ./configure --prefix=$PREFIX --disable-static --disable-nls --disable-kill \
     --without-systemd
@@ -647,10 +690,11 @@ probes = ["proc2"]
 
 [[package]]
 id = "iproute2"
+version = "6.16.0"
 scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "bison-final", "m4-final", "flex", "libcap", "zlib"]
-sources = [{ url = "https://www.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.16.0.tar.xz" }]
+sources = [{ url = "https://www.kernel.org/pub/linux/utils/net/iproute2/iproute2-{version}.tar.xz" }]
 script = '''
 sed -i /ARPD/d Makefile
 make -j$NPROC NETNS_RUN_DIR=/run/netns PREFIX=$PREFIX SBINDIR=$PREFIX/bin LIBDIR=$PREFIX/lib
@@ -660,10 +704,11 @@ smoke = ["bin/ip -V"]
 
 [[package]]
 id = "kbd"
+version = "2.8.0"
 scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "flex", "bison-final", "m4-final", "autoconf", "automake", "perl"]
-sources = [{ url = "https://www.kernel.org/pub/linux/utils/kbd/kbd-2.8.0.tar.xz" }]
+sources = [{ url = "https://www.kernel.org/pub/linux/utils/kbd/kbd-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-vlock --disable-nls
 make -j$NPROC
@@ -675,10 +720,11 @@ check = "PATH=/build/src:$PATH make -j$NPROC check"
 
 [[package]]
 id = "elfutils"
+version = "0.193"
 scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "zlib", "bzip2", "xz", "zstd", "flex", "bison-final", "m4-final"]
-sources = [{ url = "https://sourceware.org/ftp/elfutils/0.193/elfutils-0.193.tar.bz2" }]
+sources = [{ url = "https://sourceware.org/ftp/elfutils/{version}/elfutils-{version}.tar.bz2" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-debuginfod --enable-libdebuginfod=dummy --disable-nls
 make -j$NPROC
@@ -693,10 +739,11 @@ check = "make -j$NPROC check"
 
 [[package]]
 id = "glib"
+version = "2.84.4"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "zlib", "pcre2", "libffi", "util-linux", "gettext"]
-sources = [{ url = "https://download.gnome.org/sources/glib/2.84/glib-2.84.4.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/glib/2.84/glib-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --buildtype=release -D tests=true -D introspection=disabled \
     -D man-pages=disabled -D selinux=disabled -D xattr=false
@@ -711,9 +758,10 @@ check = "meson test -C /build/b --num-processes $NPROC --print-errorlogs"
 # Goes in the seed, which has to point its binaries at wherever it's unpacked.
 [[package]]
 id = "patchelf"
+version = "0.18.0"
 scope = "runtime"
 core = true
-sources = [{ url = "https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0.tar.bz2" }]
+sources = [{ url = "https://github.com/NixOS/patchelf/releases/download/{version}/patchelf-{version}.tar.bz2" }]
 script = '''
 ./configure --prefix=$PREFIX
 make -j$NPROC

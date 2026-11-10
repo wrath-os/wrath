@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::sandbox::{self, Identity, Limits, Mount, Status, Step, View};
 use crate::seed::{self, run as run_host, sha256_of};
 use crate::split;
-use crate::store::{Lab, StorePath, with_path};
+use crate::store::{self, Lab, StorePath, with_path};
 use crate::view;
 
 /// One way of building: an arm of the experiments.
@@ -183,6 +183,10 @@ struct Source {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Package {
     pub(crate) id: String,
+    /// The version it builds, which store paths carry in their names and source URLs can use as
+    /// `{version}`.
+    #[serde(default)]
+    pub(crate) version: Option<String>,
     scope: Scope,
     /// Build on the final toolchain, in addition to `deps` and `extra_deps`.
     #[serde(default)]
@@ -260,6 +264,33 @@ impl Package {
     /// Whether fixups apply to it after it's installed.
     pub(crate) fn fixed_up(&self) -> bool {
         self.toolset || self.core
+    }
+
+    /// The name its store paths carry after their hash: its id and version, as `jq-1.8.1`.
+    pub(crate) fn store_name(&self) -> String {
+        match &self.version {
+            Some(version) => format!("{}-{version}", self.id),
+            None => self.id.clone(),
+        }
+    }
+
+    /// Refuses an id or version that can't go in a store path's name.
+    fn check_name(&self) -> Result<(), String> {
+        let fits = |text: &str| !text.is_empty() && text.bytes().all(store::name_byte);
+        if !fits(&self.id) {
+            return Err(format!(
+                "`{}` can't be an id: use letters, digits and ._+-",
+                self.id
+            ));
+        }
+        match &self.version {
+            Some(version) if !fits(version) => Err(format!(
+                "`{}` has version `{version}`, which can't go in a store path: use letters, \
+                 digits and ._+-",
+                self.id
+            )),
+            _ => Ok(()),
+        }
     }
 
     /// The ids of what it depends on.
@@ -374,6 +405,7 @@ impl Package {
         );
         Self {
             id: format!("probe-{}-{library}", self.id),
+            version: None,
             scope: Scope::Runtime,
             toolset: true,
             whole: false,
@@ -719,7 +751,21 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
     let path = repository.join("recipes").join(recipes);
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     let parsed: Recipes = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(parsed.package)
+    parsed
+        .package
+        .into_iter()
+        .map(|mut package| {
+            package
+                .check_name()
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            if let Some(version) = &package.version {
+                for source in &mut package.sources {
+                    source.url = source.url.replace("{version}", version);
+                }
+            }
+            Ok(package)
+        })
+        .collect()
 }
 
 /// Fetches `package`'s sources, and then those the locks in its first source list: a project's
@@ -975,6 +1021,10 @@ pub(crate) struct Prepared {
     pub(crate) dep_paths: Vec<StorePath>,
 }
 
+/// The version of what the builder does to every package beside its recipe, such as fixing up
+/// run paths. Every package's key has it, so changing it rebuilds everything.
+const BUILD_RULES: &str = "2";
+
 /// What goes into a package's key from its recipe, before any dependency.
 fn recipe_parts(
     repository: &Path,
@@ -983,8 +1033,15 @@ fn recipe_parts(
     source_hashes: &[&str],
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut parts: Vec<Vec<u8>> = vec![
+        BUILD_RULES.as_bytes().to_vec(),
         arm_key(package, arm).as_bytes().to_vec(),
         package.id.as_bytes().to_vec(),
+        package
+            .version
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec(),
         package.script.as_bytes().to_vec(),
         vec![
             u8::from(package.wrap),
@@ -1090,7 +1147,8 @@ pub(crate) fn build_one(
     let fetched = fetch_all(sources, lab, package)?;
     let source_hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
     let recipe = recipe_parts(repository, package, arm, &source_hashes)?;
-    let out = package_key("build", &recipe, &deps, |dep| built.reference(&dep.id));
+    let out = package_key("build", &recipe, &deps, |dep| built.reference(&dep.id))
+        .named(&package.store_name());
     let unresolved = package_key("unresolved", &recipe, &deps, |dep| {
         built.unresolved_or_path(&dep.id)
     })
@@ -1342,12 +1400,10 @@ fn note(
     found: &mut BTreeMap<String, PathBuf>,
 ) {
     for at in finder.find_iter(bytes) {
-        let Some(tail) = bytes.get(at + 7..at + 47) else {
-            continue;
-        };
-        if tail.iter().all(u8::is_ascii_hexdigit) {
-            let hash = String::from_utf8_lossy(tail).into_owned();
-            found.entry(hash).or_insert_with(|| file.to_path_buf());
+        let start = at + "/store/".len();
+        if let Some(length) = store::entry_length(&bytes[start..]) {
+            let entry = String::from_utf8_lossy(&bytes[start..start + length]).into_owned();
+            found.entry(entry).or_insert_with(|| file.to_path_buf());
         }
     }
 }

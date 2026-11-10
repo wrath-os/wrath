@@ -130,10 +130,7 @@ impl Plan {
             .map(|class| {
                 let path = match class {
                     Class::Out => package.clone(),
-                    _ => StorePath::derive(
-                        "output",
-                        &[package.hash().as_bytes(), class.name().as_bytes()],
-                    ),
+                    _ => output_path(package, class),
                 };
                 (class, (path, false))
             })
@@ -166,13 +163,18 @@ fn rewrite_with(bytes: &mut [u8], plan: &Plan, wanted: impl Fn(&str) -> Class) {
     let found: Vec<usize> = memmem::find_iter(bytes, STORE).collect();
     for at in found {
         let start = at + STORE.len();
-        let Some(hash) = bytes
-            .get(start..start + HASH_LENGTH)
-            .and_then(|hash| std::str::from_utf8(hash).ok())
-        else {
+        // The entry: its hash, and the name after it when it has one.
+        let length = bytes[start..]
+            .iter()
+            .position(|b| *b == b'/' || !path_byte(*b))
+            .unwrap_or(bytes.len() - start);
+        if length < HASH_LENGTH {
+            continue;
+        }
+        let Ok(hash) = std::str::from_utf8(&bytes[start..start + length]) else {
             continue;
         };
-        let rest_at = start + HASH_LENGTH;
+        let rest_at = start + length;
         let rest_length = bytes[rest_at..]
             .iter()
             .position(|b| !path_byte(*b))
@@ -180,8 +182,10 @@ fn rewrite_with(bytes: &mut [u8], plan: &Plan, wanted: impl Fn(&str) -> Class) {
         let Ok(rest) = std::str::from_utf8(&bytes[rest_at..rest_at + rest_length]) else {
             continue;
         };
-        if let Some(output) = plan.output(hash, wanted(rest)) {
-            bytes[start..start + HASH_LENGTH].copy_from_slice(output.hash().as_bytes());
+        if let Some(output) = plan.output(hash, wanted(rest))
+            && output.hash().len() == length
+        {
+            bytes[start..start + length].copy_from_slice(output.hash().as_bytes());
         }
     }
 }
@@ -196,9 +200,10 @@ fn rewrite_runpath(bytes: &mut [u8], plan: &Plan) {
             .strip_prefix("/store/")
             .and_then(|rest| rest.strip_suffix("/lib"))
             && let Some(output) = plan.output(hash, Class::Lib)
+            && output.hash().len() == hash.len()
         {
             let start = offset + STORE.len();
-            bytes[start..start + HASH_LENGTH].copy_from_slice(output.hash().as_bytes());
+            bytes[start..start + hash.len()].copy_from_slice(output.hash().as_bytes());
         }
         offset += entry.len() + 1;
     }
@@ -345,10 +350,20 @@ pub fn strip(lab: &Lab, packages: &BTreeSet<StorePath>) -> Result<usize, String>
 
 /// Where a package's run-time libraries go when it has any.
 pub fn lib_output(package: &StorePath) -> StorePath {
-    StorePath::derive(
+    output_path(package, Class::Lib)
+}
+
+/// Where `package`'s `class` of files goes, with the package's name, so a reference to the
+/// package becomes one to the output by rewriting its hash alone.
+fn output_path(package: &StorePath, class: Class) -> StorePath {
+    let path = StorePath::derive(
         "output",
-        &[package.hash().as_bytes(), Class::Lib.name().as_bytes()],
-    )
+        &[package.hash().as_bytes(), class.name().as_bytes()],
+    );
+    match package.name() {
+        Some(name) => path.named(name),
+        None => path,
+    }
 }
 
 /// Points every program in `paths` at library slots: `/system/libs/<id>/...` for what's in
@@ -889,6 +904,36 @@ mod in_place {
         let header =
             fs::read_to_string(lab.on_host(&outputs[&Class::Dev]).join("include/z.h")).unwrap();
         assert!(header.contains(&outputs[&Class::Out].inside()), "{header}");
+    }
+
+    #[test]
+    fn a_named_package_splits_into_outputs_with_its_name() {
+        let (_dir, lab) = lab();
+        let package = StorePath::derive("seed", &[b"z"]).named("zlib-1.3.1");
+        let own = package.inside();
+        for (name, text) in [
+            ("lib/libz.so.1".to_owned(), "library\n".to_owned()),
+            (
+                "bin/z".to_owned(),
+                format!("#!{own}/lib/libz.so.1 {own}/share/x\n"),
+            ),
+            ("share/x".to_owned(), "data\n".to_owned()),
+        ] {
+            let path = lab.on_host(&package).join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let (outputs, _) = split_package(&lab, &package).unwrap();
+        for output in outputs.values() {
+            assert_eq!(output.name(), Some("zlib-1.3.1"), "{output:?}");
+        }
+        let program = fs::read_to_string(lab.on_host(&outputs[&Class::Out]).join("bin/z")).unwrap();
+        let lib = &outputs[&Class::Lib];
+        assert!(
+            program.contains(&format!("{}/lib/libz.so.1", lib.inside())),
+            "{program}"
+        );
+        assert!(!program.contains(&own), "{program}");
     }
 
     #[test]

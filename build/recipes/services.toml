@@ -3,9 +3,10 @@
 
 [[package]]
 id = "duktape"
+version = "2.7.0"
 scope = "runtime"
 core = true
-sources = [{ url = "https://duktape.org/duktape-2.7.0.tar.xz" }]
+sources = [{ url = "https://duktape.org/duktape-{version}.tar.xz" }]
 script = '''
 # A small JavaScript engine, which polkit runs its rules in.
 make -f Makefile.sharedlibrary -j$NPROC INSTALL_PREFIX=$PREFIX
@@ -16,6 +17,7 @@ probes = ["duktape"]
 
 [[package]]
 id = "polkit"
+version = "127"
 scope = "runtime"
 core = true
 extra_deps = [
@@ -23,7 +25,7 @@ extra_deps = [
     "systemd", "gettext", "util-linux", "perl",
     "python3",
 ]
-sources = [{ url = "https://github.com/polkit-org/polkit/archive/127/polkit-127.tar.gz" }]
+sources = [{ url = "https://github.com/polkit-org/polkit/archive/{version}/polkit-{version}.tar.gz" }]
 script = '''
 # It asks systemd where sysusers and tmpfiles entries go, which is systemd's own store path.
 sed -i "s#systemd_dep.get_variable(pkgconfig : 'sysusers_dir')#'$PREFIX/lib/sysusers.d'#; \
@@ -40,10 +42,11 @@ smoke = ["bin/pkexec --version", "bin/pkaction --version"]
 
 [[package]]
 id = "iputils"
+version = "20250605"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libcap"]
-sources = [{ url = "https://github.com/iputils/iputils/archive/20250605/iputils-20250605.tar.gz" }]
+sources = [{ url = "https://github.com/iputils/iputils/archive/{version}/iputils-{version}.tar.gz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --sbindir=bin --buildtype=release -D BUILD_MANS=false \
     -D USE_IDN=false -D USE_GETTEXT=false -D SKIP_TESTS=true
@@ -71,10 +74,11 @@ done
 
 [[package]]
 id = "zram-generator"
+version = "1.2.1"
 scope = "runtime"
 core = true
 extra_deps = ["rust-bin", "systemd"]
-sources = [{ url = "https://github.com/systemd/zram-generator/archive/v1.2.1/zram-generator-1.2.1.tar.gz" }]
+sources = [{ url = "https://github.com/systemd/zram-generator/archive/v{version}/zram-generator-{version}.tar.gz" }]
 # The project doesn't ship a lock, so one made once with `cargo generate-lockfile` is kept here.
 crates = "recipes/locks/zram-generator.Cargo.lock"
 files = ["locks/zram-generator.Cargo.lock"]

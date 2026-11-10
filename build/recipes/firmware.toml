@@ -3,10 +3,11 @@
 
 [[package]]
 id = "linux-firmware"
+version = "20250917"
 scope = "runtime"
 core = true
 whole = true
-sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20250917.tar.xz" }]
+sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-{version}.tar.xz" }]
 script = '''
 # Every file the project lists, with the links it makes between them.
 ./copy-firmware.sh $DEST$PREFIX/lib/firmware
@@ -14,10 +15,11 @@ script = '''
 
 [[package]]
 id = "microcode-amd"
+version = "20250917"
 scope = "runtime"
 core = true
 whole = true
-sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20250917.tar.xz" }]
+sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-{version}.tar.xz" }]
 script = '''
 # The name and place the kernel reads microcode from in the initrd.
 mkdir -p $DEST$PREFIX/kernel/x86/microcode
@@ -26,10 +28,11 @@ cat amd-ucode/microcode_amd*.bin > $DEST$PREFIX/kernel/x86/microcode/AuthenticAM
 
 [[package]]
 id = "zd1211fw"
+version = "1.5"
 scope = "runtime"
 core = true
 whole = true
-sources = [{ url = "https://downloads.sourceforge.net/project/zd1211/zd1211-firmware/1.5/zd1211-firmware-1.5.tar.bz2" }]
+sources = [{ url = "https://downloads.sourceforge.net/project/zd1211/zd1211-firmware/{version}/zd1211-firmware-{version}.tar.bz2" }]
 script = '''
 mkdir -p $DEST$PREFIX/lib/firmware/zd1211
 cp zd1211_* zd1211b_* $DEST$PREFIX/lib/firmware/zd1211/

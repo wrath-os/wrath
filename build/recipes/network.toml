@@ -2,10 +2,11 @@
 
 [[package]]
 id = "openssh"
+version = "10.0p1"
 scope = "runtime"
 core = true
 extra_deps = ["openssl", "zlib", "linux-pam", "libxcrypt"]
-sources = [{ url = "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.0p1.tar.gz" }]
+sources = [{ url = "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --sysconfdir=/etc/ssh --with-pam \
     --with-privsep-path=/var/empty --with-privsep-user=sshd --with-pid-dir=/run \

@@ -2,10 +2,11 @@
 
 [[package]]
 id = "linux"
+version = "7.3.4"
 scope = "runtime"
 core = true
 extra_deps = ["flex", "bison-final", "m4-final", "bc", "openssl", "elfutils", "perl", "pkgconf", "kmod"]
-sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.1.tar.xz" }]
+sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-{version}.tar.xz" }]
 script = '''
 export KBUILD_BUILD_TIMESTAMP=@1 KBUILD_BUILD_USER=lab KBUILD_BUILD_HOST=lab
 make x86_64_defconfig
@@ -55,10 +56,11 @@ rm -f $DEST$PREFIX/lib/modules/*/build
 
 [[package]]
 id = "linux-pam"
+version = "1.7.1"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "libxcrypt", "flex", "bison-final", "m4-final"]
-sources = [{ url = "https://github.com/linux-pam/linux-pam/releases/download/v1.7.1/Linux-PAM-1.7.1.tar.xz" }]
+sources = [{ url = "https://github.com/linux-pam/linux-pam/releases/download/v{version}/Linux-PAM-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --buildtype=release --sysconfdir=/etc --libdir=lib \
     --sbindir=bin -D i18n=disabled -D docs=disabled -D audit=disabled -D econf=disabled \
@@ -71,10 +73,11 @@ probes = ["pam"]
 
 [[package]]
 id = "shadow"
+version = "4.18.0"
 scope = "runtime"
 core = true
 extra_deps = ["linux-pam", "libxcrypt", "pkgconf"]
-sources = [{ url = "https://github.com/shadow-maint/shadow/releases/download/4.18.0/shadow-4.18.0.tar.xz" }]
+sources = [{ url = "https://github.com/shadow-maint/shadow/releases/download/{version}/shadow-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --bindir=$PREFIX/bin --sbindir=$PREFIX/bin --sysconfdir=/etc \
     --disable-static --disable-nls --disable-man --disable-account-tools-setuid \
@@ -88,10 +91,11 @@ smoke = ["bin/passwd --help"]
 
 [[package]]
 id = "sudo"
+version = "1.9.17p2"
 scope = "runtime"
 core = true
 extra_deps = ["linux-pam", "zlib"]
-sources = [{ url = "https://www.sudo.ws/dist/sudo-1.9.17p2.tar.gz" }]
+sources = [{ url = "https://www.sudo.ws/dist/sudo-{version}.tar.gz" }]
 # sudoers, the run and state directories are paths on the running system. They're installed into
 # the package instead, where nothing reads them, and wrappers give sudo its setuid bit.
 script = '''
@@ -113,6 +117,7 @@ smoke = ["bin/sudo --version"]
 
 [[package]]
 id = "systemd"
+version = "257.8"
 scope = "runtime"
 core = true
 extra_deps = [
@@ -120,7 +125,7 @@ extra_deps = [
     "libxcrypt", "acl", "kmod", "xz", "lz4", "zstd", "openssl", "kbd", "gettext", "m4-final", "zlib",
     "linux-pam", "cryptsetup", "device-mapper", "json-c", "libudev",
 ]
-sources = [{ url = "https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz" }]
+sources = [{ url = "https://github.com/systemd/systemd/archive/v{version}/systemd-{version}.tar.gz" }]
 script = '''
 # Swap units run swapon and swapoff from a fixed path, which a system without /sbin lacks.
 sed -i "s#\"/sbin/swapon\"#\"$LAB_DEP_util_linux/bin/swapon\"#; s#\"/sbin/swapoff\"#\"$LAB_DEP_util_linux/bin/swapoff\"#" \
@@ -160,10 +165,11 @@ probes = ["systemd"]
 
 [[package]]
 id = "dbus"
+version = "1.16.2"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "expat", "systemd", "libcap"]
-sources = [{ url = "https://dbus.freedesktop.org/releases/dbus/dbus-1.16.2.tar.xz" }]
+sources = [{ url = "https://dbus.freedesktop.org/releases/dbus/dbus-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --buildtype=release --auto-features=disabled \
     --sysconfdir=/etc --localstatedir=/var \

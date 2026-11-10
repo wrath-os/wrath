@@ -1493,11 +1493,9 @@ fn realise(lab: &Lab, db: &mut Db, actions: Vec<Action>) -> Result<Outcome, Stri
             }
         }
     }
-    let name = digest(
-        serde_json::to_string(&merged)
-            .map_err(|e| e.to_string())?
-            .as_bytes(),
-    );
+    // A generation's files can't name it, so its name follows from them.
+    let contents = serde_json::to_string(&merged).map_err(|e| e.to_string())?;
+    let name = format!("{}-system", digest(contents.as_bytes()));
     let unresolved = json!({"kind": "generation", "parts": unresolved_parts});
     let resolved = json!({"kind": "generation", "parts": resolved_parts});
     let unresolved_key = key_of(&unresolved);
