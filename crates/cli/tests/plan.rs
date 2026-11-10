@@ -470,3 +470,19 @@ fn an_apply_record_keeps_the_module_and_library_code_its_origins_point_into() {
         assert_eq!(text.as_str().unwrap(), on_disk, "{file}");
     }
 }
+
+#[test]
+fn a_home_of_its_own_is_refused_and_points_at_the_system_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("home.toml"), "packages = [\"jq\"]\n").unwrap();
+    for command in ["plan", "apply", "status"] {
+        let output = distro(&[command, "-C", dir.path().to_str().unwrap()]);
+
+        assert!(!output.status.success(), "{command}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("isn't supported for now") && stderr.contains("[users.NAME]"),
+            "{stderr}"
+        );
+    }
+}

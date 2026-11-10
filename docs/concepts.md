@@ -12,13 +12,12 @@ A **configuration** is a directory of TOML files that describes what should be t
 files, services, users and their settings. It is the only place where intent lives. Commands
 never keep state outside it; trying something leaves no trace, and keeping it writes TOML.
 
-Configurations come in three sizes, all the same format with the same modules, package names,
+Configurations come in two sizes, all the same format with the same modules, package names,
 lock and commands:
 
 | Size | Where | Describes |
 |---|---|---|
 | system | `/etc/distro` | the machine, and the homes of the users on it |
-| user | `~/.config/distro` | one user's home, on a machine they may not administer |
 | project | `distro.toml` in a project | the packages, environment and (planned) services a project needs |
 
 The configuration a command acts on is its **context**: `-C DIR`, or the nearest project, or

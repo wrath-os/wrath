@@ -18,7 +18,6 @@ mod edit;
 mod facts;
 mod fetch;
 mod generations;
-mod home;
 mod install;
 mod machine;
 mod on_machine;
@@ -347,7 +346,6 @@ fn main() -> ExitCode {
         Command::Status => machine().and_then(|config| {
             generations::warn_degraded();
             match model(&config, &modules) {
-                Some(model) if is_home(&config) => home::status(&model),
                 Some(model) if json => print_serde(&generations::status_json(&model)),
                 Some(model) => generations::status(&model),
                 None => Ok(ExitCode::FAILURE),
@@ -371,7 +369,6 @@ fn main() -> ExitCode {
         } => generations::parse_duration(&duration).and_then(|seconds| {
             switch(root, system, Switch::Try(seconds), yes, &machine, &modules)
         }),
-        Command::Keep if home::is_context() => home::keep(),
         Command::Keep => generations::keep(),
         Command::Build {
             target,
@@ -387,8 +384,6 @@ fn main() -> ExitCode {
                     let test = matches!(target, T::TestImage);
                     let keep = with_configuration.then_some(config.as_path());
                     generations::build_image(root, keep, &model, &kernel_options, test)?
-                } else if is_home(&config) {
-                    generations::build(root, &model, backend::Target::Home)?
                 } else {
                     generations::build(root, &model, target.try_into()?)?
                 };
@@ -398,11 +393,9 @@ fn main() -> ExitCode {
             None => Ok(ExitCode::FAILURE),
         }),
         Command::History if json => generations::history_json().and_then(|v| print_serde(&v)),
-        Command::History if home::is_context() => home::history(),
         Command::History => generations::history(),
         Command::Clean { keep, yes } => generations::clean(keep, yes),
         Command::Diff { from, to } => generations::diff(from, to),
-        Command::Rollback if home::is_context() => home::rollback(),
         Command::Rollback => generations::rollback(),
         Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, _)| run::run(root, model, &package, &args)),
@@ -580,8 +573,6 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
     let config = find_config(given)?;
     if is_project(&config) {
         eprintln!("{}", project::header(&config));
-    } else if is_home(&config) {
-        eprintln!("home {}", config.display());
     } else {
         let kind = if given.is_some() { "config" } else { "system" };
         match given_role() {
@@ -592,12 +583,11 @@ fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
     Ok(config)
 }
 
-/// The configuration a command acts on: the one given, the project it runs in, your own when you
-/// aren't root and have one, or the system's.
+/// The configuration a command acts on: the one given, the project it runs in, or the system's.
 fn find_config(given: Option<&Path>) -> Result<PathBuf, String> {
     let found = match given {
         Some(_) => None,
-        None => current_project().or_else(home::dir),
+        None => current_project(),
     };
     let config = given
         .or(found.as_deref())
@@ -610,10 +600,17 @@ fn find_config(given: Option<&Path>) -> Result<PathBuf, String> {
             }
         });
     }
+    if is_home(config) {
+        return Err(format!(
+            "{}: a home of its own, in `home.toml`, isn't supported for now; configure the \
+             user under `[users.NAME]` in the system's configuration instead",
+            config.display()
+        ));
+    }
     Ok(config.to_path_buf())
 }
 
-pub(crate) fn is_home(config: &Path) -> bool {
+fn is_home(config: &Path) -> bool {
     distro_eval::kind_of(&distro_eval::DirFs::new(config)) == distro_eval::ConfigKind::Home
 }
 
@@ -995,7 +992,6 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
             Some(before) => (before, None),
             None => return Ok(ExitCode::FAILURE),
         },
-        Against::Running if is_home(config) => (home::current()?, Some("your home".to_owned())),
         Against::Running => match backend::current_model() {
             Some(path) => (
                 read_model(Path::new(path))
@@ -1088,18 +1084,9 @@ fn switch(
     modules: &Path,
 ) -> Result<ExitCode, String> {
     if let Some(system) = system {
-        if system.join("activate").exists() && system.join("distro/model.json").exists() {
-            return home::switch_to(&system, how);
-        }
         return generations::switch_to(&system, how);
     }
     let config = config()?;
-    if is_home(&config) {
-        let Some(model) = model(&config, modules) else {
-            return Ok(ExitCode::FAILURE);
-        };
-        return home::apply(root, &config, model, how, yes);
-    }
     let role = role(&config);
     let Some(evaluation) = evaluate(&config, modules) else {
         return Ok(ExitCode::FAILURE);

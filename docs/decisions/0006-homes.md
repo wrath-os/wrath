@@ -1,6 +1,6 @@
 # 0006: Homes and user configurations
 
-Status: accepted, 2026-11-07.
+Status: accepted, 2026-11-07. Homes of their own, `home.toml`, are dropped for now by 0017.
 
 ## Context
 

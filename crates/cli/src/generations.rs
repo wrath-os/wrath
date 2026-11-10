@@ -431,7 +431,7 @@ fn degraded(dir: &Path) -> Vec<String> {
 }
 
 /// Whether the running system, whose model hash is `running`, is `model`.
-pub(crate) fn matching(running: Option<&str>, model: &Model) -> &'static str {
+fn matching(running: Option<&str>, model: &Model) -> &'static str {
     match running {
         Some(hash) if hash == model.hash() => "it matches the configuration",
         Some(_) => "the configuration differs from it; `distro plan` shows how",
