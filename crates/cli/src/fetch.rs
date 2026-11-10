@@ -7,7 +7,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use distro_backend as backend;
 use distro_eval::{ConfigFs, DirFs};
 use distro_model::{Lock, Source};
 
@@ -68,10 +67,10 @@ impl<F> Sourced<F> {
     fn tree(&self, name: &str, url: &str) -> Result<(Source, PathBuf), String> {
         let fetching = FETCHING.get().unwrap_or(&Fetching::Pinned);
         match choose(self.lock.as_ref(), fetching, name, url)? {
-            Some(source) => backend::fetch_source(source)
+            Some(source) => crate::trees::fetch(source)
                 .map(|path| (source.clone(), path))
                 .map_err(|message| format!("{message}; `distro update {name}` takes its newest")),
-            None => backend::follow_source(url),
+            None => crate::trees::follow(url),
         }
     }
 }

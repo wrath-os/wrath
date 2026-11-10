@@ -31,6 +31,7 @@ mod state;
 mod switching;
 mod system;
 mod templates;
+mod trees;
 
 /// How many times `dev test --determinism` evaluates each configuration.
 const DETERMINISM_RUNS: u64 = 5;
