@@ -1052,3 +1052,88 @@ cargo build --release --offline --locked -j $NPROC --features systemd
 mkdir -p $DEST$PREFIX/bin
 cp target/release/xwayland-satellite $DEST$PREFIX/bin/
 '''
+
+# GTK 3, and the portal that gives programs its file chooser.
+
+[[package]]
+id = "at-spi2-core"
+version = "2.60.7"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib", "dbus",
+  "libxml2", "systemd",
+]
+sources = [{ url = "https://download.gnome.org/sources/at-spi2-core/2.60/at-spi2-core-{version}.tar.xz" }]
+script = '''
+# The accessibility bus and its libraries, ATK among them, without X.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D x11=disabled \
+    -D introspection=disabled -D docs=false -D use_systemd=true \
+    -D systemd_user_dir=$PREFIX/lib/systemd/user
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["atk", "atk-bridge-2.0"]
+
+[[package]]
+id = "gsettings-desktop-schemas"
+version = "51.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "glib", "pcre2", "libffi", "util-linux", "zlib"]
+sources = [{ url = "https://download.gnome.org/sources/gsettings-desktop-schemas/51/gsettings-desktop-schemas-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+# The compiled schemas are made for a whole system, from every package's.
+rm $DEST$PREFIX/share/glib-2.0/schemas/gschemas.compiled
+'''
+
+[[package]]
+id = "gtk3"
+version = "3.24.52"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+  "cairo", "pango", "harfbuzz", "fribidi", "fontconfig", "freetype", "libpng", "expat", "pixman",
+  "gdk-pixbuf", "libepoxy", "mesa", "libdrm", "at-spi2-core", "dbus", "libxml2", "systemd",
+  "wayland", "wayland-protocols", "libxkbcommon", "gettext",
+]
+sources = [{ url = "https://download.gnome.org/sources/gtk/3.24/gtk-{version}.tar.xz" }]
+script = '''
+# Wayland only, printing to files only.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D x11_backend=false \
+    -D wayland_backend=true -D broadway_backend=false -D print_backends=file \
+    -D introspection=false -D gtk_doc=false -D man=false -D demos=false -D examples=false \
+    -D tests=false -D installed_tests=false -D colord=no -D cloudproviders=false \
+    -D tracker3=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+# The compiled schemas are made for a whole system, from every package's.
+rm $DEST$PREFIX/share/glib-2.0/schemas/gschemas.compiled
+'''
+probes = ["gtk+-3.0"]
+
+[[package]]
+id = "xdg-desktop-portal-gtk"
+version = "1.15.3"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "gtk3", "xdg-desktop-portal", "gsettings-desktop-schemas",
+  "glib", "pcre2", "libffi", "util-linux", "zlib", "cairo", "pango", "harfbuzz", "fribidi",
+  "fontconfig", "freetype", "libpng", "expat", "pixman", "gdk-pixbuf", "libepoxy", "mesa",
+  "libdrm", "at-spi2-core", "dbus", "libxml2", "systemd", "wayland", "libxkbcommon", "gettext",
+]
+sources = [{ url = "https://github.com/flatpak/xdg-desktop-portal-gtk/releases/download/{version}/xdg-desktop-portal-gtk-{version}.tar.xz" }]
+script = '''
+# The file chooser, app chooser and settings; the wallpaper portal needs GNOME's desktop library.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
+    -D dbus-service-dir=$PREFIX/share/dbus-1/services \
+    -D systemd-user-unit-dir=$PREFIX/lib/systemd/user -D wallpaper=disabled \
+    -D settings=enabled -D appchooser=enabled -D lockdown=enabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
