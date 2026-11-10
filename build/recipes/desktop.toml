@@ -615,3 +615,122 @@ meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D instal
 ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
+
+# Desktop portals, which programs open files and share screens through.
+
+[[package]]
+id = "json-glib"
+version = "1.10.8"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+]
+sources = [{ url = "https://download.gnome.org/sources/json-glib/1.10/json-glib-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
+    -D documentation=disabled -D man=false -D tests=false -D nls=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["json-glib-1.0"]
+
+[[package]]
+id = "fuse3"
+version = "3.18.3"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf"]
+sources = [{ url = "https://github.com/libfuse/libfuse/releases/download/fuse-{version}/fuse-{version}.tar.gz" }]
+script = '''
+# The library only: fusermount3 has to be setuid, which a wrapper gives it when a system needs it.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D utils=false \
+    -D examples=false -D tests=false -D useroot=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["fuse3"]
+
+[[package]]
+id = "gdk-pixbuf"
+version = "2.44.8"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+  "libpng",
+]
+sources = [{ url = "https://download.gnome.org/sources/gdk-pixbuf/2.44/gdk-pixbuf-{version}.tar.xz" }]
+script = '''
+# PNG built in, which is what icons are.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D png=enabled \
+    -D jpeg=disabled -D tiff=disabled -D gif=disabled -D others=disabled -D glycin=disabled \
+    -D builtin_loaders=png -D introspection=disabled -D documentation=false -D man=false \
+    -D tests=false -D installed_tests=false -D thumbnailer=disabled -D gio_sniffing=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["gdk-pixbuf-2.0"]
+
+[[package]]
+id = "gstreamer"
+version = "1.28.9"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "bison-final", "m4-final", "flex", "glib", "pcre2",
+  "libffi", "util-linux", "zlib",
+]
+sources = [{ url = "https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-{version}.tar.xz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
+    -D doc=disabled -D tests=disabled -D examples=disabled -D benchmarks=disabled \
+    -D ptp-helper=disabled -D libunwind=disabled -D libdw=disabled -D bash-completion=disabled \
+    -D nls=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["gstreamer-1.0"]
+
+[[package]]
+id = "gst-plugins-base"
+version = "1.28.9"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "gstreamer", "glib", "pcre2", "libffi", "util-linux",
+  "zlib",
+]
+sources = [{ url = "https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-{version}.tar.xz" }]
+script = '''
+# The base libraries, among them pbutils, which the portal checks sounds with. No plugins.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D auto_features=disabled \
+    -D introspection=disabled -D doc=disabled -D tests=disabled -D examples=disabled -D nls=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["gstreamer-pbutils-1.0"]
+
+[[package]]
+id = "xdg-desktop-portal"
+version = "1.22.1"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+  "json-glib", "fuse3", "gdk-pixbuf", "libpng", "gstreamer", "gst-plugins-base", "pipewire",
+  "systemd",
+]
+sources = [{ url = "https://github.com/flatpak/xdg-desktop-portal/releases/download/{version}/xdg-desktop-portal-{version}.tar.xz" }]
+script = '''
+# The portal programs talk to, which hands each request to the portal that implements it for the
+# desktop. It checks images and sounds in process, without a sandbox of its own.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
+    -D dbus-service-dir=$PREFIX/share/dbus-1/services \
+    -D systemd-user-unit-dir=$PREFIX/lib/systemd/user -D flatpak-interfaces=disabled \
+    -D geoclue=disabled -D gudev=disabled -D systemd=enabled -D documentation=disabled \
+    -D tests=disabled -D installed-tests=false -D man-pages=disabled \
+    -D sandboxed-image-validation=disabled -D sandboxed-sound-validation=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
