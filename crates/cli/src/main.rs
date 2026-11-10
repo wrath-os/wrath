@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
-use distro_eval::{Evaluation, OptionPath, Value};
+use distro_eval::{ConfigKind, Evaluation, OptionPath, Value};
 use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};
 use generations::Switch;
 
@@ -25,6 +25,7 @@ mod options;
 mod pinned;
 mod project;
 mod run;
+mod schema;
 mod secret;
 mod state;
 mod switching;
@@ -212,6 +213,13 @@ enum Command {
     Options {
         /// Only the options under this one, such as `services.nginx` or `users.john`
         prefix: Option<String>,
+        /// Print them as a JSON Schema for editors, of the whole configuration or of a file whose
+        /// options start at the prefix, such as `users.john` for `users/john.toml`
+        #[arg(long)]
+        schema: bool,
+        /// The schema of a project, `distro.toml`, instead of a system
+        #[arg(long, requires = "schema")]
+        project: bool,
     },
     /// Show where an option's value, a file or a package comes from
     Why {
@@ -477,7 +485,15 @@ fn main() -> ExitCode {
             None => Ok(ExitCode::FAILURE),
         }),
         Command::Check => config().and_then(|config| check_config(&config, &modules)),
-        Command::Options { prefix } => options::options(&modules, prefix.as_deref()),
+        Command::Options {
+            prefix,
+            schema,
+            project,
+        } => match (schema, project) {
+            (true, true) => options::schema(&modules, ConfigKind::Project, prefix.as_deref()),
+            (true, false) => options::schema(&modules, ConfigKind::System, prefix.as_deref()),
+            (false, _) => options::options(&modules, prefix.as_deref()),
+        },
         Command::Why { all: _, option } => {
             config().and_then(|config| why(&config, &modules, option.as_deref()))
         }

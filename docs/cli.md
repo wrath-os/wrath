@@ -163,6 +163,20 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 - Exit codes: 0 for success, 1 for errors. `plan --exit-code` returns 2 when there are changes.
 - `apply` asks before switching unless `-y`. Without a terminal, it refuses rather than
   guessing.
+- `distro options --schema` prints the options as a JSON Schema, so an editor completes, checks
+  and explains the TOML as you write it. `--schema users.john` is the one for files in `users/`,
+  and `--project` the one for `distro.toml`. With taplo, in the configuration's `.taplo.toml`:
+
+  ```toml
+  [[rule]]
+  include = ["system.toml", "services/*.toml", "roles/*.toml"]
+  schema.path = "./distro.schema.json"
+
+  [[rule]]
+  include = ["users/*.toml"]
+  schema.path = "./users.schema.json"
+  ```
+
 - Each command is a call on a library, and later on a local daemon. The CLI, a GUI installer,
   editor plugins and a Talos-style remote API all use the same calls.
 

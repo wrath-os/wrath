@@ -4,9 +4,40 @@ use std::fmt::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
-use distro_eval::{EVERY, OptionPath, OptionSpec, Sources, Type};
+use distro_eval::{ConfigKind, EVERY, OptionPath, OptionSpec, Schema, Sources, Type};
 
 use crate::system::{self, ModuleOrder};
+
+/// Prints the options of a `kind` of configuration as a JSON Schema for the files that set them:
+/// the whole configuration, or a file whose options start at `prefix`, such as `users.john` for
+/// `users/john.toml`.
+pub fn schema(modules: &Path, kind: ConfigKind, prefix: Option<&str>) -> Result<ExitCode, String> {
+    let mut sources = Sources::default();
+    let mut modules = system::load_modules(modules, &mut sources, ModuleOrder::Sorted)?;
+    modules.retain(|module| module.configurations().contains(&kind));
+    let mut options: Vec<(OptionPath, OptionSpec)> =
+        modules.iter().flat_map(|module| module.options()).collect();
+    // Options in every entry of a map come last, so the map is declared whatever the order.
+    options.sort_by_key(|(path, _)| path.segments().iter().any(|segment| segment == EVERY));
+    let mut schema = Schema::default();
+    for (path, spec) in options {
+        schema.declare_at(&path, spec)?;
+    }
+    let (root, frame) = match prefix {
+        Some(prefix) => {
+            let path = OptionPath::parse(prefix)?;
+            let spec = schema
+                .lookup(&path)
+                .ok_or_else(|| format!("there are no options under `{prefix}`"))?;
+            (spec, false)
+        }
+        None => (schema.root(), true),
+    };
+    let text = serde_json::to_string_pretty(&crate::schema::document(root, frame))
+        .map_err(|e| e.to_string())?;
+    println!("{text}");
+    Ok(ExitCode::SUCCESS)
+}
 
 /// Prints every option under `prefix`, such as `services.nginx` or `users.john.programs`.
 pub fn options(modules: &Path, prefix: Option<&str>) -> Result<ExitCode, String> {
