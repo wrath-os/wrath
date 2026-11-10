@@ -727,9 +727,9 @@ pub fn split_package(lab: &Lab, package: &StorePath) -> Result<(Outputs, Option<
     Ok((outputs, None))
 }
 
-/// A pkg-config file whose directories defined from `${prefix}` or `${exec_prefix}` name the
-/// output holding what's in them. `prefix` is the output with the headers, so `includedir` stays
-/// as it is, while programs, data and libraries are in the outputs `output_of` gives.
+/// A pkg-config file whose directories of programs and data, defined from `${prefix}` or
+/// `${exec_prefix}`, name the main output, which `output_of` gives. `prefix` is the output with the
+/// headers, and `includedir` and `libdir` stay with it.
 fn pc_dirs(bytes: &[u8], output_of: impl Fn(Class) -> Option<String>) -> Vec<u8> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return bytes.to_vec();
@@ -744,11 +744,11 @@ fn pc_dirs(bytes: &[u8], output_of: impl Fn(Class) -> Option<String>) -> Vec<u8>
             let rest = value
                 .strip_prefix("${exec_prefix}")
                 .or_else(|| value.strip_prefix("${prefix}"))?;
-            let class = reference_class(rest.trim_end());
-            if class == Class::Dev {
+            // Only programs and data move; `libdir` stays, since headers can be under it too.
+            if reference_class(rest.trim_end()) != Class::Out {
                 return None;
             }
-            Some(format!("{key}={}{rest}", output_of(class)?))
+            Some(format!("{key}={}{rest}", output_of(Class::Out)?))
         });
         out.push_str(fixed.as_deref().unwrap_or(line));
     }
