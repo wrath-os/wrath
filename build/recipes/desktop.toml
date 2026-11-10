@@ -958,3 +958,97 @@ ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
 smoke = ["bin/Xwayland -version"]
+
+[[package]]
+id = "xcb-util"
+version = "0.4.1"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "libxcb", "libXau", "libXdmcp", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xcb-util"]
+
+[[package]]
+id = "xcb-util-renderutil"
+version = "0.3.10"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "libxcb", "libXau", "libXdmcp", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-renderutil-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xcb-renderutil"]
+
+[[package]]
+id = "xcb-util-image"
+version = "0.4.1"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "libxcb", "xcb-util", "libXau", "libXdmcp", "xorgproto"]
+sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-image-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xcb-image"]
+
+[[package]]
+id = "xcb-util-cursor"
+version = "0.1.6"
+scope = "runtime"
+core = true
+extra_deps = [
+  "pkgconf", "m4-final", "libxcb", "xcb-util", "xcb-util-renderutil", "xcb-util-image",
+  "libXau", "libXdmcp", "xorgproto",
+]
+sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-cursor-{version}.tar.xz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-static
+make -j$NPROC
+make DESTDIR=$DEST install
+'''
+probes = ["xcb-cursor"]
+
+[[package]]
+id = "xwayland-satellite"
+version = "0.8.3"
+scope = "runtime"
+core = true
+extra_deps = [
+  "rust-bin", "pkgconf", "llvm", "libxcb", "xcb-util-cursor", "xcb-util", "xcb-util-renderutil",
+  "xcb-util-image", "libXau", "libXdmcp", "xorgproto",
+]
+crates = "Cargo.lock"
+sources = [{ url = "https://github.com/Supreeeme/xwayland-satellite/archive/v{version}/xwayland-satellite-{version}.tar.gz" }]
+script = '''
+# Runs Xwayland for niri and turns X windows into Wayland ones. Its bindings to xcb-util-cursor are
+# made with bindgen, which reads the headers with libclang.
+awk -F'"' '
+    /^name = / { name = $2 }
+    /^version = / { version = $2 }
+    /^checksum = / {
+        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
+    }
+' Cargo.lock
+mkdir -p .cargo
+cat > .cargo/config.toml <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+CONFIG
+export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
+export LIBCLANG_PATH=$LAB_DEP_llvm/lib
+cargo build --release --offline --locked -j $NPROC --features systemd
+mkdir -p $DEST$PREFIX/bin
+cp target/release/xwayland-satellite $DEST$PREFIX/bin/
+'''

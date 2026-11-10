@@ -1,0 +1,26 @@
+# LLVM and clang: libclang is what bindgen reads C headers with, for Rust crates that bind to C
+# libraries.
+
+[[package]]
+id = "llvm"
+version = "23.1.5"
+scope = "runtime"
+core = true
+# clang finds its own headers relative to libclang.
+whole = true
+silent_for = "3h"
+extra_deps = ["cmake", "ninja", "python3", "zlib", "zstd"]
+sources = [{ url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/llvm-project-{version}.src.tar.xz" }]
+script = '''
+# One shared library for LLVM and one for clang, for the x86 and AMD GPU targets.
+cmake -S llvm -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang -DLLVM_TARGETS_TO_BUILD="X86;AMDGPU" \
+    -DLLVM_HOST_TRIPLE=x86_64-unknown-linux-gnu -DLLVM_BUILD_LLVM_DYLIB=ON \
+    -DLLVM_LINK_LLVM_DYLIB=ON -DCLANG_LINK_CLANG_DYLIB=ON -DLLVM_ENABLE_RTTI=ON \
+    -DLLVM_ENABLE_ZLIB=FORCE_ON -DLLVM_ENABLE_ZSTD=FORCE_ON -DLLVM_ENABLE_LIBXML2=OFF \
+    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF \
+    -DLLVM_INCLUDE_DOCS=OFF -DCLANG_INCLUDE_TESTS=OFF -DCLANG_INCLUDE_DOCS=OFF
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/clang --version", "bin/llvm-config --version"]
