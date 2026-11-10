@@ -10,17 +10,23 @@ use distro_model::{DISTRO_SOURCE, Model, package_source};
 
 use crate::project;
 
-/// Runs `package`'s program with `args`, in place of this process.
+/// Runs `package`'s program with `args`, in place of this process: the one named like the
+/// package, or its only one.
 pub fn run(root: &Path, model: Model, package: &str, args: &[String]) -> Result<ExitCode, String> {
     let environment = Environment::build(root, &model, &[package.to_owned()])?;
     let name = &environment.packages[0];
-    let program = environment.bin().join(name);
-    if std::fs::symlink_metadata(&program).is_err() {
+    let programs = environment.programs();
+    let program = if programs.contains(name) {
+        name
+    } else if let [only] = programs.as_slice() {
+        only
+    } else {
         return Err(format!(
             "`{name}` has no program `{name}`; it has: {}",
-            environment.programs().join(", ")
+            programs.join(", ")
         ));
-    }
+    };
+    let program = environment.bin().join(program);
     Err(exec(environment.command(&program).args(args)))
 }
 

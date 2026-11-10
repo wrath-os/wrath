@@ -57,17 +57,16 @@ id = "locales"
 scope = "runtime"
 core = true
 script = '''
-# The locales $OPTION_locales names, such as `en_US.UTF-8/UTF-8`, compiled into one archive for
-# glibc to read through LOCALE_ARCHIVE. localedef writes it under glibc's own prefix in --prefix.
-mkdir -p /build/root$LAB_LIB_glibc/lib/locale $DEST$PREFIX/lib/locale
+# The locales $OPTION_locales names, such as `en_US.UTF-8/UTF-8`, each compiled into a directory
+# of its own for glibc to find through LOCPATH.
+mkdir -p $DEST$PREFIX/lib/locale
 for entry in ${OPTION_locales:-C.UTF-8/UTF-8}; do
     name=${entry%/*}
     charset=${entry#*/}
     input=${name%%.*}
-    localedef --prefix=/build/root -i "${input%%@*}" -f "$charset" "$name"
+    localedef --no-archive -i "${input%%@*}" -f "$charset" "$DEST$PREFIX/lib/locale/$name"
+    test -s "$DEST$PREFIX/lib/locale/$name/LC_CTYPE"
 done
-find /build/root -name locale-archive -exec cp {} $DEST$PREFIX/lib/locale/locale-archive \;
-test -s $DEST$PREFIX/lib/locale/locale-archive
 '''
 
 [[package]]

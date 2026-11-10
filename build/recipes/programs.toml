@@ -1,0 +1,75 @@
+# Programs people run, beyond what a system needs to boot and serve: small tools, an editor, and
+# what runs a project's services.
+
+[[package]]
+id = "gnu-hello"
+scope = "runtime"
+core = true
+sources = [{ url = "https://ftp.gnu.org/gnu/hello/hello-2.12.2.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX --disable-nls
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/hello --version"]
+
+[[package]]
+id = "nano"
+scope = "runtime"
+core = true
+deps = ["ncurses"]
+sources = [{ url = "https://www.nano-editor.org/dist/v8/nano-8.4.tar.xz" }]
+script = '''
+# OPTION_enableTiny leaves out everything but editing, for rescue systems.
+tiny=
+if [ "${OPTION_enableTiny:-false}" = true ]; then
+    tiny=--enable-tiny
+fi
+./configure --prefix=$PREFIX --disable-nls $tiny
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/nano --version"]
+
+[[package]]
+id = "jq"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz" }]
+script = '''
+# The release carries oniguruma, the regular expression library, and builds it in.
+./configure --prefix=$PREFIX --with-oniguruma=builtin --disable-docs --disable-static
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/jq --version", "echo '{\"a\":1}' | bin/jq -e .a"]
+
+[[package]]
+id = "process-compose"
+scope = "runtime"
+core = true
+extra_deps = ["go"]
+sources = [{ url = "https://github.com/F1bonacc1/process-compose/archive/v1.75.1/process-compose-1.75.1.tar.gz" }]
+go = "go.sum"
+script = '''
+export GOPROXY=file://$PWD/goproxy GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=0
+export GOCACHE=/build/go-cache GOMODCACHE=/build/go-modules
+go build -trimpath -o $DEST$PREFIX/bin/process-compose \
+    -ldflags "-X github.com/f1bonacc1/process-compose/src/config.Version=v1.75.1" ./src
+'''
+smoke = ["bin/process-compose version"]
+
+[[package]]
+id = "curl"
+scope = "runtime"
+core = true
+extra_deps = ["openssl", "zlib", "perl"]
+sources = [{ url = "https://curl.se/download/curl-8.15.0.tar.xz" }]
+script = '''
+# Certificates come from the system's bundle, which the system puts in /etc/ssl.
+./configure --prefix=$PREFIX --with-openssl --with-zlib --without-libpsl --disable-static \
+    --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt --disable-manual
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+smoke = ["bin/curl --version"]

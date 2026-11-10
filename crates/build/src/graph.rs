@@ -216,7 +216,11 @@ fn text<'a>(
     })
 }
 
-/// Links in `to` for every file in `dir` of `package`, leaving entries already there alone.
+/// Directories whose entries are linked whole, directories included: each compiled locale is one.
+const WHOLE_ENTRIES: &[&str] = &["lib/locale"];
+
+/// Links in `to` for every file in `dir` of `package`, and every directory where `dir` is one of
+/// [`WHOLE_ENTRIES`], leaving entries already there alone.
 fn linked(
     lab: &Lab,
     package: &PackageRef,
@@ -230,7 +234,10 @@ fn linked(
     };
     let mut names: Vec<_> = listing
         .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_file())
+        .filter(|entry| {
+            let path = entry.path();
+            path.is_file() || (WHOLE_ENTRIES.contains(&dir) && path.is_dir())
+        })
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
@@ -731,7 +738,7 @@ fn lower<'a>(
                 // Some packages put programs for root in sbin, which is on the path all the same.
                 ("sbin", "bin"),
                 ("lib/security", "lib/security"),
-                // A compiled locale archive, which LOCALE_ARCHIVE names.
+                // Compiled locales, which LOCPATH names.
                 ("lib/locale", "lib/locale"),
             ],
             packages,
@@ -1579,7 +1586,7 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 /// The recipe files systems are built from, in `recipes/`.
-pub const SYSTEM_RECIPES: [&str; 11] = [
+pub const SYSTEM_RECIPES: [&str; 12] = [
     "pilot.toml",
     "full.toml",
     "storage.toml",
@@ -1590,6 +1597,7 @@ pub const SYSTEM_RECIPES: [&str; 11] = [
     "go.toml",
     "firmware.toml",
     "network.toml",
+    "programs.toml",
     "distro.toml",
 ];
 
@@ -1642,7 +1650,7 @@ fn system_from(
 }
 
 /// Builds what the model's `builds` ask for: each a recipe built under the build's name with the
-/// options it gives, which the recipe's script reads as `OPTION_<name>`.
+/// options it gives, which the recipe's script reads as `OPTION_<name>`, and its patches.
 fn build_variants(
     lab: &Lab,
     repository: &Path,
@@ -1660,16 +1668,15 @@ fn build_variants(
             .ok_or_else(|| {
                 format!("there's no recipe for `{base}`, which the build `{name}` starts from")
             })?;
-        if build["patches"]
-            .as_array()
-            .is_some_and(|patches| !patches.is_empty())
-        {
-            return Err(format!(
-                "the build `{name}` has patches, which aren't supported yet"
-            ));
-        }
         let options = build["options"].as_object().cloned().unwrap_or_default();
-        let variant = recipe.variant(name, &options)?;
+        let patches: Vec<String> = build["patches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        let variant = recipe.variant(name, &options, &patches)?;
         if let Some(prepared) =
             chain::build_one(lab, repository, &variant, Arm::F, seed, &mut sources, built)?
         {
@@ -2541,15 +2548,18 @@ mod tests {
     }
 
     #[test]
-    fn a_compiled_locale_archive_is_where_locale_archive_points() {
+    fn compiled_locales_are_where_locpath_points() {
         let (_dir, lab, packages) = setup();
-        let locale = lab.on_host(&packages["web"].path).join("lib/locale");
+        let locale = lab
+            .on_host(&packages["web"].path)
+            .join("lib/locale/en_US.UTF-8");
         fs::create_dir_all(&locale).unwrap();
-        fs::write(locale.join("locale-archive"), "").unwrap();
+        fs::write(locale.join("LC_CTYPE"), "").unwrap();
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let outcome = realised(&lab, &mut db, &packages, &model(80, false));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
-        assert!(fs::symlink_metadata(root.join("lib/locale/locale-archive")).is_ok());
+        let link = root.join("lib/locale/en_US.UTF-8");
+        assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
     }
 
     #[test]

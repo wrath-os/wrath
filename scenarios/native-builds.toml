@@ -2,10 +2,10 @@ title = "packages are built with the options and patches the configuration gives
 
 [vm]
 config = "fixtures/configs/native"
-store = "host"
+store = "distro"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
-  { apply_config = "scenarios/fixtures/native-builds", expect_plan = ["+ build hello", "+ build tiny-nano"] },
+  { apply_config = "scenarios/fixtures/native-builds", expect_plan = ["+ build patched-hello", "+ build tiny-nano"] },
   { run = "hello --help | grep -c 'Built by distro'; nano --version | grep -c enable-tiny", stdout_contains = "1\n1" },
 ]
 timeout_secs = 900

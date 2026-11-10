@@ -43,7 +43,7 @@ def locale_environment(ctx):
             options = {"locales": ["%s/%s" % (locale, charset)]},
         )
         ctx.package(LOCALES)
-        environment.append(("LOCALE_ARCHIVE", SYSTEM + "/lib/locale/locale-archive"))
+        environment.append(("LOCPATH", SYSTEM + "/lib/locale"))
     return environment
 
 def render(ctx):

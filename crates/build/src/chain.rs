@@ -317,17 +317,19 @@ impl Package {
 
     /// This recipe built as `id` with `options`, which its script reads as `OPTION_<name>`
     /// variables set at its top, so the script says what they are and they're part of its key.
-    /// A list is its items separated by spaces.
+    /// A list is its items separated by spaces. `patches` apply after that, in order, from where
+    /// the script starts.
     pub(crate) fn variant(
         &self,
         id: &str,
         options: &serde_json::Map<String, serde_json::Value>,
+        patches: &[String],
     ) -> Result<Self, String> {
         let text_of = |value: &serde_json::Value| match value {
             serde_json::Value::String(text) => text.clone(),
             other => other.to_string(),
         };
-        let mut exports = String::new();
+        let mut prelude = String::new();
         for (name, value) in options {
             if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(format!("`{}` has no option `{name}`", self.id));
@@ -339,11 +341,22 @@ impl Package {
                 other => text_of(other),
             };
             let quoted = text.replace('\'', "'\\''");
-            exports.push_str(&format!("export OPTION_{name}='{quoted}'\n"));
+            prelude.push_str(&format!("export OPTION_{name}='{quoted}'\n"));
+        }
+        for (index, patch) in patches.iter().enumerate() {
+            let end = if patch.ends_with('\n') { "" } else { "\n" };
+            prelude.push_str(&format!(
+                "patch -p1 <<'DISTRO_PATCH_{index}'\n{patch}{end}DISTRO_PATCH_{index}\n"
+            ));
+        }
+        let mut extra_deps = self.extra_deps.clone();
+        if !patches.is_empty() && !self.dep_ids()?.iter().any(|id| id == "patch") {
+            extra_deps.push(DepSpec::Id("patch".to_owned()));
         }
         Ok(Self {
             id: id.to_owned(),
-            script: format!("{exports}{}", self.script),
+            script: format!("{prelude}{}", self.script),
+            extra_deps,
             ..self.clone()
         })
     }
@@ -1780,7 +1793,7 @@ mod variant_tests {
             "small": true,
         });
         let variant = recipe()
-            .variant("system-locales", options.as_object().unwrap())
+            .variant("system-locales", options.as_object().unwrap(), &[])
             .unwrap();
         assert_eq!(variant.id, "system-locales");
         assert_eq!(
@@ -1796,8 +1809,37 @@ mod variant_tests {
     fn an_option_name_that_isnt_a_variable_name_is_refused() {
         let options = serde_json::json!({"bad name": 1});
         let error = recipe()
-            .variant("x", options.as_object().unwrap())
+            .variant("x", options.as_object().unwrap(), &[])
             .unwrap_err();
         assert!(error.contains("no option `bad name`"), "{error}");
+    }
+
+    #[test]
+    fn patches_apply_in_order_after_the_options_and_need_patch_to_build() {
+        let patches = ["--- a/x\n+++ b/x\n".to_owned(), "second\n".to_owned()];
+        let variant = recipe()
+            .variant("patched", &serde_json::Map::new(), &patches)
+            .unwrap();
+        assert_eq!(
+            variant.script,
+            "patch -p1 <<'DISTRO_PATCH_0'\n--- a/x\n+++ b/x\nDISTRO_PATCH_0\n\
+             patch -p1 <<'DISTRO_PATCH_1'\nsecond\nDISTRO_PATCH_1\n\
+             make\n"
+        );
+        assert!(variant.dep_ids().unwrap().contains(&"patch".to_owned()));
+        let plain = recipe()
+            .variant("plain", &serde_json::Map::new(), &[])
+            .unwrap();
+        assert!(!plain.dep_ids().unwrap().contains(&"patch".to_owned()));
+        let ids = variant
+            .variant("twice", &serde_json::Map::new(), &patches)
+            .unwrap();
+        let count = ids
+            .dep_ids()
+            .unwrap()
+            .iter()
+            .filter(|id| *id == "patch")
+            .count();
+        assert_eq!(count, 1, "patch is a dependency once");
     }
 }

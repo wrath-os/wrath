@@ -1,4 +1,4 @@
-packages = ["hello", "tiny-nano"]
+packages = ["patched-hello", "tiny-nano"]
 
 [system]
 hostname = "native"
@@ -6,7 +6,8 @@ hostname = "native"
 [users.john]
 extra_groups = ["wheel"]
 
-[builds.hello]
+[builds.patched-hello]
+package = "gnu-hello"
 patches = ["patches/hello.patch"]
 
 [builds.tiny-nano]
