@@ -33,7 +33,7 @@ cat > $DEST$PREFIX/lib/systemd/system/distro-agent.service <<UNIT
 Description=distro test harness agent
 
 [Service]
-Environment=PATH=/run/wrappers/bin:/run/current-system/sw/bin
+Environment=PATH=/run/wrappers/bin:/run/system/bin
 ExecStart=$PREFIX/bin/distro-agent
 Restart=always
 UNIT

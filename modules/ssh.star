@@ -34,7 +34,7 @@ def render(ctx):
                 HOST_KEY,
             ),
             # sshd has to be started by its absolute path.
-            "ExecStart": "/run/current-system/sw/bin/sshd -D -f " + CONFIG,
+            "ExecStart": "/run/system/bin/sshd -D -f " + CONFIG,
             "KillMode": "process",
             "Restart": "on-failure",
         },

@@ -136,7 +136,7 @@ pub struct Build {
 /// A program copied into `/run/wrappers/bin` with its own owner and mode, such as setuid root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wrapper {
-    /// The program, such as `/run/current-system/sw/bin/sudo`.
+    /// The program, such as `/run/system/bin/sudo`.
     pub source: String,
     pub owner: String,
     pub group: String,

@@ -1,7 +1,7 @@
 #!@bash@/bin/bash
 # Runs at the end of every boot. The first boot also applies the second system live with distro,
 # and rolls back.
-export PATH=/run/current-system/sw/bin SYSTEMD_PAGER= SYSTEMD_COLORS=0
+export PATH=/run/wrappers/bin:/run/system/bin SYSTEMD_PAGER= SYSTEMD_COLORS=0
 say() { echo "E2E $*"; }
 fetch() {
     exec 3<>"/dev/tcp/127.0.0.1/$1" || { echo "no connection on $1"; return; }
@@ -19,7 +19,7 @@ say "failed: $(systemctl list-units --failed --no-legend --plain | tr '\n' ' ')"
 say "usr: $(ls -d /usr 2>&1)"
 say "firmware: $([[ -d /sys/firmware/efi ]] && echo uefi || echo none)" \
     "virtio_blk: $(grep -c '^virtio_blk ' /proc/modules) as module"
-say "current=$(readlink -f /run/current-system | cut -c8-15) port=$(port)"
+say "current=$(readlink -f /run/system | cut -c8-15) port=$(port)"
 say "nginx=$(systemctl is-active nginx-main) nftables=$(systemctl is-active nftables)"
 say "firewall: $(nft list ruleset 2>&1 | grep -c 'policy drop')"
 say "page on $(port): $(fetch "$(port)")"
@@ -29,7 +29,7 @@ if ((boots == 0)); then
     start=$EPOCHREALTIME
     distro apply "$(cat /var/lib/e2e-next)" > /dev/null
     took=$(bc <<< "$EPOCHREALTIME - $start")
-    say "switched to $(readlink -f /run/current-system | cut -c8-15) in ${took}s"
+    say "switched to $(readlink -f /run/system | cut -c8-15) in ${took}s"
     sleep 1
     say "page on 8081: $(fetch 8081)"
     say "page on 8080 afterwards: $(fetch 8080)"

@@ -1,7 +1,7 @@
 # PAM stacks other modules share.
 
 # pam_systemd lives with systemd rather than with PAM's own modules.
-SYSTEMD = "/run/current-system/sw/lib/security/pam_systemd.so"
+SYSTEMD = "/run/system/lib/security/pam_systemd.so"
 
 # Every login gets the system's environment, including ones that run a single command.
 ENV = {

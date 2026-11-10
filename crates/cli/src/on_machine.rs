@@ -25,7 +25,7 @@ pub fn apply(system: &Path) -> Result<(), String> {
     let activation: Value =
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     // Programs from the system being activated, which may not be on the path yet at boot.
-    let sw = system.join("sw/bin");
+    let sw = crate::activate::programs(system);
     if activation["secrets"]
         .as_object()
         .is_some_and(|all| !all.is_empty())

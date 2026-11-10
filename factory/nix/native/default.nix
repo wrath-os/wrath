@@ -371,6 +371,13 @@ let
     ln -s ${activation} $out/activation.json
     ln -s ${sw} $out/sw
     ln -s ${systemd} $out/systemd
+    # The paths modules name, as distro's own systems have them: programs in bin, libraries and
+    # data in lib and share, and each user's own packages in users.
+    mkdir -p $out/bin
+    for program in ${sw}/bin/*; do ln -s "$program" $out/bin/; done
+    ln -s ${sw}/lib $out/lib
+    ln -s ${sw}/share $out/share
+    if [ -d ${etc}/profiles/per-user ]; then ln -s ${etc}/profiles/per-user $out/users; fi
     echo ${lib.escapeShellArgs factoryInputs} > $out/factory-inputs
     echo -n ${lib.escapeShellArg (lib.concatLines (sum "initrdSecrets"))} > $out/initrd-secrets
     echo "init=$out/init ${lib.concatStringsSep " " kernelParams}" > $out/kernel-params
@@ -381,7 +388,6 @@ let
     EOF
     chmod +x $out/init
     # How distro switches to this system: `switch`, `test` or `boot`.
-    mkdir $out/bin
     cat > $out/bin/switch-to-configuration <<EOF
     #!${pkgs.runtimeShell}
     exec ${distro}/bin/distro activate --mode "\$1" $out

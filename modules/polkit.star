@@ -8,7 +8,7 @@ def render(ctx):
     ctx.package("polkit.bin")
     # Agents check a user's password through this helper, started for each request.
     ctx.enable("polkit-agent-helper.socket")
-    ctx.wrapper("pkexec", source = "/run/current-system/sw/bin/pkexec")
+    ctx.wrapper("pkexec", source = "/run/system/bin/pkexec")
     ctx.file(
         "/etc/polkit-1/rules.d/50-distro.rules",
         "polkit.addAdminRule(function (action, subject) {\n" +

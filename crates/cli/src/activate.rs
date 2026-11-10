@@ -308,8 +308,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         fs::set_permissions(&dir, fs::Permissions::from_mode(mode))
             .map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    replace_link(system, &root.join("run/current-system"))?;
-    replace_link(system, &root.join("run/booted-system"))?;
+    point_at(root, system, &[RUNNING, BOOTED])?;
     let model = model_of(system)?;
     let state = State::of(&model);
     if let Some(state) = &state {
@@ -317,15 +316,17 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         state.keep_system(root, system, None);
     }
     // A root on disk still has /etc from the system it last ran, whose files may have gone since.
-    let old = fs::read_link(root.join("etc/static"))
+    let old = fs::read_link(root.join(ETC_LINK))
+        .or_else(|_| fs::read_link(root.join("etc/static")))
         .ok()
         .and_then(|etc| etc.parent().map(Path::to_path_buf));
     switch_etc(root, old.as_deref(), system)?;
-    replace_link(&system.join("sw/bin/bash"), &root.join("bin/sh"))?;
-    replace_link(&system.join("sw/bin/env"), &root.join("usr/bin/env"))?;
+    let programs = programs(system);
+    replace_link(&programs.join("bash"), &root.join("bin/sh"))?;
+    replace_link(&programs.join("env"), &root.join("usr/bin/env"))?;
     link_kernel_modules(root, system)?;
     // /run doesn't allow setuid programs, so the wrappers get a filesystem of their own.
-    run(Command::new(system.join("sw/bin/mount")).args([
+    run(Command::new(programs.join("mount")).args([
         "-t",
         "tmpfs",
         "-o",
@@ -333,12 +334,49 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         "wrappers",
         "/run/wrappers",
     ]))?;
-    run(&mut Command::new(system.join("sw/bin/systemd-sysusers")))?;
+    run(&mut Command::new(programs.join("systemd-sysusers")))?;
     if let Some(state) = &state {
         state.save_accounts(root);
     }
     warn(make_wrappers(root, system, &model)?);
     crate::on_machine::apply(system)
+}
+
+/// The running system, under the root.
+pub(crate) const RUNNING: &str = "run/system";
+
+/// The system that booted, which differs from the running one after a live switch.
+pub(crate) const BOOTED: &str = "run/system-booted";
+
+/// The link every file in /etc goes through to the running system's, under the root.
+const ETC_LINK: &str = "etc/.system";
+
+/// The names Nix-built systems use for the running and booted systems, kept beside ours until
+/// the Nix code is gone.
+const NIX_NAMES: [(&str, &str); 2] = [
+    (RUNNING, "run/current-system"),
+    (BOOTED, "run/booted-system"),
+];
+
+/// Points each of `links`, under `root`, at `system`, with the names Nix-built systems use too.
+fn point_at(root: &Path, system: &Path, links: &[&str]) -> Result<(), String> {
+    for link in links {
+        replace_link(system, &root.join(link))?;
+        if let Some((_, nix)) = NIX_NAMES.iter().find(|(ours, _)| ours == link) {
+            replace_link(system, &root.join(nix))?;
+        }
+    }
+    Ok(())
+}
+
+/// Where `system` has its programs: `bin`, or `sw/bin` in a system the Nix code built.
+pub(crate) fn programs(system: &Path) -> PathBuf {
+    let nix = system.join("sw/bin");
+    if nix.is_dir() {
+        nix
+    } else {
+        system.join("bin")
+    }
 }
 
 /// Links /lib/modules to the modules of the kernel that booted, where kmod looks for them. A
@@ -350,14 +388,18 @@ fn link_kernel_modules(root: &Path, system: &Path) -> Result<(), String> {
     let lib = root.join("lib");
     fs::create_dir_all(&lib).map_err(|e| format!("{}: {e}", lib.display()))?;
     replace_link(
-        Path::new("/run/booted-system/kernel-modules/lib/modules"),
+        &Path::new("/")
+            .join(BOOTED)
+            .join("kernel-modules/lib/modules"),
         &lib.join("modules"),
     )
 }
 
 fn switch(root: &Path, system: &Path) -> Result<(), String> {
-    let current = root.join("run/current-system");
-    let old = fs::read_link(&current).ok();
+    let current = root.join(RUNNING);
+    let old = fs::read_link(&current)
+        .or_else(|_| fs::read_link(root.join("run/current-system")))
+        .ok();
     let before = match &old {
         Some(old) => model_of(old)?,
         None => Model::default(),
@@ -382,7 +424,7 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     systemctl("try-restart", &activation.restart)?;
     systemctl("try-reload-or-restart", &activation.reload)?;
     systemctl("start", &installed(&activation, &after))?;
-    replace_link(system, &current)
+    point_at(root, system, &[RUNNING])
 }
 
 /// Says what activation left out, and carries on.
@@ -417,7 +459,7 @@ fn wanted(unit: &Unit) -> bool {
         .any(|(key, _)| key == "WantedBy" || key == "RequiredBy")
 }
 
-/// Points /etc at `system`'s files: every file links through /etc/static, which moves in one
+/// Points /etc at `system`'s files: every file links through /etc/.system, which moves in one
 /// step, and links to files `old` had and `system` doesn't are removed. Accounts are merged.
 fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), String> {
     let etc = root.join("etc");
@@ -429,12 +471,13 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
     };
     let new_modes = etc_modes(system);
     let old_modes = old.map(etc_modes).unwrap_or_default();
-    replace_link(&new_etc, &etc.join("static"))?;
-    // A link in the system's /etc is made as it is: through /etc/static it would be two steps,
+    replace_link(&new_etc, &root.join(ETC_LINK))?;
+    // A link in the system's /etc is made as it is: through /etc/.system it would be two steps,
     // and systemd takes a unit reached in two steps for a unit of its own, so `default.target`
-    // would stop being `multi-user.target`. Files are linked through /etc/static.
+    // would stop being `multi-user.target`. Files are linked through /etc/.system.
     let target_in = |system_etc: &Path, path: &Path| {
-        fs::read_link(system_etc.join(path)).unwrap_or_else(|_| Path::new("/etc/static").join(path))
+        fs::read_link(system_etc.join(path))
+            .unwrap_or_else(|_| Path::new("/").join(ETC_LINK).join(path))
     };
     for path in &new_files {
         if ACCOUNTS.iter().any(|name| path == Path::new(name)) {
@@ -516,7 +559,11 @@ fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<Vec<String
     let mut left_out = Vec::new();
     for (name, wrapper) in &model.wrappers {
         // Sources name the running system, which is `system` once this switch is done.
-        let source = match wrapper.source.strip_prefix("/run/current-system/") {
+        let source = match wrapper
+            .source
+            .strip_prefix("/run/system/")
+            .or_else(|| wrapper.source.strip_prefix("/run/current-system/"))
+        {
             Some(inside) => system.join(inside),
             None => PathBuf::from(&wrapper.source),
         };
@@ -876,8 +923,8 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         let root = work.path().join("root");
         let system = work.path().join("system");
-        fs::create_dir_all(system.join("sw/bin")).unwrap();
-        fs::write(system.join("sw/bin/tool"), "new\n").unwrap();
+        fs::create_dir_all(system.join("bin")).unwrap();
+        fs::write(system.join("bin/tool"), "new\n").unwrap();
         fs::create_dir_all(root.join("etc")).unwrap();
         let (uid, gid) = own_ids();
         fs::write(
@@ -890,7 +937,7 @@ mod tests {
         model.wrappers.insert(
             "tool".into(),
             distro_eval::Wrapper {
-                source: "/run/current-system/sw/bin/tool".into(),
+                source: "/run/system/bin/tool".into(),
                 owner: "me".into(),
                 group: "mine".into(),
                 mode: 0o4750,
@@ -915,8 +962,8 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         let root = work.path().join("root");
         let system = work.path().join("system");
-        fs::create_dir_all(system.join("sw/bin")).unwrap();
-        fs::write(system.join("sw/bin/tool"), "new\n").unwrap();
+        fs::create_dir_all(system.join("bin")).unwrap();
+        fs::write(system.join("bin/tool"), "new\n").unwrap();
         fs::create_dir_all(root.join("etc")).unwrap();
         let (uid, gid) = own_ids();
         fs::write(
@@ -930,7 +977,7 @@ mod tests {
             model.wrappers.insert(
                 name.into(),
                 distro_eval::Wrapper {
-                    source: format!("/run/current-system/sw/bin/{name}"),
+                    source: format!("/run/system/bin/{name}"),
                     owner: "me".into(),
                     group: "mine".into(),
                     mode: 0o755,
@@ -1003,7 +1050,7 @@ mod tests {
         link_kernel_modules(&root, &system).unwrap();
         assert_eq!(
             fs::read_link(root.join("lib/modules")).unwrap(),
-            Path::new("/run/booted-system/kernel-modules/lib/modules")
+            Path::new("/run/system-booted/kernel-modules/lib/modules")
         );
     }
 
@@ -1016,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn etc_links_through_static_and_drops_what_the_old_system_had() {
+    fn etc_links_through_one_link_and_drops_what_the_old_system_had() {
         let work = tempfile::tempdir().unwrap();
         let root = work.path().join("root");
         let system = |name: &str, files: &[&str]| {
@@ -1038,10 +1085,10 @@ mod tests {
         switch_etc(&root, Some(&old), &new).unwrap();
 
         let etc = root.join("etc");
-        assert_eq!(fs::read_link(etc.join("static")).unwrap(), new.join("etc"));
+        assert_eq!(fs::read_link(etc.join(".system")).unwrap(), new.join("etc"));
         assert_eq!(
             fs::read_link(etc.join("ssh/sshd_config")).unwrap(),
-            Path::new("/etc/static/ssh/sshd_config")
+            Path::new("/etc/.system/ssh/sshd_config")
         );
         assert!(fs::symlink_metadata(etc.join("nftables.conf")).is_ok());
         assert!(fs::symlink_metadata(etc.join("gone.conf")).is_err());

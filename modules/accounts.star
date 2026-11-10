@@ -3,7 +3,7 @@
 
 load("lib/pam.star", "unix_stacks")
 
-SW = "/run/current-system/sw/bin/"
+SW = "/run/system/bin/"
 
 def render(ctx):
     for package in ["sudo", "linux-pam", "shadow", "shadow.su"]:

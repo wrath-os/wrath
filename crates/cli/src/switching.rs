@@ -16,7 +16,7 @@ use distro_build::store::{Lab, StorePath};
 
 use distro_backend as backend;
 
-use crate::activate::{CURRENT, GENERATIONS, generations};
+use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, generations, programs};
 
 /// The root of the machine distro runs on.
 const ROOT: &str = "/";
@@ -277,7 +277,7 @@ pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
     let starts = left
         .into_iter()
         .map(|(_, link)| link)
-        .chain([TRYING, "run/current-system", "run/booted-system"].map(|link| root.join(link)));
+        .chain([TRYING, RUNNING, BOOTED].map(|link| root.join(link)));
     let lab = Lab::new(root);
     let mut used = BTreeSet::new();
     for link in starts {
@@ -355,7 +355,7 @@ pub fn install(system: &Path, target: &Path) -> Result<(), String> {
         return backend::install(system, target);
     }
     copy_onto(Path::new(ROOT), system, target)?;
-    run(Command::new(system.join("sw/bin/distro"))
+    run(Command::new(programs(system).join("distro"))
         .args(["activate", "--mode", "install", "--root"])
         .arg(target)
         .arg(system))

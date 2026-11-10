@@ -266,12 +266,13 @@ impl State {
     }
 
     fn places<'a>(&'a self, root: &'a Path, system: &Path) -> Places<'a> {
+        let programs = crate::activate::programs(system);
         Places {
             root,
             keep: root.join(under(&self.path)),
             keep_absolute: &self.path,
-            mount: system.join("sw/bin/mount"),
-            cp: system.join("sw/bin/cp"),
+            mount: programs.join("mount"),
+            cp: programs.join("cp"),
             mounted: mounted(),
         }
     }
@@ -314,7 +315,7 @@ impl State {
         let Some(before) = before else {
             return;
         };
-        let umount = system.join("sw/bin/umount");
+        let umount = crate::activate::programs(system).join("umount");
         for path in before.directories.iter().chain(&before.files) {
             let target = root.join(under(path));
             let dropped = !self.directories.contains(path) && !self.files.contains(path);

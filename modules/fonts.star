@@ -4,7 +4,7 @@
 FONTS_CONF = """<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
 <fontconfig>
-  <dir>/run/current-system/sw/share/fonts</dir>
+  <dir>/run/system/share/fonts</dir>
   <cachedir prefix="xdg">fontconfig</cachedir>
 </fontconfig>
 """

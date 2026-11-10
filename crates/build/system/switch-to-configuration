@@ -1,4 +1,4 @@
 #!@bash@/bin/bash
 # switch-to-configuration switch|test|boot: distro moves the machine to this generation.
 self=$(@coreutils@/bin/readlink -f "${0%/bin/switch-to-configuration}")
-exec "$self/sw/bin/distro" activate --mode "$1" "$self"
+exec "$self/bin/distro" activate --mode "$1" "$self"

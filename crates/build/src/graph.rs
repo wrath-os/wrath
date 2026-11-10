@@ -333,9 +333,7 @@ fn account_files(model: &Value) -> Result<(String, String, String), String> {
             user["description"].as_str().unwrap_or(""),
         );
         let uid = 1000 + index;
-        let shell = user["shell"]
-            .as_str()
-            .unwrap_or("/run/current-system/sw/bin/bash");
+        let shell = user["shell"].as_str().unwrap_or("/run/system/bin/bash");
         passwd.push_str(&format!(
             "{name}:x:{uid}:100:{description}:{home}:{shell}\n"
         ));
@@ -472,7 +470,7 @@ const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
 const REPORT: &str = include_str!("../system/report");
 const REPORT_UNIT: &str = "[Unit]\nDescription=Report how the boot went\n\
     After=multi-user.target\n\n\
-    [Service]\nType=exec\nExecStart=/run/current-system/report\nStandardOutput=tty\n\
+    [Service]\nType=exec\nExecStart=/run/system/report\nStandardOutput=tty\n\
     StandardError=tty\nTTYPath=/dev/ttyS0\n";
 
 /// The label of the file system a system's root is on.
@@ -578,7 +576,7 @@ fn lower<'a>(
             base,
             "etc/systemd/system.conf",
             0o644,
-            "[Manager]\nDefaultEnvironment=PATH=/run/current-system/sw/bin\n".into(),
+            "[Manager]\nDefaultEnvironment=PATH=/run/wrappers/bin:/run/system/bin\n".into(),
             &[],
             packages,
         )?,
@@ -635,10 +633,10 @@ fn lower<'a>(
             lab,
             everything.clone(),
             vec![
-                ("bin", "sw/bin"),
+                ("bin", "bin"),
                 // Some packages put programs for root in sbin, which is on the path all the same.
-                ("sbin", "sw/bin"),
-                ("lib/security", "sw/lib/security"),
+                ("sbin", "bin"),
+                ("lib/security", "lib/security"),
             ],
             packages,
         )?,
@@ -669,7 +667,7 @@ fn lower<'a>(
     for (path, file) in model["files"].as_object().ok_or("the model has no files")? {
         let at = installed_at(path);
         if at.starts_with("files/") {
-            outside.push_str(&format!("L+ {path} - - - - /run/current-system/{at}\n"));
+            outside.push_str(&format!("L+ {path} - - - - /run/system/{at}\n"));
         }
         let mode = u32::try_from(file["mode"].as_u64().unwrap_or(0o644)).unwrap_or(0o644);
         actions.push(text(
@@ -1015,7 +1013,7 @@ fn boot_files<'a>(
                     link(target),
                 );
             }
-            // Every program of the packages on the path, the way a system's `sw/bin` has them.
+            // Every program of the packages on the path, the way a system's `bin` has them.
             let mut roots = Vec::new();
             for id in INITRD_PACKAGES {
                 let path = &package(packages, id)?.path;
@@ -2028,7 +2026,7 @@ mod tests {
             "bo": {"home": "/home/bo", "shell": "/bin/sh"},
         }}});
         let (passwd, _, shadow) = account_files(&model).unwrap();
-        assert!(passwd.contains("ann:x:1000:100::/home/ann:/run/current-system/sw/bin/bash\n"));
+        assert!(passwd.contains("ann:x:1000:100::/home/ann:/run/system/bin/bash\n"));
         assert!(
             passwd.contains("bo:x:1001:100::/home/bo:/bin/sh\n"),
             "{passwd}"
@@ -2082,12 +2080,12 @@ mod tests {
         let web = &packages["web"].path;
         let sections = json!([{"name": "Service", "entries": [
             ["ExecStartPre", "/bin/sh -c true"],
-            ["ExecStart", "/run/current-system/sw/bin/web"],
+            ["ExecStart", "/run/system/bin/web"],
         ]}]);
         let rendered = render_unit(&sections, &[(lab.on_host(web), web.inside())]).unwrap();
         assert_eq!(
             rendered,
-            "[Service]\nExecStartPre=/bin/sh -c true\nExecStart=/run/current-system/sw/bin/web\n\n"
+            "[Service]\nExecStartPre=/bin/sh -c true\nExecStart=/run/system/bin/web\n\n"
         );
     }
 
@@ -2177,7 +2175,7 @@ mod tests {
     }
 
     #[test]
-    fn pam_finds_the_modules_packages_ship_under_the_systems_sw() {
+    fn pam_finds_the_modules_packages_ship_in_the_systems_lib_security() {
         let (_dir, lab, packages) = setup();
         let security = lab.on_host(&packages["systemd"].path).join("lib/security");
         fs::create_dir_all(&security).unwrap();
@@ -2187,7 +2185,7 @@ mod tests {
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let systemd = packages["systemd"].path.inside();
         assert_eq!(
-            fs::read_link(root.join("sw/lib/security/pam_systemd.so")).unwrap(),
+            fs::read_link(root.join("lib/security/pam_systemd.so")).unwrap(),
             Path::new(&format!("{systemd}/lib/security/pam_systemd.so"))
         );
     }
@@ -2284,7 +2282,7 @@ mod tests {
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let outcome = realised(&lab, &mut db, &packages, &model(80, false));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
-        assert!(fs::symlink_metadata(root.join("sw/bin/useradd")).is_ok());
+        assert!(fs::symlink_metadata(root.join("bin/useradd")).is_ok());
     }
 
     #[test]
@@ -2317,12 +2315,12 @@ mod tests {
         let outcome = realised(&lab, &mut db, &packages, &model(80, false));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
-        assert!(read("init").contains("/sw/bin/distro\" activate --mode init \"$self\""));
+        assert!(read("init").contains("/bin/distro\" activate --mode init \"$self\""));
         let switch = read("bin/switch-to-configuration");
-        assert!(switch.contains("/sw/bin/distro\" activate --mode \"$1\" \"$self\""));
+        assert!(switch.contains("/bin/distro\" activate --mode \"$1\" \"$self\""));
         let distro = packages["distro"].path.inside();
         assert_eq!(
-            fs::read_link(root.join("sw/bin/distro")).unwrap(),
+            fs::read_link(root.join("bin/distro")).unwrap(),
             Path::new(&format!("{distro}/bin/distro"))
         );
         let systemd = packages["systemd"].path.inside();

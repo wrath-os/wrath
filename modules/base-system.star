@@ -1,7 +1,7 @@
 # The base of a system: the programs every system has, how systemd finds
 # them, and consoles to log in on.
 
-SW = "/run/current-system/sw"
+SYSTEM = "/run/system"
 LOCALES = "system-locales"
 
 PACKAGES = [
@@ -26,7 +26,7 @@ def getty(ctx, unit, args):
         "Service": {
             "ExecStart": [
                 "",
-                "-agetty --login-program %s/bin/login %s - ${TERM}" % (SW, args),
+                "-agetty --login-program %s/bin/login %s - ${TERM}" % (SYSTEM, args),
             ],
         },
     })
@@ -43,7 +43,7 @@ def locale_environment(ctx):
             options = {"allLocales": False, "locales": ["%s/%s" % (locale, charset)]},
         )
         ctx.package(LOCALES)
-        environment.append(("LOCALE_ARCHIVE", SW + "/lib/locale/locale-archive"))
+        environment.append(("LOCALE_ARCHIVE", SYSTEM + "/lib/locale/locale-archive"))
     return environment
 
 def render(ctx):
@@ -53,7 +53,7 @@ def render(ctx):
     ctx.service_package("lvm2")
 
     # Services find the system's programs, as a login shell does.
-    path = "PATH=/run/wrappers/bin:%s/bin" % SW
+    path = "PATH=/run/wrappers/bin:%s/bin" % SYSTEM
     locale_variables = locale_environment(ctx)
     ctx.file("/etc/systemd/system.conf.d/distro.conf", formats.systemd({
         "Manager": {
@@ -69,9 +69,9 @@ def render(ctx):
     # Nothing is enabled behind the configuration's back, on a first boot or any other.
     ctx.file("/etc/systemd/system-preset/00-distro.preset", "ignore *\n")
     # The kernel loads the modules it needs with this.
-    ctx.file("/etc/sysctl.d/50-distro.conf", "kernel.modprobe = %s/bin/modprobe\n" % SW)
+    ctx.file("/etc/sysctl.d/50-distro.conf", "kernel.modprobe = %s/bin/modprobe\n" % SYSTEM)
     ctx.unit("modprobe@.service.d/distro.conf", {
-        "Service": {"ExecSearchPath": SW + "/bin"},
+        "Service": {"ExecSearchPath": SYSTEM + "/bin"},
     })
     # Device nodes for modules not loaded yet, such as /dev/btrfs-control. The kernel's modules are
     # where nixpkgs' kmod looks for them, rather than in /lib/modules.
@@ -79,7 +79,7 @@ def render(ctx):
         "Unit": {
             "ConditionFileNotEmpty": [
                 "",
-                "/run/booted-system/kernel-modules/lib/modules/%v/modules.devname",
+                "/run/system-booted/kernel-modules/lib/modules/%v/modules.devname",
             ],
         },
     })
@@ -94,8 +94,8 @@ def render(ctx):
     # Login shells, and the service managers of users' sessions, find the system's programs and
     # what they ship, such as D-Bus services and desktop files.
     environment = [
-        ("PATH", "/run/wrappers/bin:/etc/profiles/per-user/${USER}/bin:%s/bin" % SW),
-        ("XDG_DATA_DIRS", SW + "/share"),
+        ("PATH", "/run/wrappers/bin:%s/users/${USER}/bin:%s/bin" % (SYSTEM, SYSTEM)),
+        ("XDG_DATA_DIRS", SYSTEM + "/share"),
         ("XDG_CONFIG_DIRS", "/etc/xdg"),
     ] + locale_variables
     ctx.file(
