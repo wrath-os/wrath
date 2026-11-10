@@ -3,6 +3,7 @@
 pub mod cargo;
 pub mod chain;
 pub mod content;
+pub mod early;
 pub mod evalbench;
 pub mod experiments;
 pub mod graph;

@@ -1,0 +1,28 @@
+#!@bash@/bin/bash
+# systemd only switches to a root that says what it is, so the root gets the os-release of the
+# system it starts, the directory of the `init=` on the kernel's command line. A root kept on disk
+# has it already, as a link, from the last boot. distro puts the rest of /etc in place once booted.
+set -eu
+PATH=@coreutils@/bin:@sed@/bin
+# A path in the new root, following its links as the new root will see them.
+resolve() {
+    local out=/sysroot part target
+    IFS=/ read -ra parts <<< "${1#/}"
+    for part in "${parts[@]}"; do
+        out="$out/$part"
+        while [ -L "$out" ]; do
+            target=$(readlink "$out")
+            case "$target" in
+                /*) out="/sysroot$target" ;;
+                *) out="$(dirname "$out")/$target" ;;
+            esac
+        done
+    done
+    echo "$out"
+}
+init=$(sed -n 's/.*\binit=\([^ ]*\).*/\1/p' /proc/cmdline)
+if [ ! -e "$(resolve /etc/os-release)" ]; then
+    mkdir -p /sysroot/etc
+    rm -f /sysroot/etc/os-release
+    cp "$(resolve "${init%/init}/etc/os-release")" /sysroot/etc/os-release
+fi

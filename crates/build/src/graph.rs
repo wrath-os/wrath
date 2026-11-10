@@ -15,6 +15,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::chain::{self, Arm, Built};
+use crate::early;
 use crate::initrd;
 use crate::pilot;
 use crate::store::{Lab, StorePath, hex, with_path};
@@ -434,7 +435,7 @@ fn unit_action<'a>(
 }
 
 const INIT: &str = include_str!("../system/init");
-const INITRD_INIT: &str = include_str!("../system/initrd-init");
+const INITRD_ROOT: &str = include_str!("../system/initrd-root");
 const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
 const REPORT: &str = include_str!("../system/report");
 const REPORT_UNIT: &str = "[Unit]\nDescription=Report how the boot went\n\
@@ -651,7 +652,7 @@ fn lower<'a>(
     }
     let (enabled, unfound) = enabled_units(lab, model, &everything, packages)?;
     actions.push(enabled);
-    actions.push(boot_files(lab, packages)?);
+    actions.push(boot_files(lab, model, packages)?);
     Ok(Lowered {
         actions,
         skipped,
@@ -795,13 +796,109 @@ fn model_packages(
     Ok((named, skipped))
 }
 
-/// The kernel and an initrd holding what it takes to reach the root file system.
-fn boot_files<'a>(lab: &'a Lab, packages: &'a Packages) -> Result<Action<'a>, String> {
-    const TOOLS: [&str; 4] = ["bash", "coreutils", "util-linux", "kmod"];
-    let ids = [TOOLS.as_slice(), &["linux"]].concat();
+/// The programs the initrd runs, all of each package's: its init and the tools for the disks.
+const INITRD_PACKAGES: [&str; 9] = [
+    "systemd",
+    "bash",
+    "coreutils",
+    "sed",
+    "util-linux",
+    "kmod",
+    "device-mapper",
+    "cryptsetup",
+    "btrfs-progs",
+];
+
+/// device-mapper's udev rules, which name unlocked containers so they can be mounted.
+const DM_RULES: [&str; 3] = ["10-dm.rules", "13-dm-disk.rules", "95-dm-notify.rules"];
+
+/// How the initrd is put together, in its action's key: what it's made of is decided in code here,
+/// so a change to that changes this, and the key with it.
+const INITRD_ASSEMBLY: &str = "systemd; packages without build files; the libraries they load; \
+     kmod by its names; udev rules in /etc";
+
+const INITRD_RELEASE: &str = "NAME=distro\nID=distro\nPRETTY_NAME=\"distro (initrd)\"\n";
+
+/// The initrd's own files, by path, where `@id@` stands for package `id`'s path: systemd's
+/// configuration, accounts, how to unlock and mount the disks, and the service that readies the
+/// root.
+fn initrd_files(disks: &early::Disks, hostname: &str) -> Vec<(String, u32, String)> {
+    let unit = "[Unit]\nDescription=Ready the root to switch to\nDefaultDependencies=no\n\
+        RequiresMountsFor=/sysroot /sysroot/store\nAfter=initrd-fs.target\n\
+        Before=initrd.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n\
+        ExecStart=/etc/distro-root\n";
+    // A shell on the console when the root can't be reached, so the machine can be fixed. The
+    // initrd's root has no password, and only the console reaches it.
+    let force_shell = "[Service]\nExecStart=\nExecStart=-/bin/sh\n";
+    let groups: String = [
+        "tty", "disk", "kmem", "input", "video", "audio", "lp", "dialout", "cdrom", "tape",
+        "floppy", "render", "sgx", "clock", "kvm",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(n, group)| format!("{group}:x:{}:\n", n + 1))
+    .collect();
+    let file = |path: &str, mode: u32, text: String| (path.to_owned(), mode, text);
+    let modules: String = disks
+        .modules
+        .iter()
+        .map(|module| format!("{module}\n"))
+        .collect();
+    let system_conf = "[Manager]\nDefaultEnvironment=PATH=/bin\nManagerEnvironment=PATH=/bin\n";
+    let mut files = vec![
+        file("etc/initrd-release", 0o644, INITRD_RELEASE.to_owned()),
+        file("etc/os-release", 0o644, INITRD_RELEASE.to_owned()),
+        file("etc/systemd/system.conf", 0o644, system_conf.to_owned()),
+        file(
+            "etc/systemd/system/distro-root.service",
+            0o644,
+            unit.to_owned(),
+        ),
+        file(
+            "etc/systemd/system/emergency.service.d/distro.conf",
+            0o644,
+            force_shell.to_owned(),
+        ),
+        file(
+            "etc/systemd/system/rescue.service.d/distro.conf",
+            0o644,
+            force_shell.to_owned(),
+        ),
+        file("etc/distro-root", 0o755, INITRD_ROOT.to_owned()),
+        file("etc/fstab", 0o644, disks.initrd_fstab.clone()),
+        file("etc/crypttab", 0o644, disks.crypttab.clone()),
+        file(
+            "etc/passwd",
+            0o644,
+            "root:x:0:0:root:/root:/bin/sh\n".to_owned(),
+        ),
+        file("etc/group", 0o644, format!("root:x:0:\n{groups}")),
+        file("etc/shadow", 0o600, "root:*:::::::\n".to_owned()),
+        file("etc/modules-load.d/distro.conf", 0o644, modules),
+    ];
+    if !hostname.is_empty() {
+        files.push(file("etc/hostname", 0o644, format!("{hostname}\n")));
+    }
+    files
+}
+
+/// The kernel and an initrd that reaches the root: systemd, which unlocks the disks the model
+/// describes, mounts the root under /sysroot and switches to the `init=` on the kernel's command
+/// line. Without disks, the root is the one `root=` names.
+fn boot_files<'a>(
+    lab: &'a Lab,
+    model: &Value,
+    packages: &'a Packages,
+) -> Result<Action<'a>, String> {
+    let disks = early::disks(&model["base"]["storage"]);
+    let hostname = model["base"]["system"]["hostname"]
+        .as_str()
+        .unwrap_or_default();
+    let files = initrd_files(&disks, hostname);
+    let ids = [INITRD_PACKAGES.as_slice(), &["linux"]].concat();
     let (unresolved, resolved) = action_records(&ids, packages, |deps| {
-        json!({"kind": "boot", "init": INITRD_INIT, "files": ["initrd", "kernel"],
-                "deps": deps})
+        json!({"kind": "boot", "assembly": INITRD_ASSEMBLY, "files": files, "rules": DM_RULES,
+               "outputs": ["initrd", "kernel"], "deps": deps})
     })?;
     Ok(Action {
         origin: "base.boot".to_owned(),
@@ -809,39 +906,84 @@ fn boot_files<'a>(lab: &'a Lab, packages: &'a Packages) -> Result<Action<'a>, St
         resolved,
         run: Box::new(move |_| {
             let linux = &package(packages, "linux")?.path;
-            let filled = fill(INITRD_INIT, &ids, packages)?;
+            let systemd_path = &package(packages, "systemd")?.path;
+            let systemd = systemd_path.inside();
             let mut nodes = initrd::Nodes::new();
-            for dir in ["proc", "sys", "dev", "run", "sysroot"] {
+            for dir in ["proc", "sys", "dev", "run", "sysroot", "tmp", "var", "root"] {
                 initrd::insert(&mut nodes, dir, initrd::Node::Dir);
             }
-            initrd::insert(
-                &mut nodes,
-                "dev/console",
-                initrd::Node::Char { major: 5, minor: 1 },
-            );
+            let console = initrd::Node::Char { major: 5, minor: 1 };
+            initrd::insert(&mut nodes, "dev/console", console);
+            let link = |target: String| initrd::Node::Link(target);
             initrd::insert(
                 &mut nodes,
                 "init",
-                initrd::Node::File {
-                    mode: 0o755,
-                    bytes: filled.into_bytes(),
-                },
+                link(format!("{systemd}/lib/systemd/systemd")),
             );
-            let mut closure = BTreeSet::new();
-            for id in TOOLS {
-                closure.extend(chain::runtime_closure(lab, &package(packages, id)?.path)?);
+            initrd::insert(
+                &mut nodes,
+                "etc/systemd/system/default.target",
+                link(format!("{systemd}/lib/systemd/system/initrd.target")),
+            );
+            initrd::insert(
+                &mut nodes,
+                "etc/systemd/system/initrd.target.requires/distro-root.service",
+                link("../distro-root.service".to_owned()),
+            );
+            for (path, mode, template) in &files {
+                let bytes = fill(template, &ids, packages)?.into_bytes();
+                initrd::insert(&mut nodes, path, initrd::Node::File { mode: *mode, bytes });
             }
-            for path in &closure {
-                initrd::add_tree(
+            let device_mapper = package(packages, "device-mapper")?.path.inside();
+            for rule in DM_RULES {
+                let target = format!("{device_mapper}/lib/udev/rules.d/{rule}");
+                initrd::insert(
                     &mut nodes,
-                    &lab.on_host(path),
-                    &format!("store/{}", path.hash()),
-                )?;
+                    &format!("etc/udev/rules.d/{rule}"),
+                    link(target),
+                );
             }
+            // udev reads its rules from /etc, and systemd's own name the disks, by label among
+            // others.
+            let rules = lab.on_host(systemd_path).join("lib/udev/rules.d");
+            for entry in fs::read_dir(&rules).into_iter().flatten().flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let target = format!("{systemd}/lib/udev/rules.d/{name}");
+                initrd::insert(
+                    &mut nodes,
+                    &format!("etc/udev/rules.d/{name}"),
+                    link(target),
+                );
+            }
+            // Every program of the packages on the path, the way a system's `sw/bin` has them.
+            let mut roots = Vec::new();
+            for id in INITRD_PACKAGES {
+                let path = &package(packages, id)?.path;
+                roots.push(path.hash());
+                let bin = lab.on_host(path).join("bin");
+                for entry in fs::read_dir(&bin).into_iter().flatten().flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let target = format!("{}/bin/{name}", path.inside());
+                    nodes
+                        .entry(format!("bin/{name}"))
+                        .or_insert_with(|| link(target));
+                }
+            }
+            initrd::insert(&mut nodes, "bin/sh", link("bash".to_owned()));
+            // kmod is one program that behaves by the name it's called, and the kernel calls
+            // modprobe.
+            for name in ["modprobe", "insmod", "rmmod", "lsmod", "modinfo", "depmod"] {
+                initrd::insert(&mut nodes, &format!("bin/{name}"), link("kmod".to_owned()));
+            }
+            initrd::insert(&mut nodes, "sbin", link("bin".to_owned()));
+            initrd::add_programs(&mut nodes, &lab.work.join("store"), &roots)?;
             let modules = lab.on_host(linux).join("lib/modules");
             if modules.exists() {
                 let to = format!("store/{}/lib/modules", linux.hash());
                 initrd::add_tree(&mut nodes, &modules, &to)?;
+                let target = format!("{}/lib/modules", linux.inside());
+                initrd::insert(&mut nodes, "lib/modules", link(target));
             }
             let compressed = zstd::bulk::compress(&initrd::archive(&nodes), 3)
                 .map_err(|e| format!("compressing the initrd: {e}"))?;
@@ -1623,7 +1765,11 @@ mod tests {
         let lab = Lab::new(dir.path().to_str().unwrap());
         fs::create_dir_all(dir.path().join("store")).unwrap();
         let mut packages = Packages::new();
-        for id in BASE_PACKAGES.iter().chain(["web", "linux"].iter()) {
+        for id in BASE_PACKAGES
+            .iter()
+            .chain(INITRD_PACKAGES.iter())
+            .chain(["web", "linux"].iter())
+        {
             let programs: &[&str] = match *id {
                 "web" => &["web"],
                 "distro" => &["distro"],
@@ -1883,6 +2029,42 @@ mod tests {
             unit,
             Path::new(&format!("{distro}/lib/systemd/system/distro-agent.service"))
         );
+    }
+
+    #[test]
+    fn the_initrd_unlocks_and_mounts_what_the_model_describes_then_readies_the_root() {
+        let disks = early::Disks {
+            crypttab: "main0-system /dev/disk/by-partlabel/main0-system none luks\n".into(),
+            initrd_fstab: "/dev/mapper/main0-system /sysroot/store btrfs subvol=@store 0 0\n"
+                .into(),
+            modules: vec!["dm_crypt".into(), "btrfs".into()],
+            ..early::Disks::default()
+        };
+        let files: BTreeMap<String, String> = initrd_files(&disks, "w-01")
+            .into_iter()
+            .map(|(path, _, text)| (path, text))
+            .collect();
+        assert_eq!(files["etc/crypttab"], disks.crypttab);
+        assert_eq!(files["etc/fstab"], disks.initrd_fstab);
+        assert_eq!(files["etc/modules-load.d/distro.conf"], "dm_crypt\nbtrfs\n");
+        assert_eq!(files["etc/hostname"], "w-01\n");
+        assert!(files["etc/initrd-release"].contains("ID=distro\n"));
+        let root = &files["etc/systemd/system/distro-root.service"];
+        assert!(root.contains("ExecStart=/etc/distro-root\n"), "{root}");
+        assert!(files["etc/distro-root"].contains("os-release"));
+    }
+
+    #[test]
+    fn a_systems_initrd_changes_when_its_disks_do() {
+        let (_dir, lab, packages) = setup();
+        let mut model = model(80, false);
+        let key = |model: &Value| boot_files(&lab, model, &packages).unwrap().resolved;
+        let before = key(&model);
+        model["base"]["storage"] = json!({
+            "partitions": [{"encrypt": true, "label": "main0-system"}],
+            "mounts": [], "unlock": {},
+        });
+        assert_ne!(key(&model), before);
     }
 
     #[test]

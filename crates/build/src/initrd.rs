@@ -148,3 +148,181 @@ mod tests {
         assert_eq!(mode, 0o750);
     }
 }
+
+/// Directories and files a running program never reads: headers, static libraries and manuals.
+fn for_building(name: &str) -> bool {
+    matches!(name, "include" | "man" | "doc" | "info" | "pkgconfig")
+        || name.ends_with(".a")
+        || name.ends_with(".la")
+}
+
+/// Adds each of `roots`, store paths by hash in the store at `store`, without what's only for
+/// building, and the shared libraries their programs load, file by file, wherever those are.
+/// Whole closures would bring in every library a package was built against, compilers included.
+pub fn add_programs(nodes: &mut Nodes, store: &Path, roots: &[&str]) -> Result<(), String> {
+    let mut adder = Adder { nodes, store };
+    for root in roots {
+        adder.tree(&store.join(root), &format!("store/{root}"))?;
+    }
+    Ok(())
+}
+
+struct Adder<'a> {
+    nodes: &'a mut Nodes,
+    store: &'a Path,
+}
+
+impl Adder<'_> {
+    fn tree(&mut self, from: &Path, to: &str) -> Result<(), String> {
+        insert(self.nodes, to, Node::Dir);
+        for entry in fs::read_dir(from).map_err(with_path(from))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if for_building(&name) {
+                continue;
+            }
+            let path = entry.path();
+            let inside = format!("{to}/{name}");
+            if fs::symlink_metadata(&path)
+                .map_err(with_path(&path))?
+                .is_dir()
+            {
+                self.tree(&path, &inside)?;
+            } else {
+                self.file(&path, &inside)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds one file, or a link and what it points to, and the libraries a program loads.
+    fn file(&mut self, from: &Path, to: &str) -> Result<(), String> {
+        if self.nodes.contains_key(to) {
+            return Ok(());
+        }
+        let meta = fs::symlink_metadata(from).map_err(with_path(from))?;
+        if meta.is_symlink() {
+            let target = fs::read_link(from).map_err(with_path(from))?;
+            insert(
+                self.nodes,
+                to,
+                Node::Link(target.to_string_lossy().into_owned()),
+            );
+            let (host, inside) = match target.strip_prefix("/store/") {
+                Ok(rest) => (self.store.join(rest), format!("store/{}", rest.display())),
+                Err(_) => {
+                    let parent = to.rsplit_once('/').map_or("", |(parent, _)| parent);
+                    let from_parent = from.parent().unwrap_or(Path::new("/"));
+                    (
+                        from_parent.join(&target),
+                        format!("{parent}/{}", target.display()),
+                    )
+                }
+            };
+            if host.is_file() && !inside.contains("..") {
+                self.file(&host, &inside)?;
+            }
+            return Ok(());
+        }
+        let bytes = fs::read(from).map_err(with_path(from))?;
+        let mode = meta.permissions().mode() & 0o7777;
+        let wanted = crate::runpath::needed_and_run_path(&bytes);
+        let names = loaded_by_name(&bytes);
+        insert(self.nodes, to, Node::File { mode, bytes });
+        if let Some((needed, runpath)) = wanted {
+            let dirs: Vec<&str> = runpath
+                .split(':')
+                .filter(|dir| dir.starts_with("/store/"))
+                .collect();
+            let mut sonames = needed;
+            sonames.extend(names);
+            if sonames.iter().any(|name| name == "libc.so.6") {
+                // glibc loads the module that reads /etc/passwd only when asked for an account.
+                sonames.push("libnss_files.so.2".to_owned());
+            }
+            for soname in sonames {
+                let found = dirs.iter().find_map(|dir| {
+                    let rest = dir.trim_start_matches("/store/");
+                    let host = self.store.join(rest).join(&soname);
+                    host.exists()
+                        .then(|| (host, format!("store/{rest}/{soname}")))
+                });
+                if let Some((host, inside)) = found {
+                    self.file(&host, &inside)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The libraries a program names in its text to load when it needs them, such as
+/// `libcryptsetup.so.12`, which systemd opens only to unlock a disk.
+fn loaded_by_name(bytes: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    for (at, _) in bytes.windows(3).enumerate().filter(|(_, w)| *w == b"lib") {
+        if at > 0 && bytes[at - 1] != 0 {
+            continue;
+        }
+        let end = bytes[at..]
+            .iter()
+            .position(|b| *b == 0)
+            .map_or(bytes.len(), |n| at + n);
+        let Ok(name) = std::str::from_utf8(&bytes[at..end]) else {
+            continue;
+        };
+        let Some((stem, version)) = name.split_once(".so.") else {
+            continue;
+        };
+        let plain = |c: char| c.is_ascii_alphanumeric() || "_+-".contains(c);
+        if name.len() < 64
+            && stem.chars().all(plain)
+            && !version.is_empty()
+            && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        {
+            names.push(name.to_owned());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[cfg(test)]
+mod program_tests {
+    use super::*;
+
+    #[test]
+    fn names_of_libraries_to_load_later_are_found_in_a_programs_text() {
+        let bytes = b"\0libcryptsetup.so.12\0libkmod.so.2\0not libc.so.6\0libx.so\0\0";
+        assert_eq!(
+            loaded_by_name(bytes),
+            ["libcryptsetup.so.12", "libkmod.so.2"]
+        );
+    }
+
+    #[test]
+    fn a_package_comes_without_what_is_only_for_building() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path();
+        let root = store.join("a".repeat(40));
+        for path in [
+            "bin/tool",
+            "include/tool.h",
+            "lib/libtool.a",
+            "share/man/tool.1",
+        ] {
+            let file = root.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "x").unwrap();
+        }
+        let mut nodes = Nodes::new();
+        add_programs(&mut nodes, store, &[&"a".repeat(40)]).unwrap();
+        let files: Vec<&String> = nodes
+            .iter()
+            .filter(|(_, node)| matches!(node, Node::File { .. }))
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(files, [&format!("store/{}/bin/tool", "a".repeat(40))]);
+    }
+}

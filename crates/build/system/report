@@ -42,6 +42,7 @@ if ((boots == 0)); then
     sleep 1
     say "page on 8080 after rolling back: $(fetch 8080)"
     distro try --for 3s "$(cat /var/lib/e2e-next)" > /dev/null
+    sleep 1
     say "trying, page on 8081: $(fetch 8081)"
     sleep 6
     say "after the try, page on 8080: $(fetch 8080)"
