@@ -22,6 +22,8 @@ scripts/config --enable DEVTMPFS --enable DEVTMPFS_MOUNT --enable EXT4_FS --enab
     --enable FS_VERITY --enable NETFILTER --enable NF_CONNTRACK --enable NF_TABLES \
     --enable NF_TABLES_INET --enable NFT_CT --enable MODULES --enable EFI --enable EFI_STUB \
     --enable BLK_DEV_INITRD --enable RD_ZSTD --module VIRTIO_BLK --disable DEBUG_INFO --disable DEBUG_INFO_BTF
+# The clock starts from the machine's, which Linux 7's defaults leave to programs to set.
+scripts/config --enable RTC_HCTOSYS
 # What a PC needs to boot from USB or NVMe and log in at its screen, with no GPU driver.
 scripts/config --enable PCI --enable BLK_DEV_NVME --enable USB_SUPPORT --enable USB \
     --enable USB_PCI --enable USB_XHCI_HCD --enable USB_XHCI_PCI --enable USB_STORAGE --enable USB_UAS \
@@ -139,6 +141,10 @@ script = '''
 # Swap units run swapon and swapoff from a fixed path, which a system without /sbin lacks.
 sed -i "s#\"/sbin/swapon\"#\"$LAB_DEP_util_linux/bin/swapon\"#; s#\"/sbin/swapoff\"#\"$LAB_DEP_util_linux/bin/swapoff\"#" \
     src/core/swap.c
+# Units from packages name programs without a path, such as `ExecStart=niri`, and systemd looks
+# them up in its own list of directories, never in PATH. A system's programs are in /run/system/bin.
+sed -i 's|^#define DEFAULT_PATH_WITH\(OUT\)\?_SBIN |&"/run/wrappers/bin:/run/system/bin:" |' \
+    src/basic/path-util.h
 export PYTHONPATH=$LAB_DEP_jinja2/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyelftools/site
 meson setup /build/b --prefix=$PREFIX --buildtype=release --auto-features=disabled \
     --sysconfdir=/etc --localstatedir=/var \
