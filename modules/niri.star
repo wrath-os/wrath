@@ -20,8 +20,9 @@ def render(ctx):
         "gnome-keyring",
     ]:
         ctx.service_package(package)
-    # niri runs X programs through it.
+    # niri runs X programs through it, and it runs Xwayland.
     ctx.package("xwayland-satellite")
+    ctx.package("xwayland")
     ctx.file("/etc/xdg/xdg-desktop-portal/niri-portals.conf", PORTALS)
 
 module(name = "niri", options = {}, writes = [], render = render)
