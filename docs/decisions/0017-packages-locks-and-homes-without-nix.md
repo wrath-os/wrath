@@ -1,6 +1,6 @@
 # 0017: Packages, locks and homes without Nix
 
-Status: proposed, 2026-11-10.
+Status: accepted, 2026-11-10.
 
 ## Context
 
@@ -43,9 +43,9 @@ namespace with that directory at `/store`, the same way the build sandbox does.
 
 **Homes.** A user's packages and files are part of the system's configuration, as `[users.NAME]`
 already allows, and switch with the system. Standalone homes, which a user builds and switches
-without root, wait for a service that builds for users. That service is the subject of its own
-decision, since it decides who may put what into a store everyone shares. `home.toml` keeps
-working through Nix until then, and is the one thing still on Nix when the rest is gone.
+without root from `home.toml`, are dropped for now. They come back with a service that builds for
+users, the subject of its own decision, since it decides who may put what into a store everyone
+shares.
 
 **Then.** With these done, the Nix code goes: `factory/nix`, the backend crate, the Nix paths of
 the harness, and the scenarios and acceptance checks that still name Nix images, the last after
@@ -57,8 +57,7 @@ review.
   error that says so, and writing recipes is the work that follows.
 - `distro info` and version lookups read recipes, and are fast because nothing evaluates.
 - Locks lose their per-package entries. Old locks still read; their package entries are ignored.
-- Standalone homes are the one feature that keeps Nix around for a while, unless they're dropped
-  until the build service exists.
+- Standalone homes are gone until the build service exists; `home.toml` is an error that says so.
 
 ## Alternatives
 
@@ -66,5 +65,5 @@ review.
   would rewrite every lock, and the distro pin already determines the recipe.
 - Let users write to the store directly, with group permissions. Simple, but then any user can
   plant what another user's programs run.
-- Drop standalone homes now, and move their users' configuration into the system's. Removes Nix
-  sooner, at the cost of a feature people use.
+- Keep standalone homes on Nix until the build service exists. Keeps the feature, but keeps Nix
+  and its daemon on every machine that uses one.
