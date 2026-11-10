@@ -54,12 +54,13 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
 /// Where a machine from Nix keeps its generations, under the root.
 const PROFILES: &str = "nix/var/nix/profiles";
 
-/// Where a machine from distro's store keeps its generations, under the root: each a link
-/// named by its number to a system in `/store`.
-pub(crate) const GENERATIONS: &str = "system/generations";
+/// Where a machine from distro's store keeps its generations, under the root: each a link named
+/// by its number to a system in `/store`, kept beside the store so a root erased at every boot
+/// keeps them.
+pub(crate) const GENERATIONS: &str = "store/.system/generations";
 
 /// The link to the current generation, under the root, as `generations/N`.
-pub(crate) const CURRENT: &str = "system/current";
+pub(crate) const CURRENT: &str = "store/.system/current";
 
 /// Writes a boot loader entry for each generation of the system at `root`, with its kernel and
 /// initrd copied to the ESP at `/boot`, and makes the current generation the default. Kernels

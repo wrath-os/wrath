@@ -1,5 +1,7 @@
-//! A machine's generations in distro's store: each one a link in `/system/generations` named by
-//! its number, `/system/current` naming the current one, and the systems themselves in `/store`.
+//! A machine's generations in distro's store: each one a link in `/store/.system/generations`
+//! named by its number, `/store/.system/current` naming the current one, and the systems
+//! themselves in `/store`. The records live with the store, so a root erased at every boot keeps
+//! them.
 //! Making one current and switching to it, trying one for a while, rolling back, and collecting
 //! what no generation uses any more.
 
@@ -26,7 +28,7 @@ fn here_in_store() -> bool {
 }
 
 /// A system being tried, kept from collection while no generation has it.
-const TRYING: &str = "system/trying";
+const TRYING: &str = "store/.system/trying";
 
 /// The timer that switches back from a system being tried.
 const TRY_TIMER: &str = "distro-try";
@@ -291,7 +293,8 @@ pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
     for entry in fs::read_dir(&store).map_err(|e| format!("{}: {e}", store.display()))? {
         let entry = entry.map_err(|e| format!("{}: {e}", store.display()))?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if used.contains(&StorePath::from_hash(&name)) {
+        // Only store paths are collected; the machine's records in `.system` stay.
+        if !is_hash(&name) || used.contains(&StorePath::from_hash(&name)) {
             continue;
         }
         let path = entry.path();
@@ -308,8 +311,12 @@ pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
 fn store_path(target: &Path) -> Option<StorePath> {
     let mut parts = target.strip_prefix("/store").ok()?.components();
     let hash = parts.next()?.as_os_str().to_str()?;
-    (hash.len() == 40 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
-        .then(|| StorePath::from_hash(hash))
+    is_hash(hash).then(|| StorePath::from_hash(hash))
+}
+
+/// Whether `name` is a store path's, 40 hex digits.
+fn is_hash(name: &str) -> bool {
+    name.len() == 40 && name.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Store paths are read-only, so their directories are made writable before they're removed.
@@ -474,7 +481,10 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(left, BTreeSet::from([hash('b'), hash('c')]));
+        assert_eq!(
+            left,
+            BTreeSet::from([hash('b'), hash('c'), ".system".to_owned()])
+        );
         assert!(remove(root, &[2]).unwrap_err().contains("current"));
     }
 

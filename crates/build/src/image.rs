@@ -61,10 +61,10 @@ pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), S
             &format!("copying {}", path.inside()),
         )?;
     }
-    let generations = root.join("system/generations");
+    let generations = root.join("store/.system/generations");
     fs::create_dir_all(&generations).map_err(with_path(&generations))?;
     symlink(generation.inside(), generations.join("1")).map_err(with_path(&generations))?;
-    symlink("generations/1", root.join("system/current")).map_err(with_path(root))?;
+    symlink("generations/1", root.join("store/.system/current")).map_err(with_path(root))?;
     for dir in [
         "bin", "etc", "dev", "proc", "sys", "run", "tmp", "var/lib", "root", "home", "srv",
     ] {
@@ -284,16 +284,18 @@ mod tests {
         root_tree(&lab, &generation, &root).unwrap();
         let mut stored: Vec<String> = fs::read_dir(root.join("store"))
             .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy()[..1].to_owned())
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| !name.starts_with('.'))
+            .map(|name| name[..1].to_owned())
             .collect();
         stored.sort();
         assert_eq!(stored, ["a", "b", "c", "d"]);
         assert_eq!(
-            fs::read_link(root.join("system/generations/1")).unwrap(),
+            fs::read_link(root.join("store/.system/generations/1")).unwrap(),
             Path::new(&generation.inside())
         );
         assert_eq!(
-            fs::read_link(root.join("system/current")).unwrap(),
+            fs::read_link(root.join("store/.system/current")).unwrap(),
             Path::new("generations/1")
         );
         assert!(root.join("var/lib").is_dir());

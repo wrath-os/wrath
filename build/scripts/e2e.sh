@@ -25,7 +25,7 @@ if [[ -d $root ]]; then
     chmod -R u+w -- "$root"
     rm -r -- "$root"
 fi
-mkdir -p "$root/store" "$root/system/generations" work/e2e
+mkdir -p "$root/store/.system/generations" work/e2e
 
 {
     echo "--- evaluate first configuration"
@@ -59,8 +59,8 @@ done < <("$lab" graph-closure "$arm" work/e2e/two.json | grep -E '^(root|path) '
 
 # Only the first is a generation; the first boot applies the second with distro.
 cp -a "work/store/$first" "work/store/$second" "$root/store/"
-ln -s "/store/$first" "$root/system/generations/1"
-ln -s generations/1 "$root/system/current"
+ln -s "/store/$first" "$root/store/.system/generations/1"
+ln -s generations/1 "$root/store/.system/current"
 mkdir -p "$root"/{bin,etc,dev,proc,sys,run,tmp,var/lib,root,home,srv}
 echo "/store/$second" > "$root/var/lib/e2e-next"
 ln -s "/store/${store[bash]}/bin/bash" "$root/bin/sh"

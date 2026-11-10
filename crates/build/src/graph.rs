@@ -440,7 +440,7 @@ const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
 const REPORT: &str = include_str!("../system/report");
 const REPORT_UNIT: &str = "[Unit]\nDescription=Report how the boot went\n\
     After=multi-user.target\n\n\
-    [Service]\nType=exec\nExecStart=/system/current/report\nStandardOutput=tty\n\
+    [Service]\nType=exec\nExecStart=/run/current-system/report\nStandardOutput=tty\n\
     StandardError=tty\nTTYPath=/dev/ttyS0\n";
 
 /// The label of the file system a system's root is on.
@@ -547,7 +547,7 @@ fn lower<'a>(
             base,
             "etc/systemd/system.conf",
             0o644,
-            "[Manager]\nDefaultEnvironment=PATH=/system/current/sw/bin\n".into(),
+            "[Manager]\nDefaultEnvironment=PATH=/run/current-system/sw/bin\n".into(),
             &[],
             packages,
         )?,
@@ -627,7 +627,7 @@ fn lower<'a>(
     for (path, file) in model["files"].as_object().ok_or("the model has no files")? {
         let at = installed_at(path);
         if at.starts_with("files/") {
-            outside.push_str(&format!("L+ {path} - - - - /system/current/{at}\n"));
+            outside.push_str(&format!("L+ {path} - - - - /run/current-system/{at}\n"));
         }
         let mode = u32::try_from(file["mode"].as_u64().unwrap_or(0o644)).unwrap_or(0o644);
         actions.push(text(
