@@ -48,6 +48,9 @@ standalone homes wait on, since both decide who may put what into a store.
 - A machine that builds needs disk and time for the toolchain the first time, until the cache
   exists. A laptop that applies through `--host` never does.
 - `Lab` learns to keep its records apart from its store, so `/store` holds only store paths.
+- Builds run in bubblewrap, which every system has. It's Linux's; building on macOS later needs
+  a sandbox of its own there, so the builder asks the sandbox for what a build may see and do, and
+  doesn't assume bwrap's options.
 - The pinned distro is built, not just noted, once machines build.
 
 ## Alternatives

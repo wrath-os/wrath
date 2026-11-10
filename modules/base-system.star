@@ -6,6 +6,7 @@ LOCALES = "system-locales"
 
 PACKAGES = [
     "bash",
+    "bubblewrap",
     "coreutils",
     "findutils",
     "gawk",

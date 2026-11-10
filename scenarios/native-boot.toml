@@ -12,5 +12,6 @@ steps = [
   { run = "systemctl is-system-running --wait; systemctl --failed --no-legend", stdout_contains = "running" },
   { run = "readlink /run/system", stdout_contains = "/store/" },
   { run = "systemctl is-active systemd-resolved; grep -c 127.0.0.53 /etc/resolv.conf", stdout_contains = "active\n1" },
+  { run = "su john -c 'bwrap --ro-bind / / --unshare-all --dev /dev --proc /proc id -un' 2>&1", stdout_contains = "john" },
 ]
 timeout_secs = 120

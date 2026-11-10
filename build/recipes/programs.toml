@@ -85,3 +85,18 @@ make -j$NPROC CFLAGS="-O2"
 install -Dm755 hostname $DEST$PREFIX/bin/hostname
 '''
 smoke = ["bin/hostname --version"]
+
+[[package]]
+id = "bubblewrap"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libcap"]
+sources = [{ url = "https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz" }]
+script = '''
+# The sandbox every build runs in, and `run` and `shell` in a checkout.
+meson setup /build/b --prefix=$PREFIX --buildtype=release -D man=disabled -D selinux=disabled \
+    -D tests=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/bwrap --version"]
