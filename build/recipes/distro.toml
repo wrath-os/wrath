@@ -5,7 +5,7 @@ id = "distro"
 scope = "runtime"
 core = true
 extra_deps = ["rust-bin"]
-crates = "../Cargo.lock"
+crates = "Cargo.lock"
 sources = [{ url = "tree:..", include = ["Cargo.toml", "Cargo.lock", "crates", "modules"] }]
 script = '''
 # Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.

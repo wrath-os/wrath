@@ -1,0 +1,44 @@
+# Go, and programs written in it. Go is prebuilt, taken on trust as Rust is; programs get their
+# modules from their own go.sum, which Go checks them against as it builds.
+
+[[package]]
+id = "go"
+scope = "runtime"
+core = true
+whole = true
+sources = [{ url = "https://go.dev/dl/go1.25.1.linux-amd64.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX
+cp -a . $DEST$PREFIX/
+'''
+smoke = ["bin/go version"]
+
+[[package]]
+id = "age"
+scope = "runtime"
+core = true
+extra_deps = ["go"]
+sources = [{ url = "https://github.com/FiloSottile/age/archive/v1.2.1/age-1.2.1.tar.gz" }]
+go = "go.sum"
+script = '''
+# Modules come from the proxy of files the sources were put in, and from nowhere else.
+export GOPROXY=file://$PWD/goproxy GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=0
+export GOCACHE=/build/go-cache GOMODCACHE=/build/go-modules
+go build -trimpath -ldflags "-X main.Version=v1.2.1" -o $DEST$PREFIX/bin/ ./cmd/age ./cmd/age-keygen
+'''
+smoke = ["bin/age --version", "bin/age-keygen -o /tmp/key"]
+
+[[package]]
+id = "tailscale"
+scope = "runtime"
+core = true
+extra_deps = ["go"]
+sources = [{ url = "https://github.com/tailscale/tailscale/archive/v1.86.2/tailscale-1.86.2.tar.gz" }]
+go = "go.sum"
+script = '''
+export GOPROXY=file://$PWD/goproxy GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=0
+export GOCACHE=/build/go-cache GOMODCACHE=/build/go-modules
+version="-X tailscale.com/version.longStamp=1.86.2 -X tailscale.com/version.shortStamp=1.86.2"
+go build -trimpath -ldflags "$version" -o $DEST$PREFIX/bin/ ./cmd/tailscale ./cmd/tailscaled
+'''
+smoke = ["bin/tailscale version", "bin/tailscaled --version"]

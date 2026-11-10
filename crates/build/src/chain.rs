@@ -174,6 +174,9 @@ struct Source {
     /// The hash the file must have, when the recipe knows it, such as a crate's from a
     /// `Cargo.lock`. Otherwise `sources.lock` pins it.
     sha256: Option<String>,
+    /// Put the file in place at `into` as it is, instead of unpacking it.
+    #[serde(default)]
+    file: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -197,9 +200,12 @@ pub(crate) struct Package {
     extra_deps: Vec<DepSpec>,
     #[serde(default)]
     sources: Vec<Source>,
-    /// A `Cargo.lock`, relative to the repository, whose registry crates are added to `sources`,
-    /// each under `vendor/` and checked against the lock's hash.
+    /// A `Cargo.lock` in the first source, whose registry crates are added to the sources, each
+    /// under `vendor/` and checked against the lock's hash.
     crates: Option<String>,
+    /// A `go.sum` in the first source, whose modules are added to the sources as a proxy of files
+    /// under `goproxy/`, which Go checks against the `go.sum` as it builds.
+    go: Option<String>,
     #[serde(default)]
     files: Vec<String>,
     script: String,
@@ -328,6 +334,7 @@ impl Package {
             extra_deps,
             sources: Vec::new(),
             crates: None,
+            go: None,
             files: Vec::new(),
             script,
             wrap: true,
@@ -664,23 +671,91 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
     let path = repository.join("recipes").join(recipes);
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     let parsed: Recipes = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut packages = parsed.package;
-    for package in &mut packages {
-        let Some(lock) = &package.crates else {
-            continue;
-        };
-        let lock = repository.join(lock);
-        let text = fs::read_to_string(&lock).map_err(with_path(&lock))?;
-        package
-            .sources
-            .extend(crate::cargo::crates(&text)?.into_iter().map(|c| Source {
-                url: c.url(),
-                into: Some(format!("vendor/{}-{}", c.name, c.version)),
-                include: Vec::new(),
-                sha256: Some(c.checksum),
-            }));
+    Ok(parsed.package)
+}
+
+/// Fetches `package`'s sources, and then those the locks in its first source list: a project's
+/// own lock says what it depends on, so a recipe names the lock instead of copying it.
+fn fetch_all(
+    sources: &mut Sources,
+    lab: &Lab,
+    package: &Package,
+) -> Result<Vec<(Source, PathBuf, String)>, String> {
+    let mut fetched = Vec::new();
+    for source in &package.sources {
+        let (path, hash) = sources.fetch_source(lab, source)?;
+        fetched.push((source.clone(), path, hash));
     }
-    Ok(packages)
+    let locked = locked_sources(package, fetched.first().map(|(_, path, _)| path.as_path()))?;
+    for source in locked {
+        let (path, hash) = sources.fetch_source(lab, &source)?;
+        fetched.push((source, path, hash));
+    }
+    Ok(fetched)
+}
+
+/// The sources `package`'s locks list, read from its first source, `first`.
+fn locked_sources(package: &Package, first: Option<&Path>) -> Result<Vec<Source>, String> {
+    let read = |lock: &str| {
+        let first = first.ok_or_else(|| format!("`{}` names a lock but no source", package.id))?;
+        read_in(first, lock)
+    };
+    let mut locked = Vec::new();
+    if let Some(lock) = &package.crates {
+        locked.extend(
+            crate::cargo::crates(&read(lock)?)?
+                .into_iter()
+                .map(|c| Source {
+                    url: c.url(),
+                    into: Some(format!("vendor/{}-{}", c.name, c.version)),
+                    include: Vec::new(),
+                    sha256: Some(c.checksum),
+                    file: false,
+                }),
+        );
+    }
+    if let Some(lock) = &package.go {
+        locked.extend(
+            crate::go::module_files(&read(lock)?)
+                .into_iter()
+                .map(|m| Source {
+                    url: m.url,
+                    into: Some(m.into),
+                    include: Vec::new(),
+                    sha256: None,
+                    file: true,
+                }),
+        );
+    }
+    Ok(locked)
+}
+
+/// The text of `relative`, a path inside the source archive at `archive`, under its top directory.
+fn read_in(archive: &Path, relative: &str) -> Result<String, String> {
+    let listing = Command::new("tar")
+        .arg("-tf")
+        .arg(archive)
+        .output()
+        .map_err(|e| format!("tar: {e}"))?;
+    let listing = String::from_utf8_lossy(&listing.stdout);
+    let top = listing
+        .lines()
+        .next()
+        .and_then(|first| first.split('/').next())
+        .ok_or_else(|| format!("{} is empty", archive.display()))?;
+    let output = Command::new("tar")
+        .arg("-xOf")
+        .arg(archive)
+        .arg(format!("{top}/{relative}"))
+        .output()
+        .map_err(|e| format!("tar: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "the source has no `{relative}`: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout).map_err(|_| format!("`{relative}` isn't text"))
 }
 
 /// Whether a package's arm matters: those built once for every arm share a path.
@@ -904,11 +979,8 @@ pub fn unresolved_keys(
     let mut keys = BTreeMap::from([("seed".to_owned(), seed.hash().to_owned())]);
     for file in recipes {
         for package in load(repository, file)? {
-            let mut hashes = Vec::new();
-            for source in &package.sources {
-                hashes.push(sources.fetch_source(&lab, source)?.1);
-            }
-            let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
+            let fetched = fetch_all(&mut sources, &lab, &package)?;
+            let hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
             let recipe = recipe_parts(repository, &package, arm, &hashes)?;
             let deps = package.all_deps()?;
             if let Some(dep) = deps.iter().rfind(|dep| !keys.contains_key(&dep.id)) {
@@ -947,11 +1019,7 @@ pub(crate) fn build_one(
         closure.extend(built.closures[&dep.id].iter().cloned());
     }
 
-    let mut fetched = Vec::new();
-    for source in &package.sources {
-        let (path, hash) = sources.fetch_source(lab, source)?;
-        fetched.push((source, path, hash));
-    }
+    let fetched = fetch_all(sources, lab, package)?;
     let source_hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
     let recipe = recipe_parts(repository, package, arm, &source_hashes)?;
     let out = package_key("build", &recipe, &deps, |dep| built.reference(&dep.id));
@@ -1008,6 +1076,12 @@ pub(crate) fn build_one(
             Some(into) => src.join(into),
             None => src.clone(),
         };
+        if source.file {
+            let parent = target.parent().unwrap_or(&src);
+            fs::create_dir_all(parent).map_err(with_path(parent))?;
+            fs::copy(path, &target).map_err(with_path(path))?;
+            continue;
+        }
         fs::create_dir_all(&target).map_err(with_path(&target))?;
         run_host(
             Command::new("tar")
@@ -1471,25 +1545,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 "#;
 
-    fn repository(recipe: &str) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("build/recipes")).unwrap();
-        fs::write(dir.path().join("Cargo.lock"), LOCK).unwrap();
-        fs::write(dir.path().join("build/recipes/app.toml"), recipe).unwrap();
-        dir
+    /// A source archive with a lock in its top directory, as a release tarball has.
+    fn archive(dir: &Path, files: &[(&str, &str)]) -> PathBuf {
+        let top = dir.join("project-1.0");
+        fs::create_dir_all(&top).unwrap();
+        for (name, text) in files {
+            fs::write(top.join(name), text).unwrap();
+        }
+        let archive = dir.join("project-1.0.tar");
+        let status = Command::new("tar")
+            .arg("-cf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(dir)
+            .arg("project-1.0")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        archive
+    }
+
+    fn package(fields: &str) -> Package {
+        let recipe =
+            format!("[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\n{fields}");
+        toml::from_str::<Recipes>(&recipe)
+            .unwrap()
+            .package
+            .remove(0)
     }
 
     #[test]
-    fn a_recipe_takes_each_registry_crate_of_a_cargo_lock_pinned_by_its_checksum() {
-        let dir = repository(
-            "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\n\
-             crates = \"../Cargo.lock\"\n",
-        );
-        let packages = load(&dir.path().join("build"), "app.toml").unwrap();
-        let sources: Vec<(&str, Option<&str>, Option<&str>)> = packages[0]
-            .sources
+    fn a_recipe_takes_each_crate_of_the_cargo_lock_in_its_source_pinned_by_its_checksum() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive(dir.path(), &[("Cargo.lock", LOCK)]);
+        let locked = locked_sources(&package("crates = \"Cargo.lock\"\n"), Some(&archive)).unwrap();
+        let sources: Vec<(&str, Option<&str>, Option<&str>, bool)> = locked
             .iter()
-            .map(|s| (s.url.as_str(), s.into.as_deref(), s.sha256.as_deref()))
+            .map(|s| {
+                (
+                    s.url.as_str(),
+                    s.into.as_deref(),
+                    s.sha256.as_deref(),
+                    s.file,
+                )
+            })
             .collect();
         assert_eq!(
             sources,
@@ -1497,8 +1596,33 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
                 "https://static.crates.io/crates/itoa/itoa-1.0.15.crate",
                 Some("vendor/itoa-1.0.15"),
                 Some("4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"),
+                false,
             )]
         );
+    }
+
+    #[test]
+    fn a_recipe_takes_each_module_of_the_go_sum_in_its_source_as_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let go_sum = "filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5=\n";
+        let archive = archive(dir.path(), &[("go.sum", go_sum)]);
+        let locked = locked_sources(&package("go = \"go.sum\"\n"), Some(&archive)).unwrap();
+        assert_eq!(locked.len(), 1);
+        assert_eq!(
+            locked[0].into.as_deref(),
+            Some("goproxy/filippo.io/edwards25519/@v/v1.1.0.mod")
+        );
+        assert!(locked[0].file);
+    }
+
+    #[test]
+    fn a_lock_the_source_doesnt_have_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive(dir.path(), &[("README", "")]);
+        let error = locked_sources(&package("go = \"go.sum\"\n"), Some(&archive)).unwrap_err();
+        assert!(error.contains("no `go.sum`"), "{error}");
+        let error = locked_sources(&package("go = \"go.sum\"\n"), None).unwrap_err();
+        assert!(error.contains("no source"), "{error}");
     }
 
     #[test]
@@ -1513,6 +1637,7 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
             into: None,
             include: Vec::new(),
             sha256: Some("00".repeat(32)),
+            file: false,
         };
         let error = sources.fetch_source(&lab, &source).unwrap_err();
         assert!(error.contains(&"00".repeat(32)), "{error}");
@@ -1532,6 +1657,7 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
             into: None,
             include: Vec::new(),
             sha256: None,
+            file: false,
         }
     }
 

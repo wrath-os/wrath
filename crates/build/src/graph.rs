@@ -1455,13 +1455,14 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 /// The recipe files systems are built from, in `recipes/`.
-pub const SYSTEM_RECIPES: [&str; 9] = [
+pub const SYSTEM_RECIPES: [&str; 10] = [
     "pilot.toml",
     "full.toml",
     "storage.toml",
     "boot.toml",
     "e2e.toml",
     "services.toml",
+    "go.toml",
     "network.toml",
     "rust.toml",
     "distro.toml",
