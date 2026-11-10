@@ -101,6 +101,9 @@ enum Command {
         /// A kernel option for an image's boot entry, instead of the screen and serial consoles
         #[arg(long = "kernel-option")]
         kernel_options: Vec<String>,
+        /// Put the configuration in the image's /etc/distro, so distro on it can plan
+        #[arg(long)]
+        with_configuration: bool,
     },
     /// Show the system's generations
     History,
@@ -369,6 +372,7 @@ fn main() -> ExitCode {
         Command::Build {
             target,
             kernel_options,
+            with_configuration,
         } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => {
                 use generations::BuildTarget as T;
@@ -377,7 +381,8 @@ fn main() -> ExitCode {
                     generations::build_generation(root, &model, test)?
                 } else if let T::Image | T::TestImage = target {
                     let test = matches!(target, T::TestImage);
-                    generations::build_image(root, &model, &kernel_options, test)?
+                    let keep = with_configuration.then_some(config.as_path());
+                    generations::build_image(root, keep, &model, &kernel_options, test)?
                 } else if is_home(&config) {
                     generations::build(root, &model, backend::Target::Home)?
                 } else {
@@ -803,6 +808,14 @@ fn under_root(root: &Path, path: &Path) -> PathBuf {
         .unwrap_or(joined)
 }
 
+/// The directory with distro's own files for the binary at `exe`: the checkout it was built in,
+/// or the `share/distro` beside it in the store.
+fn files_beside(exe: &Path) -> Option<PathBuf> {
+    exe.ancestors()
+        .flat_map(|dir| [dir.to_path_buf(), dir.join("share/distro")])
+        .find(|dir| dir.join("modules").is_dir())
+}
+
 /// Reruns a failed scenario against the image of the failed run and reports whether it fails
 /// with the same reason.
 fn reproduce(scenario: &Scenario, failure: &distro_check::Failure, ctx: &RunContext) -> String {
@@ -850,7 +863,7 @@ fn evaluate(config: &Path, modules: &Path) -> Option<Evaluation> {
 
 fn evaluate_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Evaluation> {
     system::evaluate_dir(config, modules, system::ModuleOrder::Sorted, role)
-        .inspect_err(|errors| eprint!("{errors}"))
+        .inspect_err(|errors| eprint!("{}", ending_a_line(errors)))
         .ok()
 }
 
@@ -932,7 +945,7 @@ fn lock(
 ) -> Result<ExitCode, String> {
     if is_project(config) && project::has_local(config) {
         let shared = system::evaluate_shared(config, modules)
-            .inspect_err(|errors| eprint!("{errors}"))
+            .inspect_err(|errors| eprint!("{}", ending_a_line(errors)))
             .ok()
             .and_then(|evaluation| with_lock(config, Model::from_evaluation(&evaluation)));
         let (Some(shared), Some(mut model)) = (shared, model(config, modules)) else {
@@ -1034,7 +1047,7 @@ fn why(config: &Path, modules: &Path, thing: Option<&str>) -> Result<ExitCode, S
     Ok(ExitCode::SUCCESS)
 }
 
-/// Where distro's own files are: `factory/nix` and `modules`, and in a checkout `acceptance` too.
+/// Where distro's own files are: `modules`, and in a checkout `build` and `acceptance` too.
 /// It's `--root`, else `$DISTRO_ROOT`, else the checkout the running binary was built in or the
 /// copy an installed binary keeps in `share/distro`, else the current directory. Inside that
 /// checkout it's `.`, so paths in messages stay short.
@@ -1042,11 +1055,10 @@ fn find_root(given: Option<PathBuf>, from_env: Option<PathBuf>) -> PathBuf {
     if let Some(root) = given.or(from_env) {
         return root;
     }
-    let Some(checkout) = std::env::current_exe().ok().and_then(|exe| {
-        exe.ancestors()
-            .flat_map(|dir| [dir.to_path_buf(), dir.join("share/distro")])
-            .find(|dir| dir.join("factory/nix/flake.nix").is_file())
-    }) else {
+    let Some(checkout) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| files_beside(&exe))
+    else {
         return PathBuf::from(".");
     };
     let here = std::env::current_dir()
@@ -1118,4 +1130,48 @@ fn print_serde(value: &serde_json::Value) -> Result<ExitCode, String> {
     let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     println!("{text}");
     Ok(ExitCode::SUCCESS)
+}
+
+/// `text` ending in a newline, so the shell's prompt starts on a line of its own after it.
+fn ending_a_line(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.ends_with('\n') {
+        text.into()
+    } else {
+        format!("{text}\n").into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_binary_in_the_store_finds_the_modules_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = dir.path().join("store/abc");
+        fs::create_dir_all(package.join("bin")).unwrap();
+        fs::create_dir_all(package.join("share/distro/modules")).unwrap();
+        assert_eq!(
+            files_beside(&package.join("bin/distro")),
+            Some(package.join("share/distro"))
+        );
+    }
+
+    #[test]
+    fn a_binary_built_in_a_checkout_finds_the_checkouts_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("distro");
+        fs::create_dir_all(checkout.join("target/release")).unwrap();
+        fs::create_dir_all(checkout.join("modules")).unwrap();
+        assert_eq!(
+            files_beside(&checkout.join("target/release/distro")),
+            Some(checkout)
+        );
+    }
+
+    #[test]
+    fn an_error_ends_its_line() {
+        assert_eq!(ending_a_line("no modules"), "no modules\n");
+        assert_eq!(ending_a_line("two\nlines\n"), "two\nlines\n");
+    }
 }

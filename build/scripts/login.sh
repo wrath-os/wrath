@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Boots an image the way the Framework Desktop would see a USB stick (see vm.sh). Logs in on the
 # serial port as a user with a password from the configuration, writes to their home, becomes
-# root through sudo, and saves a picture of the screen.
+# root through sudo, checks that distro on it sees it runs its configuration, and saves a picture
+# of the screen.
 set -euo pipefail
 
 configuration=${CONFIGURATION:-scenarios/fixtures/native-password}
@@ -26,8 +27,9 @@ if wait_for "login: " 180; then
         send 'echo written > ~/probe && echo "HOME-WRITE $(cat ~/probe)"'
         send 'echo "MOUNTS $(findmnt -no SOURCE,OPTIONS /home)"'
         send "printf '%s\\n' '$password' | sudo -S -p '' id -un | sed 's/^/SUDO-AS /'"
+        send 'distro status 2>&1 | grep -q "it matches the configuration" && echo STATUS-MATCHES'
         if wait_for "HOME-WRITE written" 20 && wait_for "MOUNTS " 10 \
-            && wait_for "SUDO-AS root" 20; then
+            && wait_for "SUDO-AS root" 20 && wait_for "STATUS-MATCHES" 30; then
             result=passed
         fi
     fi
@@ -36,7 +38,7 @@ screendump "$work/screen.png"
 vm_stop
 plain_log \
     | grep -aE -e 'INITRD|login:|LOGIN|HOME-WRITE|MOUNTS|SUDO-AS' \
-        -e 'sudo:|wrappers:|Login incorrect|FAILED' \
+        -e 'sudo:|wrappers:|Login incorrect|FAILED|STATUS-|distro:' \
     | cut -c1-200
 echo "login $result"
 [[ $result == passed ]]

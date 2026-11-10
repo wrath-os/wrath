@@ -20,10 +20,12 @@ const ESP_MIB: u64 = 256;
 const ROOM_MIB: u64 = 2048;
 
 /// Makes `out` a disk image that boots `generation`, with `options` added to the kernel's own,
-/// such as where its console is. `work` holds what's put together on the way.
+/// such as where its console is, and, when given, the `configuration` it was built from in
+/// `/etc/distro`, so distro on it can plan. `work` holds what's put together on the way.
 pub fn image(
     lab: &Lab,
     generation: &StorePath,
+    configuration: Option<&Path>,
     options: &str,
     work: &Path,
     out: &Path,
@@ -32,6 +34,9 @@ pub fn image(
     let root = work.join("root");
     let esp = work.join("esp");
     root_tree(lab, generation, &root)?;
+    if let Some(configuration) = configuration {
+        keep_configuration(configuration, &root)?;
+    }
     esp_tree(lab, generation, options, &esp)?;
 
     let esp_image = work.join("esp.img");
@@ -64,6 +69,24 @@ pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), S
         "bin", "etc", "dev", "proc", "sys", "run", "tmp", "var/lib", "root", "home", "srv",
     ] {
         fs::create_dir_all(root.join(dir)).map_err(with_path(root))?;
+    }
+    Ok(())
+}
+
+/// Copies `configuration` into the root as the system's own, in `/etc/distro`, leaving out what
+/// was built or written in it, such as a VCS's files.
+pub fn keep_configuration(configuration: &Path, root: &Path) -> Result<(), String> {
+    let to = root.join("etc/distro");
+    fs::create_dir_all(&to).map_err(with_path(&to))?;
+    run(
+        Command::new("cp")
+            .args(["-r", "--no-preserve=ownership"])
+            .arg(configuration.join("."))
+            .arg(&to),
+        "copying the configuration",
+    )?;
+    for vcs in [".git", ".jj"] {
+        crate::chain::remove(&to.join(vcs))?;
     }
     Ok(())
 }
@@ -275,6 +298,25 @@ mod tests {
         );
         assert!(root.join("var/lib").is_dir());
         assert!(!root.join("usr").exists());
+    }
+
+    #[test]
+    fn the_root_keeps_the_configuration_without_its_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let configuration = dir.path().join("config");
+        fs::create_dir_all(configuration.join("users")).unwrap();
+        fs::create_dir_all(configuration.join(".jj/repo")).unwrap();
+        fs::write(configuration.join("system.toml"), "[system]\n").unwrap();
+        fs::write(configuration.join("users/demo.toml"), "\n").unwrap();
+        let root = dir.path().join("root");
+        keep_configuration(&configuration, &root).unwrap();
+        let etc = root.join("etc/distro");
+        assert_eq!(
+            fs::read_to_string(etc.join("system.toml")).unwrap(),
+            "[system]\n"
+        );
+        assert!(etc.join("users/demo.toml").is_file());
+        assert!(!etc.join(".jj").exists());
     }
 
     #[test]

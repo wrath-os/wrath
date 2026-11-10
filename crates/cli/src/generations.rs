@@ -121,9 +121,11 @@ fn add_test_layer(model: &mut serde_json::Value) {
 const IMAGE_OPTIONS: &str = "distro.rescue console=ttyS0,115200 console=tty0";
 
 /// Builds `model` into a generation and a disk image that boots it, with `options` added to the
-/// kernel's own, and returns where the image is: in `build/work/images`, named by the generation.
+/// kernel's own and, when given, `config`, the configuration it's from, as the system's own.
+/// Returns where the image is: in `build/work/images`, named by the generation.
 pub fn build_image(
     root: &Path,
+    config: Option<&Path>,
     model: &Model,
     options: &[String],
     test: bool,
@@ -147,6 +149,7 @@ pub fn build_image(
     distro_build::image::image(
         &distro_build::store::Lab::new(&work),
         &distro_build::store::StorePath::from_hash(&name),
+        config,
         &options,
         &work.join("image"),
         &out,
