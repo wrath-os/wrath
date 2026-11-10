@@ -302,7 +302,6 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     }
     // A root on disk still has /etc from the system it last ran, whose files may have gone since.
     let old = fs::read_link(root.join(ETC_LINK))
-        .or_else(|_| fs::read_link(root.join("etc/static")))
         .ok()
         .and_then(|etc| etc.parent().map(Path::to_path_buf));
     switch_etc(root, old.as_deref(), system)?;
