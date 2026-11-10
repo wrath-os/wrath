@@ -29,6 +29,10 @@ scripts/config --enable PCI --enable BLK_DEV_NVME --enable USB_SUPPORT --enable 
     --enable DRM_FBDEV_EMULATION --enable SYSFB_SIMPLEFB --enable FB --enable FRAMEBUFFER_CONSOLE \
     --enable FAT_FS --enable VFAT_FS --enable NLS_CODEPAGE_437 --enable NLS_ISO8859_1 \
     --enable EFI_PARTITION --enable R8169 --enable REALTEK_PHY --disable DRM_AMDGPU --disable DRM_RADEON
+# The VM tests talk to their agent over vsock. Install encrypts disks, unlocked by passphrase or TPM.
+scripts/config --enable VSOCKETS --enable VIRTIO_VSOCKETS --enable MD --enable BLK_DEV_DM \
+    --enable DM_CRYPT --enable CRYPTO_XTS --enable CRYPTO_AES_NI_INTEL --enable TCG_TPM \
+    --enable TCG_TIS --enable TCG_CRB
 make olddefconfig
 make -j$NPROC bzImage modules
 mkdir -p $DEST$PREFIX /build/tools

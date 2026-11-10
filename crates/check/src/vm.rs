@@ -6,6 +6,7 @@
 //! directory with a copy-on-write overlay of the disk, writable UEFI variables, an optional
 //! software TPM, logs, and a script that boots the same VM interactively.
 
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -16,6 +17,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use distro_agent::{Client, Request, Response};
+use distro_build::chain;
+use distro_build::store::{Lab, StorePath};
 use serde::Deserialize;
 use vsock::VsockStream;
 
@@ -257,6 +260,9 @@ pub enum Store {
     /// The host's store, mounted read-only with the kernel booted directly. For systems too
     /// large to copy into an image.
     Host,
+    /// A disk image from distro's own store, booted with UEFI. Later systems are copied in from
+    /// the host's store, which the guest sees read-only at `/run/distro-store`.
+    Distro,
 }
 
 impl Store {
@@ -269,6 +275,7 @@ impl Store {
                     .into(),
             ),
             Self::Host => Ok(("test-vm", "test-vm-system")),
+            Self::Distro => Ok(("test-image", "test-generation")),
         }
     }
 }
@@ -282,11 +289,15 @@ pub enum Boot {
     Kernel,
     /// What `distro install` put on the VM's blank disks, with UEFI.
     Installed,
+    /// A raw disk image file, booted with UEFI.
+    Image,
 }
 
 impl Boot {
     pub fn of(image: &Path) -> Result<Self, String> {
-        if image.join("disk.qcow2").is_file() {
+        if image.is_file() {
+            Ok(Self::Image)
+        } else if image.join("disk.qcow2").is_file() {
             Ok(Self::Disk)
         } else if image.join("kernel").is_file() {
             Ok(Self::Kernel)
@@ -489,9 +500,12 @@ impl VmRun<'_> {
             }
         }
         if boot != Boot::Kernel {
-            let backing = self.image.join("disk.qcow2");
+            let (backing, format) = match boot {
+                Boot::Image => (self.image.to_path_buf(), "raw"),
+                _ => (self.image.join("disk.qcow2"), "qcow2"),
+            };
             let status = Command::new("qemu-img")
-                .args(["create", "-q", "-f", "qcow2", "-F", "qcow2", "-b"])
+                .args(["create", "-q", "-f", "qcow2", "-F", format, "-b"])
                 .arg(&backing)
                 .arg(self.dir.join("disk.qcow2"))
                 .status()
@@ -565,7 +579,7 @@ impl VmRun<'_> {
         .map(str::to_owned)
         .into();
         match boot {
-            Boot::Disk => {
+            Boot::Disk | Boot::Image => {
                 argv.extend([
                     "-m".into(),
                     "2048".into(),
@@ -573,6 +587,16 @@ impl VmRun<'_> {
                     "if=virtio,format=qcow2,file=disk.qcow2".into(),
                 ]);
                 argv.extend(uefi_drives(firmware));
+                if boot == Boot::Image {
+                    let store = self.host.store()?;
+                    argv.extend([
+                        "-virtfs".into(),
+                        format!(
+                            "local,path={},mount_tag=distro-store,security_model=none,readonly=on",
+                            store.display()
+                        ),
+                    ]);
+                }
             }
             Boot::Installed => {
                 // The console takes input, so a passphrase can be typed at it.
@@ -854,11 +878,23 @@ impl VmRun<'_> {
             ));
         }
         let (_, target) = self.spec.store.targets()?;
-        let system = self
+        let built = self
             .host
             .distro(&["build", "--config", config, "--target", target])?;
-        let system = system.trim();
-        self.copy_in(agent, system, deadline)?;
+        let built = built.trim();
+        let system = if self.spec.store == Store::Distro {
+            let name = Path::new(built)
+                .file_name()
+                .ok_or("a generation has a name")?
+                .to_string_lossy()
+                .into_owned();
+            self.copy_from_store(agent, &name, deadline)?;
+            format!("/store/{name}")
+        } else {
+            self.copy_in(agent, built, deadline)?;
+            built.to_owned()
+        };
+        let system = system.as_str();
         let switch = match try_for {
             Some(duration) => argv(&["distro", "try", "--for", duration, system]),
             None => argv(&["distro", "apply", system]),
@@ -1067,6 +1103,29 @@ impl VmRun<'_> {
         )
     }
 
+    /// Copies generation `name` and what it needs from the host's store into the guest's, where
+    /// it lacks them.
+    fn copy_from_store(
+        &self,
+        agent: &mut Client<VsockStream>,
+        name: &str,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let lab = Lab::new(self.host.work());
+        let generation = StorePath::from_hash(name);
+        let closure = chain::runtime_closure(&lab, &generation)?;
+        let hashes: Vec<&str> = closure.iter().map(|path| path.hash()).collect();
+        let (_, have, _) = run_shell(agent, argv(&["ls", "/store"]), deadline)?;
+        let Some(copy) = copy_command(&have, &hashes) else {
+            return Ok(());
+        };
+        let (code, _, stderr) = run_shell(agent, argv(&["/bin/sh", "-c", &copy]), deadline)?;
+        if code != Some(0) {
+            return Err(format!("copying into the VM failed: {}", stderr.trim()));
+        }
+        Ok(())
+    }
+
     /// Copies the store paths of `system` that the guest lacks into the guest's store, as an
     /// export in the share. The guest already has everything else they refer to.
     fn copy_in(
@@ -1102,6 +1161,11 @@ impl VmRun<'_> {
         let (export, import) = match self.spec.store {
             Store::Image => ("--export", "--import"),
             Store::Host => ("--dump-db", "--load-db"),
+            Store::Distro => {
+                return Err(
+                    "homes and builds in the guest don't work with `store = \"distro\"` yet".into(),
+                );
+            }
         };
         let file =
             fs::File::create(self.dir.join(SHARE).join(EXPORT)).map_err(io_err("the export"))?;
@@ -1120,7 +1184,34 @@ impl VmRun<'_> {
     }
 }
 
+/// The command that copies the paths of `closure` the guest lacks, as `ls /store` there says,
+/// from the host's store into its own, or `None` when it has them all.
+fn copy_command(have: &str, closure: &[&str]) -> Option<String> {
+    let have: BTreeSet<&str> = have.lines().collect();
+    let missing: Vec<String> = closure
+        .iter()
+        .filter(|hash| !have.contains(*hash))
+        .map(|hash| format!("{GUEST_STORE}/{hash}"))
+        .collect();
+    (!missing.is_empty()).then(|| format!("cp -a {} /store/", missing.join(" ")))
+}
+
+/// Where the guest sees the host's store, from distro's own builder.
+const GUEST_STORE: &str = "/run/distro-store";
+
 impl Host<'_> {
+    /// Where distro's own builder keeps its store on the host.
+    fn work(&self) -> PathBuf {
+        self.workdir.join("build/work")
+    }
+
+    fn store(&self) -> Result<PathBuf, String> {
+        let store = self.work().join("store");
+        store
+            .canonicalize()
+            .map_err(|e| format!("{}: {e}", store.display()))
+    }
+
     /// Runs `distro` on the host and returns its output.
     fn distro(&self, args: &[&str]) -> Result<String, String> {
         host_command(
@@ -1464,6 +1555,35 @@ mod tests {
 
         fs::write(dir.path().join("disk.qcow2"), "").unwrap();
         assert_eq!(Boot::of(dir.path()), Ok(Boot::Disk));
+    }
+
+    #[test]
+    fn a_config_scenario_can_boot_an_image_from_distros_own_store() {
+        let spec = spec("config = \"x\"\nstore = \"distro\"\n").unwrap();
+        assert_eq!(spec.store, Store::Distro);
+        assert_eq!(
+            Store::Distro.targets(),
+            Ok(("test-image", "test-generation"))
+        );
+    }
+
+    #[test]
+    fn a_disk_image_file_boots_as_a_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("system.img");
+        fs::write(&image, "").unwrap();
+        assert_eq!(Boot::of(&image), Ok(Boot::Image));
+    }
+
+    #[test]
+    fn a_system_in_distros_store_is_copied_in_by_what_the_guest_lacks() {
+        let have = "aaa\nbbb\n";
+        let closure = ["aaa", "ccc", "bbb", "ddd"];
+        assert_eq!(
+            copy_command(have, &closure),
+            Some("cp -a /run/distro-store/ccc /run/distro-store/ddd /store/".to_owned())
+        );
+        assert_eq!(copy_command("aaa\nccc\nbbb\nddd\n", &closure), None);
     }
 
     fn spec_err(text: &str) -> String {

@@ -583,6 +583,7 @@ name = "distro-check"
 version = "0.0.0"
 dependencies = [
  "distro-agent",
+ "distro-build",
  "insta",
  "serde",
  "serde_json",

@@ -371,10 +371,13 @@ fn main() -> ExitCode {
             kernel_options,
         } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => {
-                let path = if matches!(target, generations::BuildTarget::Generation) {
-                    generations::build_generation(root, &model)?
-                } else if matches!(target, generations::BuildTarget::Image) {
-                    generations::build_image(root, &model, &kernel_options)?
+                use generations::BuildTarget as T;
+                let path = if let T::Generation | T::TestGeneration = target {
+                    let test = matches!(target, T::TestGeneration);
+                    generations::build_generation(root, &model, test)?
+                } else if let T::Image | T::TestImage = target {
+                    let test = matches!(target, T::TestImage);
+                    generations::build_image(root, &model, &kernel_options, test)?
                 } else if is_home(&config) {
                     generations::build(root, &model, backend::Target::Home)?
                 } else {

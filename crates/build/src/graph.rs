@@ -552,14 +552,6 @@ fn lower<'a>(
         )?,
         text(
             base,
-            "etc/systemd/system/report.service",
-            0o644,
-            REPORT_UNIT.into(),
-            &[],
-            packages,
-        )?,
-        text(
-            base,
             "init",
             0o755,
             INIT.into(),
@@ -606,7 +598,6 @@ fn lower<'a>(
             &[],
             packages,
         )?,
-        text(base, "report", 0o755, REPORT.into(), &["bash"], packages)?,
         links(
             "packages",
             lab,
@@ -658,7 +649,7 @@ fn lower<'a>(
     for (name, unit) in model["units"].as_object().ok_or("the model has no units")? {
         actions.push(unit_action(lab, name, unit, named.clone(), packages)?);
     }
-    let (enabled, unfound) = enabled_units(lab, model, &named, packages)?;
+    let (enabled, unfound) = enabled_units(lab, model, &everything, packages)?;
     actions.push(enabled);
     actions.push(boot_files(lab, packages)?);
     Ok(Lowered {
@@ -673,12 +664,13 @@ fn lower<'a>(
 fn enabled_units<'a>(
     lab: &'a Lab,
     model: &'a Value,
-    named: &[&'a str],
+    present: &[&'a str],
     packages: &'a Packages,
 ) -> Result<(Action<'a>, Vec<String>), String> {
+    // systemd's and dbus's own units first, then those of every other package the system has.
     let base = ["systemd", "dbus"];
     let mut ids: Vec<&'a str> = base.to_vec();
-    ids.extend(named.iter().filter(|id| !base.contains(id)));
+    ids.extend(present.iter().filter(|id| !base.contains(id)));
     let mut links = BTreeMap::new();
     let mut missing = Vec::new();
     for (unit, targets) in model["enabled"].as_object().into_iter().flatten() {
@@ -687,9 +679,9 @@ fn enabled_units<'a>(
             let path = &packages.get(*id)?.path;
             let host = lab.on_host(path).join(&file);
             host.is_file()
-                .then(|| (host, format!("{}/{file}", path.inside())))
+                .then(|| (*id, host, format!("{}/{file}", path.inside())))
         });
-        let Some((host, inside)) = found else {
+        let Some((id, host, inside)) = found else {
             missing.push(unit.clone());
             continue;
         };
@@ -708,6 +700,11 @@ fn enabled_units<'a>(
                 format!("etc/systemd/system/{target}.wants/{unit}"),
                 inside.clone(),
             );
+        }
+        // systemd finds a wanted unit by its name on its search path, which has its own units and
+        // dbus's already.
+        if !base.contains(&id) {
+            links.insert(format!("etc/systemd/system/{unit}"), inside);
         }
     }
     let (unresolved, resolved) = action_records(
@@ -868,9 +865,34 @@ fn boot_files<'a>(lab: &'a Lab, packages: &'a Packages) -> Result<Action<'a>, St
     })
 }
 
+/// What the UEFI boot test adds to its systems: a service that reports how each boot went, on the
+/// serial port, switches live on the first one, and powers off.
+fn report_actions(packages: &Packages) -> Result<Vec<Action<'_>>, String> {
+    let origin = "e2e";
+    Ok(vec![
+        text(
+            origin,
+            "etc/systemd/system/report.service",
+            0o644,
+            REPORT_UNIT.into(),
+            &[],
+            packages,
+        )?,
+        text(origin, "report", 0o755, REPORT.into(), &["bash"], packages)?,
+        links_to(
+            origin,
+            &[(
+                "etc/systemd/system/multi-user.target.wants/report.service",
+                "../report.service",
+            )],
+            packages,
+        )?,
+    ])
+}
+
 /// Links every system has, where `@systemd@` stands for systemd's path. They're part of the
 /// action's key, so changing one changes the action.
-const FIXED_LINKS: [(&str, &str); 6] = [
+const FIXED_LINKS: [(&str, &str); 5] = [
     // distro starts systemd from here at boot.
     ("systemd", "@systemd@"),
     (
@@ -886,10 +908,6 @@ const FIXED_LINKS: [(&str, &str); 6] = [
         "etc/systemd/system/systemd-update-done.service",
         "/dev/null",
     ),
-    (
-        "etc/systemd/system/multi-user.target.wants/report.service",
-        "../report.service",
-    ),
     // A login prompt on the screen.
     (
         "etc/systemd/system/getty.target.wants/getty@tty1.service",
@@ -898,17 +916,27 @@ const FIXED_LINKS: [(&str, &str); 6] = [
 ];
 
 fn fixed_links(packages: &Packages) -> Result<Action<'_>, String> {
+    links_to("base", &FIXED_LINKS, packages)
+}
+
+/// Links, each from a path in the generation to a target where `@systemd@` stands for systemd's
+/// path. They're part of the action's key.
+fn links_to<'a>(
+    origin: &str,
+    links: &'static [(&'static str, &'static str)],
+    packages: &'a Packages,
+) -> Result<Action<'a>, String> {
     let (unresolved, resolved) = action_records(
         &["systemd"],
         packages,
-        |deps| json!({"kind": "fixed-links", "links": FIXED_LINKS, "deps": deps}),
+        |deps| json!({"kind": "fixed-links", "links": links, "deps": deps}),
     )?;
     Ok(Action {
-        origin: "base".to_owned(),
+        origin: origin.to_owned(),
         unresolved,
         resolved,
         run: Box::new(move |_| {
-            FIXED_LINKS
+            links
                 .iter()
                 .map(|(path, target)| {
                     let target = fill(target, &["systemd"], packages)?;
@@ -1247,12 +1275,16 @@ fn system_from(
     model: &Value,
     kept: &Kept,
     inputs: Option<&Value>,
+    report: bool,
 ) -> Result<System, String> {
     let Lowered {
-        actions,
+        mut actions,
         skipped,
         unfound,
     } = lower(lab, model, kept, packages)?;
+    if report {
+        actions.extend(report_actions(packages)?);
+    }
     let outcome = realise(lab, db, actions)?;
     let apply = match inputs {
         Some(inputs) => Some(record_apply(lab, db, model, &outcome, inputs)?),
@@ -1280,7 +1312,15 @@ pub fn system(
     let (built, ..) = pilot::build_recipes(&lab, repository, &SYSTEM_RECIPES, Arm::F)?;
     let mut db = Db::open(&db_path(&lab))?;
     record_packages(&mut db, &built)?;
-    system_from(&lab, &mut db, &known_packages(&built), model, kept, inputs)
+    system_from(
+        &lab,
+        &mut db,
+        &known_packages(&built),
+        model,
+        kept,
+        inputs,
+        false,
+    )
 }
 
 /// Lowers `model` and realises it. Prints the generation and how long each part took.
@@ -1309,7 +1349,15 @@ pub fn run(
 
     let start = Instant::now();
     let kept = Kept::plain(&model);
-    let system = system_from(lab, &mut db, &packages, &model, &kept, inputs.as_ref())?;
+    let system = system_from(
+        lab,
+        &mut db,
+        &packages,
+        &model,
+        &kept,
+        inputs.as_ref(),
+        true,
+    )?;
     let realised = elapsed_ms(start);
     let skipped: Vec<&str> = system
         .skipped
@@ -1671,8 +1719,16 @@ mod tests {
         let mut model = model(80, false);
         model["packages"] = json!(["web", "missing"]);
 
-        let built =
-            system_from(&lab, &mut db, &packages, &model, &Kept::plain(&model), None).unwrap();
+        let built = system_from(
+            &lab,
+            &mut db,
+            &packages,
+            &model,
+            &Kept::plain(&model),
+            None,
+            false,
+        )
+        .unwrap();
         assert_eq!(built.skipped, ["missing"]);
         assert_eq!(built.apply, None);
         assert_eq!(
@@ -1689,6 +1745,7 @@ mod tests {
             &model,
             &Kept::plain(&model),
             Some(&inputs),
+            false,
         )
         .unwrap();
         assert_eq!(again.generation, built.generation);
@@ -1799,6 +1856,32 @@ mod tests {
         assert_eq!(recipe_for("web.bin", known), Some("web"));
         assert_eq!(recipe_for("web", known), Some("web"));
         assert_eq!(recipe_for("polkit", known), None);
+    }
+
+    #[test]
+    fn a_unit_from_a_package_every_system_has_can_be_enabled() {
+        let (_dir, lab, packages) = setup();
+        let units = lab
+            .on_host(&packages["distro"].path)
+            .join("lib/systemd/system");
+        fs::create_dir_all(&units).unwrap();
+        fs::write(units.join("distro-agent.service"), "[Service]\n").unwrap();
+        let mut model = model(80, false);
+        model["enabled"] = json!({"distro-agent.service": ["multi-user.target"]});
+        let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
+        assert!(lowered.unfound.is_empty(), "{:?}", lowered.unfound);
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realise(&lab, &mut db, lowered.actions).unwrap();
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let wants = root.join("etc/systemd/system/multi-user.target.wants/distro-agent.service");
+        assert!(fs::symlink_metadata(wants).is_ok());
+        // systemd finds a wanted unit by its name, on its own search path.
+        let unit = fs::read_link(root.join("etc/systemd/system/distro-agent.service")).unwrap();
+        let distro = packages["distro"].path.inside();
+        assert_eq!(
+            unit,
+            Path::new(&format!("{distro}/lib/systemd/system/distro-agent.service"))
+        );
     }
 
     #[test]

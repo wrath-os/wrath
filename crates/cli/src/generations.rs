@@ -23,6 +23,10 @@ pub enum BuildTarget {
     Generation,
     /// A disk image that boots the generation, to write to a USB stick or boot in a VM
     Image,
+    /// The generation with what the VM tests drive it through
+    TestGeneration,
+    /// A disk image of the test generation, for the VM tests
+    TestImage,
 }
 
 impl TryFrom<BuildTarget> for Target {
@@ -34,7 +38,10 @@ impl TryFrom<BuildTarget> for Target {
             BuildTarget::TestVmSystem => Ok(Self::TestVmSystem),
             BuildTarget::TestVm => Ok(Self::TestVm),
             BuildTarget::TestInstalledSystem => Ok(Self::TestInstalledSystem),
-            BuildTarget::Generation | BuildTarget::Image => {
+            BuildTarget::Generation
+            | BuildTarget::Image
+            | BuildTarget::TestGeneration
+            | BuildTarget::TestImage => {
                 Err("a generation is built by `distro build --target generation`".to_owned())
             }
         }
@@ -43,7 +50,7 @@ impl TryFrom<BuildTarget> for Target {
 
 /// Builds `model` into a generation with distro's own builder, from the recipes in `build/` under
 /// `root`, and returns where it is. Packages without a recipe are left out, with a warning.
-pub fn build_generation(root: &Path, model: &Model) -> Result<PathBuf, String> {
+pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBuf, String> {
     let repository = root
         .join("build")
         .canonicalize()
@@ -52,7 +59,10 @@ pub fn build_generation(root: &Path, model: &Model) -> Result<PathBuf, String> {
         text: model.canonical(),
         hash: model.hash(),
     };
-    let model = serde_json::from_str(&kept.text).map_err(|e| e.to_string())?;
+    let mut model = serde_json::from_str(&kept.text).map_err(|e| e.to_string())?;
+    if test {
+        add_test_layer(&mut model);
+    }
     let system = distro_build::graph::system(&repository, &model, &kept, None)?;
     for package in &system.skipped {
         eprintln!("warning: there's no recipe for `{package}` yet, so the system goes without it");
@@ -63,14 +73,62 @@ pub fn build_generation(root: &Path, model: &Model) -> Result<PathBuf, String> {
     Ok(system.path)
 }
 
+/// What a test system adds so the VM harness can drive it: the agent on vsock, the harness's
+/// share and the host's store over 9p, which the kernel has built in, and the console on the
+/// serial port. Only the system has these; the model it keeps is the configuration's own, so
+/// plans and switches don't see them.
+fn add_test_layer(model: &mut serde_json::Value) {
+    use serde_json::json;
+    model["enabled"]["distro-agent.service"] = json!(["multi-user.target"]);
+    for param in ["console=ttyS0", "systemd.journald.forward_to_console=1"] {
+        if let Some(params) = model["base"]["boot"]["kernel_params"].as_array_mut() {
+            params.push(json!(param));
+        } else {
+            model["base"]["boot"]["kernel_params"] = json!([param]);
+        }
+    }
+    for (unit, tag, at) in [
+        (
+            "run-distro\\x2dshare.mount",
+            "distro-share",
+            "/run/distro-share",
+        ),
+        (
+            "run-distro\\x2dstore.mount",
+            "distro-store",
+            "/run/distro-store",
+        ),
+    ] {
+        model["units"][unit] = json!({"sections": [
+            {"name": "Unit", "entries": [
+                ["Description", format!("The harness's {tag}")],
+                ["DefaultDependencies", "no"],
+                ["Before", "local-fs.target"],
+            ]},
+            {"name": "Mount", "entries": [
+                ["What", tag],
+                ["Where", at],
+                ["Type", "9p"],
+                ["Options", "trans=virtio,version=9p2000.L,msize=1048576,ro,nofail"],
+            ]},
+            {"name": "Install", "entries": [["WantedBy", "local-fs.target"]]},
+        ]});
+    }
+}
+
 /// The kernel options an image gets when it's given none: a shell when the initrd can't find the
 /// root, and the console on the screen with the serial port as well.
 const IMAGE_OPTIONS: &str = "distro.rescue console=ttyS0,115200 console=tty0";
 
 /// Builds `model` into a generation and a disk image that boots it, with `options` added to the
 /// kernel's own, and returns where the image is: in `build/work/images`, named by the generation.
-pub fn build_image(root: &Path, model: &Model, options: &[String]) -> Result<PathBuf, String> {
-    let generation = build_generation(root, model)?;
+pub fn build_image(
+    root: &Path,
+    model: &Model,
+    options: &[String],
+    test: bool,
+) -> Result<PathBuf, String> {
+    let generation = build_generation(root, model, test)?;
     let name = generation
         .file_name()
         .ok_or("a generation has a name")?
@@ -80,7 +138,8 @@ pub fn build_image(root: &Path, model: &Model, options: &[String]) -> Result<Pat
     let images = work.join("images");
     std::fs::create_dir_all(&images).map_err(|e| format!("{}: {e}", images.display()))?;
     let out = images.join(format!("{name}.img"));
-    let options = if options.is_empty() {
+    // A test system has its console on the serial port, where the harness reads it.
+    let options = if options.is_empty() && !test {
         IMAGE_OPTIONS.to_owned()
     } else {
         options.join(" ")
@@ -724,6 +783,47 @@ fn factory(root: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_test_system_adds_the_agent_the_shares_and_a_serial_console() {
+        let mut model = serde_json::json!({
+            "base": {"boot": {"kernel_params": ["quiet"]}},
+            "enabled": {"sshd.service": []},
+            "files": {},
+            "units": {},
+        });
+        add_test_layer(&mut model);
+        assert_eq!(
+            model["enabled"]["distro-agent.service"],
+            serde_json::json!(["multi-user.target"])
+        );
+        assert_eq!(model["enabled"]["sshd.service"], serde_json::json!([]));
+        let params = &model["base"]["boot"]["kernel_params"];
+        assert_eq!(params[0], "quiet");
+        assert!(
+            params
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("console=ttyS0"))
+        );
+        for (unit, tag, at) in [
+            (
+                "run-distro\\x2dshare.mount",
+                "distro-share",
+                "/run/distro-share",
+            ),
+            (
+                "run-distro\\x2dstore.mount",
+                "distro-store",
+                "/run/distro-store",
+            ),
+        ] {
+            let text = model["units"][unit].to_string();
+            assert!(text.contains(&format!("\"What\",\"{tag}\"")), "{text}");
+            assert!(text.contains(&format!("\"Where\",\"{at}\"")), "{text}");
+            assert!(text.contains("\"WantedBy\",\"local-fs.target\""), "{text}");
+        }
+    }
 
     #[test]
     fn only_nix_targets_map_to_the_nix_backend() {
