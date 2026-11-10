@@ -1,7 +1,8 @@
-title = "A plain NixOS image boots under QEMU with UEFI and a TPM, and the guest agent answers"
+title = "A minimal system boots under QEMU with UEFI and a TPM, and the guest agent answers"
 
 [vm]
-image = "factory/nix#harness-fixture"
+config = "fixtures/configs/native"
+store = "distro"
 firmware = "uefi"
 tpm = true
 wait_for = ["agent", "unit:multi-user.target"]

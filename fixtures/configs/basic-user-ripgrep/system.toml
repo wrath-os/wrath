@@ -1,0 +1,4 @@
+packages = ["curl"]
+
+[system]
+hostname = "box"

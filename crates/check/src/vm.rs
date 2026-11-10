@@ -128,7 +128,8 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 16] = [
+pub const STEP_FIELDS: [&str; 17] = [
+    "run_as",
     "apply_config",
     "prepare_build",
     "target",
@@ -165,6 +166,7 @@ struct RawStep {
     expect_plan: Vec<String>,
     try_for: Option<String>,
     run: Option<String>,
+    run_as: Option<String>,
     #[serde(default)]
     exit: i32,
     stdout_contains: Option<String>,
@@ -208,14 +210,18 @@ impl TryFrom<RawStep> for Step {
                 try_for: raw.try_for,
             }),
             (None, Some(run), None) if !apply_fields => Ok(Self::Run(Expect {
-                run,
+                run: match raw.run_as {
+                    // As the user, through su, which root runs without a password.
+                    Some(user) => format!("su {user} -c '{}'", run.replace('\'', "'\\''")),
+                    None => run,
+                },
                 exit: raw.exit,
                 stdout_contains: raw.stdout_contains,
             })),
             (None, None, Some(true)) if !run_fields && !apply_fields => Ok(Self::ExpectNoReboot),
             _ => Err(
                 "a step is one of `apply_config` (with `expect_plan` and `try_for`), `run` (with \
-                 `exit` and `stdout_contains`) or `expect_no_reboot = true`"
+                 `run_as`, `exit` and `stdout_contains`) or `expect_no_reboot = true`"
                     .into(),
             ),
         }
@@ -1451,6 +1457,23 @@ mod tests {
                 }),
                 Step::ExpectNoReboot,
             ]
+        );
+    }
+
+    #[test]
+    fn a_command_can_run_as_a_user() {
+        let spec = spec(
+            "config = \"c\"\n\
+             steps = [{ run_as = \"demo\", run = \"echo 'hi'\", stdout_contains = \"hi\" }]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            spec.steps,
+            [Step::Run(Expect {
+                run: "su demo -c 'echo '\\''hi'\\'''".into(),
+                exit: 0,
+                stdout_contains: Some("hi".into()),
+            })]
         );
     }
 

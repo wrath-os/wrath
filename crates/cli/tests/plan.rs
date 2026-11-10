@@ -69,7 +69,7 @@ fn why_names_the_file_and_line() {
     services.nginx.main.sites.blog.domains = ["blog.example.com", "box.lan"]
       set at fixtures/configs/basic/services/web.toml:6:11
       overrides [], default
-      uses system.hostname = "box", set at fixtures/configs/basic/system.toml:2:12
+      uses system.hostname = "box", set at fixtures/configs/basic/system.toml:4:12
     services.nginx.main.sites.blog.root = "/srv/blog"
       set at fixtures/configs/basic/services/web.toml:7:8
     "#);

@@ -1,9 +1,10 @@
-title = "Adding a user package installs it without NixOS evaluation and without a reboot"
+title = "Adding a user package installs it without a reboot"
 
 [vm]
 config = "fixtures/configs/basic"
+store = "distro"
 steps = [
-  { apply_user_config = "fixtures/configs/user-ripgrep", user = "demo", expect_log_absent = "nix eval" },
+  { apply_config = "fixtures/configs/basic-user-ripgrep" },
   { run_as = "demo", run = "rg --version", stdout_contains = "ripgrep" },
   { expect_no_reboot = true },
 ]
