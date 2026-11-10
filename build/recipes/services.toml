@@ -1,0 +1,53 @@
+# Services every system has beyond systemd and dbus: polkit, which decides what unprivileged
+# programs may ask of privileged ones, and the network tools in the base system.
+
+[[package]]
+id = "duktape"
+scope = "runtime"
+core = true
+sources = [{ url = "https://duktape.org/duktape-2.7.0.tar.xz" }]
+script = '''
+# A small JavaScript engine, which polkit runs its rules in.
+make -f Makefile.sharedlibrary -j$NPROC INSTALL_PREFIX=$PREFIX
+make -f Makefile.sharedlibrary install INSTALL_PREFIX=$DEST$PREFIX
+sed -i "s#$DEST##g" $DEST$PREFIX/lib/pkgconfig/duktape.pc 2>/dev/null || true
+'''
+probes = ["duktape"]
+
+[[package]]
+id = "polkit"
+scope = "runtime"
+core = true
+extra_deps = [
+    "meson", "ninja", "pkgconf", "glib", "pcre2", "libffi", "zlib", "expat", "duktape", "linux-pam",
+    "systemd", "gettext", "util-linux", "perl",
+    "python3",
+]
+sources = [{ url = "https://github.com/polkit-org/polkit/archive/127/polkit-127.tar.gz" }]
+script = '''
+# It asks systemd where sysusers and tmpfiles entries go, which is systemd's own store path.
+sed -i "s#systemd_dep.get_variable(pkgconfig : 'sysusers_dir')#'$PREFIX/lib/sysusers.d'#; \
+    s#systemd_dep.get_variable(pkgconfig : 'tmpfiles_dir')#'$PREFIX/lib/tmpfiles.d'#" meson.build
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release --sysconfdir=/etc \
+    -D authfw=pam -D session_tracking=logind -D introspection=false \
+    -D man=false -D examples=false -D tests=false -D gtk_doc=false \
+    -D systemdsystemunitdir=$PREFIX/lib/systemd/system -D polkitd_user=polkitd \
+    -D privileged_group=wheel
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/pkexec --version", "bin/pkaction --version"]
+
+[[package]]
+id = "iputils"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libcap"]
+sources = [{ url = "https://github.com/iputils/iputils/archive/20250605/iputils-20250605.tar.gz" }]
+script = '''
+meson setup /build/b --prefix=$PREFIX --sbindir=bin --buildtype=release -D BUILD_MANS=false \
+    -D USE_IDN=false -D USE_GETTEXT=false -D SKIP_TESTS=true
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/ping -V"]

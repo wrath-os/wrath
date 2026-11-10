@@ -61,7 +61,13 @@ let
       };
   moduleTree = pkgs.aggregateModules [ (lib.getOutput "modules" linux) ];
 
-  packages = [ distro ] ++ map package input.packages ++ sum "packages";
+  packages = [
+    distro
+  ]
+  ++ map package input.packages
+  # nixpkgs keeps su in an output of its own, which distro's shadow has in it.
+  ++ lib.optional (lib.elem "shadow" input.packages) pkgs.shadow.su
+  ++ sum "packages";
   sw = pkgs.buildEnv {
     name = "system-path";
     paths = packages;

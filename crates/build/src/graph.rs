@@ -278,7 +278,6 @@ const BASE_PACKAGES: &[&str] = &[
     "bc",
     "coreutils",
     "dbus",
-    "device-mapper",
     "diffutils",
     "distro",
     "findutils",
@@ -532,6 +531,21 @@ fn lower<'a>(
     };
 
     let base = "base";
+    // Packages whose units, udev rules, D-Bus services and the like join the system, not only
+    // their programs: systemd and dbus, then those the model names.
+    let mut services: Vec<&'a str> = vec!["systemd", "dbus"];
+    for value in model["service_packages"].as_array().into_iter().flatten() {
+        if let Some(name) = value.as_str()
+            && packages.contains_key(name)
+            && !services.contains(&name)
+        {
+            services.push(name);
+        }
+    }
+    let dbus_services: String = services
+        .iter()
+        .map(|id| format!("<servicedir>@{id}@/share/dbus-1/system-services</servicedir>"))
+        .collect();
     let hostname = str_field(&model["base"]["system"]["hostname"], "hostname")?;
     let (passwd, group, shadow) = account_files(model)?;
     let mut actions = vec![
@@ -566,10 +580,8 @@ fn lower<'a>(
             base,
             "etc/dbus-1/system.d/services.conf",
             0o644,
-            "<busconfig><servicedir>@systemd@/share/dbus-1/system-services</servicedir>\
-             </busconfig>\n"
-                .into(),
-            &["systemd"],
+            format!("<busconfig>{dbus_services}</busconfig>\n"),
+            &services,
             packages,
         )?,
         text(
@@ -640,17 +652,12 @@ fn lower<'a>(
             ],
             packages,
         )?,
+        links(base, lab, services.clone(), system_layout(), packages)?,
+        // systemd finds its own units; the others' join the system's.
         links(
-            base,
+            "services",
             lab,
-            vec!["systemd", "dbus", "device-mapper"],
-            system_layout(),
-            packages,
-        )?,
-        links(
-            "base.dbus",
-            lab,
-            vec!["dbus"],
+            services[1..].to_vec(),
             vec![("lib/systemd/system", "etc/systemd/system")],
             packages,
         )?,
@@ -1448,12 +1455,13 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 /// The recipe files systems are built from, in `recipes/`.
-pub const SYSTEM_RECIPES: [&str; 8] = [
+pub const SYSTEM_RECIPES: [&str; 9] = [
     "pilot.toml",
     "full.toml",
     "storage.toml",
     "boot.toml",
     "e2e.toml",
+    "services.toml",
     "network.toml",
     "rust.toml",
     "distro.toml",
@@ -2224,17 +2232,30 @@ mod tests {
     }
 
     #[test]
-    fn every_system_has_device_mappers_udev_rules() {
+    fn a_service_packages_units_rules_and_dbus_services_join_the_system() {
         let (_dir, lab, packages) = setup();
-        let rules = lab
-            .on_host(&packages["device-mapper"].path)
-            .join("lib/udev/rules.d");
-        fs::create_dir_all(&rules).unwrap();
-        fs::write(rules.join("95-dm-notify.rules"), "").unwrap();
+        let web = lab.on_host(&packages["web"].path);
+        for (dir, file) in [
+            ("lib/udev/rules.d", "95-web.rules"),
+            ("lib/systemd/system", "web-helper.service"),
+        ] {
+            fs::create_dir_all(web.join(dir)).unwrap();
+            fs::write(web.join(dir).join(file), "").unwrap();
+        }
+        let mut model = model(80, false);
+        model["service_packages"] = json!(["web"]);
         let mut db = Db::open(&db_path(&lab)).unwrap();
-        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let outcome = realised(&lab, &mut db, &packages, &model);
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
-        assert!(fs::symlink_metadata(root.join("etc/udev/rules.d/95-dm-notify.rules")).is_ok());
+        let linked = |path: &str| fs::symlink_metadata(root.join(path)).is_ok();
+        assert!(linked("etc/udev/rules.d/95-web.rules"));
+        assert!(linked("etc/systemd/system/web-helper.service"));
+        let conf = fs::read_to_string(root.join("etc/dbus-1/system.d/services.conf")).unwrap();
+        let web = packages["web"].path.inside();
+        assert!(
+            conf.contains(&format!("{web}/share/dbus-1/system-services")),
+            "{conf}"
+        );
     }
 
     #[test]

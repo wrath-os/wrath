@@ -14,6 +14,7 @@ let
     dejavu-fonts = "dejavu_fonts";
     linux = "linuxPackages";
     linux-latest = "linuxPackages_latest";
+    device-mapper = "lvm2";
   };
   attrIn =
     source: set: attr:

@@ -86,7 +86,7 @@ fn full(lab: &Lab, arm: &str) -> Result<(), String> {
 }
 
 const SPREAD_RECIPES: [&str; 3] = ["toolchain.toml", "pilot.toml", "full.toml"];
-const BOOT_RECIPES: [&str; 8] = distro_build::graph::SYSTEM_RECIPES;
+const BOOT_RECIPES: [&str; 9] = distro_build::graph::SYSTEM_RECIPES;
 
 fn parse_counts(first: &str, second: &str) -> Result<(usize, usize), String> {
     let parse = |text: &str| text.parse::<usize>().map_err(|e| e.to_string());
