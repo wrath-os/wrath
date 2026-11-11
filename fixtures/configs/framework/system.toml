@@ -33,3 +33,7 @@ enable = true
 
 [desktop]
 session = "niri"
+
+# Programs downloaded for other distributions run, finding their libraries through /lib64.
+[programs.foreign]
+enable = true
