@@ -38,7 +38,9 @@ const ACCOUNTS: [&str; 3] = ["passwd", "group", "shadow"];
 pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
     match mode {
         Mode::Boot => boot_entries(root),
-        Mode::Switch => switch(root, system).and_then(|()| boot_entries(root)),
+        // The entries come first, so a switch that fails partway, such as on a unit that needs the
+        // new kernel, still boots into the new generation next time.
+        Mode::Switch => boot_entries(root).and_then(|()| switch(root, system)),
         Mode::Test => switch(root, system),
         Mode::Init => init(system),
         Mode::Install => {
@@ -761,6 +763,18 @@ mod tests {
             .unwrap();
         }
         symlink(format!("generations/{current}"), root.join(CURRENT)).unwrap();
+    }
+
+    #[test]
+    fn a_switch_that_fails_partway_still_leaves_the_generation_bootable() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        store_machine(root, &[(1, "aaa"), (2, "bbb")], 2);
+        fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
+        // The new system has no activation record, so switching to it fails before any unit.
+        let system = root.join("store/bbb");
+        assert!(activate(&system, Mode::Switch, root).is_err());
+        assert!(root.join("boot/loader/entries/distro-2+3.conf").exists());
     }
 
     #[test]
