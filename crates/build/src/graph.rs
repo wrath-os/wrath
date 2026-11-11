@@ -1448,9 +1448,10 @@ fn initrd_files(
     files
 }
 
-/// A modprobe deny-list of every module in `tree` that `wanted` doesn't need, for the initrd.
-/// Its udev would otherwise load a driver for each device it finds, before the root, and the
-/// firmware they read from it, is there. Loading a module by name, as for `wanted`, still works.
+/// A modprobe deny-list for the initrd: the modules in `tree` that read firmware and `wanted`
+/// doesn't need. Its udev would otherwise load them for devices it finds before the root, which
+/// holds the firmware, is mounted. Other drivers, such as the root disk's, still load for their
+/// devices, and loading a module by name, as for `wanted`, still works.
 fn initrd_deny_list(tree: &Path, wanted: &[String]) -> String {
     let name = |path: &str| {
         let file = path.rsplit('/').next().unwrap_or_default();
@@ -1460,11 +1461,17 @@ fn initrd_deny_list(tree: &Path, wanted: &[String]) -> String {
             .replace('-', "_")
     };
     let mut deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut firmware = BTreeSet::new();
     for version in fs::read_dir(tree).into_iter().flatten().flatten() {
-        let text = fs::read_to_string(version.path().join("modules.dep")).unwrap_or_default();
+        let dir = version.path();
+        let text = fs::read_to_string(dir.join("modules.dep")).unwrap_or_default();
         for line in text.lines() {
-            let (module, needs) = line.split_once(':').unwrap_or((line, ""));
-            deps.insert(name(module), needs.split_whitespace().map(name).collect());
+            let (path, needs) = line.split_once(':').unwrap_or((line, ""));
+            let module = name(path);
+            if reads_firmware(&dir.join(path)) {
+                firmware.insert(module.clone());
+            }
+            deps.insert(module, needs.split_whitespace().map(name).collect());
         }
     }
     let mut needed = BTreeSet::new();
@@ -1474,10 +1481,17 @@ fn initrd_deny_list(tree: &Path, wanted: &[String]) -> String {
             pending.extend(deps.get(&module).into_iter().flatten().cloned());
         }
     }
-    deps.keys()
+    firmware
+        .iter()
         .filter(|module| !needed.contains(*module))
         .map(|module| format!("blacklist {module}\n"))
         .collect()
+}
+
+/// Whether the module at `path` names firmware it loads, as a `firmware=` entry of its modinfo.
+/// Compressed modules aren't read, and count as not reading any.
+fn reads_firmware(path: &Path) -> bool {
+    fs::read(path).is_ok_and(|bytes| bytes.windows(10).any(|w| w == b"\0firmware="))
 }
 
 /// The modules of `wanted` that the kernel whose modules are in `tree` has, as a module or built
@@ -2182,7 +2196,9 @@ fn variants(recipes: &[chain::Package], model: &Value) -> Result<Vec<chain::Pack
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
                 .collect();
-            recipe.variant(name, &options, &patches)
+            recipe
+                .variant(name, &options, &patches)
+                .map_err(|e| format!("`builds.{name}.options`: {e}"))
         })
         .collect()
 }
@@ -3048,22 +3064,30 @@ mod tests {
     }
 
     #[test]
-    fn the_initrd_keeps_every_module_it_doesnt_need_from_loading_until_the_root() {
+    fn the_initrd_keeps_drivers_that_read_firmware_from_loading_until_the_root() {
         let dir = tempfile::tempdir().unwrap();
         let version = dir.path().join("7.3.4");
-        fs::create_dir_all(&version).unwrap();
-        fs::write(
-            version.join("modules.dep"),
-            "kernel/drivers/md/dm-crypt.ko: kernel/drivers/md/dm-mod.ko\n\
-             kernel/drivers/md/dm-mod.ko:\n\
-             kernel/drivers/block/virtio_blk.ko:\n\
-             kernel/net/wireless/cfg80211.ko:\n\
-             kernel/drivers/net/wireless/mediatek/mt76/mt7925/mt7925e.ko: \
-             kernel/net/wireless/cfg80211.ko\n",
-        )
-        .unwrap();
-        let wanted = ["dm_crypt", "virtio_blk"].map(String::from);
-        // Firmware is on the root, so a driver that wants some loads once the root is there.
+        let modules = [
+            ("kernel/drivers/md/dm-mod.ko", ""),
+            ("kernel/drivers/block/virtio_blk.ko", ""),
+            ("kernel/drivers/block/nvme.ko", ""),
+            ("kernel/net/wireless/cfg80211.ko", "firmware=regulatory.db"),
+            (
+                "kernel/drivers/net/wireless/mt7925e.ko",
+                "firmware=mt7925.bin",
+            ),
+            ("kernel/drivers/scsi/qla2xxx.ko", "firmware=ql2500_fw.bin"),
+        ];
+        let mut dep = String::new();
+        for (path, info) in modules {
+            let file = version.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, format!("\x7fELF\0license=GPL\0{info}\0")).unwrap();
+            dep.push_str(&format!("{path}:\n"));
+        }
+        fs::write(version.join("modules.dep"), dep).unwrap();
+        // The root's disk can need a driver nobody named, which udev finds for its device.
+        let wanted = ["dm_mod", "qla2xxx"].map(String::from);
         assert_eq!(
             initrd_deny_list(dir.path(), &wanted),
             "blacklist cfg80211\nblacklist mt7925e\n"
