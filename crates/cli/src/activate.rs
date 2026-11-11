@@ -9,7 +9,6 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use distro_build::graph::BOOT_SPEC;
 use distro_eval::Unit;
 use distro_model::{Activation, Model};
 
@@ -81,7 +80,7 @@ fn boot_entries(root: &Path) -> Result<(), String> {
         let system = inside(root, &link);
         let boot = Boot::of(&system)?;
         let mut files = Vec::new();
-        for path in std::iter::once(&boot.kernel).chain(&boot.initrds) {
+        for path in [&boot.kernel, &boot.initrd] {
             // Named after the store path, so a kernel shared by generations is copied once.
             let name = path
                 .strip_prefix("/store")
@@ -194,53 +193,29 @@ fn counted_entry(entries: &Path, number: u32) -> Result<Option<String>, String> 
     Ok(None)
 }
 
-/// What boots a generation, from its `boot.json`.
+/// What boots a generation, from its `kernel` and `initrd` links, its `kernel-params` and its
+/// `initrd-secrets`.
 #[derive(Debug, PartialEq)]
 struct Boot {
     kernel: PathBuf,
-    initrds: Vec<PathBuf>,
+    initrd: PathBuf,
     params: Vec<String>,
     /// Files on the machine that go in an initrd of their own.
     secrets: Vec<String>,
 }
 
 impl Boot {
-    /// A generation's boot description. One built before generations had `boot.json` gets the
-    /// same from its `kernel` and `initrd` links and its `kernel-params` and `initrd-secrets`.
     fn of(system: &Path) -> Result<Self, String> {
         let at = |name: &str| system.join(name);
         let error = |name: &str| {
             let path = at(name);
             move |e: io::Error| format!("{}: {e}", path.display())
         };
-        let json = at("boot.json");
-        if let Ok(text) = fs::read_to_string(&json) {
-            let document: serde_json::Value =
-                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", json.display()))?;
-            let spec = &document[BOOT_SPEC];
-            let strings = |field: &str| -> Vec<String> {
-                spec[field]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|item| item.as_str().map(str::to_owned))
-                    .collect()
-            };
-            let kernel = spec["kernel"]
-                .as_str()
-                .ok_or_else(|| format!("{} has no `{BOOT_SPEC}` kernel", json.display()))?;
-            return Ok(Self {
-                kernel: PathBuf::from(kernel),
-                initrds: strings("initrds").into_iter().map(PathBuf::from).collect(),
-                params: strings("kernel_params"),
-                secrets: strings("initrd_secrets"),
-            });
-        }
         let params = fs::read_to_string(at("kernel-params")).map_err(error("kernel-params"))?;
         let secrets = fs::read_to_string(at("initrd-secrets")).unwrap_or_default();
         Ok(Self {
             kernel: fs::read_link(at("kernel")).map_err(error("kernel"))?,
-            initrds: vec![fs::read_link(at("initrd")).map_err(error("initrd"))?],
+            initrd: fs::read_link(at("initrd")).map_err(error("initrd"))?,
             params: params.split_whitespace().map(str::to_owned).collect(),
             secrets: secrets
                 .lines()
@@ -808,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn a_generation_boots_as_its_boot_json_says_and_an_older_one_as_its_files_say() {
+    fn a_generation_boots_as_its_files_say() {
         let work = tempfile::tempdir().unwrap();
         let system = work.path();
         symlink("/store/old/bzImage", system.join("kernel")).unwrap();
@@ -816,22 +791,19 @@ mod tests {
         fs::write(system.join("kernel-params"), "quiet rw\n").unwrap();
         let old = Boot::of(system).unwrap();
         assert_eq!(old.kernel, Path::new("/store/old/bzImage"));
-        assert_eq!(old.initrds, [Path::new("/store/old/initrd")]);
+        assert_eq!(old.initrd, Path::new("/store/old/initrd"));
         assert_eq!(old.params, ["quiet", "rw"]);
         assert!(old.secrets.is_empty());
 
-        let spec = serde_json::json!({BOOT_SPEC: {
-            "kernel": "/store/k/bzImage",
-            "initrds": ["/store/i/initrd", "/store/j/initrd"],
-            "kernel_params": ["loglevel=3"],
-            "initrd_secrets": ["/etc/ssh/initrd_ed25519_key"],
-        }});
-        fs::write(system.join("boot.json"), spec.to_string()).unwrap();
-        let new = Boot::of(system).unwrap();
-        assert_eq!(new.kernel, Path::new("/store/k/bzImage"));
-        assert_eq!(new.initrds.len(), 2);
-        assert_eq!(new.params, ["loglevel=3"]);
-        assert_eq!(new.secrets, ["/etc/ssh/initrd_ed25519_key"]);
+        fs::write(
+            system.join("initrd-secrets"),
+            "/etc/ssh/initrd_ed25519_key\n\n",
+        )
+        .unwrap();
+        assert_eq!(
+            Boot::of(system).unwrap().secrets,
+            ["/etc/ssh/initrd_ed25519_key"]
+        );
     }
 
     #[test]

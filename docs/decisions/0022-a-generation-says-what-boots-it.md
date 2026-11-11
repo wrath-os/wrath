@@ -1,6 +1,6 @@
 # 0022: A generation says what boots it
 
-Status: accepted, 2026-11-11.
+Status: superseded by 0024, 2026-11-11.
 
 ## Context
 
