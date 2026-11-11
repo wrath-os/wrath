@@ -307,12 +307,10 @@ pub(crate) struct Package {
     /// What a build can set, which its script reads as `OPTION_<name>`, by name.
     #[serde(default)]
     options: BTreeMap<String, RecipeOption>,
-    /// The build style that makes its script, when it has none: named here, or found from the
-    /// files at the top of its first source (decision 0025).
-    #[serde(default)]
-    build: Option<String>,
-    /// The options it gives its style, in a table named after the style, such as
-    /// `[package.cargo]`. Any other field is an error when the recipe loads.
+    /// The build style that makes its script, when it has none, and the options it gives it: a
+    /// table named after the style, such as `[package.cargo]`, empty when it gives none. Without
+    /// one, the files at the top of its first source pick the style (decision 0025). Any other
+    /// field is an error when the recipe loads.
     #[serde(flatten)]
     style_options: BTreeMap<String, toml::Value>,
     /// Whether a style makes its script, decided when it loads.
@@ -587,7 +585,6 @@ impl Package {
             sources: Vec::new(),
             files: Vec::new(),
             options: BTreeMap::new(),
-            build: None,
             style_options: BTreeMap::new(),
             styled: false,
             script,
@@ -1232,12 +1229,6 @@ impl Package {
                     self.id
                 ));
             }
-            if let Some(build) = self.build.as_ref().filter(|build| *build != name) {
-                return Err(format!(
-                    "`{}` builds with the {build} style, so `[package.{name}]` doesn't apply",
-                    self.id
-                ));
-            }
         }
         if self.style_options.len() > 1 {
             return Err(format!(
@@ -1245,7 +1236,7 @@ impl Package {
                 self.id
             ));
         }
-        let names_style = self.build.is_some() || !self.style_options.is_empty();
+        let names_style = !self.style_options.is_empty();
         if names_style && !self.script.is_empty() {
             return Err(format!(
                 "`{}` has a script and a build style; a style makes the script",
@@ -1264,11 +1255,7 @@ impl Package {
         top: &dyn Fn() -> Result<Vec<String>, String>,
         read: &dyn Fn(&str) -> Result<String, String>,
     ) -> Result<Self, String> {
-        let named = self
-            .build
-            .as_deref()
-            .or_else(|| self.style_options.keys().next().map(String::as_str));
-        let style = match named {
+        let style = match self.style_options.keys().next() {
             Some(name) => styles
                 .iter()
                 .find(|style| style.name() == name)
@@ -1307,7 +1294,6 @@ impl Package {
                 sha256: source.sha256,
                 file: source.file,
             }));
-        self.build = Some(style.name().to_owned());
         Ok(self)
     }
 }
@@ -1327,15 +1313,17 @@ fn found_style<'a>(id: &str, styles: &'a [Style], top: &[String]) -> Result<&'a 
             _ => {
                 let names: Vec<&str> = found.iter().map(|style| style.name()).collect();
                 return Err(format!(
-                    "`{id}`'s source has a {kind} for each of {}: name one with `build =`",
-                    names.join(" and ")
+                    "`{id}`'s source has a {kind} for each of {}: name one with its table, \
+                     such as `[package.{}]`",
+                    names.join(" and "),
+                    names[0]
                 ));
             }
         }
     }
     Err(format!(
         "`{id}` has no script, and nothing at the top of its source picks a build style: give it \
-         `build =` or a `script`"
+         a style's table, such as `[package.meson]`, or a `script`"
     ))
 }
 
@@ -3016,7 +3004,6 @@ style(name = "meson", files = ["meson.build"], build = build)
             "https://static.crates.io/crates/itoa/itoa-1.0.15.crate"
         );
         assert_eq!(package.sources[0].sha256.as_deref(), Some("abc"));
-        assert_eq!(package.build.as_deref(), Some("cargo"));
     }
 
     #[test]
@@ -3034,15 +3021,12 @@ style(name = "meson", files = ["meson.build"], build = build)
         let found = |top: &[&str]| style(recipe("").unwrap(), top).map(|p| p.script);
         assert_eq!(
             found(&["Cargo.toml", "meson.build"]).unwrap_err(),
-            "`app`'s source has a build file for each of cargo and meson: name one with `build =`"
+            "`app`'s source has a build file for each of cargo and meson: name one with its \
+             table, such as `[package.cargo]`"
         );
-        assert!(
-            found(&["Makefile"])
-                .unwrap_err()
-                .contains("give it `build =` or a `script`")
-        );
+        assert!(found(&["Makefile"]).unwrap_err().contains("or a `script`"));
         let named = style(
-            recipe("build = \"meson\"\n").unwrap(),
+            recipe("[package.meson]\n").unwrap(),
             &["Cargo.toml", "meson.build"],
         );
         assert_eq!(named.unwrap().script, "meson setup\n");
@@ -3055,14 +3039,18 @@ style(name = "meson", files = ["meson.build"], build = build)
     }
 
     #[test]
-    fn style_options_beside_a_script_or_for_another_style_are_refused() {
+    fn style_options_beside_a_script_or_for_two_styles_are_refused() {
         assert_eq!(
             recipe("script = \"make\\n\"\n[package.cargo]\nfeatures = []\n").unwrap_err(),
             "`app` has a script and a build style; a style makes the script"
         );
         assert_eq!(
-            recipe("build = \"meson\"\n[package.cargo]\nfeatures = []\n").unwrap_err(),
-            "`app` builds with the meson style, so `[package.cargo]` doesn't apply"
+            recipe("[package.meson]\n[package.cargo]\nfeatures = []\n").unwrap_err(),
+            "`app` gives options to more than one style"
+        );
+        assert_eq!(
+            recipe("build = \"meson\"\n").unwrap_err(),
+            "`app` has `build`, which is neither a recipe field nor a build style"
         );
         assert_eq!(
             recipe("[package.cmake]\nx = 1\n").unwrap_err(),
@@ -3092,7 +3080,7 @@ mod style_goldens {
     #[test]
     fn the_cargo_style_patches_in_crates_from_git_found_by_name_in_their_checkout() {
         let styles = styles(&repository()).unwrap();
-        let text = "[[package]]\nid = \"niri\"\nscope = \"runtime\"\nbuild = \"cargo\"\n";
+        let text = "[[package]]\nid = \"niri\"\nscope = \"runtime\"\n[package.cargo]\n";
         let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
         package.check_style(&styles).unwrap();
         let lock = "[[package]]\nname = \"smithay\"\nversion = \"0.7.0\"\n\

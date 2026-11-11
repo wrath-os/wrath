@@ -17,8 +17,8 @@ that every user depends on and nobody can read whole.
 
 ## Decision
 
-A recipe gets a build style, found from its source or named with `build = "meson"`, or a `.star`
-file beside it for a build of its own. A recipe with a `script` keeps it.
+A recipe gets a build style, named by a table of its options or found from its source. A recipe
+with a `script` keeps it.
 
 Finding the style:
 
@@ -26,9 +26,10 @@ Finding the style:
   is cargo, `go.sum` is go, `package-lock.json` or `pnpm-lock.yaml` is npm, `uv.lock` or
   `poetry.lock` is python, `Gemfile.lock` is ruby. Without a lock, a build file picks it:
   `meson.build`, `CMakeLists.txt`, `configure`.
-- More than one match is an error that lists what was found and asks for `build =`. A Rust
-  project with a `package-lock.json` for its docs names `build = "cargo"`. A language project
-  without its lock is an error too: styles read locks and never resolve versions.
+- More than one match is an error that lists what was found and asks for the style's table. A
+  Rust project with a `package-lock.json` for its docs has `[package.cargo]`, empty if it sets
+  nothing. A language project without its lock is an error too: styles read locks and never
+  resolve versions.
 - Every dependency's hash comes from the lock. One without a hash, as in an older
   `Gemfile.lock`, is pinned on its first fetch, as sources are.
 - What a source holds is read once per source hash and kept, as locks read from sources are now,
@@ -48,8 +49,9 @@ The shape in TOML:
   features = ["pcre2"]
   ```
 
-- A recipe that finds its style and sets nothing has no table at all. `[package.cargo]` under
-  a package whose style is meson is an error naming the style it has.
+- The table is the only way to name a style: a recipe whose source makes the choice and that
+  sets nothing has no table, and one that has to choose has the table, empty if need be. Tables
+  for two styles are an error, and so is a field that is neither the recipe's nor a style.
 - A kind of package per style, such as `[[cargo_package]]`, was rejected: the header would
   have to be written, so the style couldn't be found, and every tool reading recipes would
   have to know each kind.
