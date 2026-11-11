@@ -110,6 +110,7 @@ add4604d3bc410344433122a819ee4154b79dd8316a56298c60417e637c07608  https://github
 f280278161446fe3838bedb970c7b3998043ad107f7627735a81483218c6f6f9  https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz
 9c82cd3db386e82fba2adfe01c3d09436c9e9cfe3ca8bb341d7eb882768c58af  https://github.com/systemd/zram-generator/archive/v1.2.1/zram-generator-1.2.1.tar.gz
 9b7fe9f915744ca1448efeb88d7333b7a86df375a4623941d2e41880c51c0aec  https://github.com/tailscale/tailscale/archive/v1.86.2/tailscale-1.86.2.tar.gz
+d4aadbc1610876385a370494bbfd7d994356f446dff60cd09eea5933befb1471  https://github.com/tpm2-software/tpm2-tss/releases/download/4.2.1/tpm2-tss-4.2.1.tar.gz
 14fd1fadeb84040eb31901da2b53a48aa55b0fdaccb36d96fa52ce2d2113667f  https://github.com/tuigreet/tuigreet/archive/0.9.1/tuigreet-0.9.1.tar.gz
 0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e  https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz
 5a71ab7a48c668ef912fcfdbec046949087019f8dd7fb967445d36fbeb778350  https://github.com/vcrhonek/hwdata/archive/v0.413/hwdata-0.413.tar.gz

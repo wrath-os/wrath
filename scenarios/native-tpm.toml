@@ -1,0 +1,17 @@
+title = "a disk the TPM was enrolled for unlocks at boot without a passphrase"
+
+[vm]
+config = "scenarios/fixtures/native-state-installer"
+store = "distro"
+tpm = true
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { prepare_build = "scenarios/fixtures/native-tpm" },
+  { run = "cp -r /run/distro-share/configs/native-tpm /tmp/config && printf 'correct horse' > /tmp/passphrase && distro install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name t-01 --system $(cat /run/distro-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  # No passphrase: the boot only gets this far if the TPM unlocked the disk.
+  { boot_installed = true },
+  { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+  { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pcrs":\[[0-9,]*\]' ''', stdout_contains = '"tpm2-pcrs":[7]' },
+]
+timeout_secs = 1500

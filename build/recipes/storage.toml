@@ -127,6 +127,27 @@ smoke = ["bin/cryptsetup --version"]
 probes = ["cryptsetup"]
 
 [[package]]
+id = "tpm2-tss"
+version = "4.2.1"
+scope = "runtime"
+core = true
+extra_deps = ["openssl", "pkgconf"]
+sources = [{ url = "https://github.com/tpm2-software/tpm2-tss/releases/download/{version}/tpm2-tss-{version}.tar.gz" }]
+script = '''
+# The libraries systemd talks to the TPM through, to unlock disks with it. The feature API and
+# policy library need a JSON parser and a web client, and systemd uses neither.
+./configure --prefix=$PREFIX --disable-static --disable-fapi --disable-policy \
+    --disable-doxygen-doc --disable-unit --disable-integration --disable-tcti-libtpms \
+    --disable-tcti-spi-helper --disable-tcti-spi-ltt2go --disable-tcti-spi-ftdi --disable-tcti-i2c-helper \
+    --disable-tcti-i2c-ftdi --with-udevrulesdir=$PREFIX/lib/udev/rules.d \
+    --with-sysusersdir=$PREFIX/lib/sysusers.d --with-tmpfilesdir=$PREFIX/lib/tmpfiles.d \
+    --with-runstatedir=/run --sysconfdir=$PREFIX/etc
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+probes = ["tss2-esys", "tss2-rc", "tss2-mu", "tss2-tcti-device"]
+
+[[package]]
 id = "btrfs-progs"
 version = "6.14"
 scope = "runtime"

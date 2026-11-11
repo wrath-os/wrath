@@ -1,0 +1,15 @@
+# One encrypted disk that the TPM unlocks at boot, so nobody types a passphrase.
+[system]
+hostname = "t-01"
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest", encrypt = true }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+subvolumes."@store" = { mount = "/store" }
+
+[unlock]
+tpm2 = true
