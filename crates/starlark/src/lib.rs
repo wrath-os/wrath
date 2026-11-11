@@ -17,6 +17,7 @@
 #![allow(unsafe_code)]
 
 mod convert;
+pub mod style;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -296,6 +297,11 @@ fn strings(value: StarValue<'_>) -> anyhow::Result<Vec<String>> {
 }
 
 fn globals() -> Globals {
+    base_globals().build()
+}
+
+/// What modules and build styles both have: `option`, `types` and `formats`.
+fn base_globals() -> GlobalsBuilder {
     GlobalsBuilder::extended_by(&[
         LibraryExtension::StructType,
         LibraryExtension::Json,
@@ -317,7 +323,6 @@ fn globals() -> Globals {
         }
     })
     .with_namespace("formats", formats_functions)
-    .build()
 }
 
 #[starlark_module]

@@ -627,9 +627,11 @@ dependencies = [
  "blake3",
  "distro-eval",
  "insta",
+ "serde_json",
  "starlark",
  "starlark_derive",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
