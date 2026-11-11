@@ -15,6 +15,7 @@ name = "lab"
 path = "src/main.rs"
 
 [dependencies]
+distro-starlark.workspace = true
 memchr = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde.workspace = true

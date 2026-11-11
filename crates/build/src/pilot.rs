@@ -721,7 +721,7 @@ pub fn recheck(lab: &Lab, repository: &Path, recipes: &[&str], arm: Arm) -> Resu
     ];
     let (mut working, mut total) = (0, 0);
     for file in recipes {
-        for package in chain::load(repository, file)? {
+        for package in chain::load_styled(lab, repository, file)? {
             total += 1;
             match chain::build_one(
                 lab,
@@ -854,7 +854,7 @@ pub fn paths(lab: &Lab, repository: &Path, recipes: &str, arm: Arm) -> Result<St
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut lines = String::new();
-    for package in chain::load(repository, recipes)? {
+    for package in chain::load_styled(lab, repository, recipes)? {
         chain::build_one(
             lab,
             repository,
@@ -897,7 +897,7 @@ pub(crate) fn build_some(
     let mut sources = Sources::load(repository)?;
     let mut loaded = Vec::new();
     for file in recipes {
-        loaded.extend(chain::load(repository, file)?);
+        loaded.extend(chain::load_styled(lab, repository, file)?);
     }
     let loaded = chain::in_order(loaded, |id| built.paths.contains_key(id))?;
     let needed = wanted
@@ -1166,7 +1166,7 @@ pub fn run(
     let mut sources = Sources::load(repository)?;
     let mut packages = Vec::new();
     for file in recipes {
-        packages.extend(chain::load(repository, file)?);
+        packages.extend(chain::load_styled(lab, repository, file)?);
     }
     let mut lines = vec![
         format!("# {label}, arm {}", arm.name()),

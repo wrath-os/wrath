@@ -6,7 +6,6 @@ pub mod content;
 pub mod early;
 pub mod evalbench;
 pub mod experiments;
-pub mod go;
 pub mod graph;
 pub mod image;
 pub mod initrd;

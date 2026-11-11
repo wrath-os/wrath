@@ -2330,7 +2330,7 @@ pub fn package_keys(repository: &Path, model: &Value) -> Result<BTreeMap<String,
     let lab = Lab::new(repository.join("work"));
     let mut packages = Vec::new();
     for file in std::iter::once(TOOLCHAIN_RECIPES.to_owned()).chain(system_recipes(repository)?) {
-        packages.extend(chain::load(repository, &file)?);
+        packages.extend(chain::load_styled(&lab, repository, &file)?);
     }
     let builds = variants(&packages, model)?;
     packages.extend(builds);

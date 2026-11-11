@@ -220,7 +220,7 @@ fn from_toml(value: toml::Value) -> Value {
 }
 
 /// JSON as a value. Its `null` has no counterpart, so a style never sees one.
-fn from_json(value: serde_json::Value) -> anyhow::Result<Value> {
+pub fn from_json(value: serde_json::Value) -> anyhow::Result<Value> {
     Ok(match value {
         serde_json::Value::Null => anyhow::bail!("JSON: `null` has no value here"),
         serde_json::Value::Bool(b) => Value::Bool(b),

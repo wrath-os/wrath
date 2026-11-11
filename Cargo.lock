@@ -555,6 +555,7 @@ dependencies = [
 name = "distro-build"
 version = "0.0.0"
 dependencies = [
+ "distro-starlark",
  "memchr",
  "rusqlite",
  "serde",

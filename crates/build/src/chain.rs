@@ -5,6 +5,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+
+use distro_starlark::style::{self, Style};
 
 use memchr::memmem;
 use serde::Deserialize;
@@ -257,7 +260,6 @@ struct Source {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct Package {
     pub(crate) id: String,
     /// The version it builds, which store paths carry in their names and source URLs can use as
@@ -303,14 +305,23 @@ pub(crate) struct Package {
     /// A `Cargo.lock` in the first source, whose registry crates are added to the sources, each
     /// under `vendor/` and checked against the lock's hash.
     crates: Option<String>,
-    /// A `go.sum` in the first source, whose modules are added to the sources as a proxy of files
-    /// under `goproxy/`, which Go checks against the `go.sum` as it builds.
-    go: Option<String>,
     #[serde(default)]
     files: Vec<String>,
     /// What a build can set, which its script reads as `OPTION_<name>`, by name.
     #[serde(default)]
     options: BTreeMap<String, RecipeOption>,
+    /// The build style that makes its script, when it has none: named here, or found from the
+    /// files at the top of its first source (decision 0025).
+    #[serde(default)]
+    build: Option<String>,
+    /// The options it gives its style, in a table named after the style, such as
+    /// `[package.cargo]`. Any other field is an error when the recipe loads.
+    #[serde(flatten)]
+    style_options: BTreeMap<String, toml::Value>,
+    /// Whether a style makes its script, decided when it loads.
+    #[serde(skip)]
+    styled: bool,
+    #[serde(default)]
     script: String,
     #[serde(default = "yes")]
     wrap: bool,
@@ -578,9 +589,11 @@ impl Package {
             hold: None,
             sources: Vec::new(),
             crates: None,
-            go: None,
             files: Vec::new(),
             options: BTreeMap::new(),
+            build: None,
+            style_options: BTreeMap::new(),
+            styled: false,
             script,
             wrap: true,
             fixup: true,
@@ -1037,12 +1050,16 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
     let path = repository.join("recipes").join(recipes);
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     let parsed: Recipes = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let styles = styles(repository)?;
     parsed
         .package
         .into_iter()
         .map(|mut package| {
             package
                 .check_name()
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            package
+                .check_style(&styles)
                 .map_err(|e| format!("{}: {e}", path.display()))?;
             if let Some(version) = &package.version {
                 for source in &mut package.sources {
@@ -1057,6 +1074,218 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
                 .map_err(|e| format!("{}: {e}", path.display()))
         })
         .collect()
+}
+
+/// Where build styles are, beside the recipes.
+const STYLES: &str = "styles";
+
+/// The build styles in `repository`, loaded once for each repository.
+fn styles(repository: &Path) -> Result<Arc<Vec<Style>>, String> {
+    static LOADED: Mutex<BTreeMap<PathBuf, Arc<Vec<Style>>>> = Mutex::new(BTreeMap::new());
+    let mut loaded = LOADED
+        .lock()
+        .map_err(|_| "the build styles failed to load before")?;
+    if let Some(styles) = loaded.get(repository) {
+        return Ok(Arc::clone(styles));
+    }
+    let dir = repository.join(STYLES);
+    let mut files: Vec<PathBuf> = match fs::read_dir(&dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|e| e == "star"))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    files.sort();
+    let styles = files
+        .iter()
+        .map(|file| {
+            let text = fs::read_to_string(file).map_err(with_path(file))?;
+            style::load(&file.display().to_string(), &text)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let styles = Arc::new(styles);
+    loaded.insert(repository.to_owned(), Arc::clone(&styles));
+    Ok(styles)
+}
+
+/// The recipes in `recipes`, with the script of each that has a build style made by it. A styled
+/// recipe's first source is fetched, if it hasn't been, for the style to read.
+pub(crate) fn load_styled(
+    lab: &Lab,
+    repository: &Path,
+    recipes: &str,
+) -> Result<Vec<Package>, String> {
+    let mut packages = load(repository, recipes)?;
+    if !packages.iter().any(|package| package.styled) {
+        return Ok(packages);
+    }
+    let styles = styles(repository)?;
+    let mut sources = Sources::load(repository)?;
+    for package in packages.iter_mut().filter(|package| package.styled) {
+        let first = package
+            .sources
+            .first()
+            .ok_or_else(|| format!("`{}` has a build style but no source", package.id))?;
+        let (archive, _) = sources.fetch_source(lab, first)?;
+        let top = || top_files(&archive);
+        let read = |path: &str| read_in(&archive, path);
+        *package = package.clone().styled_by(&styles, &top, &read)?;
+    }
+    Ok(packages)
+}
+
+impl Package {
+    /// Refuses fields that are neither the recipe's nor its style's options, and a style beside
+    /// a script. A recipe with no script, or one that names a style, is built by a style.
+    fn check_style(&mut self, styles: &[Style]) -> Result<(), String> {
+        for name in self.style_options.keys() {
+            if !styles.iter().any(|style| style.name() == name) {
+                return Err(format!(
+                    "`{}` has `{name}`, which is neither a recipe field nor a build style",
+                    self.id
+                ));
+            }
+            if let Some(build) = self.build.as_ref().filter(|build| *build != name) {
+                return Err(format!(
+                    "`{}` builds with the {build} style, so `[package.{name}]` doesn't apply",
+                    self.id
+                ));
+            }
+        }
+        if self.style_options.len() > 1 {
+            return Err(format!(
+                "`{}` gives options to more than one style",
+                self.id
+            ));
+        }
+        let names_style = self.build.is_some() || !self.style_options.is_empty();
+        if names_style && !self.script.is_empty() {
+            return Err(format!(
+                "`{}` has a script and a build style; a style makes the script",
+                self.id
+            ));
+        }
+        self.styled = names_style || self.script.is_empty();
+        Ok(())
+    }
+
+    /// The recipe with its style's script, after its options, and the style's dependencies and
+    /// sources added. `top` lists the files at the top of its first source, and `read` reads one.
+    fn styled_by(
+        mut self,
+        styles: &[Style],
+        top: &dyn Fn() -> Result<Vec<String>, String>,
+        read: &dyn Fn(&str) -> Result<String, String>,
+    ) -> Result<Self, String> {
+        let named = self
+            .build
+            .as_deref()
+            .or_else(|| self.style_options.keys().next().map(String::as_str));
+        let style = match named {
+            Some(name) => styles
+                .iter()
+                .find(|style| style.name() == name)
+                .ok_or_else(|| {
+                    let names: Vec<&str> = styles.iter().map(Style::name).collect();
+                    format!(
+                        "`{}` builds with the {name} style, and the styles are {}",
+                        self.id,
+                        names.join(", ")
+                    )
+                })?,
+            None => found_style(&self.id, styles, &top()?)?,
+        };
+        let mut set = BTreeMap::new();
+        if let Some(toml::Value::Table(table)) = self.style_options.get(style.name()) {
+            for (name, value) in table {
+                let json = serde_json::to_value(value).map_err(|e| e.to_string())?;
+                let value = style::from_json(json).map_err(|e| e.to_string())?;
+                set.insert(name.clone(), value);
+            }
+        }
+        let version = self.version.clone().unwrap_or_default();
+        let record = style.run(&self.id, &version, &set, read)?;
+        self.script.push_str(&record.script);
+        let listed = self.dep_ids()?;
+        for dep in record.deps {
+            if !listed.contains(&dep) {
+                self.extra_deps.push(DepSpec::Id(dep));
+            }
+        }
+        self.sources
+            .extend(record.sources.into_iter().map(|source| Source {
+                url: source.url,
+                into: source.into,
+                include: Vec::new(),
+                sha256: source.sha256,
+                file: source.file,
+            }));
+        self.build = Some(style.name().to_owned());
+        Ok(self)
+    }
+}
+
+/// The style the files at the top of a source pick: the one whose lock is there, or with no lock,
+/// the one whose build file is there.
+fn found_style<'a>(id: &str, styles: &'a [Style], top: &[String]) -> Result<&'a Style, String> {
+    let has = |names: &[String]| names.iter().any(|name| top.contains(name));
+    for (kind, picks) in [
+        ("lock", Style::locks as fn(&Style) -> &[String]),
+        ("build file", Style::files),
+    ] {
+        let found: Vec<&Style> = styles.iter().filter(|style| has(picks(style))).collect();
+        match found[..] {
+            [] => {}
+            [style] => return Ok(style),
+            _ => {
+                let names: Vec<&str> = found.iter().map(|style| style.name()).collect();
+                return Err(format!(
+                    "`{id}`'s source has a {kind} for each of {}: name one with `build =`",
+                    names.join(" and ")
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "`{id}` has no script, and nothing at the top of its source picks a build style: give it \
+         `build =` or a `script`"
+    ))
+}
+
+/// The names at the top of the source archive at `archive`, under its top directory, kept beside
+/// it like what [`read_in`] reads.
+fn top_files(archive: &Path) -> Result<Vec<String>, String> {
+    let mut name = archive.as_os_str().to_owned();
+    name.push(".files");
+    let kept = PathBuf::from(name).join("%%top");
+    if let Ok(text) = fs::read_to_string(&kept) {
+        return Ok(text.lines().map(str::to_owned).collect());
+    }
+    let listing = Command::new("tar")
+        .arg("-tf")
+        .arg(archive)
+        .output()
+        .map_err(|e| format!("tar: {e}"))?;
+    let mut names = BTreeSet::new();
+    for line in String::from_utf8_lossy(&listing.stdout).lines() {
+        let mut parts = line.splitn(3, '/');
+        if let (Some(_top), Some(name)) = (parts.next(), parts.next())
+            && !name.is_empty()
+        {
+            names.insert(name.to_owned());
+        }
+    }
+    let text: String = names.iter().map(|name| format!("{name}\n")).collect();
+    let partial = kept.with_extension(format!("partial{}", std::process::id()));
+    if let Some(dir) = kept.parent() {
+        fs::create_dir_all(dir).map_err(with_path(dir))?;
+    }
+    fs::write(&partial, &text)
+        .and_then(|()| fs::rename(&partial, &kept))
+        .map_err(with_path(&kept))?;
+    Ok(names.into_iter().collect())
 }
 
 /// The release series a version belongs to, as GNOME names its download directories: `2.84` for
@@ -1148,19 +1377,6 @@ fn locked_sources(
                 file: false,
             });
         }
-    }
-    if let Some(lock) = &package.go {
-        locked.extend(
-            crate::go::module_files(&read(lock)?)
-                .into_iter()
-                .map(|m| Source {
-                    url: m.url,
-                    into: Some(m.into),
-                    include: Vec::new(),
-                    sha256: None,
-                    file: true,
-                }),
-        );
     }
     Ok(locked)
 }
@@ -1340,7 +1556,7 @@ pub fn build(lab: &Lab, repository: &Path, recipes: &str, arm: Arm) -> Result<Bu
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut built = built_from_seed(&seed);
-    let packages = in_order(load(repository, recipes)?, |id| {
+    let packages = in_order(load_styled(lab, repository, recipes)?, |id| {
         built.paths.contains_key(id)
     })?;
     for package in &packages {
@@ -1460,7 +1676,7 @@ pub fn unresolved_keys(
 ) -> Result<BTreeMap<String, String>, String> {
     let mut packages = Vec::new();
     for file in recipes {
-        packages.extend(load(repository, file)?);
+        packages.extend(load_styled(lab, repository, file)?);
     }
     keys_of(lab, repository, packages, arm)
 }
@@ -2335,21 +2551,6 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
     }
 
     #[test]
-    fn a_recipe_takes_each_module_of_the_go_sum_in_its_source_as_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let go_sum = "filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5=\n";
-        let archive = archive(dir.path(), &[("go.sum", go_sum)]);
-        let locked =
-            locked_sources(&package("go = \"go.sum\"\n"), dir.path(), Some(&archive)).unwrap();
-        assert_eq!(locked.len(), 1);
-        assert_eq!(
-            locked[0].into.as_deref(),
-            Some("goproxy/filippo.io/edwards25519/@v/v1.1.0.mod")
-        );
-        assert!(locked[0].file);
-    }
-
-    #[test]
     fn a_lock_read_from_a_source_once_is_read_again_without_unpacking_it() {
         let dir = tempfile::tempdir().unwrap();
         let go_sum = "filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5=\n";
@@ -2376,10 +2577,15 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
     fn a_lock_the_source_doesnt_have_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let archive = archive(dir.path(), &[("README", "")]);
+        let error = locked_sources(
+            &package("crates = \"Cargo.lock\"\n"),
+            dir.path(),
+            Some(&archive),
+        )
+        .unwrap_err();
+        assert!(error.contains("no `Cargo.lock`"), "{error}");
         let error =
-            locked_sources(&package("go = \"go.sum\"\n"), dir.path(), Some(&archive)).unwrap_err();
-        assert!(error.contains("no `go.sum`"), "{error}");
-        let error = locked_sources(&package("go = \"go.sum\"\n"), dir.path(), None).unwrap_err();
+            locked_sources(&package("crates = \"Cargo.lock\"\n"), dir.path(), None).unwrap_err();
         assert!(error.contains("no source"), "{error}");
     }
 
@@ -2728,5 +2934,220 @@ mod order_tests {
         let cycle = [recipe("a", "\"b\""), recipe("b", "\"a\""), recipe("c", "")].concat();
         let error = in_order(packages(&cycle), |_| false).unwrap_err();
         assert_eq!(error, "these packages depend on each other: a, b");
+    }
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+
+    const CARGO: &str = r#"
+def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    lock = decode.toml(recipe.read("Cargo.lock"))
+    sources = [
+        {"url": "https://static.crates.io/crates/%s/%s-%s.crate" % (
+            p["name"], p["name"], p["version"]),
+         "into": "vendor/%s-%s" % (p["name"], p["version"]), "sha256": p["checksum"]}
+        for p in lock["package"] if "checksum" in p
+    ]
+    return {
+        "script": "cargo build %s\n" % " ".join(options["features"]),
+        "deps": ["rust-bin"],
+        "sources": sources,
+    }
+
+style(name = "cargo", locks = ["Cargo.lock"], files = ["Cargo.toml"],
+      options = {"features": option(types.list(types.str))}, build = build)
+"#;
+
+    const MESON: &str = r#"
+def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    return {"script": "meson setup\n", "deps": ["meson"]}
+
+style(name = "meson", files = ["meson.build"], build = build)
+"#;
+
+    const LOCK: &str = "[[package]]\nname = \"itoa\"\nversion = \"1.0.15\"\nchecksum = \"abc\"\n";
+
+    fn styles() -> Vec<Style> {
+        vec![
+            style::load("cargo.star", CARGO).unwrap(),
+            style::load("meson.star", MESON).unwrap(),
+        ]
+    }
+
+    fn recipe(fields: &str) -> Result<Package, String> {
+        let text =
+            format!("[[package]]\nid = \"app\"\nversion = \"1.0\"\nscope = \"runtime\"\n{fields}");
+        let mut package = toml::from_str::<Recipes>(&text)
+            .map_err(|e| e.to_string())?
+            .package
+            .remove(0);
+        package.check_style(&styles())?;
+        Ok(package)
+    }
+
+    fn style(package: Package, top: &[&str]) -> Result<Package, String> {
+        let top: Vec<String> = top.iter().map(|name| (*name).to_owned()).collect();
+        package.styled_by(&styles(), &|| Ok(top.clone()), &|path| match path {
+            "Cargo.lock" => Ok(LOCK.to_owned()),
+            other => Err(format!("no {other}")),
+        })
+    }
+
+    #[test]
+    fn a_recipe_without_a_script_gets_the_style_its_lock_picks() {
+        let package =
+            recipe("extra_deps = [\"pam\"]\n[package.cargo]\nfeatures = [\"x\"]\n").unwrap();
+        assert!(package.styled);
+        let package = style(package, &["Cargo.lock", "Cargo.toml", "meson.build"]).unwrap();
+        assert_eq!(package.script, "cargo build x\n");
+        assert_eq!(
+            package.dep_ids().unwrap()[..],
+            ["pam".to_owned(), "rust-bin".to_owned()]
+        );
+        assert_eq!(
+            package.sources[0].url,
+            "https://static.crates.io/crates/itoa/itoa-1.0.15.crate"
+        );
+        assert_eq!(package.sources[0].sha256.as_deref(), Some("abc"));
+        assert_eq!(package.build.as_deref(), Some("cargo"));
+    }
+
+    #[test]
+    fn a_lock_wins_over_a_build_file_and_without_one_the_build_file_picks() {
+        let found = |top: &[&str]| style(recipe("").unwrap(), top).map(|p| p.script);
+        assert_eq!(
+            found(&["Cargo.lock", "meson.build"]).unwrap(),
+            "cargo build \n"
+        );
+        assert_eq!(found(&["meson.build"]).unwrap(), "meson setup\n");
+    }
+
+    #[test]
+    fn two_build_files_or_none_ask_for_a_named_style() {
+        let found = |top: &[&str]| style(recipe("").unwrap(), top).map(|p| p.script);
+        assert_eq!(
+            found(&["Cargo.toml", "meson.build"]).unwrap_err(),
+            "`app`'s source has a build file for each of cargo and meson: name one with `build =`"
+        );
+        assert!(
+            found(&["Makefile"])
+                .unwrap_err()
+                .contains("give it `build =` or a `script`")
+        );
+        let named = style(
+            recipe("build = \"meson\"\n").unwrap(),
+            &["Cargo.toml", "meson.build"],
+        );
+        assert_eq!(named.unwrap().script, "meson setup\n");
+    }
+
+    #[test]
+    fn a_recipe_with_a_script_keeps_it() {
+        let package = recipe("script = \"make\\n\"\n").unwrap();
+        assert!(!package.styled);
+    }
+
+    #[test]
+    fn style_options_beside_a_script_or_for_another_style_are_refused() {
+        assert_eq!(
+            recipe("script = \"make\\n\"\n[package.cargo]\nfeatures = []\n").unwrap_err(),
+            "`app` has a script and a build style; a style makes the script"
+        );
+        assert_eq!(
+            recipe("build = \"meson\"\n[package.cargo]\nfeatures = []\n").unwrap_err(),
+            "`app` builds with the meson style, so `[package.cargo]` doesn't apply"
+        );
+        assert_eq!(
+            recipe("[package.cmake]\nx = 1\n").unwrap_err(),
+            "`app` has `cmake`, which is neither a recipe field nor a build style"
+        );
+        assert_eq!(
+            recipe("scirpt = \"make\"\n").unwrap_err(),
+            "`app` has `scirpt`, which is neither a recipe field nor a build style"
+        );
+    }
+
+    #[test]
+    fn a_style_option_of_the_wrong_type_is_an_error_in_the_recipe() {
+        let package = recipe("[package.cargo]\nfeatures = \"x\"\n").unwrap();
+        let error = style(package, &["Cargo.lock"]).unwrap_err();
+        assert!(
+            error.starts_with("`app`'s cargo option `features`: "),
+            "{error}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod style_goldens {
+    use super::*;
+
+    #[test]
+    fn the_go_style_takes_the_files_the_go_sum_names_as_go_rs_did() {
+        let styles = styles(&repository()).unwrap();
+        let text = "[[package]]\nid = \"age\"\nscope = \"runtime\"\n[package.go]\n\
+                    packages = [\"./cmd/age\"]\nldflags = \"-X main.Version=v1\"\n";
+        let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        package.check_style(&styles).unwrap();
+        let go_sum = "filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=\n\
+                      filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5=\n\
+                      github.com/BurntSushi/toml v1.2.0/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=\n";
+        let package = package
+            .styled_by(&styles, &|| Ok(vec!["go.sum".to_owned()]), &|_| {
+                Ok(go_sum.to_owned())
+            })
+            .unwrap();
+        let proxied = |path: &str| {
+            (
+                format!("https://proxy.golang.org/{path}"),
+                Some(format!("goproxy/{path}")),
+            )
+        };
+        let by_rust = vec![
+            proxied("filippo.io/edwards25519/@v/v1.1.0.zip"),
+            proxied("filippo.io/edwards25519/@v/v1.1.0.mod"),
+            proxied("github.com/!burnt!sushi/toml/@v/v1.2.0.mod"),
+        ];
+        let by_style: Vec<(String, Option<String>)> = package
+            .sources
+            .iter()
+            .map(|s| (s.url.clone(), s.into.clone()))
+            .collect();
+        assert_eq!(by_style, by_rust);
+        assert!(package.sources.iter().all(|s| s.file));
+        assert!(package.script.ends_with(
+            "go build -trimpath -ldflags \"-X main.Version=v1\" -o $DEST$PREFIX/bin/ ./cmd/age\n"
+        ));
+    }
+
+    fn repository() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build")
+    }
+
+    #[test]
+    fn the_cargo_style_makes_the_script_greetd_had_by_hand() {
+        let styles = styles(&repository()).unwrap();
+        let text = "[[package]]\nid = \"greetd\"\nversion = \"0.10.3\"\nscope = \"runtime\"\n\
+                    [package.cargo]\nprograms = [\"greetd\", \"agreety\"]\n";
+        let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        package.check_style(&styles).unwrap();
+        let lock = "[[package]]\nname = \"greetd\"\nversion = \"0.10.3\"\n\n\
+                    [[package]]\nname = \"itoa\"\nversion = \"1.0.15\"\n\
+                    source = \"registry+https://github.com/rust-lang/crates.io-index\"\n\
+                    checksum = \"abc\"\n";
+        let package = package
+            .styled_by(&styles, &|| Ok(vec!["Cargo.lock".to_owned()]), &|_| {
+                Ok(lock.to_owned())
+            })
+            .unwrap();
+        let golden = repository().join("styles/tests/cargo-greetd.sh");
+        assert_eq!(package.script, fs::read_to_string(golden).unwrap());
+        assert_eq!(package.sources.len(), 1);
+        assert_eq!(
+            package.sources[0].into.as_deref(),
+            Some("vendor/itoa-1.0.15")
+        );
     }
 }

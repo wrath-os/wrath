@@ -21,14 +21,11 @@ scope = "runtime"
 core = true
 extra_deps = ["go"]
 sources = [{ url = "https://github.com/FiloSottile/age/archive/v{version}/age-{version}.tar.gz" }]
-go = "go.sum"
-script = '''
-# Modules come from the proxy of files the sources were put in, and from nowhere else.
-export GOPROXY=file://$PWD/goproxy GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=0
-export GOCACHE=/build/go-cache GOMODCACHE=/build/go-modules
-go build -trimpath -ldflags "-X main.Version=v1.2.1" -o $DEST$PREFIX/bin/ ./cmd/age ./cmd/age-keygen
-'''
 smoke = ["bin/age --version", "bin/age-keygen -o /tmp/key"]
+
+[package.go]
+packages = ["./cmd/age", "./cmd/age-keygen"]
+ldflags = "-X main.Version=v1.2.1"
 
 [[package]]
 id = "tailscale"
@@ -37,11 +34,8 @@ scope = "runtime"
 core = true
 extra_deps = ["go"]
 sources = [{ url = "https://github.com/tailscale/tailscale/archive/v{version}/tailscale-{version}.tar.gz" }]
-go = "go.sum"
-script = '''
-export GOPROXY=file://$PWD/goproxy GOSUMDB=off GOTOOLCHAIN=local GOFLAGS=-mod=mod CGO_ENABLED=0
-export GOCACHE=/build/go-cache GOMODCACHE=/build/go-modules
-version="-X tailscale.com/version.longStamp=1.86.2 -X tailscale.com/version.shortStamp=1.86.2"
-go build -trimpath -ldflags "$version" -o $DEST$PREFIX/bin/ ./cmd/tailscale ./cmd/tailscaled
-'''
 smoke = ["bin/tailscale version", "bin/tailscaled --version"]
+
+[package.go]
+packages = ["./cmd/tailscale", "./cmd/tailscaled"]
+ldflags = "-X tailscale.com/version.longStamp=1.86.2 -X tailscale.com/version.shortStamp=1.86.2"

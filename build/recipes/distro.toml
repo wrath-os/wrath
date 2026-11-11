@@ -5,28 +5,14 @@ id = "distro"
 scope = "runtime"
 core = true
 extra_deps = ["rust-bin"]
-crates = "Cargo.lock"
 sources = [{ url = "tree:..", include = ["Cargo.toml", "Cargo.lock", "crates", "modules"] }]
-script = '''
-# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
-awk -F'"' '
-    /^name = / { name = $2 }
-    /^version = / { version = $2 }
-    /^checksum = / {
-        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
-    }
-' Cargo.lock
-mkdir -p .cargo
-cat > .cargo/config.toml <<CONFIG
-[source.crates-io]
-replace-with = "vendored"
-[source.vendored]
-directory = "vendor"
-CONFIG
-export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
-cargo build --release --offline --locked -j $NPROC -p distro-cli -p distro-agent
-mkdir -p $DEST$PREFIX/bin $DEST$PREFIX/share/distro $DEST$PREFIX/lib/systemd/system
-cp target/release/distro target/release/distro-agent $DEST$PREFIX/bin/
+smoke = ["bin/distro --version", "bin/distro-agent --help"]
+
+[package.cargo]
+packages = ["distro-cli", "distro-agent"]
+programs = ["distro", "distro-agent"]
+install = '''
+mkdir -p $DEST$PREFIX/share/distro $DEST$PREFIX/lib/systemd/system
 cp -r modules $DEST$PREFIX/share/distro/
 cat > $DEST$PREFIX/lib/systemd/system/distro-agent.service <<UNIT
 [Unit]
@@ -38,4 +24,3 @@ ExecStart=$PREFIX/bin/distro-agent
 Restart=always
 UNIT
 '''
-smoke = ["bin/distro --version", "bin/distro-agent --help"]
