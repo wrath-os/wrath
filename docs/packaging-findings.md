@@ -148,7 +148,69 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What we did:** added softpipe, which draws without a GPU.
 - **Status:** done.
 
+### A program fetches more sources as it builds
+
+- **Seen in:** helix, which clones each language's tree-sitter grammar from git while it builds.
+- **What happened:** the sandbox has no network, so the grammar step would fail.
+- **What we did:** `HELIX_DISABLE_AUTO_GRAMMAR_BUILD`, so helix has themes and queries but no
+  grammars, and highlights nothing.
+- **What would prevent it:** a style option that reads `languages.toml` and adds each grammar's
+  repository and commit as a git source, as the cargo style does for git crates.
+- **Belongs in:** a style for helix's grammars, or the cargo style's options.
+- **Status:** open.
+
 ## Prevented
+
+### A plan fetched every recipe's sources
+
+- **Seen in:** applying to the Framework after adding about 50 recipes.
+- **What happened:** to make the plan, every styled recipe's source was fetched for its lock, and
+  every package's sources for its key, including recipes the configuration never used. With
+  nothing printed, it looked hung.
+- **What we did:** plans and builds start from what the configuration names and style only the
+  recipes they reach; keys take hashes from `sources.lock` or a lock without fetching, and each
+  download prints a line.
+
+### Archives with no directory around their files
+
+- **Seen in:** Nerd Fonts, whose release archives hold the font files at the top.
+- **What happened:** unpacking stripped the first path component, so every file was dropped.
+- **What we did:** the top directory is stripped only when everything in the archive is under one.
+
+### A project's own `vendor` directory
+
+- **Seen in:** atuin, which keeps a patched crate in `vendor/axoasset`.
+- **What happened:** the cargo style vendored crates into `vendor/` too, and Cargo read atuin's
+  crate as one of ours and failed for want of its checksum file.
+- **What we did:** crates go in `.cargo-vendor/`.
+
+### A crate from git joined the project's workspace
+
+- **Seen in:** yazi, which patches `ratatui-core` from a fork on GitHub.
+- **What happened:** the checkout was under the source, and Cargo makes every path dependency
+  inside a workspace a member of it, so the crate inherited yazi's workspace settings in place of
+  ratatui's, and one it needed was missing.
+- **What we did:** git checkouts go in `git/` beside the source. yazi also patches the crate in
+  place of the one from crates.io, and Cargo doesn't patch a patch, so the cargo style reads the
+  project's `Cargo.toml` and patches crates.io for those.
+
+### A system library only the lock names
+
+- **Seen in:** atuin, whose lock has `openssl-sys`.
+- **What happened:** the build failed at the crate's build script, looking for OpenSSL.
+- **What we did:** the cargo style brings the library and pkg-config for each such crate its
+  lock names, from a table: `openssl-sys` and `libdbus-sys` so far. gitui also asked for its own
+  OpenSSL built from source, which needs Perl; the style sets `OPENSSL_NO_VENDOR` so the system's
+  is used.
+
+### Fonts drawn without hinting or fallbacks
+
+- **Seen in:** noctalia and alacritty on the Framework.
+- **What happened:** `/etc/fonts/fonts.conf` named the font directory and nothing else, so none of
+  fontconfig's presets for antialiasing, hinting and fallbacks applied, and DejaVu was the only
+  face.
+- **What we did:** the fonts module includes the presets, installs Inter, JetBrainsMono Nerd Font
+  and Noto Color Emoji, and sets the generic families, as options.
 
 ### Crates from git, fetched as GitHub archives
 
