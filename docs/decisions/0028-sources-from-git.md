@@ -1,6 +1,6 @@
 # 0028: Sources from git
 
-Status: proposed, 2026-11-11.
+Status: accepted, 2026-11-11.
 
 ## Context
 
@@ -30,21 +30,26 @@ hand with every update, or else fetched git while evaluating, which made evaluat
 
 ## Decision
 
-- A source can be a git commit: `{ git = "https://...", commit = "<sha>", into = "..." }`. The
-  fetcher clones only that commit, with its submodules, from any host.
+- A source can be a git commit, `git+https://...#<commit>`. The fetcher clones only that commit,
+  with its submodules, from any host.
 - What's pinned is the hash of the checked-out tree, not of an archive, so it doesn't change with
   how a host compresses. `sources.lock` pins it on the first fetch, as it does now for
   sources without a hash. No recipe carries one.
 - Styles emit git sources for what a lock takes from git, and lay them out as the language's own
-  tools expect: for Cargo, each crate under `vendor/` by name and version, with a source
-  replacement for the git URL, as `cargo vendor` writes, so the build stays `--locked` and the
-  recipe names no paths. Go, npm, Python and Ruby styles do the same when they come.
+  tools expect. For Cargo, the build finds each crate by name among the manifests in its
+  repository and patches it in, so the recipe names no paths. Go, npm, Python and Ruby styles do
+  the same when they come.
+- A Cargo build with crates from git isn't `--locked` yet: the patch changes the lock's sources.
+  Vendoring them as `cargo vendor` does would keep it, but needs their manifests rewritten with
+  the workspace's inherited fields, which only Cargo does well. It stays `--offline`, so it can
+  only use what the lock and the pinned commits hold.
 - A commit that moved, a repository that's gone or a tree whose hash changed is an error at
   fetch, naming the source and the lock entry it came from.
 
 ## Consequences
 
-- niri's recipe loses its `git` paths and builds `--locked`.
+- niri's recipe names no paths, and Smithay comes from a clone of the commit, not GitHub's
+  archive.
 - Every future style handles git dependencies the same way. A style that can't lay out a git
   dependency for its language fails with a message naming it, instead of a half-working build.
 - A git dependency is checked once, by the pinned tree hash. Registry dependencies are still

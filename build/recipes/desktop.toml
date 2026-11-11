@@ -375,7 +375,6 @@ smoke = ["bin/niri --version"]
 [package.cargo]
 default_features = false
 features = ["systemd"]
-git = { smithay = "git/smithay", smithay-drm-extras = "git/smithay/smithay-drm-extras" }
 install = '''
 mkdir -p $DEST$PREFIX/lib/systemd/user $DEST$PREFIX/share/wayland-sessions \
     $DEST$PREFIX/share/xdg-desktop-portal

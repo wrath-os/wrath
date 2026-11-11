@@ -1,3 +1,4 @@
+a6c8a4a2ffc74208e961b7f3cc6427e770c5e6203e2b12851c3f737a30bfc036  git+https://github.com/Smithay/smithay.git#ff5fa7df392cecfba049ffed55cdaa4e98a8e7ef
 a107adad2101fecac54ac7f9f0e0a0dd155d954193da55c2340c97f2ff1d814e  http://bitmath.org/code/mtdev/mtdev-1.1.7.tar.bz2
 c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9  http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz
 91d729aa68bb89e4ec857841300bbe922bcb3e52b1f97566ca83930d3b28343a  https://archive.mesa3d.org/mesa-26.3.0.tar.xz
@@ -81,7 +82,6 @@ d1f380bc2ebc931aaf663b8bb84fc06269a4d75b9c8c9b9ed8ad4b5417499437  https://github
 9c09b901149c729df745057dafa815278aaa101b84d2b6e14f16a42de52f97f2  https://github.com/KhronosGroup/glslang/archive/16.6.0/glslang-16.6.0.tar.gz
 1952b2a782ba576279c211ee942e341748fdb44997f704dd53def46cd055470b  https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0.tar.bz2
 21547f3516120c75597e5b30a992e27a592a31950b5140e7b8bfde3f192033c4  https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.45/pcre2-10.45.tar.bz2
-2df0f01fd83ee01dc2fcd5976ac0004334b03ef567f467b6c511f11fc1c8a7b9  https://github.com/Smithay/smithay/archive/ff5fa7df392cecfba049ffed55cdaa4e98a8e7ef.tar.gz
 8b32873d7d740143ce9efa3cfb43c17d0176b89d2e8ffaa497db709f154fc478  https://github.com/Supreeeme/xwayland-satellite/archive/v0.8.3/xwayland-satellite-0.8.3.tar.gz
 b814e30c6271ae23158c66e0e2377c3600bb24041fa382a36e81be564eeb2e36  https://github.com/alacritty/alacritty/archive/v0.15.1/alacritty-0.15.1.tar.gz
 a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15  https://github.com/anholt/libepoxy/archive/1.5.10/libepoxy-1.5.10.tar.gz

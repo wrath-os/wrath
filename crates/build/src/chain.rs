@@ -906,6 +906,34 @@ pub(crate) fn fresh(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(with_path(path))
 }
 
+/// `names` in `from`, packed into `to` the same way whenever their files are the same: sorted, with
+/// no times, owners or version control, under one top directory as a downloaded source is. `skip`
+/// names directories to leave out wherever they are.
+fn pack(from: &Path, names: &[String], skip: &[&str], to: &Path) -> Result<(), String> {
+    run_host(
+        Command::new("tar")
+            .args(["--create", "--file"])
+            .arg(to)
+            .arg("--directory")
+            .arg(from)
+            .args([
+                "--sort=name",
+                "--mtime=@0",
+                "--owner=0",
+                "--group=0",
+                "--numeric-owner",
+                "--mode=go-w",
+                "--format=gnu",
+                "--exclude-vcs",
+            ])
+            .args(skip.iter().map(|name| format!("--exclude={name}")))
+            .arg("--transform=flags=r;s,^\\./,,;s,^,tree/,")
+            .arg("--")
+            .args(names),
+        &format!("packing {}", from.display()),
+    )
+}
+
 /// The pinned hashes of sources, kept in `sources.lock` as `<sha256>  <url>` lines. A URL not in
 /// it yet is pinned the first time it's fetched.
 pub(crate) struct Sources {
@@ -940,16 +968,18 @@ impl Sources {
 
     /// Where `source` is on the host, with its hash.
     fn fetch_source(&mut self, lab: &Lab, source: &Source) -> Result<(PathBuf, String), String> {
-        match source.url.strip_prefix("tree:") {
-            Some(tree) => self.fetch_tree(lab, tree, &source.include),
-            None => self.fetch(lab, &source.url, source.sha256.as_deref()),
+        if let Some(tree) = source.url.strip_prefix("tree:") {
+            return self.fetch_tree(lab, tree, &source.include);
         }
+        if source.url.starts_with("git+") {
+            return self.fetch_git(lab, &source.url);
+        }
+        self.fetch(lab, &source.url, source.sha256.as_deref())
     }
 
-    /// The files `include` names in `tree`, a directory relative to the repository, packed the
-    /// same way whenever they're the same, under one top directory as a downloaded source is.
-    /// What was built in them, `target`, is left out. Named by its hash, which isn't pinned:
-    /// the tree is the repository's own and changes with it.
+    /// The files `include` names in `tree`, a directory relative to the repository, packed by
+    /// [`pack`]. Named by its hash, which isn't pinned: the tree is the repository's own and
+    /// changes with it.
     fn fetch_tree(
         &mut self,
         lab: &Lab,
@@ -966,31 +996,82 @@ impl Sources {
         let dir = lab.work.join("sources");
         fs::create_dir_all(&dir).map_err(with_path(&dir))?;
         let partial = dir.join(format!("tree.partial{}", std::process::id()));
-        run_host(
-            Command::new("tar")
-                .args(["--create", "--file"])
-                .arg(&partial)
-                .arg("--directory")
-                .arg(&from)
-                .args([
-                    "--sort=name",
-                    "--mtime=@0",
-                    "--owner=0",
-                    "--group=0",
-                    "--numeric-owner",
-                    "--mode=go-w",
-                    "--format=gnu",
-                    "--exclude=target",
-                    "--exclude-vcs",
-                ])
-                .arg("--transform=flags=r;s,^,tree/,")
-                .arg("--")
-                .args(&include),
-            &format!("packing {}", from.display()),
-        )?;
+        // What was built in the repository, `target`, is left out.
+        pack(&from, &include, &["target"], &partial)?;
         let hash = sha256_of(&partial)?;
         let path = dir.join(&hash);
         fs::rename(&partial, &path).map_err(with_path(&path))?;
+        Ok((path, hash))
+    }
+
+    /// Where the commit `url` names, `git+REPOSITORY#COMMIT`, is on the host, with its hash: the
+    /// commit cloned with its submodules from any host and packed by [`pack`], so the hash is of
+    /// the files, not of how a host compresses an archive (decision 0028). It's pinned in
+    /// `sources.lock` the first time.
+    fn fetch_git(&mut self, lab: &Lab, url: &str) -> Result<(PathBuf, String), String> {
+        let dir = lab.work.join("sources");
+        fs::create_dir_all(&dir).map_err(with_path(&dir))?;
+        let known = self.pins.get(url).cloned();
+        if let Some(hash) = &known
+            && dir.join(hash).is_file()
+        {
+            return Ok((dir.join(hash), hash.clone()));
+        }
+        let (repository, commit) = url
+            .strip_prefix("git+")
+            .and_then(|rest| rest.split_once('#'))
+            .ok_or_else(|| format!("{url} names no commit after `#`"))?;
+        let checkout = dir.join(format!("git.partial{}", std::process::id()));
+        fresh(&checkout)?;
+        let git = |args: &[&str]| {
+            run_host(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&checkout)
+                    .args([
+                        "-c",
+                        "advice.detachedHead=false",
+                        "-c",
+                        "protocol.file.allow=always",
+                    ])
+                    .args(args)
+                    .env("GIT_TERMINAL_PROMPT", "0"),
+                &format!("fetching {commit} of {repository}"),
+            )
+        };
+        git(&["init", "--quiet"])?;
+        // Most hosts hand out one commit by its hash; for those that don't, everything.
+        git(&["fetch", "--quiet", "--depth", "1", repository, commit])
+            .or_else(|_| git(&["fetch", "--quiet", "--tags", repository]))
+            .and_then(|()| git(&["checkout", "--quiet", commit]))
+            .and_then(|()| {
+                git(&[
+                    "submodule",
+                    "update",
+                    "--quiet",
+                    "--init",
+                    "--recursive",
+                    "--depth",
+                    "1",
+                ])
+            })
+            .map_err(|e| format!("{url}: {e}"))?;
+        let partial = dir.join(format!("git.partial{}.tar", std::process::id()));
+        pack(&checkout, &[".".to_owned()], &[], &partial)?;
+        remove(&checkout)?;
+        let hash = sha256_of(&partial)?;
+        if let Some(known) = &known
+            && hash != *known
+        {
+            fs::remove_file(&partial).map_err(with_path(&partial))?;
+            return Err(format!("{url} has hash {hash}, and {known} is pinned"));
+        }
+        let path = dir.join(&hash);
+        fs::rename(&partial, &path).map_err(with_path(&path))?;
+        if known.is_none() {
+            self.pins.insert(url.to_owned(), hash.clone());
+            self.save()?;
+        }
         Ok((path, hash))
     }
 
@@ -2479,6 +2560,66 @@ mod crate_tests {
         assert!(!dir.path().join("sources.lock").exists());
     }
 
+    #[test]
+    fn a_git_commit_is_fetched_with_its_submodules_and_pinned_by_its_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |repo: &Path, args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "protocol.file.allow=always",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        let (inner, repo) = (dir.path().join("inner"), dir.path().join("repo"));
+        for path in [&inner, &repo] {
+            fs::create_dir_all(path).unwrap();
+            git(path, &["init", "-q"]);
+        }
+        fs::write(inner.join("lib.rs"), "inner\n").unwrap();
+        git(&inner, &["add", "."]);
+        git(&inner, &["commit", "-qm", "inner"]);
+        fs::write(repo.join("Cargo.toml"), "[package]\n").unwrap();
+        git(
+            &repo,
+            &["submodule", "add", "-q", inner.to_str().unwrap(), "inner"],
+        );
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "one"]);
+        let commit = git(&repo, &["rev-parse", "HEAD"]);
+        let lab = Lab::new(dir.path().join("work"));
+        let mut sources = Sources::load(dir.path()).unwrap();
+        let url = format!("git+file://{}#{commit}", repo.display());
+        let (path, hash) = sources.fetch_source(&lab, &source(url.clone())).unwrap();
+        let listing = Command::new("tar").arg("-tf").arg(&path).output().unwrap();
+        let listing = String::from_utf8_lossy(&listing.stdout);
+        assert!(listing.contains("tree/Cargo.toml"), "{listing}");
+        assert!(listing.contains("tree/inner/lib.rs"), "{listing}");
+        assert!(!listing.contains(".git/"), "{listing}");
+        let lock = fs::read_to_string(dir.path().join("sources.lock")).unwrap();
+        assert!(lock.contains(&format!("{hash}  {url}")), "{lock}");
+        // Pinned and kept, it needs the repository no more.
+        fs::remove_dir_all(&repo).unwrap();
+        assert_eq!(sources.fetch_source(&lab, &source(url)).unwrap().1, hash);
+        let missing = format!("git+file://{}#{}", inner.display(), "0".repeat(40));
+        let error = sources.fetch_source(&lab, &source(missing)).unwrap_err();
+        assert!(error.contains(&"0".repeat(40)), "{error}");
+    }
+
     fn source(url: String) -> Source {
         Source {
             url,
@@ -2949,44 +3090,65 @@ mod style_goldens {
     use super::*;
 
     #[test]
-    fn the_cargo_style_patches_in_crates_from_git_at_the_paths_the_recipe_gives() {
+    fn the_cargo_style_patches_in_crates_from_git_found_by_name_in_their_checkout() {
         let styles = styles(&repository()).unwrap();
-        let text = "[[package]]\nid = \"niri\"\nscope = \"runtime\"\n[package.cargo]\n\
-                    git = { smithay = \"git/smithay\" }\n";
+        let text = "[[package]]\nid = \"niri\"\nscope = \"runtime\"\nbuild = \"cargo\"\n";
         let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
         package.check_style(&styles).unwrap();
         let lock = "[[package]]\nname = \"smithay\"\nversion = \"0.7.0\"\n\
+                    source = \"git+https://github.com/Smithay/smithay.git?rev=ff5f#ff5f\"\n\n\
+                    [[package]]\nname = \"drm-extras\"\nversion = \"0.1.0\"\n\
                     source = \"git+https://github.com/Smithay/smithay.git?rev=ff5f#ff5f\"\n";
         let read = |_: &str| Ok(lock.to_owned());
         let package = package
             .styled_by(&styles, &|| Ok(Vec::new()), &read)
             .unwrap();
+        assert_eq!(package.sources.len(), 1);
         assert_eq!(
             package.sources[0].url,
-            "https://github.com/Smithay/smithay/archive/ff5f.tar.gz"
+            "git+https://github.com/Smithay/smithay.git#ff5f"
         );
         assert_eq!(package.sources[0].into.as_deref(), Some("git/smithay"));
-        assert!(package.script.contains(
-            "[patch.\"https://github.com/Smithay/smithay.git\"]\n\
-             smithay = { path = \"git/smithay\" }\n"
-        ));
         assert!(
             package
                 .script
                 .contains("cargo build --release --offline -j $NPROC\n")
         );
-        let mut unmapped =
-            toml::from_str::<Recipes>("[[package]]\nid = \"niri\"\nscope = \"runtime\"\n")
-                .unwrap()
-                .package
-                .remove(0);
-        unmapped.build = Some("cargo".to_owned());
-        let error = unmapped
-            .styled_by(&styles, &|| Ok(Vec::new()), &read)
-            .unwrap_err();
+        // The part that finds the crates, run on a checkout laid out as Smithay's is.
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("git/smithay");
+        fs::create_dir_all(checkout.join("drm-extras")).unwrap();
+        fs::write(
+            checkout.join("Cargo.toml"),
+            "[package]\nname = \"smithay\"\n\n[workspace]\nmembers = [\"drm-extras\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            checkout.join("drm-extras/Cargo.toml"),
+            "[package]\nname = \"drm-extras\"\nversion.workspace = true\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join(".cargo")).unwrap();
+        let start = package
+            .script
+            .find("# A crate the lock takes from git")
+            .unwrap();
+        let end = package.script.find("cargo build").unwrap();
+        let output = Command::new("sh")
+            .args(["-eu", "-c", &package.script[start..end]])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
         assert!(
-            error.contains("give its path under `git/` in `git`"),
-            "{error}"
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".cargo/config.toml")).unwrap(),
+            "[patch.\"https://github.com/Smithay/smithay.git\"]\n\
+             smithay = { path = \"git/smithay\" }\n\
+             drm-extras = { path = \"git/smithay/drm-extras\" }\n"
         );
     }
 
