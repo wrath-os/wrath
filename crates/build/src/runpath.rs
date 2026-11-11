@@ -101,18 +101,25 @@ fn library_byte(byte: u8) -> bool {
 }
 
 /// Every `lib*.so*` name written anywhere in the file, which covers `dlopen` of a literal name and
-/// systemd's `.note.dlopen`. A name put together at run time is out of reach.
+/// systemd's `.note.dlopen`. A name put together at run time is out of reach. A name ends after
+/// its version numbers, since Rust's strings have no NUL between them.
 fn named_libraries(bytes: &[u8]) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
+    let mut previous_end = 0;
     for at in memmem::find_iter(bytes, b".so") {
         let start = bytes[..at]
             .iter()
             .rposition(|b| !library_byte(*b))
-            .map_or(0, |p| p + 1);
-        let end = bytes[at..]
-            .iter()
-            .position(|b| !library_byte(*b))
-            .map_or(bytes.len(), |p| at + p);
+            .map_or(0, |p| p + 1)
+            .max(previous_end);
+        let mut end = at + 3;
+        while bytes.get(end) == Some(&b'.') && bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+            while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+                end += 1;
+            }
+        }
+        previous_end = end;
         let name = &bytes[start..end];
         if name.starts_with(b"lib")
             && let Ok(name) = std::str::from_utf8(name)
@@ -466,5 +473,15 @@ mod tests {
         assert!(names.contains("libfoo.so.2"));
         assert!(names.contains("libbar-1.so"));
         assert!(!names.contains("not.so.1"));
+    }
+
+    #[test]
+    fn finds_library_names_written_one_after_another() {
+        // Rust ends no string with a NUL, so names written next to each other run together.
+        let names = named_libraries(b"\0libEGL.so.1libEGL.so\0libglib-2.0.so.0libz.so\0");
+        assert_eq!(
+            names.into_iter().collect::<Vec<_>>(),
+            ["libEGL.so", "libEGL.so.1", "libglib-2.0.so.0", "libz.so"]
+        );
     }
 }
