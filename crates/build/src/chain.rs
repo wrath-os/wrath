@@ -241,6 +241,10 @@ pub(crate) struct Package {
     /// What its tools make from what a generation's packages share.
     #[serde(default)]
     indexes: Vec<Index>,
+    /// Packages it needs at run time without referring to them, such as data it reads by name,
+    /// written into it so the reference scan finds them (decision 0021).
+    #[serde(default)]
+    runtime_deps: Vec<String>,
     #[serde(default)]
     sources: Vec<Source>,
     /// A `Cargo.lock` in the first source, whose registry crates are added to the sources, each
@@ -351,7 +355,8 @@ impl Package {
         changed
     }
 
-    /// All the dependencies, the toolchain's first when the package builds on it.
+    /// All the dependencies, the toolchain's first when the package builds on it, and last what
+    /// it needs only at run time, which isn't in its view.
     fn all_deps(&self) -> Result<Vec<Dep>, String> {
         let toolset = [
             DepSpec::Id("wrapper".to_owned()),
@@ -381,11 +386,20 @@ impl Package {
         } else {
             Vec::new()
         };
+        let runtime = self.runtime_deps.iter().map(|id| Dep {
+            id: id.clone(),
+            view: false,
+            rpath: false,
+            skip: Vec::new(),
+            propagate: Propagate::None,
+            exclude: Vec::new(),
+        });
         base.iter()
             .chain(&core)
             .chain(&self.deps)
             .chain(&self.extra_deps)
             .map(DepSpec::resolve)
+            .chain(runtime.map(Ok))
             .collect()
     }
 
@@ -456,6 +470,7 @@ impl Package {
             propagates: Vec::new(),
             propagate_private: true,
             indexes: Vec::new(),
+            runtime_deps: Vec::new(),
             sources: Vec::new(),
             crates: None,
             go: None,
@@ -646,6 +661,31 @@ fn in_views(mut deps: Vec<Dep>, package: &Package, built: &Built) -> Result<Vec<
         }
     }
 }
+
+/// Writes the store paths of a package's `runtime_deps` into it, where the reference scan finds
+/// them.
+fn write_runtime_deps(
+    lab: &Lab,
+    package: &Package,
+    out: &StorePath,
+    built: &Built,
+) -> Result<(), String> {
+    if package.runtime_deps.is_empty() {
+        return Ok(());
+    }
+    let text: String = package
+        .runtime_deps
+        .iter()
+        .map(|id| format!("{}\n", built.paths[id].inside()))
+        .collect();
+    let file = lab.on_host(out).join(RUNTIME_DEPS);
+    let dir = file.parent().unwrap_or(&file);
+    fs::create_dir_all(dir).map_err(with_path(dir))?;
+    fs::write(&file, text).map_err(with_path(&file))
+}
+
+/// Where a package keeps the store paths of its `runtime_deps`.
+const RUNTIME_DEPS: &str = "lib/distro/runtime-deps";
 
 /// `listed` and what each of them brings along (decision 0019). Boot packages keep what they list.
 fn with_requirements(
@@ -1504,6 +1544,7 @@ pub(crate) fn build_one(
             log.display()
         ));
     }
+    write_runtime_deps(lab, package, &out, built)?;
     fs::create_dir_all(&done_dir).map_err(with_path(&done_dir))?;
     fs::write(&done, "").map_err(with_path(&done))?;
     Ok(Some(Prepared {
@@ -1841,6 +1882,20 @@ mod requirement_tests {
                 ("pango".to_owned(), true)
             ]
         );
+    }
+
+    #[test]
+    fn what_a_package_needs_only_at_run_time_is_a_dependency_outside_its_view() {
+        let text = "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\n\
+                    extra_deps = [\"gtk\"]\nruntime_deps = [\"cairo\"]\n";
+        let package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        let deps = package.all_deps().unwrap();
+        let cairo = deps.iter().find(|dep| dep.id == "cairo").unwrap();
+        assert!(!cairo.view && !cairo.rpath);
+        let lab = Lab::new("/nonexistent");
+        let seen = with_requirements(&lab, &package, &deps, &mut built()).unwrap();
+        let ids: Vec<&str> = seen.iter().map(|dep| dep.id.as_str()).collect();
+        assert_eq!(ids, ["gtk", "cairo", "pango", "zlib"]);
     }
 
     #[test]
@@ -2241,7 +2296,10 @@ mod reference_tests {
         fs::create_dir_all(root.join("bin")).unwrap();
         let text = format!("#!{0}/bin/sh\n{1}/lib\n", other.inside(), path.inside());
         fs::write(root.join("bin/run"), text).unwrap();
-        assert_eq!(references_of(&lab, &path).unwrap(), std::slice::from_ref(&other));
+        assert_eq!(
+            references_of(&lab, &path).unwrap(),
+            std::slice::from_ref(&other)
+        );
         fs::remove_file(root.join("bin/run")).unwrap();
         assert_eq!(references_of(&lab, &path).unwrap(), [other]);
         forget_references(&lab, &path).unwrap();

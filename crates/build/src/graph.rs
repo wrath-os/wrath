@@ -20,6 +20,7 @@ use crate::early;
 use crate::initrd;
 use crate::pilot;
 use crate::sandbox;
+use crate::split;
 use crate::store::{Lab, StorePath, hex, with_path};
 
 fn digest(bytes: &[u8]) -> String {
@@ -108,6 +109,8 @@ pub struct PackageRef {
     pub unresolved: String,
     /// What its tool makes from what packages share, which a generation has made.
     pub indexes: Vec<chain::Index>,
+    /// Its outputs a system can run, programs and libraries, which closures are found from.
+    pub outputs: Vec<StorePath>,
 }
 
 pub type Packages = BTreeMap<String, PackageRef>;
@@ -294,14 +297,66 @@ fn linked(
         names.sort();
         names
     };
+    let merged = MERGED_TREES.contains(&dir);
     for name in names {
-        entries
-            .entry(format!("{to}/{name}"))
-            .or_insert(Entry::Link {
-                target: format!("{}/{dir}/{name}", package.path.inside()),
-            });
+        let target = format!("{}/{dir}/{name}", package.path.inside());
+        let path = format!("{to}/{name}");
+        match entries.get(&path) {
+            None => {
+                entries.insert(path, Entry::Link { target });
+            }
+            // Packages merged file by file can't quietly win over each other: the same file twice
+            // is fine, two different ones stop the build.
+            Some(Entry::Link { target: first })
+                if merged && *first != target && !same_contents(lab, first, &target)? =>
+            {
+                return Err(format!(
+                    "`{path}` is in two packages with different contents: {first} and {target}"
+                ));
+            }
+            Some(_) => {}
+        }
     }
     Ok(())
+}
+
+/// The packages whose data a system with `named` shares: those, and every package one of whose
+/// programs or libraries their run-time closure reaches (decision 0021).
+fn sharing<'a>(
+    lab: &Lab,
+    named: &[&'a str],
+    packages: &'a Packages,
+) -> Result<Vec<&'a str>, String> {
+    let mut reached = BTreeSet::new();
+    for id in named {
+        for output in &package(packages, id)?.outputs {
+            if !reached.contains(output) {
+                reached.extend(chain::runtime_closure(lab, output)?);
+            }
+        }
+    }
+    Ok(packages
+        .iter()
+        .filter(|(id, package)| {
+            named.contains(&id.as_str()) || package.outputs.iter().any(|o| reached.contains(o))
+        })
+        .map(|(id, _)| id.as_str())
+        .collect())
+}
+
+/// Whether two links into the store name files with the same contents.
+fn same_contents(lab: &Lab, first: &str, second: &str) -> Result<bool, String> {
+    let on_host = |target: &str| match target.strip_prefix("/store/") {
+        Some(rest) => lab.work.join("store").join(rest),
+        None => PathBuf::from(target),
+    };
+    let (first, second) = (on_host(first), on_host(second));
+    match (fs::read_link(&first), fs::read_link(&second)) {
+        (Ok(a), Ok(b)) => Ok(a == b),
+        (Err(_), Err(_)) => Ok(fs::read(&first).map_err(with_path(&first))?
+            == fs::read(&second).map_err(with_path(&second))?),
+        (Ok(_), Err(_)) | (Err(_), Ok(_)) => Ok(false),
+    }
 }
 
 /// An action that makes links into packages. `layout` lists directories as (from, to).
@@ -928,6 +983,8 @@ fn lower<'a>(
         all.into_iter().collect()
     };
 
+    let sharing = sharing(lab, &everything, packages)?;
+
     let base = "base";
     // Packages whose units, udev rules, D-Bus services and the like join the system, not only
     // their programs: systemd and dbus, then those the model names.
@@ -1062,8 +1119,14 @@ fn lower<'a>(
                 ("lib/security", "lib/security"),
                 // Compiled locales, which LOCPATH names.
                 ("lib/locale", "lib/locale"),
-                ("share", "share"),
             ],
+            packages,
+        )?,
+        links(
+            "packages",
+            lab,
+            sharing.clone(),
+            &[("share", "share")],
             packages,
         )?,
         links(base, lab, services.clone(), &system_layout(), packages)?,
@@ -1080,7 +1143,7 @@ fn lower<'a>(
         )?,
         fixed_links(packages)?,
     ];
-    actions.extend(index_actions("packages", lab, &everything, packages)?);
+    actions.extend(index_actions("packages", lab, &sharing, packages)?);
 
     let disks = early::disks(&model["base"]["storage"]);
     for (path, contents) in [("etc/fstab", disks.fstab), ("etc/crypttab", disks.crypttab)] {
@@ -1922,6 +1985,13 @@ fn known_packages(built: &Built) -> Packages {
                     path: path.clone(),
                     unresolved: built.unresolved_or_path(id),
                     indexes: built.indexes.get(id).cloned().unwrap_or_default(),
+                    outputs: match built.outputs.get(id) {
+                        Some(outputs) => [split::Class::Out, split::Class::Lib]
+                            .iter()
+                            .filter_map(|class| outputs.get(class).cloned())
+                            .collect(),
+                        None => vec![path.clone()],
+                    },
                 },
             )
         })
@@ -2489,6 +2559,7 @@ mod tests {
             fs::write(bin.join(program), "").unwrap();
         }
         PackageRef {
+            outputs: vec![path.clone()],
             path,
             unresolved: format!("unresolved-{name}"),
             indexes: Vec::new(),
@@ -3075,6 +3146,56 @@ mod tests {
                 .unwrap(),
             "`dbus` indexes `lib/gio/modules`, which isn't in what packages share"
         );
+    }
+
+    /// `libweb`, which no configuration names, ships data and a program, and `web` refers to it.
+    fn with_libweb(lab: &Lab, packages: &mut Packages) -> PathBuf {
+        let libweb = fake(lab, "libweb", &["libweb-tool"]);
+        let root = lab.on_host(&libweb.path);
+        fs::create_dir_all(root.join("share/libweb")).unwrap();
+        fs::write(root.join("share/libweb/data"), "libweb").unwrap();
+        let web = lab.on_host(&packages["web"].path).join("bin/web");
+        fs::write(web, format!("{}/lib/libweb.so\n", libweb.path.inside())).unwrap();
+        packages.insert("libweb".to_owned(), libweb);
+        root
+    }
+
+    #[test]
+    fn a_system_shares_the_data_of_what_its_packages_run_but_not_its_programs() {
+        let (_dir, lab, mut packages) = setup();
+        with_libweb(&lab, &mut packages);
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let target = fs::read_link(root.join("share/libweb/data")).unwrap();
+        let inside = packages["libweb"].path.inside();
+        assert_eq!(target, Path::new(&format!("{inside}/share/libweb/data")));
+        assert!(fs::symlink_metadata(root.join("bin/libweb-tool")).is_err());
+        assert!(fs::symlink_metadata(root.join("bin/web")).is_ok());
+    }
+
+    #[test]
+    fn two_packages_may_share_the_same_file_but_not_two_different_ones() {
+        for (contents, clash) in [("libweb", false), ("changed", true)] {
+            let (_dir, lab, mut packages) = setup();
+            with_libweb(&lab, &mut packages);
+            let web = lab.on_host(&packages["web"].path).join("share/libweb");
+            fs::create_dir_all(&web).unwrap();
+            fs::write(web.join("data"), contents).unwrap();
+            let model = model(80, false);
+            let actions = lower(&lab, &model, &Kept::plain(&model), &packages)
+                .unwrap()
+                .actions;
+            let mut db = Db::open(&db_path(&lab)).unwrap();
+            match realise(&lab, &mut db, actions) {
+                Ok(_) => assert!(!clash),
+                Err(error) => {
+                    assert!(clash);
+                    let start = "`share/libweb/data` is in two packages with different contents";
+                    assert!(error.starts_with(start), "{error}");
+                }
+            }
+        }
     }
 
     #[test]

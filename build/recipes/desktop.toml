@@ -1123,6 +1123,8 @@ id = "xdg-desktop-portal-gtk"
 version = "1.15.3"
 scope = "runtime"
 core = true
+# It reads the desktop's settings by name.
+runtime_deps = ["gsettings-desktop-schemas"]
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "gtk3", "xdg-desktop-portal", "gsettings-desktop-schemas",
   "glib", "pcre2", "libffi", "util-linux", "zlib", "cairo", "pango", "harfbuzz", "fribidi",

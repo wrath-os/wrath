@@ -26,10 +26,6 @@ def render(ctx):
     # niri runs X programs through it, and it runs Xwayland.
     ctx.package("xwayland-satellite")
     ctx.package("xwayland")
-    # Only what a system names joins its share, so the settings schemas GTK programs and the GTK
-    # portal read are named here.
-    ctx.package("gtk3")
-    ctx.package("gsettings-desktop-schemas")
     ctx.file("/etc/xdg/xdg-desktop-portal/niri-portals.conf", PORTALS)
 
 module(name = "niri", options = {}, writes = [], render = render)
