@@ -127,15 +127,21 @@ fn recipe_methods(builder: &mut MethodsBuilder) {
         Ok(this.version.clone())
     }
 
-    /// The text of a file in the recipe's first source, by its path under the top directory.
+    /// The text of a file in the recipe's first source, by its path under the top directory, or
+    /// `default` when the source has no such file and one is given.
     fn read<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] path: &str,
+        #[starlark(require = named)] default: Option<StarValue<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<StarValue<'v>> {
         let running = running(eval)?;
         running.reads.borrow_mut().push(path.to_owned());
-        (running.read)(path).map_err(anyhow::Error::msg)
+        match ((running.read)(path), default) {
+            (Ok(text), _) => Ok(eval.heap().alloc(text)),
+            (Err(_), Some(default)) => Ok(default),
+            (Err(e), None) => Err(anyhow::Error::msg(e)),
+        }
     }
 }
 
@@ -376,12 +382,22 @@ impl Style {
             set_time_limit(&mut eval);
             let made = eval
                 .eval_function(build, &[recipe, options], &[])
-                .map_err(|e| format!("`{id}`, in the {} style: {e}", self.name))?;
+                .map_err(|e| {
+                    failed(&e.to_string())
+                        .unwrap_or_else(|| format!("`{id}`, in the {} style: {e}", self.name))
+                })?;
             convert::from_starlark(made)
         })?;
         record(made, running.reads.into_inner())
             .map_err(|e| format!("`{id}`, in the {} style: {e}", self.name))
     }
+}
+
+/// The message a style gave `fail()`, which is meant for whoever wrote the recipe, without the
+/// traceback through the style around it.
+fn failed(error: &str) -> Option<String> {
+    let message = error.split_once("error: fail: ")?.1;
+    Some(message.lines().next().unwrap_or(message).to_owned())
 }
 
 /// The record a build function returned: `script`, and optionally `deps` and `sources`.

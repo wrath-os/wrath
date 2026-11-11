@@ -1178,6 +1178,69 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
         .collect()
 }
 
+/// What a failed build said it was missing, from the end of its log.
+#[derive(Debug, PartialEq, Eq)]
+enum Missing {
+    Program(String),
+    /// A pkg-config module.
+    Module(String),
+    Header(String),
+}
+
+/// What the last lines of `log` say a build was missing, when they say it the way Meson,
+/// configure, a compiler or the shell do.
+fn missing_in(log: &str) -> Option<Missing> {
+    let between = |line: &str, start: &str, end: &str| {
+        let rest = &line[line.find(start)? + start.len()..];
+        Some(rest[..rest.find(end)?].to_owned())
+    };
+    log.lines().rev().take(40).find_map(|line| {
+        if let Some(name) = between(line, "ERROR: Program '", "' not found") {
+            return Some(Missing::Program(name));
+        }
+        if let Some(name) = between(line, "Dependency \"", "\" not found") {
+            return Some(Missing::Module(name));
+        }
+        if line.contains("no suitable Python interpreter") {
+            return Some(Missing::Program("python3".to_owned()));
+        }
+        if let Some(name) = between(line, "fatal error: ", ": No such file or directory") {
+            return Some(Missing::Header(name));
+        }
+        let program = line.strip_suffix(": command not found")?;
+        Some(Missing::Program(program.rsplit(": ").next()?.to_owned()))
+    })
+}
+
+/// Which built recipe has what a build was missing, said as what to do about it.
+fn failure_hint(lab: &Lab, built: &Built, missing: &Missing) -> String {
+    let (what, name, file, places): (&str, &str, String, &[&str]) = match missing {
+        Missing::Program(name) => ("the program", name, name.clone(), &["bin"]),
+        Missing::Module(name) => (
+            "the pkg-config module",
+            name,
+            format!("{name}.pc"),
+            &["lib/pkgconfig", "share/pkgconfig"],
+        ),
+        Missing::Header(name) => ("the header", name, name.clone(), &["include"]),
+    };
+    let has = built.paths.keys().find(|id| {
+        built.output_paths(id).iter().any(|path| {
+            places
+                .iter()
+                .any(|place| lab.on_host(path).join(place).join(&file).exists())
+        })
+    });
+    match (has, missing) {
+        (None, _) => format!("no recipe built so far has {what} `{name}`; one may need writing"),
+        (Some(id), Missing::Header(_)) => format!(
+            "`{id}` has {what} `{name}`: add it to `extra_deps`, or to `propagates` of the \
+             library whose headers include it"
+        ),
+        (Some(id), _) => format!("`{id}` has {what} `{name}`: add it to `extra_deps`"),
+    }
+}
+
 /// Where build styles are, beside the recipes.
 const STYLES: &str = "styles";
 
@@ -2043,8 +2106,13 @@ pub(crate) fn build_one(
         },
     )?;
     if outcome.status != Status::Passed {
+        let hint = fs::read_to_string(&log)
+            .ok()
+            .and_then(|text| missing_in(&text))
+            .map(|missing| format!("\n  hint: {}", failure_hint(lab, built, &missing)))
+            .unwrap_or_default();
         return Err(format!(
-            "`{}` {:?} after {} s, see {}",
+            "`{}` {:?} after {} s, see {}{hint}",
             package.id,
             outcome.status,
             outcome.milliseconds / 1000,
@@ -3194,6 +3262,29 @@ mod style_goldens {
     }
 
     #[test]
+    fn a_meson_option_the_project_doesnt_declare_is_refused_before_it_builds() {
+        let styles = styles(&repository()).unwrap();
+        let text = "[[package]]\nid = \"libsecret\"\nscope = \"runtime\"\n[package.meson]\n\
+                    args = [\"-D gir=false\", \"-D b_lto=true\", \"--sysconfdir=/etc\"]\n";
+        let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        package.check_style(&styles).unwrap();
+        // An older project keeps its options in meson_options.txt.
+        let read = |path: &str| match path {
+            "meson_options.txt" => Ok("option('introspection', type: 'boolean')\n\
+                                       option('vapi',\n  type: 'boolean')\n"
+                .to_owned()),
+            _ => Err(format!("no {path}")),
+        };
+        let error = package
+            .styled_by(&styles, &|| Ok(Vec::new()), &read)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "`libsecret`: the project has no option `gir`; it has `introspection`, `vapi`"
+        );
+    }
+
+    #[test]
     fn the_build_system_styles_make_their_usual_three_steps() {
         let styles = styles(&repository()).unwrap();
         let script = |style: &str, args: &str| {
@@ -3203,10 +3294,11 @@ mod style_goldens {
             let mut package = toml::from_str::<Recipes>(&text).unwrap().package.remove(0);
             package.check_style(&styles).unwrap();
             let top = || Ok(Vec::new());
-            package
-                .styled_by(&styles, &top, &|_| Err(String::new()))
-                .unwrap()
-                .script
+            let read = |path: &str| match path {
+                "meson.options" => Ok("option('docs', type: 'feature')\n".to_owned()),
+                _ => Err(String::new()),
+            };
+            package.styled_by(&styles, &top, &read).unwrap().script
         };
         assert_eq!(
             script("meson", "\"-D docs=disabled\""),
@@ -3371,6 +3463,78 @@ style(name = "cargo", locks = ["Cargo.lock"],
         assert_eq!(
             error,
             "`app-x`: the cargo style has no option `feature`; it has `features`"
+        );
+    }
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_program_module_or_header_is_found_at_the_end_of_a_log() {
+        let cases = [
+            (
+                "src/meson.build:58:7: ERROR: Program 'cmake' not found or not executable",
+                Missing::Program("cmake".into()),
+            ),
+            (
+                "doc/meson.build:2:8: ERROR: Dependency \"scdoc\" not found, tried pkgconfig",
+                Missing::Module("scdoc".into()),
+            ),
+            (
+                "configure: error: no suitable Python interpreter found",
+                Missing::Program("python3".into()),
+            ),
+            (
+                "Number.h:17:10: fatal error: gmp.h: No such file or directory",
+                Missing::Header("gmp.h".into()),
+            ),
+            (
+                "/bin/sh: line 3: scdoc: command not found",
+                Missing::Program("scdoc".into()),
+            ),
+        ];
+        for (line, missing) in cases {
+            let log = format!("checking things...\n{line}\nA full log can be found at x\n");
+            assert_eq!(missing_in(&log), Some(missing), "{line}");
+        }
+        assert_eq!(missing_in("error: something else entirely\n"), None);
+    }
+
+    #[test]
+    fn the_hint_names_the_recipe_that_has_what_was_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path());
+        let mut built = Built::default();
+        for (id, file) in [
+            ("cmake", "bin/cmake"),
+            ("gmp-lib", "include/gmp.h"),
+            ("wayland", "lib/pkgconfig/wayland-client.pc"),
+        ] {
+            let path = StorePath::from_hash(&format!("{id}hash"));
+            let at = lab.on_host(&path).join(file);
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            fs::write(at, "").unwrap();
+            built.paths.insert(id.to_owned(), path);
+        }
+        let hint = |missing| failure_hint(&lab, &built, &missing);
+        assert_eq!(
+            hint(Missing::Program("cmake".into())),
+            "`cmake` has the program `cmake`: add it to `extra_deps`"
+        );
+        assert_eq!(
+            hint(Missing::Header("gmp.h".into())),
+            "`gmp-lib` has the header `gmp.h`: add it to `extra_deps`, or to `propagates` of the \
+             library whose headers include it"
+        );
+        assert_eq!(
+            hint(Missing::Module("wayland-client".into())),
+            "`wayland` has the pkg-config module `wayland-client`: add it to `extra_deps`"
+        );
+        assert_eq!(
+            hint(Missing::Program("scdoc".into())),
+            "no recipe built so far has the program `scdoc`; one may need writing"
         );
     }
 }

@@ -23,7 +23,9 @@ style (Starlark), the builder (Rust), or the recipe.
   be checked before it runs; the cmake style passes `--warn-unused-cli`, and a warning about an
   unused variable fails the build.
 - **Belongs in:** the styles.
-- **Status:** open.
+- **Status:** meson done: the style reads `meson.options` or `meson_options.txt` and refuses an
+  undeclared `-D`, naming the options the project has, when the recipe is styled. Autotools and
+  CMake wait for the next full rebuild, since their flags change every script.
 
 ### A configure script finds a compiler that isn't the wrapper
 
@@ -50,7 +52,8 @@ style (Starlark), the builder (Rust), or the recipe.
   `Dependency "X" not found`) and says "add `X` to `extra_deps`", naming the recipe that provides
   it.
 - **Belongs in:** the builder.
-- **Status:** open.
+- **Status:** done: a failed build ends with a hint naming the recipe that has the missing
+  program, pkg-config module or header, or saying none built so far has it.
 
 ### Headers include what the library's .pc file doesn't name
 
