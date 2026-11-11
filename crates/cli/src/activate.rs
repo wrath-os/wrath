@@ -78,33 +78,32 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     let mut written = BTreeSet::new();
     for (number, link) in generations {
         let system = inside(root, &link);
+        let boot = Boot::of(&system)?;
         let mut files = Vec::new();
-        for part in ["kernel", "initrd"] {
-            let path = fs::read_link(system.join(part))
-                .map_err(|e| format!("{}: {e}", system.join(part).display()))?;
+        for path in std::iter::once(&boot.kernel).chain(&boot.initrds) {
             // Named after the store path, so a kernel shared by generations is copied once.
             let name = path
                 .strip_prefix("/store")
-                .unwrap_or(&path)
+                .unwrap_or(path)
                 .to_string_lossy()
                 .replace('/', "-");
             let copy = kernels.join(&name);
             if !copy.exists() {
-                copy_replacing(&inside(root, &system.join(part)), &copy)?;
+                let under_root = root.join(path.strip_prefix("/").unwrap_or(path));
+                copy_replacing(&inside(root, &under_root), &copy)?;
             }
             kept.insert(name.clone());
             files.push(name);
         }
         // Secrets the initrd needs from the disk, such as its SSH host key, go in an initrd of
         // their own made here, so they never go in the store.
-        let listed = fs::read_to_string(system.join("initrd-secrets")).unwrap_or_default();
-        let secrets = listed
-            .lines()
-            .filter(|line| !line.is_empty())
+        let secrets = boot
+            .secrets
+            .iter()
             .map(|path| {
                 let file = root.join(path.trim_start_matches('/'));
                 fs::read(&file)
-                    .map(|bytes| (path, bytes))
+                    .map(|bytes| (path.as_str(), bytes))
                     .map_err(|e| format!("{}: {e}", file.display()))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -118,10 +117,7 @@ fn boot_entries(root: &Path) -> Result<(), String> {
             kept.insert(name.clone());
             files.push(name);
         }
-        let mut params = fs::read_to_string(system.join("kernel-params"))
-            .map_err(|e| format!("{}: {e}", system.display()))?
-            .trim()
-            .to_owned();
+        let mut params = boot.params.join(" ");
         // A system from distro's store can't name itself in its own files, so the entry does.
         if !params.split(' ').any(|param| param.starts_with("init=")) {
             let named = fs::read_link(&link).map_err(|e| format!("{}: {e}", link.display()))?;
@@ -150,6 +146,66 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     remove_others(&kernels, |name| !kept.contains(name))?;
     sync_tree(&kernels)?;
     sync_tree(&esp.join("loader"))
+}
+
+/// What boots a generation, from its `boot.json`.
+#[derive(Debug, PartialEq)]
+struct Boot {
+    kernel: PathBuf,
+    initrds: Vec<PathBuf>,
+    params: Vec<String>,
+    /// Files on the machine that go in an initrd of their own.
+    secrets: Vec<String>,
+}
+
+impl Boot {
+    /// A generation's boot description. One built before generations had `boot.json` gets the
+    /// same from its `kernel` and `initrd` links and its `kernel-params` and `initrd-secrets`.
+    fn of(system: &Path) -> Result<Self, String> {
+        let at = |name: &str| system.join(name);
+        let error = |name: &str| {
+            let path = at(name);
+            move |e: io::Error| format!("{}: {e}", path.display())
+        };
+        if let Ok(text) = fs::read_to_string(at("boot.json")) {
+            let document: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|e| format!("{}: {e}", at("boot.json").display()))?;
+            let spec = &document[distro_build::graph::BOOT_SPEC];
+            let strings = |field: &str| -> Vec<String> {
+                spec[field]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect()
+            };
+            let kernel = spec["kernel"].as_str().ok_or_else(|| {
+                format!(
+                    "{} has no `{}` kernel",
+                    at("boot.json").display(),
+                    distro_build::graph::BOOT_SPEC
+                )
+            })?;
+            return Ok(Self {
+                kernel: PathBuf::from(kernel),
+                initrds: strings("initrds").into_iter().map(PathBuf::from).collect(),
+                params: strings("kernel_params"),
+                secrets: strings("initrd_secrets"),
+            });
+        }
+        let params = fs::read_to_string(at("kernel-params")).map_err(error("kernel-params"))?;
+        let secrets = fs::read_to_string(at("initrd-secrets")).unwrap_or_default();
+        Ok(Self {
+            kernel: fs::read_link(at("kernel")).map_err(error("kernel"))?,
+            initrds: vec![fs::read_link(at("initrd")).map_err(error("initrd"))?],
+            params: params.split_whitespace().map(str::to_owned).collect(),
+            secrets: secrets
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        })
+    }
 }
 
 /// Writes everything under `dir` to the disk itself. The ESP's filesystem leaves that to whoever
@@ -687,6 +743,33 @@ mod tests {
             .unwrap();
         }
         symlink(format!("generations/{current}"), root.join(CURRENT)).unwrap();
+    }
+
+    #[test]
+    fn a_generation_boots_as_its_boot_json_says_and_an_older_one_as_its_files_say() {
+        let work = tempfile::tempdir().unwrap();
+        let system = work.path();
+        symlink("/store/old/bzImage", system.join("kernel")).unwrap();
+        symlink("/store/old/initrd", system.join("initrd")).unwrap();
+        fs::write(system.join("kernel-params"), "quiet rw\n").unwrap();
+        let old = Boot::of(system).unwrap();
+        assert_eq!(old.kernel, Path::new("/store/old/bzImage"));
+        assert_eq!(old.initrds, [Path::new("/store/old/initrd")]);
+        assert_eq!(old.params, ["quiet", "rw"]);
+        assert!(old.secrets.is_empty());
+
+        let spec = serde_json::json!({distro_build::graph::BOOT_SPEC: {
+            "kernel": "/store/k/bzImage",
+            "initrds": ["/store/i/initrd", "/store/j/initrd"],
+            "kernel_params": ["loglevel=3"],
+            "initrd_secrets": ["/etc/ssh/initrd_ed25519_key"],
+        }});
+        fs::write(system.join("boot.json"), spec.to_string()).unwrap();
+        let new = Boot::of(system).unwrap();
+        assert_eq!(new.kernel, Path::new("/store/k/bzImage"));
+        assert_eq!(new.initrds.len(), 2);
+        assert_eq!(new.params, ["loglevel=3"]);
+        assert_eq!(new.secrets, ["/etc/ssh/initrd_ed25519_key"]);
     }
 
     #[test]

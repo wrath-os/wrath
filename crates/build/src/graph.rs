@@ -1493,17 +1493,21 @@ fn boot_files<'a>(
     let microcode = kernel["microcode"]["package"]
         .as_str()
         .filter(|id| packages.contains_key(*id));
+    let params: Vec<String> = kernel_params(model)?
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
     let mut ids = [INITRD_PACKAGES.as_slice(), &["linux"]].concat();
     ids.extend(microcode);
     let (unresolved, resolved) = action_records(&ids, packages, |deps| {
-        json!({"kind": "boot", "files": files, "rules": DM_RULES,
-               "outputs": ["initrd", "kernel"], "deps": deps})
+        json!({"kind": "boot", "files": files, "rules": DM_RULES, "params": params,
+               "outputs": ["boot.json", "initrd", "kernel"], "deps": deps})
     })?;
     Ok(Action {
         origin: "base.boot".to_owned(),
         unresolved,
         resolved,
-        run: Box::new(move |_| {
+        run: Box::new(move |objects| {
             let linux = &package(packages, "linux")?.path;
             let systemd_path = &package(packages, "systemd")?.path;
             let systemd = systemd_path.inside();
@@ -1619,18 +1623,42 @@ fn boot_files<'a>(
             let file = directory.join("initrd");
             fs::write(&file, compressed).map_err(with_path(&file))?;
             let link = |target: String| Entry::Link { target };
+            let (kernel, initrd) = (
+                format!("{}/bzImage", linux.inside()),
+                format!("{}/initrd", path.inside()),
+            );
+            let spec = boot_spec(&kernel, std::slice::from_ref(&initrd), &params);
             Ok(BTreeMap::from([
                 (
-                    "initrd".to_owned(),
-                    link(format!("{}/initrd", path.inside())),
+                    "boot.json".to_owned(),
+                    Entry::File {
+                        mode: 0o644,
+                        object: objects.put(spec.as_bytes())?,
+                    },
                 ),
-                (
-                    "kernel".to_owned(),
-                    link(format!("{}/bzImage", linux.inside())),
-                ),
+                ("initrd".to_owned(), link(initrd)),
+                ("kernel".to_owned(), link(kernel)),
             ]))
         }),
     })
+}
+
+/// The key a generation's `boot.json` keeps its boot description under. A new version gets a new
+/// key, so a reader knows what it's reading (after NixOS's bootspec, RFC 0125).
+pub const BOOT_SPEC: &str = "org.distro.boot.v1";
+
+/// What boots a generation: its kernel, its initrds in order and its kernel parameters, as store
+/// paths, so whatever writes boot entries or signs them reads this alone. A generation can't
+/// name itself, so the `init=` that points at it is added by whoever writes the entry.
+fn boot_spec(kernel: &str, initrds: &[String], params: &[String]) -> String {
+    let spec = json!({BOOT_SPEC: {
+        "system": "x86_64-linux",
+        "label": "distro",
+        "kernel": kernel,
+        "initrds": initrds,
+        "kernel_params": params,
+    }});
+    format!("{spec:#}\n")
 }
 
 /// What the UEFI boot test adds to its systems: a service that reports how each boot went, on the
@@ -3240,6 +3268,32 @@ mod tests {
             params.contains("firmware_class.path=/run/system-booted/firmware"),
             "{params}"
         );
+    }
+
+    #[test]
+    fn a_generation_says_what_boots_it_in_one_versioned_document() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let text = fs::read_to_string(root.join("boot.json")).unwrap();
+        let spec = &serde_json::from_str::<Value>(&text).unwrap()[BOOT_SPEC];
+        let link = |name: &str| fs::read_link(root.join(name)).unwrap();
+        assert_eq!(Path::new(spec["kernel"].as_str().unwrap()), link("kernel"));
+        assert_eq!(
+            Path::new(spec["initrds"][0].as_str().unwrap()),
+            link("initrd")
+        );
+        let params = fs::read_to_string(root.join("kernel-params")).unwrap();
+        let listed: Vec<&str> = spec["kernel_params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|param| param.as_str().unwrap())
+            .collect();
+        assert_eq!(listed, params.split_whitespace().collect::<Vec<_>>());
+        // Optional fields are left out rather than null.
+        assert!(!text.contains("null"));
     }
 
     #[test]
