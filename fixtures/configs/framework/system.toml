@@ -38,3 +38,7 @@ shell = "noctalia"
 # Programs downloaded for other distributions run, finding their libraries through /lib64.
 [programs.foreign]
 enable = true
+
+# Bluetooth keyboards, mice and headphones, on the MediaTek radio beside the wifi.
+[bluetooth]
+enable = true

@@ -7,3 +7,6 @@ enable = true
 [desktop]
 session = "niri"
 autologin = "demo"
+
+[bluetooth]
+enable = true

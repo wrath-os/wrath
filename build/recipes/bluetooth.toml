@@ -1,0 +1,36 @@
+# Bluetooth: BlueZ, its daemon and bluetoothctl, and the SBC codec PipeWire sends audio to
+# headphones with.
+
+[[package]]
+id = "bluez"
+version = "5.88"
+scope = "runtime"
+core = true
+extra_deps = ["dbus", "glib", "systemd", "readline", "pkgconf", "python3"]
+sources = [{ url = "https://www.kernel.org/pub/linux/bluetooth/bluez-{version}.tar.xz" }]
+smoke = ["bin/bluetoothctl --version"]
+probes = ["bluetooth"]
+
+# The daemon, the library PipeWire builds against, and bluetoothctl. Without the OBEX file
+# transfer daemon, mesh networking, MIDI or printing.
+[package.autotools]
+args = [
+  "--localstatedir=/var", "--sysconfdir=/etc", "--enable-library", "--disable-obex",
+  "--disable-mesh", "--disable-midi", "--disable-cups", "--disable-manpages", "--disable-testing",
+  "--with-systemdsystemunitdir=$PREFIX/lib/systemd/system",
+  "--with-systemduserunitdir=$PREFIX/lib/systemd/user", "--with-udevdir=$PREFIX/lib/udev",
+  "--with-dbusconfdir=$PREFIX/share",
+  "--with-dbussystembusdir=$PREFIX/share/dbus-1/system-services",
+  "--with-dbussessionbusdir=$PREFIX/share/dbus-1/services",
+]
+
+[[package]]
+id = "sbc"
+version = "2.2"
+scope = "runtime"
+core = true
+sources = [{ url = "https://www.kernel.org/pub/linux/bluetooth/sbc-{version}.tar.xz" }]
+probes = ["sbc"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-tools", "--disable-tester"]

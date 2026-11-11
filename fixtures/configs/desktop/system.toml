@@ -8,3 +8,6 @@ enable = true
 session = "niri"
 shell = "noctalia"
 autologin = "demo"
+
+[bluetooth]
+enable = true

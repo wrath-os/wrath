@@ -462,14 +462,14 @@ id = "pipewire"
 version = "1.6.11"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "python3", "alsa-lib", "dbus", "glib"]
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "alsa-lib", "dbus", "glib", "bluez", "sbc"]
 sources = [{ url = "https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/{version}/pipewire-{version}.tar.gz" }]
 smoke = ["bin/pipewire --version"]
 probes = ["libpipewire-0.3"]
 
 # Audio through ALSA, with the PulseAudio server for programs that speak it, run as each user's
-# service. Every optional feature is off unless named, and the session manager is WirePlumber,
-# built on its own.
+# service, and Bluetooth headphones through BlueZ, with SBC. Every optional feature is off unless
+# named, and the session manager is WirePlumber, built on its own.
 [package.meson]
 args = [
   "-D auto_features=disabled", "-D session-managers=[]", "-D alsa=enabled",
@@ -478,7 +478,8 @@ args = [
   "-D udevrulesdir=$PREFIX/lib/udev/rules.d", "-D udev=enabled", "-D spa-plugins=enabled",
   "-D support=enabled", "-D audioconvert=enabled", "-D audiomixer=enabled",
   "-D control=enabled", "-D volume=enabled", "-D flatpak=disabled", "-D examples=disabled",
-  "-D tests=disabled", "-D man=disabled", "-D docs=disabled",
+  "-D tests=disabled", "-D man=disabled", "-D docs=disabled", "-D bluez5=enabled",
+  "-D bluez5-backend-hfp-native=enabled", "-D bluez5-backend-hsp-native=enabled",
 ]
 
 [[package]]

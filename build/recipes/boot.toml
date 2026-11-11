@@ -61,6 +61,11 @@ scripts/config --enable CRYPTO_USER_API_HASH --enable CRYPTO_USER_API_SKCIPHER -
 scripts/config --module ZRAM --enable ZRAM_BACKEND_ZSTD --enable ZRAM_DEF_COMP_ZSTD --enable CRYPTO_ZSTD
 # Firmware stored compressed, which takes a third of the room.
 scripts/config --enable FW_LOADER_COMPRESS --enable FW_LOADER_COMPRESS_ZSTD
+# Bluetooth, for keyboards, mice and headphones, with the Framework Desktop's MediaTek radio on
+# USB, which reads its firmware once the root is there.
+scripts/config --module BT --enable BT_BREDR --enable BT_LE --module BT_RFCOMM --module BT_BNEP \
+    --module BT_HIDP --module BT_HCIBTUSB --enable BT_HCIBTUSB_MTK --enable BT_HCIBTUSB_AUTOSUSPEND \
+    --module UHID
 make olddefconfig
 make -j$NPROC bzImage modules
 mkdir -p $DEST$PREFIX /build/tools

@@ -10,6 +10,8 @@ steps = [
   # The GTK portal aborts without the system's compiled settings schemas. The wlroots portal
   # needs dmabufs, which niri only offers with a GPU, so it isn't started here.
   { run = "systemctl --user -M demo@ start xdg-desktop-portal-gtk.service; sleep 3; test \"$(systemctl --user -M demo@ is-active xdg-desktop-portal-gtk.service)\" = active && echo running", stdout_contains = "running" },
+  # BlueZ waits for an adapter, which the VM hasn't, and PipeWire has its Bluetooth plugin.
+  { run = "systemctl show -p LoadState --value bluetooth.service; bluetoothctl --version; ls /store/*-pipewire-*/lib/spa-0.2/bluez5/ | grep -c libspa-bluez5", stdout_contains = "loaded\nbluetoothctl: 5.88\n1" },
   # A shell added while the session runs starts in it, as the user's manager reloads.
   { apply_config = "fixtures/configs/desktop", expect_plan = ["noctalia"] },
   { run = "sleep 5; systemctl --user -M demo@ is-active noctalia.service", stdout_contains = "active" },
