@@ -61,10 +61,12 @@ pub(crate) const GENERATIONS: &str = "store/.system/generations";
 /// The link to the current generation, under the root, as `generations/N`.
 pub(crate) const CURRENT: &str = "store/.system/current";
 
-/// Writes a boot loader entry for each generation of the system at `root`, with its kernel and
-/// initrd copied to the ESP at `/boot`, and makes the current generation the default. Kernels
-/// and entries no generation has any more are removed. A machine without an ESP, such as a test
-/// VM booted directly, has nothing to write.
+/// Writes a boot loader entry for generations of the system at `root`, with their kernels and
+/// initrds copied to the ESP at `/boot`, and makes the current generation the default. The
+/// current generation and the running one always get entries, and older ones as long as their
+/// files fit; the rest stay in the store, without an entry. Kernels and entries no generation
+/// with an entry has are removed first, so their space is there for what's copied. A machine
+/// without an ESP, such as a test VM booted directly, has nothing to write.
 fn boot_entries(root: &Path) -> Result<(), String> {
     let esp = root.join("boot");
     if !esp.join("loader").is_dir() {
@@ -76,27 +78,71 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     for dir in [&kernels, &entries] {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let mut kept = BTreeSet::new();
-    let mut written = BTreeSet::new();
+    let mut booting = Vec::new();
     for (number, link) in generations {
-        let system = inside(root, &link);
-        let boot = Boot::of(&system)?;
-        let mut files = Vec::new();
-        for path in [&boot.kernel, &boot.initrd] {
-            // Named after the store path, so a kernel shared by generations is copied once.
-            let name = path
-                .strip_prefix("/store")
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('/', "-");
-            let copy = kernels.join(&name);
-            if !copy.exists() {
+        let boot = Boot::of(&inside(root, &link))?;
+        let files = [&boot.kernel, &boot.initrd]
+            .into_iter()
+            .map(|path| {
+                // Named after the store path, so a kernel shared by generations is copied once.
+                let name = path
+                    .strip_prefix("/store")
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .replace('/', "-");
                 let under_root = root.join(path.strip_prefix("/").unwrap_or(path));
-                copy_replacing(&inside(root, &under_root), &copy)?;
-            }
-            kept.insert(name.clone());
-            files.push(name);
+                (name, inside(root, &under_root))
+            })
+            .collect::<Vec<_>>();
+        booting.push((number, link, boot, files));
+    }
+
+    let mut wanted = BTreeSet::from([current]);
+    wanted.extend(running_generations(
+        root,
+        booting
+            .iter()
+            .map(|(number, link, ..)| (*number, link.as_path())),
+    ));
+    let mut sizes = Vec::new();
+    for (number, _, _, files) in &booting {
+        let mut sized = Vec::new();
+        for (name, from) in files {
+            let size = fs::metadata(from).map_err(|e| format!("{}: {e}", from.display()))?;
+            sized.push((name.clone(), size.len()));
         }
+        sizes.push((*number, sized));
+    }
+    let chosen = fitting(&sizes, &wanted, room(&kernels)?)?;
+    let dropped: Vec<String> = booting
+        .iter()
+        .filter(|(number, ..)| !chosen.contains(number))
+        .map(|(number, ..)| number.to_string())
+        .collect();
+    if !dropped.is_empty() {
+        eprintln!(
+            "generations {} have no boot entry, since /boot has no room for them; they stay \
+             in the store",
+            dropped.join(", ")
+        );
+    }
+    booting.retain(|(number, ..)| chosen.contains(number));
+    let mut kept: BTreeSet<String> = booting
+        .iter()
+        .flat_map(|(_, _, _, files)| files.iter().map(|(name, _)| name.clone()))
+        .collect();
+    kept.extend(booting.iter().map(|(number, ..)| secrets_name(*number)));
+    remove_others(&kernels, |name| !kept.contains(name))?;
+
+    let mut written = BTreeSet::new();
+    for (number, link, boot, files) in booting {
+        for (name, from) in &files {
+            let copy = kernels.join(name);
+            if !copy.exists() {
+                copy_replacing(from, &copy)?;
+            }
+        }
+        let mut names: Vec<String> = files.into_iter().map(|(name, _)| name).collect();
         // Secrets the initrd needs from the disk, such as its SSH host key, go in an initrd of
         // their own made here, so they never go in the store.
         let secrets = boot
@@ -110,14 +156,9 @@ fn boot_entries(root: &Path) -> Result<(), String> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         if !secrets.is_empty() {
-            let name = format!("secrets-{number}.cpio");
-            let archive = kernels.join(&name);
-            let temporary = archive.with_extension("distro-new");
-            fs::write(&temporary, cpio(&secrets))
-                .and_then(|()| fs::rename(&temporary, &archive))
-                .map_err(|e| format!("{}: {e}", archive.display()))?;
-            kept.insert(name.clone());
-            files.push(name);
+            let name = secrets_name(number);
+            write_replacing(&kernels.join(&name), cpio(&secrets), 0o600)?;
+            names.push(name);
         }
         let mut params = boot.params.join(" ");
         // A system from distro's store can't name itself in its own files, so the entry does.
@@ -130,7 +171,7 @@ fn boot_entries(root: &Path) -> Result<(), String> {
         // tries is booted only when nothing else is left.
         let entry = counted_entry(&entries, number)?
             .unwrap_or_else(|| format!("distro-{number}+{BOOT_TRIES}.conf"));
-        let initrds: String = files[1..]
+        let initrds: String = names[1..]
             .iter()
             .map(|file| format!("initrd /EFI/distro/{file}\n"))
             .collect();
@@ -144,7 +185,7 @@ fn boot_entries(root: &Path) -> Result<(), String> {
         let text = format!(
             "title distro\nversion generation {number}\nsort-key {sort_key}\n\
              linux /EFI/distro/{}\n{initrds}options {}\n",
-            files[0], params
+            names[0], params
         );
         write_replacing(&entries.join(&entry), &text, 0o644)?;
         written.insert(entry);
@@ -157,9 +198,80 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     remove_others(&entries, |name| {
         name.starts_with("distro-") && !written.contains(name)
     })?;
-    remove_others(&kernels, |name| !kept.contains(name))?;
     sync_tree(&kernels)?;
     sync_tree(&esp.join("loader"))
+}
+
+fn secrets_name(number: u32) -> String {
+    format!("secrets-{number}.cpio")
+}
+
+/// The generations whose systems run now or were booted, which keep their entries so the machine
+/// can boot what it last booted.
+fn running_generations<'a>(
+    root: &Path,
+    generations: impl Iterator<Item = (u32, &'a Path)>,
+) -> Vec<u32> {
+    let running: Vec<PathBuf> = [RUNNING, BOOTED]
+        .iter()
+        .filter_map(|link| fs::read_link(root.join(link)).ok())
+        .collect();
+    generations
+        .filter(|(_, link)| fs::read_link(link).is_ok_and(|to| running.contains(&to)))
+        .map(|(number, _)| number)
+        .collect()
+}
+
+/// The bytes the ESP's directory of kernels can hold: what's free, and what's in it now, since
+/// any of that can go.
+fn room(kernels: &Path) -> Result<u64, String> {
+    let stat = rustix::fs::statvfs(kernels).map_err(|e| format!("{}: {e}", kernels.display()))?;
+    let mut room = stat.f_bavail * stat.f_frsize;
+    for entry in fs::read_dir(kernels).map_err(|e| format!("{}: {e}", kernels.display()))? {
+        let entry = entry.map_err(|e| format!("{}: {e}", kernels.display()))?;
+        room += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+    }
+    // Room for the boot loader's entries and the secrets initrds, which are small.
+    Ok(room.saturating_sub(1 << 20))
+}
+
+/// The generations of `sizes`, each with the files it needs on the ESP and their sizes, that get
+/// entries: those in `wanted`, then the newest others while their files fit in `room`, sharing
+/// files they have in common. An error when `wanted` alone doesn't fit.
+fn fitting(
+    sizes: &[(u32, Vec<(String, u64)>)],
+    wanted: &BTreeSet<u32>,
+    room: u64,
+) -> Result<BTreeSet<u32>, String> {
+    let mut newest_first: Vec<&(u32, Vec<(String, u64)>)> = sizes.iter().collect();
+    newest_first.sort_by_key(|(number, _)| std::cmp::Reverse(*number));
+    let (first, others): (Vec<_>, Vec<_>) = newest_first
+        .into_iter()
+        .partition(|(number, _)| wanted.contains(number));
+    let mut chosen = BTreeSet::new();
+    let mut files = BTreeSet::new();
+    let mut used = 0;
+    for (number, generation) in first.iter().chain(&others) {
+        let more: u64 = generation
+            .iter()
+            .filter(|(name, _)| !files.contains(name.as_str()))
+            .map(|(_, size)| size)
+            .sum();
+        if used + more > room {
+            if wanted.contains(number) {
+                return Err(format!(
+                    "/boot has room for {} MB of kernels, and the current and running \
+                     generations need more",
+                    room >> 20
+                ));
+            }
+            break;
+        }
+        used += more;
+        files.extend(generation.iter().map(|(name, _)| name.as_str()));
+        chosen.insert(*number);
+    }
+    Ok(chosen)
 }
 
 /// How many times the boot loader tries a new generation before it falls back to another.
@@ -324,7 +436,11 @@ fn inside(root: &Path, link: &Path) -> PathBuf {
 
 fn copy_replacing(from: &Path, to: &Path) -> Result<(), String> {
     let temporary = to.with_extension("distro-new");
-    fs::copy(from, &temporary).map_err(|e| format!("{}: {e}", from.display()))?;
+    // A copy that fails, such as on a full ESP, leaves nothing behind to fill it.
+    if let Err(e) = fs::copy(from, &temporary) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("{}: {e}", from.display()));
+    }
     fs::rename(&temporary, to).map_err(|e| format!("{}: {e}", to.display()))
 }
 
@@ -845,6 +961,55 @@ fn run(command: &mut Command) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Generations each with a kernel and an initrd of 10 bytes, named as given.
+    fn sized(generations: &[(u32, &str, &str)]) -> Vec<(u32, Vec<(String, u64)>)> {
+        generations
+            .iter()
+            .map(|(number, kernel, initrd)| {
+                (
+                    *number,
+                    vec![((*kernel).to_owned(), 10), ((*initrd).to_owned(), 10)],
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_generation_gets_an_entry_when_its_files_fit() {
+        let sizes = sized(&[(1, "k1", "i1"), (2, "k1", "i2"), (3, "k2", "i3")]);
+        let chosen = fitting(&sizes, &BTreeSet::from([3]), 1000).unwrap();
+        assert_eq!(chosen, BTreeSet::from([1, 2, 3]));
+    }
+
+    #[test]
+    fn the_oldest_generations_lose_their_entries_when_the_esp_is_full() {
+        let sizes = sized(&[(1, "k1", "i1"), (2, "k2", "i2"), (3, "k3", "i3")]);
+        let chosen = fitting(&sizes, &BTreeSet::from([3]), 45).unwrap();
+        assert_eq!(chosen, BTreeSet::from([2, 3]));
+    }
+
+    #[test]
+    fn a_kernel_generations_share_is_counted_once() {
+        let sizes = sized(&[(1, "k1", "i1"), (2, "k1", "i2"), (3, "k1", "i3")]);
+        // Three initrds and one kernel.
+        let chosen = fitting(&sizes, &BTreeSet::from([3]), 40).unwrap();
+        assert_eq!(chosen, BTreeSet::from([1, 2, 3]));
+    }
+
+    #[test]
+    fn the_running_generation_keeps_its_entry_before_newer_ones() {
+        let sizes = sized(&[(1, "k1", "i1"), (2, "k2", "i2"), (3, "k3", "i3")]);
+        let chosen = fitting(&sizes, &BTreeSet::from([3, 1]), 45).unwrap();
+        assert_eq!(chosen, BTreeSet::from([1, 3]));
+    }
+
+    #[test]
+    fn a_current_generation_that_does_not_fit_is_an_error() {
+        let sizes = sized(&[(1, "k1", "i1"), (2, "k2", "i2")]);
+        let error = fitting(&sizes, &BTreeSet::from([2, 1]), 30).unwrap_err();
+        assert!(error.contains("/boot has room for"), "{error}");
+    }
 
     /// A machine from distro's store, with generations `numbered` by store name, each with its own
     /// kernel and the same initrd, and `current` the current one.

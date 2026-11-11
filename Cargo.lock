@@ -591,6 +591,7 @@ dependencies = [
  "distro-model",
  "distro-starlark",
  "insta",
+ "rustix",
  "serde_json",
  "sha2",
  "tempfile",
