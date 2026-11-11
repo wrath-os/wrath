@@ -6,4 +6,5 @@ enable = true
 
 [desktop]
 session = "niri"
+shell = "noctalia"
 autologin = "demo"

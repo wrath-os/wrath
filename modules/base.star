@@ -50,6 +50,12 @@ module(
                 optional = True,
                 doc = "Start the session for this user at boot without a login.",
             ),
+            shell = option(
+                types.one_of(["noctalia"]),
+                optional = True,
+                doc = "The desktop shell around the compositor: its bar, launcher, " +
+                      "notifications and lock screen.",
+            ),
         ),
     },
     writes = [],

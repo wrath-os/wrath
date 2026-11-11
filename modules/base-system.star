@@ -101,6 +101,8 @@ def render(ctx: Context) -> None:
         for path in [CERTIFICATES, "/etc/ssl/cert.pem", "/etc/pki/tls/certs/ca-bundle.crt"]
     ]))
 
+    # The login shells there are, which programs such as chsh and some session scripts check.
+    ctx.file("/etc/shells", lines(["/bin/sh", SYSTEM + "/bin/sh", SYSTEM + "/bin/bash"]))
     ctx.file("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n")
     ctx.file("/etc/nsswitch.conf", lines([
         "passwd: files systemd",
