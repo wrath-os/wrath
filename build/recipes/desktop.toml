@@ -241,7 +241,7 @@ core = true
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "mako", "markupsafe", "pyyaml", "packaging", "libdrm",
   "wayland",
-  "wayland-protocols", "libffi", "expat", "zlib", "zstd", "elfutils", "systemd", "bison-final",
+  "wayland-protocols", "expat", "elfutils", "systemd", "bison-final",
   "flex", "m4-final",
   "glslang",
 ]
@@ -282,7 +282,7 @@ id = "freetype"
 version = "2.15.0"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "zlib", "libpng"]
+extra_deps = ["meson", "ninja", "pkgconf", "libpng"]
 sources = [{ url = "https://download.savannah.gnu.org/releases/freetype/freetype-{version}.tar.xz" }]
 script = '''
 # Without HarfBuzz, which is built on FreeType.
@@ -298,7 +298,7 @@ id = "harfbuzz"
 version = "15.1.0"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "python3", "freetype", "glib", "libpng", "zlib", "pcre2"]
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "freetype", "glib"]
 sources = [{ url = "https://github.com/harfbuzz/harfbuzz/releases/download/{version}/harfbuzz-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D freetype=enabled \
@@ -331,7 +331,7 @@ version = "2.17.1"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "gperf", "freetype", "expat", "libpng", "zlib",
+  "meson", "ninja", "pkgconf", "python3", "gperf", "freetype", "expat",
 ]
 sources = [{ url = "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/{version}/fontconfig-{version}.tar.xz" }]
 script = '''
@@ -350,8 +350,8 @@ version = "1.18.6"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "pixman", "freetype", "fontconfig", "libpng", "zlib",
-  "glib", "expat", "pcre2", "libffi",
+  "meson", "ninja", "pkgconf", "python3", "pixman", "fontconfig",
+  "glib",
 ]
 sources = [{ url = "https://cairographics.org/releases/cairo-{version}.tar.xz" }]
 script = '''
@@ -370,8 +370,8 @@ version = "1.56.4"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "harfbuzz", "fribidi", "fontconfig", "freetype",
-  "cairo", "libpng", "zlib", "expat", "pixman", "pcre2", "libffi", "util-linux",
+  "meson", "ninja", "pkgconf", "python3", "harfbuzz", "fribidi",
+  "cairo",
 ]
 sources = [{ url = "https://download.gnome.org/sources/pango/1.56/pango-{version}.tar.xz" }]
 script = '''
@@ -391,10 +391,9 @@ version = "26.04"
 scope = "runtime"
 core = true
 extra_deps = [
-  "rust-bin", "pkgconf", "systemd", "libinput", "libxkbcommon", "mesa", "seatd", "libdisplay-info",
-  "pango", "cairo", "glib", "pixman", "libdrm",
-  "harfbuzz", "fribidi", "fontconfig", "freetype", "libpng", "zlib", "expat", "pcre2", "libffi",
-  "libxml2", "libevdev", "mtdev", "wayland", "util-linux",
+  "rust-bin", "pkgconf", "libinput", "libxkbcommon", "mesa", "seatd", "libdisplay-info",
+  "pango",
+  "libevdev", "mtdev", "wayland",
 ]
 crates = "Cargo.lock"
 sources = [{ url = "https://github.com/niri-wm/niri/archive/v{version}/niri-{version}.tar.gz" }]
@@ -552,7 +551,7 @@ id = "pipewire"
 version = "1.6.11"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "python3", "alsa-lib", "systemd", "dbus", "glib"]
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "alsa-lib", "dbus", "glib"]
 sources = [{ url = "https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/{version}/pipewire-{version}.tar.gz" }]
 script = '''
 # Audio through ALSA, with the PulseAudio server for programs that speak it, run as each user's
@@ -579,8 +578,7 @@ core = true
 # Its library finds its modules by adding their directory to its own at run time.
 whole = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "pipewire", "glib", "lua", "systemd", "pcre2", "libffi",
-  "util-linux", "zlib",
+  "meson", "ninja", "pkgconf", "python3", "pipewire", "glib", "lua", "systemd",
 ]
 sources = [{ url = "https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/{version}/wireplumber-{version}.tar.gz" }]
 script = '''
@@ -599,7 +597,7 @@ id = "rtkit"
 version = "0.14"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "dbus", "libcap", "systemd", "polkit"]
+extra_deps = ["meson", "ninja", "pkgconf", "dbus", "libcap", "polkit"]
 sources = [{ url = "https://gitlab.freedesktop.org/pipewire/rtkit/-/archive/v{version}/rtkit-v{version}.tar.gz" }]
 script = '''
 # Gives processes that ask, such as PipeWire, realtime priority within limits.
@@ -626,7 +624,7 @@ version = "1.10.8"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+  "meson", "ninja", "pkgconf", "python3", "glib",
 ]
 sources = [{ url = "https://download.gnome.org/sources/json-glib/1.10/json-glib-{version}.tar.xz" }]
 script = '''
@@ -659,7 +657,7 @@ version = "2.44.8"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
+  "meson", "ninja", "pkgconf", "python3", "glib",
   "libpng",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gdk-pixbuf/2.44/gdk-pixbuf-{version}.tar.xz" }]
@@ -680,8 +678,7 @@ version = "1.28.9"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "bison-final", "m4-final", "flex", "glib", "pcre2",
-  "libffi", "util-linux", "zlib",
+  "meson", "ninja", "pkgconf", "python3", "bison-final", "m4-final", "flex", "glib",
 ]
 sources = [{ url = "https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-{version}.tar.xz" }]
 script = '''
@@ -700,8 +697,7 @@ version = "1.28.9"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "gstreamer", "glib", "pcre2", "libffi", "util-linux",
-  "zlib",
+  "meson", "ninja", "pkgconf", "python3", "gstreamer",
 ]
 sources = [{ url = "https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-{version}.tar.xz" }]
 script = '''
@@ -719,8 +715,8 @@ version = "1.22.1"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
-  "json-glib", "fuse3", "gdk-pixbuf", "libpng", "gstreamer", "gst-plugins-base", "pipewire",
+  "meson", "ninja", "pkgconf", "python3",
+  "json-glib", "fuse3", "gdk-pixbuf", "gst-plugins-base", "pipewire",
   "systemd",
 ]
 sources = [{ url = "https://github.com/flatpak/xdg-desktop-portal/releases/download/{version}/xdg-desktop-portal-{version}.tar.xz" }]
@@ -810,7 +806,7 @@ id = "libxcb"
 version = "1.17.0"
 scope = "runtime"
 core = true
-extra_deps = ["pkgconf", "python3", "xcb-proto", "libXau", "libXdmcp", "xorgproto"]
+extra_deps = ["pkgconf", "python3", "xcb-proto", "libXau", "libXdmcp"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libxcb-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --disable-devel-docs --without-doxygen
@@ -824,7 +820,7 @@ id = "libX11"
 version = "1.8.14"
 scope = "runtime"
 core = true
-extra_deps = ["pkgconf", "xorgproto", "xtrans", "libxcb", "libXau", "libXdmcp"]
+extra_deps = ["pkgconf", "xtrans", "libxcb"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libX11-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --disable-specs --without-xmlto --without-fop
@@ -838,7 +834,7 @@ id = "libxkbfile"
 version = "1.2.0"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "libX11", "libxcb", "libXau", "libXdmcp", "xorgproto"]
+extra_deps = ["meson", "ninja", "pkgconf", "libX11"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libxkbfile-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
@@ -853,8 +849,7 @@ version = "1.5.0"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "bison-final", "m4-final", "libxkbfile", "libX11", "libxcb",
-  "libXau", "libXdmcp", "xorgproto",
+  "meson", "ninja", "pkgconf", "bison-final", "m4-final", "libxkbfile",
 ]
 sources = [{ url = "https://www.x.org/archive/individual/app/xkbcomp-{version}.tar.xz" }]
 script = '''
@@ -884,7 +879,7 @@ id = "libXfont2"
 version = "2.0.9"
 scope = "runtime"
 core = true
-extra_deps = ["pkgconf", "xorgproto", "xtrans", "libfontenc", "freetype", "libpng", "zlib"]
+extra_deps = ["pkgconf", "xtrans", "libfontenc", "freetype"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libXfont2-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --disable-devel-docs
@@ -926,7 +921,7 @@ id = "libepoxy"
 version = "1.5.10"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "python3", "mesa", "libdrm"]
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "mesa"]
 sources = [{ url = "https://github.com/anholt/libepoxy/archive/{version}/libepoxy-{version}.tar.gz" }]
 script = '''
 # OpenGL function loading over EGL, without GLX.
@@ -943,10 +938,10 @@ version = "24.1.15"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "xorgproto", "xtrans", "pixman", "libxkbfile", "libXfont2",
-  "libfontenc", "freetype", "libpng", "zlib", "libxcvt", "libdrm", "libepoxy", "mesa", "wayland",
-  "wayland-protocols", "libxshmfence", "openssl", "libXau", "libXdmcp", "libX11", "libxcb",
-  "xkeyboard-config", "xkbcomp", "libffi", "expat",
+  "meson", "ninja", "pkgconf", "xtrans", "pixman", "libXfont2",
+  "libxcvt", "libepoxy", "wayland",
+  "wayland-protocols", "libxshmfence", "openssl",
+  "xkeyboard-config", "xkbcomp", "expat",
 ]
 sources = [{ url = "https://www.x.org/archive/individual/xserver/xwayland-{version}.tar.xz" }]
 script = '''
@@ -966,7 +961,7 @@ id = "xcb-util"
 version = "0.4.1"
 scope = "runtime"
 core = true
-extra_deps = ["pkgconf", "libxcb", "libXau", "libXdmcp", "xorgproto"]
+extra_deps = ["pkgconf", "libxcb"]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static
@@ -980,7 +975,7 @@ id = "xcb-util-renderutil"
 version = "0.3.10"
 scope = "runtime"
 core = true
-extra_deps = ["pkgconf", "libxcb", "libXau", "libXdmcp", "xorgproto"]
+extra_deps = ["pkgconf", "libxcb"]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-renderutil-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static
@@ -994,7 +989,7 @@ id = "xcb-util-image"
 version = "0.4.1"
 scope = "runtime"
 core = true
-extra_deps = ["pkgconf", "libxcb", "xcb-util", "libXau", "libXdmcp", "xorgproto"]
+extra_deps = ["pkgconf", "xcb-util"]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-image-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static
@@ -1009,8 +1004,7 @@ version = "0.1.6"
 scope = "runtime"
 core = true
 extra_deps = [
-  "pkgconf", "m4-final", "libxcb", "xcb-util", "xcb-util-renderutil", "xcb-util-image",
-  "libXau", "libXdmcp", "xorgproto",
+  "pkgconf", "m4-final", "xcb-util", "xcb-util-renderutil", "xcb-util-image",
 ]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-cursor-{version}.tar.xz" }]
 script = '''
@@ -1026,8 +1020,7 @@ version = "0.8.3"
 scope = "runtime"
 core = true
 extra_deps = [
-  "rust-bin", "pkgconf", "llvm", "libxcb", "xcb-util-cursor", "xcb-util", "xcb-util-renderutil",
-  "xcb-util-image", "libXau", "libXdmcp", "xorgproto",
+  "rust-bin", "pkgconf", "llvm", "xcb-util-cursor", "xcb-util",
 ]
 crates = "Cargo.lock"
 sources = [{ url = "https://github.com/Supreeeme/xwayland-satellite/archive/v{version}/xwayland-satellite-{version}.tar.gz" }]
@@ -1063,8 +1056,8 @@ version = "2.60.7"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib", "dbus",
-  "libxml2", "systemd",
+  "meson", "ninja", "pkgconf", "python3", "glib", "dbus",
+  "libxml2",
 ]
 sources = [{ url = "https://download.gnome.org/sources/at-spi2-core/2.60/at-spi2-core-{version}.tar.xz" }]
 script = '''
@@ -1082,7 +1075,7 @@ id = "gsettings-desktop-schemas"
 version = "51.0"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "glib", "pcre2", "libffi", "util-linux", "zlib"]
+extra_deps = ["meson", "ninja", "pkgconf", "glib"]
 sources = [{ url = "https://download.gnome.org/sources/gsettings-desktop-schemas/51/gsettings-desktop-schemas-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=false
@@ -1098,9 +1091,9 @@ version = "3.24.52"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
-  "cairo", "pango", "harfbuzz", "fribidi", "fontconfig", "freetype", "libpng", "expat", "pixman",
-  "gdk-pixbuf", "libepoxy", "mesa", "libdrm", "at-spi2-core", "dbus", "libxml2", "systemd",
+  "meson", "ninja", "pkgconf", "python3",
+  "pango",
+  "gdk-pixbuf", "libepoxy", "at-spi2-core",
   "wayland", "wayland-protocols", "libxkbcommon", "gettext",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gtk/3.24/gtk-{version}.tar.xz" }]
@@ -1127,9 +1120,8 @@ core = true
 runtime_deps = ["gsettings-desktop-schemas"]
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "gtk3", "xdg-desktop-portal", "gsettings-desktop-schemas",
-  "glib", "pcre2", "libffi", "util-linux", "zlib", "cairo", "pango", "harfbuzz", "fribidi",
-  "fontconfig", "freetype", "libpng", "expat", "pixman", "gdk-pixbuf", "libepoxy", "mesa",
-  "libdrm", "at-spi2-core", "dbus", "libxml2", "systemd", "wayland", "libxkbcommon", "gettext",
+
+  "gettext",
 ]
 sources = [{ url = "https://github.com/flatpak/xdg-desktop-portal-gtk/releases/download/{version}/xdg-desktop-portal-gtk-{version}.tar.xz" }]
 script = '''
@@ -1167,7 +1159,7 @@ scope = "runtime"
 core = true
 extra_deps = [
   "meson", "ninja", "pkgconf", "pipewire", "wayland", "wayland-protocols", "inih", "mesa",
-  "libdrm", "systemd",
+  "systemd",
 ]
 sources = [{ url = "https://github.com/emersion/xdg-desktop-portal-wlr/archive/refs/tags/v{version}.tar.gz" }]
 script = '''
@@ -1232,8 +1224,8 @@ version = "3.41.2"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
-  "libgcrypt", "libgpg-error", "p11-kit", "systemd", "gettext", "openssh",
+  "meson", "ninja", "pkgconf", "python3", "glib",
+  "libgcrypt", "p11-kit", "systemd", "gettext", "openssh",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gcr/3.41/gcr-{version}.tar.xz" }]
 script = '''
@@ -1255,8 +1247,8 @@ version = "51.1"
 scope = "runtime"
 core = true
 extra_deps = [
-  "meson", "ninja", "pkgconf", "python3", "glib", "pcre2", "libffi", "util-linux", "zlib",
-  "gcr3", "libgcrypt", "libgpg-error", "p11-kit", "systemd", "linux-pam", "gettext",
+  "meson", "ninja", "pkgconf", "python3",
+  "gcr3", "libgcrypt", "systemd", "linux-pam", "gettext",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gnome-keyring/51/gnome-keyring-{version}.tar.xz" }]
 script = '''

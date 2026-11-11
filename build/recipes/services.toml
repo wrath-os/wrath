@@ -21,8 +21,8 @@ version = "127"
 scope = "runtime"
 core = true
 extra_deps = [
-    "meson", "ninja", "pkgconf", "glib", "pcre2", "libffi", "zlib", "expat", "duktape", "linux-pam",
-    "systemd", "gettext", "util-linux", "perl",
+    "meson", "ninja", "pkgconf", "glib", "expat", "duktape", "linux-pam",
+    "systemd", "gettext", "perl",
     "python3",
 ]
 sources = [{ url = "https://github.com/polkit-org/polkit/archive/{version}/polkit-{version}.tar.gz" }]

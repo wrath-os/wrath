@@ -157,7 +157,7 @@ id = "bash"
 version = "5.3"
 scope = "runtime"
 toolset = true
-extra_deps = ["ncurses", "readline"]
+extra_deps = ["readline"]
 sources = [{ url = "https://ftp.gnu.org/gnu/bash/bash-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --without-bash-malloc --with-installed-readline
@@ -532,7 +532,7 @@ id = "gdbm"
 version = "1.26"
 scope = "runtime"
 core = true
-extra_deps = ["readline", "ncurses"]
+extra_deps = ["readline"]
 sources = [{ url = "https://ftp.gnu.org/gnu/gdbm/gdbm-{version}.tar.gz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --enable-libgdbm-compat --disable-nls

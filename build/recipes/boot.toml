@@ -5,7 +5,7 @@ id = "linux"
 version = "7.3.4"
 scope = "runtime"
 core = true
-extra_deps = ["flex", "bison-final", "m4-final", "bc", "openssl", "elfutils", "perl", "pkgconf", "kmod"]
+extra_deps = ["flex", "bison-final", "m4-final", "bc", "elfutils", "perl", "pkgconf", "kmod"]
 sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-{version}.tar.xz" }]
 script = '''
 export KBUILD_BUILD_TIMESTAMP=@1 KBUILD_BUILD_USER=lab KBUILD_BUILD_HOST=lab
@@ -134,9 +134,9 @@ version = "257.8"
 scope = "runtime"
 core = true
 extra_deps = [
-    "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap", "util-linux",
-    "libxcrypt", "acl", "kmod", "xz", "lz4", "zstd", "openssl", "kbd", "gettext", "m4-final", "zlib",
-    "linux-pam", "cryptsetup", "device-mapper", "json-c", "libudev", "tpm2-tss",
+    "meson", "ninja", "python3", "markupsafe", "jinja2", "pyelftools", "pkgconf", "gperf", "libcap",
+    "libxcrypt", "acl", "kmod", "lz4", "kbd", "gettext", "m4-final",
+    "linux-pam", "cryptsetup", "tpm2-tss",
 ]
 sources = [{ url = "https://github.com/systemd/systemd/archive/v{version}/systemd-{version}.tar.gz" }]
 script = '''

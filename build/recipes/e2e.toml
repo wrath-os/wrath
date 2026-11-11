@@ -30,7 +30,7 @@ id = "nftables"
 version = "1.1.3"
 scope = "runtime"
 core = true
-extra_deps = ["libmnl", "libnftnl", "pkgconf"]
+extra_deps = ["libnftnl", "pkgconf"]
 sources = [{ url = "https://www.netfilter.org/pub/nftables/nftables-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --disable-static --disable-man-doc \

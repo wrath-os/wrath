@@ -21,7 +21,7 @@ id = "iwd"
 version = "3.12"
 scope = "runtime"
 core = true
-extra_deps = ["readline", "ncurses", "dbus", "pkgconf", "python3"]
+extra_deps = ["readline", "dbus", "pkgconf", "python3"]
 sources = [{ url = "https://mirrors.edge.kernel.org/pub/linux/network/wireless/iwd-{version}.tar.xz" }]
 script = '''
 # The wifi daemon and its `iwctl`. It carries ell, the library it's built on.
