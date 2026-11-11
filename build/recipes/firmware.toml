@@ -7,10 +7,11 @@ version = "20250917"
 scope = "runtime"
 core = true
 whole = true
+extra_deps = ["zstd"]
 sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-{version}.tar.xz" }]
 script = '''
-# Every file the project lists, with the links it makes between them.
-./copy-firmware.sh $DEST$PREFIX/lib/firmware
+# Every file the project lists, compressed, with the links it makes between them.
+./copy-firmware.sh --zstd $DEST$PREFIX/lib/firmware
 '''
 
 [[package]]

@@ -57,6 +57,8 @@ scripts/config --enable CRYPTO_USER_API_HASH --enable CRYPTO_USER_API_SKCIPHER -
     --enable PKCS8_PRIVATE_KEY_PARSER --module MAC80211_HWSIM
 # Swap on compressed memory.
 scripts/config --module ZRAM --enable ZRAM_BACKEND_ZSTD --enable ZRAM_DEF_COMP_ZSTD --enable CRYPTO_ZSTD
+# Firmware stored compressed, which takes a third of the room.
+scripts/config --enable FW_LOADER_COMPRESS --enable FW_LOADER_COMPRESS_ZSTD
 make olddefconfig
 make -j$NPROC bzImage modules
 mkdir -p $DEST$PREFIX /build/tools
