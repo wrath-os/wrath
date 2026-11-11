@@ -807,13 +807,17 @@ fn render_unit(sections: &Value, packages: &[(PathBuf, String)]) -> Result<Strin
                 let command = value.trim_start_matches(['-', '@', ':', '+', '!']);
                 let (prefixes, command) = value.split_at(value.len() - command.len());
                 let program = command.split(' ').next().unwrap_or("");
-                // A program given by its path is used as it is.
-                if !program.is_empty()
-                    && !program.contains('/')
-                    && let Some((_, inside)) = packages
+                // A program given by its path is used as it is. systemd looks for one given by
+                // name only in its own fixed path, which has nothing of ours.
+                if !program.is_empty() && !program.contains('/') {
+                    let (_, inside) = packages
                         .iter()
                         .find(|(host, _)| host.join("bin").join(program).exists())
-                {
+                        .ok_or_else(|| {
+                            format!(
+                                "`{key}` runs `{program}`, which none of the system's packages has"
+                            )
+                        })?;
                     value = format!("{prefixes}{inside}/bin/{command}");
                 }
             }
@@ -2837,6 +2841,20 @@ mod tests {
         assert_eq!(
             rendered,
             "[Service]\nExecStartPre=/bin/sh -c true\nExecStart=/run/system/bin/web\n\n"
+        );
+    }
+
+    #[test]
+    fn a_program_no_package_has_is_an_error_rather_than_a_unit_that_cant_start() {
+        let (_dir, lab, packages) = setup();
+        let web = &packages["web"].path;
+        let sections = json!([{"name": "Service", "entries": [
+            ["ExecStart", "systemd-repart --dry-run=no"],
+        ]}]);
+        let error = render_unit(&sections, &[(lab.on_host(web), web.inside())]).unwrap_err();
+        assert_eq!(
+            error,
+            "`ExecStart` runs `systemd-repart`, which none of the system's packages has"
         );
     }
 
