@@ -36,7 +36,7 @@ service = types.record(
     ),
 )
 
-def tcp_port(ready):
+def tcp_port(ready: str) -> int | None:
     """The port of `tcp:PORT`, or None."""
     if not ready.startswith("tcp:"):
         return None
@@ -45,7 +45,11 @@ def tcp_port(ready):
         return None
     return int(port)
 
-def check_services(ctx: Context, where, services):
+def check_services(
+    ctx: Context,
+    where: list[str],
+    services: dict[str, dict[str, typing.Any]],
+) -> None:
     """Reports what's wrong with `services`, found at the option path `where`."""
     for name, s in services.items():
         at = where + [name]
@@ -63,14 +67,14 @@ def check_services(ctx: Context, where, services):
             if other not in services:
                 ctx.error(at + ["needs"], "there's no service `%s` here to need" % other)
 
-def systemd_arg(arg):
+def systemd_arg(arg: str) -> str:
     """An argument as systemd's ExecStart reads it."""
     if arg and not any([c in arg for c in " \t\"'\\$%;".elems()]):
         return arg
     escaped = arg.replace("\\", "\\\\").replace("\"", "\\\"")
     return "\"%s\"" % escaped.replace("$", "$$").replace("%", "%%")
 
-def systemd_unit(name, s):
+def systemd_unit(name: str, s: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """The systemd unit for the service `name`."""
     restart = {"on-failure": "on-failure", "always": "always", "never": "no"}[s["restart"]]
     unit = {

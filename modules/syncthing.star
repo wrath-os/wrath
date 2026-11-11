@@ -97,7 +97,11 @@ instance = types.record(
     folders = types.map(folder),
 )
 
-def desired(ctx: Context, name, cfg):
+def desired(
+    ctx: Context,
+    name: str,
+    cfg: dict[str, typing.Any],
+) -> dict[str, list[dict[str, typing.Any]]]:
     devices = [
         {"deviceID": d["id"], "name": device_name, "addresses": d["addresses"]}
         for device_name, d in cfg["devices"].items()

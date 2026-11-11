@@ -3,12 +3,12 @@
 
 load("lib/merge.star", "merge")
 
-def value(v):
+def value(v: typing.Any) -> str:
     if type(v) == "bool":
         return "true" if v else "false"
     return str(v)
 
-def section_lines(name, keys):
+def section_lines(name: str, keys: dict[str, typing.Any]) -> list[str]:
     """`[name]` and its keys. A list repeats its key."""
     out = ["[%s]" % name]
     for key, v in sorted(keys.items()):
@@ -16,7 +16,7 @@ def section_lines(name, keys):
             out.append("\t%s = %s" % (key, value(item)))
     return out
 
-def gitconfig(settings):
+def gitconfig(settings: dict[str, typing.Any]) -> str:
     """Settings as `section.key` or `section.subsection.key`, the way `git config` names them."""
     out = []
 

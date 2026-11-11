@@ -26,7 +26,7 @@ PACKAGES = [
     "util-linux",
 ]
 
-def getty(ctx: Context, unit, args):
+def getty(ctx: Context, unit: str, args: str) -> None:
     ctx.unit(unit + ".d/distro.conf", {
         "Service": {
             "ExecStart": [
@@ -36,7 +36,7 @@ def getty(ctx: Context, unit, args):
         },
     })
 
-def locale_environment(ctx: Context):
+def locale_environment(ctx: Context) -> list[tuple[str, ...]]:
     """The variables that select the machine's language, with its locale built when it's needed."""
     locale = ctx.read("system.locale")
     environment = [("LANG", locale)]

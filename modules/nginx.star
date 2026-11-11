@@ -13,7 +13,7 @@ instance = types.record(
     sites = types.map(site),
 )
 
-def server(port, s):
+def server(port: int, s: dict[str, typing.Any]) -> str:
     out = [
         "  server {",
         "    listen %d;" % port,

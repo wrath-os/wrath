@@ -11,7 +11,7 @@ ENV = {
     "args": ["conffile=/etc/pam/environment", "readenv=0"],
 }
 
-def unix_stacks():
+def unix_stacks() -> dict[str, list[dict[str, str | list[str]]]]:
     return {
         "account": [
             {"name": "unix", "control": "required", "module": "pam_unix.so"},

@@ -93,21 +93,21 @@ unlock = types.record(
 
 UNITS = {"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024, "T": 1024 * 1024 * 1024 * 1024}
 
-def size_of(text):
+def size_of(text: str) -> int | None:
     """Bytes in a size such as `512M`, or None when it isn't one."""
     if len(text) < 2 or text[-1] not in UNITS or not text[:-1].isdigit():
         return None
     return int(text[:-1]) * UNITS[text[-1]]
 
-def laid_out(partitions):
+def laid_out(partitions: dict[str, dict[str, typing.Any]]) -> list[dict[str, typing.Any]]:
     """The partitions in the order they go on the disk, each with its `name`."""
     named = [dict(p, name = name) for name, p in sorted(partitions.items())]
     return [p for p in named if p["size"] != "rest"] + [p for p in named if p["size"] == "rest"]
 
-def count_of(devices):
+def count_of(devices: dict[str, typing.Any]) -> int:
     return len(devices["paths"]) or devices["count"]
 
-def device_path(p, label):
+def device_path(p: dict[str, typing.Any], label: str) -> str:
     """Where a partition is once booted: an encrypted one is opened under its label."""
     if p["encrypt"]:
         return "/dev/mapper/" + label

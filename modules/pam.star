@@ -8,7 +8,7 @@ rule = types.record(
     args = option(types.list(types.str), optional = True),
 )
 
-def stack():
+def stack() -> Option:
     return option(types.ordered(rule))
 
 KINDS = ["account", "auth", "password", "session"]

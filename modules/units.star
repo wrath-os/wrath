@@ -13,7 +13,7 @@ KINDS = [
     "timer",
 ]
 
-def is_unit_name(name):
+def is_unit_name(name: str) -> bool:
     """Whether `name` is a unit, or a drop-in for one such as `nginx.service.d/limits.conf`."""
     unit, slash, dropin = name.partition(".d/")
     if slash and not dropin.endswith(".conf"):

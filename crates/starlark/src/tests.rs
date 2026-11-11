@@ -106,7 +106,7 @@ fn settings_point_at_the_exact_call() {
         @"
     networking.firewall.allowed_tcp_ports = [80, 22000]
       set by module `nginx` at modules/nginx.star:60:9: [80]
-      set by module `syncthing` at modules/syncthing.star:209:9: [22000]
+      set by module `syncthing` at modules/syncthing.star:213:9: [22000]
       overrides [], default
     "
     );
@@ -1652,4 +1652,61 @@ fn an_annotated_render_that_is_called_right_renders() {
             .iter()
             .any(|p| p == "jq")
     );
+}
+
+/// Every `.star` file under `dir`, recursively.
+fn star_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            star_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "star") {
+            out.push(path);
+        }
+    }
+}
+
+/// `file:line: name` for each `def` under `stmt` with a parameter or return type unannotated.
+fn unannotated(
+    module: &starlark::syntax::AstModule,
+    file: &str,
+    stmt: &starlark::syntax::ast::AstStmt,
+    out: &mut Vec<String>,
+) {
+    use starlark::syntax::ast::{ParameterP, StmtP};
+    if let StmtP::Def(def) = &stmt.node {
+        let missing: Vec<&str> = def
+            .params
+            .iter()
+            .filter_map(|param| match &param.node {
+                ParameterP::Normal(ident, None, _)
+                | ParameterP::Args(ident, None)
+                | ParameterP::KwArgs(ident, None) => Some(ident.node.ident.as_str()),
+                _ => None,
+            })
+            .chain(def.return_type.is_none().then_some("the return type"))
+            .collect();
+        if !missing.is_empty() {
+            let line = module.file_span(stmt.span).resolve_span().begin.line + 1;
+            let name = &def.name.node.ident;
+            out.push(format!("{file}:{line}: `{name}` lacks {}", missing.join(", ")));
+        }
+    }
+    stmt.visit_stmt(|child| unannotated(module, file, child, out));
+}
+
+#[test]
+fn every_function_in_the_built_in_modules_is_fully_annotated() {
+    let mut files = Vec::new();
+    star_files(&repo().join("modules"), &mut files);
+    files.sort();
+    let mut missing = Vec::new();
+    for path in &files {
+        let file = path.strip_prefix(repo()).unwrap().display().to_string();
+        let module = super::parse(&file, &std::fs::read_to_string(path).unwrap())
+            .unwrap_or_else(|e| panic!("{e}"));
+        unannotated(&module, &file, module.statement(), &mut missing);
+    }
+    assert!(files.len() > 40, "found only {} module files", files.len());
+    assert!(missing.is_empty(), "unannotated:\n{}", missing.join("\n"));
 }

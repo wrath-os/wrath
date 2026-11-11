@@ -6,7 +6,7 @@ MICROCODE_PACKAGES = {"amd": "microcode-amd", "intel": "microcode-intel"}
 SYSCTL = "/etc/sysctl.d/60-kernel.conf"
 MODULES = "/etc/modules-load.d/kernel.conf"
 
-def modprobe_config(kernel):
+def modprobe_config(kernel: dict[str, typing.Any]) -> str:
     lines = ["blacklist " + module for module in sorted(kernel["blacklist"])]
     lines += ["options %s %s" % item for item in sorted(kernel["module_options"].items())]
     return "".join([line + "\n" for line in lines])

@@ -30,7 +30,7 @@ DNS_KEYS = {
     "cache": "Cache",
 }
 
-def render_network(ctx: Context, name, cfg):
+def render_network(ctx: Context, name: str, cfg: dict[str, typing.Any]) -> str:
     sections = {
         "Match": {"Name": cfg["match"]},
         "Network": {"DHCP": cfg["dhcp"], "IPv6PrivacyExtensions": cfg["ipv6_privacy"]},

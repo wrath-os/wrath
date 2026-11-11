@@ -32,7 +32,7 @@ file = types.record(
     **fields
 )
 
-def contents(ctx: Context, at, f):
+def contents(ctx: Context, at: list[str], f: dict[str, typing.Any]) -> typing.Any:
     """What the file described by `f`, at the option path `at`, holds."""
     if "text" in f and "settings" in f:
         ctx.error(at, "a file has `text` or `settings`, not both")

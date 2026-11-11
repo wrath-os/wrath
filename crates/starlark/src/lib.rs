@@ -296,7 +296,11 @@ fn strings(value: StarValue<'_>) -> anyhow::Result<Vec<String>> {
 }
 
 fn globals() -> Globals {
-    GlobalsBuilder::extended_by(&[LibraryExtension::StructType, LibraryExtension::Json])
+    GlobalsBuilder::extended_by(&[
+        LibraryExtension::StructType,
+        LibraryExtension::Json,
+        LibraryExtension::Typing,
+    ])
         .with(std_globals)
         .with_namespace("types", |builder| {
             types_functions(builder);
@@ -317,7 +321,7 @@ fn globals() -> Globals {
 }
 
 #[starlark_module]
-#[starlark_types(Ctx as Context)]
+#[starlark_types(Ctx as Context, StarOption as Option)]
 fn std_globals(builder: &mut GlobalsBuilder) {
     /// A machine value, such as `machine_value("machine.name")`, filled in on the machine when it
     /// switches. Only options and files filled in there take it, like a secret.
