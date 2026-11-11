@@ -26,7 +26,7 @@ A recipe says where its program reads its settings, and in what format:
 ```toml
 [[package]]
 id = "alacritty"
-config = { file = "alacritty/alacritty.toml", format = "toml" }
+config.settings = { file = "alacritty/alacritty.toml", format = "toml" }
 ```
 
 `file` is under the configuration directory: `/etc` for a system, `~/.config` for a user. Then
@@ -38,11 +38,31 @@ font.size = 12
 window.opacity = 0.95
 ```
 
-- `programs.<id>.settings` exists for every package whose recipe has `config`, for the system and
-  for each user. Setting it adds the package, and writes the file in its format.
-- When the package ships a JSON Schema for its settings, named with `config.schema`, plan checks
-  the settings against it, and an error points at the line in the configuration. Types come from
-  the program's authors, and stay as current as the package.
+A program with more than one file names each, and each is an option of its own. Helix reads
+its editor settings from `config.toml` and its languages from `languages.toml`:
+
+```toml
+[[package]]
+id = "helix"
+config.settings = { file = "helix/config.toml", format = "toml" }
+config.languages = { file = "helix/languages.toml", format = "toml" }
+```
+
+```toml
+[programs.helix.settings]
+theme = "onedark"
+
+[[programs.helix.languages.language]]
+name = "rust"
+auto-format = true
+```
+
+- `programs.<id>.<name>` exists for each file a package's recipe names under `config`, for the
+  system and for each user, with `settings` the usual name for a program's main file. Setting
+  any of them adds the package, and writes that file in its format.
+- When the package ships a JSON Schema for a file, named with `schema` beside its `file`, plan
+  checks the settings against it, and an error points at the line in the configuration. Types
+  come from the program's authors, and stay as current as the package.
 - A module for a program keeps a small typed core, only what distro reasons about or other modules
   read, and takes the rest as `settings` in the same shape. A module and a recipe's `config` for
   the same program don't both write the file: the module owns it, and takes the settings.
