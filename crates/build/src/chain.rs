@@ -3428,6 +3428,52 @@ mod style_goldens {
     use super::*;
 
     #[test]
+    fn a_crate_the_project_patches_from_git_is_patched_for_crates_io() {
+        let styles = styles(&repository()).unwrap();
+        let text = "[[package]]\nid = \"yazi\"\nscope = \"runtime\"\n[package.cargo]\n";
+        let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        package.check_style(&styles).unwrap();
+        let url = "https://github.com/yazi-rs/ratatui.git";
+        let lock = format!(
+            "[[package]]\nname = \"ratatui-core\"\nversion = \"0.1.2\"\n\
+             source = \"git+{url}?branch=fix#dde5\"\n"
+        );
+        let manifest = format!("[patch.crates-io]\nratatui-core = {{ git = \"{url}\" }}\n");
+        let read = |path: &str| match path {
+            "Cargo.lock" => Ok(lock.clone()),
+            "Cargo.toml" => Ok(manifest.clone()),
+            other => Err(format!("no {other}")),
+        };
+        let package = package
+            .styled_by(&styles, &|| Ok(Vec::new()), &read)
+            .unwrap();
+        assert!(package.script.contains("echo '[patch.crates-io]'"));
+        assert!(!package.script.contains(&format!("[patch.\"{url}\"]")));
+    }
+
+    #[test]
+    fn a_crate_that_links_a_system_library_brings_it() {
+        let styles = styles(&repository()).unwrap();
+        let text = "[[package]]\nid = \"atuin\"\nscope = \"runtime\"\nextra_deps = [\"openssl\"]\n\
+                    [package.cargo]\n";
+        let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        package.check_style(&styles).unwrap();
+        let lock = "[[package]]\nname = \"openssl-sys\"\nversion = \"0.9.117\"\n\n\
+                    [[package]]\nname = \"atuin\"\nversion = \"18.0.0\"\n";
+        let read = |_: &str| Ok(lock.to_owned());
+        let package = package
+            .styled_by(&styles, &|| Ok(Vec::new()), &read)
+            .unwrap();
+        // Listed once, though the recipe names it too.
+        assert_eq!(
+            package.dep_ids().unwrap(),
+            ["openssl", "rust-bin", "pkgconf"]
+        );
+        // And builds with it, even where the project asks for its own.
+        assert!(package.script.contains("export OPENSSL_NO_VENDOR=1\n"));
+    }
+
+    #[test]
     fn the_cargo_style_patches_in_crates_from_git_found_by_name_in_their_checkout() {
         let styles = styles(&repository()).unwrap();
         let text = "[[package]]\nid = \"niri\"\nscope = \"runtime\"\n[package.cargo]\n";
@@ -3446,7 +3492,7 @@ mod style_goldens {
             package.sources[0].url,
             "git+https://github.com/Smithay/smithay.git#ff5f"
         );
-        assert_eq!(package.sources[0].into.as_deref(), Some("git/smithay"));
+        assert_eq!(package.sources[0].into.as_deref(), Some("../git/smithay"));
         assert!(
             package
                 .script
@@ -3466,7 +3512,8 @@ mod style_goldens {
             "[package]\nname = \"drm-extras\"\nversion.workspace = true\n",
         )
         .unwrap();
-        fs::create_dir_all(dir.path().join(".cargo")).unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir_all(src.join(".cargo")).unwrap();
         let start = package
             .script
             .find("# A crate the lock takes from git")
@@ -3474,7 +3521,7 @@ mod style_goldens {
         let end = package.script.find("cargo build").unwrap();
         let output = Command::new("sh")
             .args(["-eu", "-c", &package.script[start..end]])
-            .current_dir(dir.path())
+            .current_dir(&src)
             .output()
             .unwrap();
         assert!(
@@ -3483,10 +3530,10 @@ mod style_goldens {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(
-            fs::read_to_string(dir.path().join(".cargo/config.toml")).unwrap(),
+            fs::read_to_string(src.join(".cargo/config.toml")).unwrap(),
             "[patch.\"https://github.com/Smithay/smithay.git\"]\n\
-             smithay = { path = \"git/smithay\" }\n\
-             drm-extras = { path = \"git/smithay/drm-extras\" }\n"
+             smithay = { path = \"../git/smithay\" }\n\
+             drm-extras = { path = \"../git/smithay/drm-extras\" }\n"
         );
     }
 
@@ -3611,7 +3658,7 @@ mod style_goldens {
         assert_eq!(package.sources.len(), 1);
         assert_eq!(
             package.sources[0].into.as_deref(),
-            Some("vendor/itoa-1.0.15")
+            Some(".cargo-vendor/itoa-1.0.15")
         );
     }
 }
