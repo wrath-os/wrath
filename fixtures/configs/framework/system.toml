@@ -22,3 +22,10 @@ country = "SE"
 
 [hardware]
 firmware = ["linux-firmware"]
+
+# The niri desktop, logged in to at the greeter, with sound.
+[audio]
+enable = true
+
+[desktop]
+session = "niri"
