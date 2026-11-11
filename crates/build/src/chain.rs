@@ -1452,15 +1452,17 @@ fn top_files(archive: &Path) -> Result<Vec<String>, String> {
     if let Ok(text) = fs::read_to_string(&kept) {
         return Ok(text.lines().map(str::to_owned).collect());
     }
-    let listing = Command::new("tar")
-        .arg("-tf")
-        .arg(archive)
-        .output()
-        .map_err(|e| format!("tar: {e}"))?;
+    let listing = listing(archive)?;
+    let top = top_directory(&listing);
     let mut names = BTreeSet::new();
-    for line in String::from_utf8_lossy(&listing.stdout).lines() {
-        let mut parts = line.splitn(3, '/');
-        if let (Some(_top), Some(name)) = (parts.next(), parts.next())
+    for line in listing.lines() {
+        let inside = match top {
+            Some(top) => line
+                .strip_prefix(top)
+                .and_then(|rest| rest.strip_prefix('/')),
+            None => Some(line),
+        };
+        if let Some(name) = inside.and_then(|rest| rest.split('/').next())
             && !name.is_empty()
         {
             names.insert(name.to_owned());
@@ -1544,22 +1546,58 @@ fn read_in(archive: &Path, relative: &str) -> Result<String, String> {
     Ok(text)
 }
 
-fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
-    let listing = Command::new("tar")
+/// The names in an archive, one per line.
+fn listing(archive: &Path) -> Result<String, String> {
+    let output = Command::new("tar")
         .arg("-tf")
         .arg(archive)
         .output()
         .map_err(|e| format!("tar: {e}"))?;
-    let listing = String::from_utf8_lossy(&listing.stdout);
-    let top = listing
-        .lines()
-        .next()
-        .and_then(|first| first.split('/').next())
-        .ok_or_else(|| format!("{} is empty", archive.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "listing {}: {}",
+            archive.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The directory everything in an archive is under, as a release's `project-1.0/`, when there
+/// is one. Some archives, such as font releases, hold their files with nothing around them.
+fn top_directory(listing: &str) -> Option<&str> {
+    let mut lines = listing.lines();
+    let (top, _) = lines.next()?.split_once('/')?;
+    lines
+        .all(|line| line.split_once('/').is_some_and(|(first, _)| first == top))
+        .then_some(top)
+}
+
+/// Unpacks a source archive into `target`, without the directory around its files.
+fn unpack(archive: &Path, target: &Path) -> Result<(), String> {
+    let names = listing(archive)?;
+    fs::create_dir_all(target).map_err(with_path(target))?;
+    let mut command = Command::new("tar");
+    command.arg("-xf").arg(archive).arg("-C").arg(target);
+    if top_directory(&names).is_some() {
+        command.arg("--strip-components=1");
+    }
+    run_host(&mut command, &format!("unpacking {}", archive.display()))
+}
+
+fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
+    let names = listing(archive)?;
+    if names.is_empty() {
+        return Err(format!("{} is empty", archive.display()));
+    }
+    let path = match top_directory(&names) {
+        Some(top) => format!("{top}/{relative}"),
+        None => relative.to_owned(),
+    };
     let output = Command::new("tar")
         .arg("-xOf")
         .arg(archive)
-        .arg(format!("{top}/{relative}"))
+        .arg(path)
         .output()
         .map_err(|e| format!("tar: {e}"))?;
     if !output.status.success() {
@@ -1952,16 +1990,7 @@ pub(crate) fn build_one(
             fs::copy(path, &target).map_err(with_path(path))?;
             continue;
         }
-        fs::create_dir_all(&target).map_err(with_path(&target))?;
-        run_host(
-            Command::new("tar")
-                .arg("-xf")
-                .arg(path)
-                .arg("--strip-components=1")
-                .arg("-C")
-                .arg(&target),
-            &format!("unpacking {}", path.display()),
-        )?;
+        unpack(path, &target)?;
     }
     for name in &package.files {
         let from = repository.join("recipes").join(name);
@@ -2641,6 +2670,68 @@ mod crate_tests {
         fs::write(&archive, "not an archive any more").unwrap();
         assert_eq!(read_in(&archive, "go.sum").unwrap(), go_sum);
         assert!(read_in(&archive, "go.mod").is_err());
+    }
+
+    /// An archive of files with no directory around them, as font releases often are.
+    fn flat_archive(dir: &Path, names: &[&str]) -> PathBuf {
+        let files = dir.join("flat");
+        fs::create_dir_all(&files).unwrap();
+        for name in names {
+            fs::write(files.join(name), name).unwrap();
+        }
+        let archive = dir.join("flat.tar");
+        let status = Command::new("tar")
+            .arg("-cf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&files)
+            .args(names)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        archive
+    }
+
+    #[test]
+    fn a_source_loses_its_top_directory_when_unpacked() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive(dir.path(), &[("meson.build", "project")]);
+        let target = dir.path().join("src");
+        unpack(&archive, &target).unwrap();
+        assert_eq!(
+            fs::read_to_string(target.join("meson.build")).unwrap(),
+            "project"
+        );
+    }
+
+    #[test]
+    fn a_source_without_a_top_directory_is_unpacked_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = flat_archive(dir.path(), &["A.ttf", "B.ttf"]);
+        let target = dir.path().join("src");
+        unpack(&archive, &target).unwrap();
+        assert_eq!(fs::read_to_string(target.join("A.ttf")).unwrap(), "A.ttf");
+        assert_eq!(fs::read_to_string(target.join("B.ttf")).unwrap(), "B.ttf");
+    }
+
+    #[test]
+    fn the_names_at_the_top_of_a_source_without_a_top_directory_are_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = flat_archive(dir.path(), &["README.md", "A.ttf"]);
+        assert_eq!(top_files(&archive).unwrap(), ["A.ttf", "README.md"]);
+        assert_eq!(read_in(&archive, "README.md").unwrap(), "README.md");
+    }
+
+    #[test]
+    fn a_source_of_one_file_keeps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = flat_archive(dir.path(), &["only.ttf"]);
+        let target = dir.path().join("src");
+        unpack(&archive, &target).unwrap();
+        assert_eq!(
+            fs::read_to_string(target.join("only.ttf")).unwrap(),
+            "only.ttf"
+        );
     }
 
     #[test]
