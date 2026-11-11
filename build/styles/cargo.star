@@ -97,7 +97,18 @@ def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.An
     if options["features"]:
         command += " --features " + ",".join(options["features"])
     programs = options.get("programs", [recipe.id])
-    lines = ["export %s=%s" % item for item in options["env"].items()] + [command]
+    lines = ["export %s=%s" % item for item in options["env"].items()]
+    if options["vendor_only"]:
+        # The same sources for Cargo wherever another build tool runs it from, and no network.
+        lines += [
+            "mkdir -p $CARGO_HOME",
+            "sed 's|directory = \"vendor\"|directory = \"/build/src/vendor\"|' .cargo/config.toml " +
+            "> $CARGO_HOME/config.toml",
+            "printf '[net]\\noffline = true\\n' >> $CARGO_HOME/config.toml",
+        ]
+        programs = []
+    else:
+        lines.append(command)
     if programs:
         lines += [
             "mkdir -p $DEST$PREFIX/bin",
@@ -140,6 +151,12 @@ style(
         "env": option(
             types.map(types.str),
             doc = "Variables the build has, such as `LIBCLANG_PATH` for bindgen.",
+        ),
+        "vendor_only": option(
+            types.bool,
+            default = False,
+            doc = "Only fetch and vendor the lock's crates, for a project another build tool " +
+                  "builds, such as Meson calling Cargo; `install` builds it.",
         ),
         "install": option(
             types.str,

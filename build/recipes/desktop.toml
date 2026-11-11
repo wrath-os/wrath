@@ -227,11 +227,12 @@ sources = [{ url = "https://archive.mesa3d.org/mesa-{version}.tar.xz" }]
 probes = ["egl", "gbm"]
 
 # OpenGL and Vulkan for AMD GPUs: radeonsi and RADV, which compile shaders with ACO, so without
-# LLVM. EGL and GBM for Wayland compositors.
+# LLVM. softpipe draws without a GPU, slowly, so a shell still starts on a machine without one
+# here, such as a VM. EGL and GBM for Wayland compositors.
 [package.meson]
 env = { PYTHONPATH = "$LAB_DEP_mako/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyyaml/site:$LAB_DEP_packaging/site" }
 args = [
-  "-D platforms=wayland", "-D gallium-drivers=radeonsi", "-D vulkan-drivers=amd",
+  "-D platforms=wayland", "-D gallium-drivers=radeonsi,softpipe", "-D vulkan-drivers=amd",
   "-D llvm=disabled", "-D egl=enabled", "-D gbm=enabled", "-D gles2=enabled", "-D glx=disabled",
   "-D xlib-lease=disabled", "-D valgrind=disabled", "-D libunwind=disabled",
   "-D lmsensors=disabled", "-D video-codecs=all", "-D microsoft-clc=disabled",
@@ -412,7 +413,6 @@ programs = ["greetd", "agreety"]
 [[package]]
 id = "tuigreet"
 version = "0.9.1"
-hold = { below = "0.10", reason = "0.10 needs Rust 1.91" }
 scope = "runtime"
 core = true
 extra_deps = ["rust-bin"]

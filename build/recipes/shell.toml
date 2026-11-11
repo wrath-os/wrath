@@ -1,0 +1,288 @@
+# Noctalia, the desktop shell around niri: its bar, launcher, notifications, lock screen and
+# wallpaper, and the libraries it needs that nothing else here does.
+
+[[package]]
+id = "noctalia"
+version = "5.4.1"
+scope = "runtime"
+core = true
+extra_deps = [
+  "sdbus-cpp", "wayland", "wayland-protocols", "mesa", "freetype", "fontconfig", "cairo",
+  "pango", "harfbuzz", "librsvg", "libxkbcommon", "glib", "libsecret", "libsodium", "polkit",
+  "pipewire", "wireplumber", "curl", "libqalculate", "libxml2", "md4c", "nlohmann-json",
+  "tomlplusplus", "libical", "linux-pam", "stb", "libwebp", "libjxl", "libsndfile", "git",
+]
+sources = [{ url = "https://github.com/noctalia-dev/noctalia/archive/v{version}/noctalia-{version}.tar.gz" }]
+smoke = ["bin/noctalia --version"]
+
+# Without jemalloc, which only speeds up allocation. It runs as a user service for the graphical
+# session, in the foreground; `--daemon` would fork away from it.
+[package.meson]
+args = ["-D jemalloc=disabled", "-D tests=disabled"]
+# stb ships no pkg-config file, and the build checks for its header directly.
+env = { CPPFLAGS = "-I$LAB_DEP_stb/include" }
+install = '''
+mkdir -p $DEST$PREFIX/lib/systemd/user
+cat > $DEST$PREFIX/lib/systemd/user/noctalia.service <<UNIT
+[Unit]
+Description=Noctalia desktop shell
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+ExecStart=$PREFIX/bin/noctalia
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
+UNIT
+'''
+
+# C++ bindings to sd-bus, which Noctalia talks to services with.
+[[package]]
+id = "sdbus-cpp"
+version = "2.3.1"
+scope = "runtime"
+core = true
+extra_deps = ["systemd"]
+sources = [{ url = "https://github.com/Kistler-Group/sdbus-cpp/archive/v{version}/sdbus-cpp-{version}.tar.gz" }]
+probes = ["sdbus-c++"]
+
+[package.cmake]
+args = ["-DSDBUSCPP_BUILD_DOCS=OFF", "-DSDBUSCPP_BUILD_TESTS=OFF", "-DBUILD_SHARED_LIBS=ON"]
+
+# SVG drawing, in Rust, built by Meson calling Cargo and cargo-c. Only the library: no pixbuf
+# loader, no rsvg-convert, no introspection.
+[[package]]
+id = "librsvg"
+version = "2.62.4"
+scope = "runtime"
+core = true
+extra_deps = [
+  "rust-bin", "cargo-c", "meson", "ninja", "pkgconf", "cairo", "pango", "glib", "freetype",
+  "harfbuzz", "fontconfig", "libxml2", "gdk-pixbuf", "python3",
+]
+sources = [{ url = "https://download.gnome.org/sources/librsvg/{series}/librsvg-{version}.tar.xz" }]
+probes = ["rsvg-2"]
+
+[package.cargo]
+vendor_only = true
+install = '''
+meson setup /build/b . --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
+    -D pixbuf=disabled -D pixbuf-loader=disabled -D rsvg-convert=disabled -D docs=disabled \
+    -D vala=disabled -D tests=false -D avif=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+
+# Builds and installs Rust libraries with a C interface, as librsvg's build does.
+[[package]]
+id = "cargo-c"
+version = "0.10.26+cargo-0.100.0"
+scope = "runtime"
+core = true
+extra_deps = ["rust-bin", "pkgconf", "openssl", "zlib", "curl"]
+# The crate as published, which has the lock the repository leaves out.
+sources = [{ url = "https://static.crates.io/crates/cargo-c/cargo-c-{version}.crate" }]
+smoke = ["bin/cargo-cbuild --version"]
+
+[package.cargo]
+programs = ["cargo-capi", "cargo-cbuild", "cargo-cinstall", "cargo-ctest"]
+
+[[package]]
+id = "libsecret"
+version = "0.21.8"
+scope = "runtime"
+core = true
+extra_deps = ["glib", "libgcrypt"]
+sources = [{ url = "https://download.gnome.org/sources/libsecret/{series}/libsecret-{version}.tar.xz" }]
+probes = ["secret-1"]
+
+# The client for a secret service such as GNOME Keyring.
+[package.meson]
+args = [
+  "-D introspection=false", "-D vapi=false", "-D manpage=false", "-D gtk_doc=false",
+  "-D crypto=libgcrypt", "-D bash_completion=disabled", "-D pam=false",
+]
+
+[[package]]
+id = "libsodium"
+version = "1.0.22"
+scope = "runtime"
+core = true
+sources = [{ url = "https://download.libsodium.org/libsodium/releases/libsodium-{version}.tar.gz" }]
+probes = ["sodium"]
+
+[package.autotools]
+args = ["--disable-static"]
+
+# The calculator Noctalia's launcher evaluates expressions with.
+[[package]]
+id = "libqalculate"
+version = "5.13.2"
+scope = "runtime"
+core = true
+extra_deps = ["gmp-lib", "mpfr", "libxml2", "curl", "pkgconf"]
+# Its headers include gmp.h and mpfr.h, which its .pc file doesn't name.
+propagates = ["gmp-lib", "mpfr"]
+sources = [{ url = "https://github.com/Qalculate/libqalculate/releases/download/v{version}/libqalculate-{version}.tar.gz" }]
+probes = ["qalculate"]
+
+[package.autotools]
+args = ["--disable-static", "--without-icu", "--disable-nls"]
+# Its configure looks for a compiler for the build machine by the full target name, which isn't
+# the wrapper.
+env = { CC_FOR_BUILD = "gcc", CXX_FOR_BUILD = "g++" }
+
+[[package]]
+id = "md4c"
+version = "0.5.3"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/mity/md4c/archive/release-{version}/md4c-release-{version}.tar.gz" }]
+probes = ["md4c"]
+
+# Markdown, for notifications and the changelog.
+[package.cmake]
+args = ["-DBUILD_MD2HTML_EXECUTABLE=OFF"]
+
+# JSON for C++, in headers.
+[[package]]
+id = "nlohmann-json"
+version = "3.12.0"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/nlohmann/json/archive/v{version}/json-{version}.tar.gz" }]
+
+[package.cmake]
+args = ["-DJSON_BuildTests=OFF", "-DJSON_Install=ON"]
+
+# TOML for C++, in headers.
+[[package]]
+id = "tomlplusplus"
+version = "3.4.0"
+scope = "runtime"
+core = true
+# Its build writes CMake package files too, with cmake.
+extra_deps = ["cmake"]
+sources = [{ url = "https://github.com/marzer/tomlplusplus/archive/v{version}/tomlplusplus-{version}.tar.gz" }]
+
+[package.meson]
+
+# Calendars, for the clock's calendar.
+[[package]]
+id = "libical"
+version = "4.0.7"
+scope = "runtime"
+core = true
+extra_deps = ["perl"]
+sources = [{ url = "https://github.com/libical/libical/archive/v{version}/libical-{version}.tar.gz" }]
+probes = ["ical"]
+
+[package.cmake]
+args = [
+  "-DLIBICAL_BUILD_TESTING=OFF", "-DLIBICAL_BUILD_EXAMPLES=OFF", "-DLIBICAL_BUILD_DOCS=OFF",
+  "-DLIBICAL_GLIB=OFF", "-DLIBICAL_GOBJECT_INTROSPECTION=OFF", "-DLIBICAL_GLIB_VAPI=OFF",
+  "-DLIBICAL_JAVA_BINDINGS=OFF", "-DLIBICAL_BUILD_VZIC=OFF",
+]
+
+# Single-header image libraries, under stb/, which Noctalia includes as such. stb has no
+# releases, so this is the commit it was taken at.
+[[package]]
+id = "stb"
+version = "4e9b368"
+scope = "runtime"
+core = true
+# Only headers, kept together where `$LAB_DEP_stb` points.
+whole = true
+sources = [{ url = "https://github.com/nothings/stb/archive/4e9b368bfc071e97206ea5c6adba68dd0cbf8897.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/include/stb
+cp stb_*.h $DEST$PREFIX/include/stb/
+# The resizer moved among the deprecated headers, where programs still use it.
+cp deprecated/stb_image_resize2.h $DEST$PREFIX/include/stb/
+'''
+
+[[package]]
+id = "libwebp"
+version = "1.6.0"
+scope = "runtime"
+core = true
+extra_deps = ["libpng"]
+sources = [{ url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-{version}.tar.gz" }]
+probes = ["webp", "webpdemux"]
+
+[package.autotools]
+args = ["--disable-static", "--enable-libwebpdemux"]
+
+[[package]]
+id = "brotli"
+version = "1.2.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/google/brotli/archive/v{version}/brotli-{version}.tar.gz" }]
+probes = ["brotlidec"]
+
+[package.cmake]
+
+[[package]]
+id = "highway"
+version = "1.4.0"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/google/highway/archive/{version}/highway-{version}.tar.gz" }]
+probes = ["hwy"]
+
+[package.cmake]
+args = [
+  "-DBUILD_SHARED_LIBS=ON", "-DBUILD_TESTING=OFF", "-DHWY_ENABLE_TESTS=OFF",
+  "-DHWY_ENABLE_EXAMPLES=OFF", "-DHWY_ENABLE_CONTRIB=OFF",
+]
+
+# Colour management, which JPEG XL images carry profiles for.
+[[package]]
+id = "lcms2"
+version = "2.20"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/mm2/Little-CMS/releases/download/lcms{version}/lcms2-{version}.tar.gz" }]
+probes = ["lcms2"]
+
+[package.autotools]
+args = ["--disable-static"]
+
+# JPEG XL images, with the libraries above instead of the copies its repository has.
+[[package]]
+id = "libjxl"
+version = "0.13.0"
+scope = "runtime"
+core = true
+extra_deps = ["brotli", "highway", "lcms2", "pkgconf"]
+sources = [{ url = "https://github.com/libjxl/libjxl/archive/v{version}/libjxl-{version}.tar.gz" }]
+probes = ["jxl", "jxl_threads"]
+
+[package.cmake]
+args = [
+  "-DBUILD_TESTING=OFF", "-DJPEGXL_FORCE_SYSTEM_BROTLI=ON", "-DJPEGXL_FORCE_SYSTEM_HWY=ON",
+  "-DJPEGXL_FORCE_SYSTEM_LCMS2=ON", "-DJPEGXL_ENABLE_SKCMS=OFF", "-DJPEGXL_ENABLE_TOOLS=OFF",
+  "-DJPEGXL_ENABLE_JPEGLI=OFF", "-DJPEGXL_ENABLE_SJPEG=OFF", "-DJPEGXL_ENABLE_OPENEXR=OFF",
+  "-DJPEGXL_ENABLE_BENCHMARK=OFF", "-DJPEGXL_ENABLE_EXAMPLES=OFF", "-DJPEGXL_ENABLE_MANPAGES=OFF",
+  "-DJPEGXL_ENABLE_DOXYGEN=OFF", "-DJPEGXL_ENABLE_PLUGINS=OFF", "-DJPEGXL_ENABLE_JNI=OFF",
+  "-DJPEGXL_BUNDLE_LIBPNG=OFF",
+]
+
+# Sound files, for Noctalia's sounds. WAV and the like only, without FLAC, Ogg or MP3.
+[[package]]
+id = "libsndfile"
+version = "1.2.2"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "python3"]
+sources = [{ url = "https://github.com/libsndfile/libsndfile/releases/download/{version}/libsndfile-{version}.tar.xz" }]
+probes = ["sndfile"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-external-libs", "--disable-mpeg", "--disable-full-suite"]
+# Its ALAC code defines `bool` itself, which C23, GCC 15's default, doesn't allow.
+env = { CFLAGS = "'-O2 -std=gnu17'" }
