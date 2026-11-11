@@ -743,6 +743,10 @@ version = "2.84.4"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "zlib", "pcre2", "libffi", "util-linux", "gettext"]
+# GSettings reads one file compiled from every package's schemas, made with each generation.
+indexes = [
+  { from = "share/glib-2.0/schemas", run = "bin/glib-compile-schemas share/glib-2.0/schemas" },
+]
 sources = [{ url = "https://download.gnome.org/sources/glib/2.84/glib-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --buildtype=release -D tests=true -D introspection=disabled \

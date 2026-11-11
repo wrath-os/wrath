@@ -1,11 +1,14 @@
-title = "the sample desktop boots to a niri session with audio"
+title = "the sample desktop boots to a niri session with audio, and its GTK portal starts"
 
 [vm]
 config = "fixtures/configs/desktop"
-store = "host"
+store = "distro"
 wait_for = ["unit:greetd.service", "user-unit:demo:niri.service", "user-unit:demo:pipewire.service"]
 steps = [
   { run = "test -z \"$(systemctl --failed --no-legend; systemctl --user -M demo@ --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },
-  { run = "runuser -u demo -- env XDG_RUNTIME_DIR=/run/user/1000 pw-cli info 0 | grep -c core.name", stdout_contains = "1" },
+  { run = "systemd-run -M demo@ --user --wait --pipe --quiet pw-cli info 0 | grep -c core.name", stdout_contains = "1" },
+  # The GTK portal aborts without the system's compiled settings schemas. The wlroots portal
+  # needs dmabufs, which niri only offers with a GPU, so it isn't started here.
+  { run = "systemctl --user -M demo@ start xdg-desktop-portal-gtk.service; sleep 3; test \"$(systemctl --user -M demo@ is-active xdg-desktop-portal-gtk.service)\" = active && echo running", stdout_contains = "running" },
 ]
 timeout_secs = 240

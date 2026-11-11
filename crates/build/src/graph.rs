@@ -19,6 +19,7 @@ use crate::chain::{self, Arm, Built};
 use crate::early;
 use crate::initrd;
 use crate::pilot;
+use crate::sandbox;
 use crate::store::{Lab, StorePath, hex, with_path};
 
 fn digest(bytes: &[u8]) -> String {
@@ -105,6 +106,8 @@ type Entries = BTreeMap<String, Entry>;
 pub struct PackageRef {
     pub path: StorePath,
     pub unresolved: String,
+    /// What its tool makes from what packages share, which a generation has made.
+    pub indexes: Vec<chain::Index>,
 }
 
 pub type Packages = BTreeMap<String, PackageRef>;
@@ -332,6 +335,155 @@ fn links<'a>(
             Ok(entries)
         }),
     })
+}
+
+/// The files under `from` of each of `ids` that has some, as (path under `from`, file on the
+/// host), the first package's where two have one, as merged links take it.
+fn index_inputs(
+    lab: &Lab,
+    ids: &[&str],
+    packages: &Packages,
+    from: &str,
+) -> Vec<(String, PathBuf)> {
+    let mut found: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for id in ids {
+        let Some(package) = packages.get(*id) else {
+            continue;
+        };
+        let root = lab.on_host(&package.path).join(from);
+        for name in tree_files(&root) {
+            let file = root.join(&name);
+            found.entry(name).or_insert(file);
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// For each index a package declares, the files its tool makes from what `ids` have under the
+/// index's `from`, such as GSettings' compiled schemas (decision 0020). An index whose `from`
+/// none of them has makes nothing.
+fn index_actions<'a>(
+    origin: &str,
+    lab: &'a Lab,
+    ids: &[&'a str],
+    packages: &'a Packages,
+) -> Result<Vec<Action<'a>>, String> {
+    let mut actions = Vec::new();
+    for (tool, package) in packages {
+        for index in &package.indexes {
+            let from = index.from.as_str();
+            if !MERGED_TREES
+                .iter()
+                .any(|tree| from.starts_with(&format!("{tree}/")))
+            {
+                return Err(format!(
+                    "`{tool}` indexes `{from}`, which isn't in what packages share"
+                ));
+            }
+            let contributors: Vec<&str> = ids
+                .iter()
+                .copied()
+                .filter(|id| !index_inputs(lab, &[id], packages, from).is_empty())
+                .collect();
+            if contributors.is_empty() {
+                continue;
+            }
+            let mut deps = vec![tool.as_str()];
+            deps.extend(contributors.iter().filter(|id| **id != tool));
+            let (unresolved, resolved) = action_records(&deps, packages, |deps| {
+                json!({"kind": "index", "from": from, "run": index.run, "deps": deps,
+                       "order": contributors})
+            })?;
+            let key = key_of(&resolved);
+            actions.push(Action {
+                origin: origin.to_owned(),
+                unresolved,
+                resolved,
+                run: Box::new(move |objects| {
+                    let inputs = index_inputs(lab, &contributors, packages, from);
+                    run_index(lab, objects, &key, &package.path, &index.run, from, &inputs)
+                }),
+            });
+        }
+    }
+    Ok(actions)
+}
+
+/// Runs an index's tool over a copy of its inputs under `from`, and takes what it adds there.
+fn run_index(
+    lab: &Lab,
+    objects: &Objects,
+    key: &str,
+    tool: &StorePath,
+    run: &str,
+    from: &str,
+    inputs: &[(String, PathBuf)],
+) -> Result<Entries, String> {
+    let dir = lab.work.join("index").join(key);
+    chain::fresh(&dir)?;
+    let tree = dir.join("build");
+    let indexed = tree.join(from);
+    for (name, file) in inputs {
+        let to = indexed.join(name);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(with_path(parent))?;
+        }
+        fs::copy(file, &to).map_err(with_path(file))?;
+    }
+    let mut words = run.split_whitespace();
+    let program = words
+        .next()
+        .ok_or_else(|| format!("an index of `{from}` runs nothing"))?;
+    let log = dir.join("log");
+    let outcome = sandbox::run(
+        lab,
+        &sandbox::Step {
+            name: format!("index {from}"),
+            argv: std::iter::once(format!("{}/{program}", tool.inside()))
+                .chain(words.map(str::to_owned))
+                .collect(),
+            inputs: chain::runtime_closure(lab, tool)?.into_iter().collect(),
+            output: None,
+            view: None,
+            build_dir: tree.clone(),
+            log: log.clone(),
+            env: BTreeMap::new(),
+            limits: sandbox::Limits::DEFAULT,
+            links: Vec::new(),
+        },
+    )?;
+    if outcome.status != sandbox::Status::Passed {
+        let text = fs::read_to_string(&log).unwrap_or_default();
+        return Err(format!("indexing `{from}` with `{run}` failed:\n{text}"));
+    }
+    // What the tool made: files that are new, or that it rewrote, such as a compiled file a
+    // package shipped too, which then clashes with that package's link and says so.
+    let copied: BTreeMap<&String, &PathBuf> =
+        inputs.iter().map(|(name, file)| (name, file)).collect();
+    let mut entries = Entries::new();
+    for name in tree_files(&indexed) {
+        let file = indexed.join(&name);
+        let bytes = fs::read(&file).map_err(with_path(&file))?;
+        if let Some(input) = copied.get(&name)
+            && fs::read(input).map_err(with_path(input))? == bytes
+        {
+            continue;
+        }
+        let mode = fs::metadata(&file)
+            .map_err(with_path(&file))?
+            .permissions()
+            .mode()
+            & 0o777;
+        entries.insert(
+            format!("{from}/{name}"),
+            Entry::File {
+                mode,
+                object: objects.put(&bytes)?,
+            },
+        );
+    }
+    chain::remove(&dir)?;
+    Ok(entries)
 }
 
 const BASE_PACKAGES: &[&str] = &[
@@ -928,6 +1080,7 @@ fn lower<'a>(
         )?,
         fixed_links(packages)?,
     ];
+    actions.extend(index_actions("packages", lab, &everything, packages)?);
 
     let disks = early::disks(&model["base"]["storage"]);
     for (path, contents) in [("etc/fstab", disks.fstab), ("etc/crypttab", disks.crypttab)] {
@@ -994,9 +1147,9 @@ fn lower<'a>(
     })
 }
 
-/// Links that pull in the model's enabled units, the system's and users': into each target it names,
-/// or into those its `[Install]` section names when it names none. Also returns the units no
-/// package has.
+/// Links that pull in the model's enabled units, the system's and users': into each target it
+/// names, or into those its `[Install]` section names when it names none. Also returns the units
+/// no package has.
 fn enabled_units<'a>(
     lab: &'a Lab,
     model: &'a Value,
@@ -1768,6 +1921,7 @@ fn known_packages(built: &Built) -> Packages {
                 PackageRef {
                     path: path.clone(),
                     unresolved: built.unresolved_or_path(id),
+                    indexes: built.indexes.get(id).cloned().unwrap_or_default(),
                 },
             )
         })
@@ -2337,6 +2491,7 @@ mod tests {
         PackageRef {
             path,
             unresolved: format!("unresolved-{name}"),
+            indexes: Vec::new(),
         }
     }
 
@@ -2847,6 +3002,79 @@ mod tests {
         }
         assert!(!root.join("share/locale").exists());
         assert!(!root.join("share/man").exists());
+    }
+
+    fn with_schemas(lab: &Lab, packages: &Packages, id: &str, names: &[&str]) {
+        let dir = lab
+            .on_host(&packages[id].path)
+            .join("share/glib-2.0/schemas");
+        fs::create_dir_all(&dir).unwrap();
+        for name in names {
+            fs::write(dir.join(name), id).unwrap();
+        }
+    }
+
+    fn schemas_index(packages: &mut Packages, from: &str) {
+        packages.get_mut("dbus").unwrap().indexes = vec![chain::Index {
+            from: from.to_owned(),
+            run: "bin/glib-compile-schemas share/glib-2.0/schemas".to_owned(),
+        }];
+    }
+
+    #[test]
+    fn an_index_reads_what_packages_share_under_its_from_the_first_package_winning() {
+        let (_dir, lab, packages) = setup();
+        with_schemas(&lab, &packages, "bash", &["a.gschema.xml", "b.gschema.xml"]);
+        with_schemas(&lab, &packages, "web", &["b.gschema.xml", "c.gschema.xml"]);
+        let inputs = index_inputs(&lab, &["bash", "web"], &packages, "share/glib-2.0/schemas");
+        let from: Vec<(&str, &Path)> = inputs
+            .iter()
+            .map(|(name, file)| (name.as_str(), file.parent().unwrap()))
+            .collect();
+        let dir = |id: &str| {
+            lab.on_host(&packages[id].path)
+                .join("share/glib-2.0/schemas")
+        };
+        let (bash, web) = (dir("bash"), dir("web"));
+        assert_eq!(
+            from,
+            [
+                ("a.gschema.xml", bash.as_path()),
+                ("b.gschema.xml", bash.as_path()),
+                ("c.gschema.xml", web.as_path())
+            ]
+        );
+    }
+
+    #[test]
+    fn an_index_runs_only_when_a_package_has_something_under_its_from() {
+        let (_dir, lab, mut packages) = setup();
+        schemas_index(&mut packages, "share/glib-2.0/schemas");
+        assert!(
+            index_actions("packages", &lab, &["bash", "web"], &packages)
+                .unwrap()
+                .is_empty()
+        );
+        with_schemas(&lab, &packages, "web", &["a.gschema.xml"]);
+        let actions = index_actions("packages", &lab, &["bash", "web"], &packages).unwrap();
+        assert_eq!(actions.len(), 1);
+        let record = &actions[0].resolved;
+        assert_eq!(record["kind"], "index");
+        assert_eq!(record["order"], json!(["web"]));
+        let deps: Vec<&String> = record["deps"].as_object().unwrap().keys().collect();
+        assert_eq!(deps, ["dbus", "web"]);
+    }
+
+    #[test]
+    fn an_index_of_something_packages_dont_share_is_an_error() {
+        let (_dir, lab, mut packages) = setup();
+        schemas_index(&mut packages, "lib/gio/modules");
+        assert_eq!(
+            index_actions("packages", &lab, &["web"], &packages)
+                .err()
+                .unwrap(),
+            "`dbus` indexes `lib/gio/modules`, which isn't in what packages share"
+        );
     }
 
     #[test]

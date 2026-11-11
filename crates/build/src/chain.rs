@@ -184,6 +184,15 @@ impl DepSpec {
     }
 }
 
+/// A file a package's tool makes from what every package of a generation has under `from`, by
+/// running `run`, a program in the package and its arguments (decision 0020).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Index {
+    pub from: String,
+    pub run: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Source {
@@ -229,6 +238,9 @@ pub(crate) struct Package {
     /// Whether what its `.pc` files require privately comes into its dependents' views too.
     #[serde(default = "yes")]
     propagate_private: bool,
+    /// What its tools make from what a generation's packages share.
+    #[serde(default)]
+    indexes: Vec<Index>,
     #[serde(default)]
     sources: Vec<Source>,
     /// A `Cargo.lock` in the first source, whose registry crates are added to the sources, each
@@ -443,6 +455,7 @@ impl Package {
             extra_deps,
             propagates: Vec::new(),
             propagate_private: true,
+            indexes: Vec::new(),
             sources: Vec::new(),
             crates: None,
             go: None,
@@ -496,6 +509,8 @@ pub struct Built {
     pub providers: BTreeMap<String, requires::Provider>,
     /// What each package brings into a dependent's view, once worked out.
     pub requirements: BTreeMap<String, requires::Requirements>,
+    /// What each package's tools make from what a generation's packages share.
+    pub indexes: BTreeMap<String, Vec<Index>>,
 }
 
 impl Built {
@@ -1273,6 +1288,11 @@ pub(crate) fn build_one(
     built.temporary.insert(package.id.clone(), out.clone());
     built.closures.insert(package.id.clone(), closure.clone());
     built.requirements.remove(&package.id);
+    if !package.indexes.is_empty() {
+        built
+            .indexes
+            .insert(package.id.clone(), package.indexes.clone());
+    }
     built.providers.insert(
         package.id.clone(),
         requires::Provider {
