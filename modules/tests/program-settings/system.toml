@@ -1,0 +1,7 @@
+[system]
+hostname = "box"
+
+[programs.alacritty.settings.font]
+size = 11
+
+[users.ann]

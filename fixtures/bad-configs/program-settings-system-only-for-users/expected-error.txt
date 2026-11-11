@@ -1,0 +1,5 @@
+error: unknown option `programs.noctalia`
+ --> fixtures/bad-configs/program-settings-system-only-for-users/system.toml:4:11
+  |
+4 | [programs.noctalia.settings.bar]
+  |           ^^^^^^^^ no option with this name
