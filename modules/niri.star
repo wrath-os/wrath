@@ -29,6 +29,9 @@ def render(ctx: Context) -> None:
     # niri runs X programs through it, and it runs Xwayland.
     ctx.package("xwayland-satellite")
     ctx.package("xwayland")
+    # The Compose tables dead keys and compose sequences come from, which xkbcommon reads from
+    # libX11's share/X11/locale.
+    ctx.package("libX11")
     ctx.file("/etc/xdg/xdg-desktop-portal/niri-portals.conf", PORTALS)
     # The shell starts with the graphical session niri brings up.
     if desktop.get("shell") == "noctalia":
