@@ -316,6 +316,12 @@ pub(crate) struct Package {
     /// Whether a style makes its script, decided when it loads.
     #[serde(skip)]
     styled: bool,
+    /// The style that made its script, and the recipe as it was before, which a build that sets
+    /// the style's options is styled from again.
+    #[serde(skip)]
+    style: Option<String>,
+    #[serde(skip)]
+    unstyled: Option<Box<Package>>,
     #[serde(default)]
     script: String,
     #[serde(default = "yes")]
@@ -537,6 +543,26 @@ impl Package {
         options: &serde_json::Map<String, serde_json::Value>,
         patches: &[String],
     ) -> Result<Self, String> {
+        // A styled recipe's build starts from the recipe as it was, with what isn't the recipe's
+        // own option given to its style, and is styled again.
+        if let (Some(recipe), Some(style)) = (&self.unstyled, &self.style) {
+            let (own, given): (serde_json::Map<_, _>, serde_json::Map<_, _>) = options
+                .clone()
+                .into_iter()
+                .partition(|(name, _)| recipe.options.contains_key(name));
+            let mut variant = recipe.variant(id, &own, patches)?;
+            let table = variant
+                .style_options
+                .entry(style.clone())
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(table) = table {
+                for (name, value) in given {
+                    let value = serde_json::from_value(value).map_err(|e| e.to_string())?;
+                    table.insert(name, value);
+                }
+            }
+            return Ok(variant);
+        }
         let defaults = self.option_exports(&serde_json::Map::new())?;
         let script = self.script.strip_prefix(&defaults).unwrap_or(&self.script);
         let mut prelude = self.option_exports(options)?;
@@ -587,6 +613,8 @@ impl Package {
             options: BTreeMap::new(),
             style_options: BTreeMap::new(),
             styled: false,
+            style: None,
+            unstyled: None,
             script,
             wrap: true,
             fixup: true,
@@ -1198,24 +1226,48 @@ pub(crate) fn load_styled(
     let styles = styles(repository)?;
     let mut sources = Sources::load(repository)?;
     for package in packages.iter_mut().filter(|package| package.styled) {
-        let first = package
-            .sources
-            .first()
-            .ok_or_else(|| format!("`{}` has a build style but no source", package.id))?;
-        let (archive, _) = sources.fetch_source(lab, first)?;
-        let top = || top_files(&archive);
-        // A lock under `recipes/` is one kept beside the recipes, for a project that ships none.
-        let read = |path: &str| {
-            if path.starts_with("recipes/") {
-                let file = repository.join(path);
-                fs::read_to_string(&file).map_err(with_path(&file))
-            } else {
-                read_in(&archive, path)
-            }
-        };
-        *package = package.clone().styled_by(&styles, &top, &read)?;
+        *package = style_one(lab, repository, &styles, &mut sources, package.clone())?;
     }
     Ok(packages)
+}
+
+/// `package` with its style's script, its first source fetched, if it hasn't been, for the style to
+/// read.
+fn style_one(
+    lab: &Lab,
+    repository: &Path,
+    styles: &[Style],
+    sources: &mut Sources,
+    package: Package,
+) -> Result<Package, String> {
+    let first = package
+        .sources
+        .first()
+        .ok_or_else(|| format!("`{}` has a build style but no source", package.id))?;
+    let (archive, _) = sources.fetch_source(lab, first)?;
+    let top = || top_files(&archive);
+    // A lock under `recipes/` is one kept beside the recipes, for a project that ships none.
+    let read = |path: &str| {
+        if path.starts_with("recipes/") {
+            let file = repository.join(path);
+            fs::read_to_string(&file).map_err(with_path(&file))
+        } else {
+            read_in(&archive, path)
+        }
+    };
+    let mut styled = package.clone().styled_by(styles, &top, &read)?;
+    styled.unstyled = Some(Box::new(package));
+    Ok(styled)
+}
+
+/// A build of a styled recipe, styled again with the options it sets.
+pub(crate) fn restyled(lab: &Lab, repository: &Path, package: Package) -> Result<Package, String> {
+    if !package.styled {
+        return Ok(package);
+    }
+    let styles = styles(repository)?;
+    let mut sources = Sources::load(repository)?;
+    style_one(lab, repository, &styles, &mut sources, package)
 }
 
 impl Package {
@@ -1294,6 +1346,7 @@ impl Package {
                 sha256: source.sha256,
                 file: source.file,
             }));
+        self.style = Some(style.name().to_owned());
         Ok(self)
     }
 }
@@ -3238,6 +3291,86 @@ mod style_goldens {
         assert_eq!(
             package.sources[0].into.as_deref(),
             Some("vendor/itoa-1.0.15")
+        );
+    }
+}
+
+#[cfg(test)]
+mod styled_variant_tests {
+    use super::*;
+
+    const CARGO: &str = r#"
+def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    return {"script": "cargo build %s\n" % " ".join(options["features"])}
+
+style(name = "cargo", locks = ["Cargo.lock"],
+      options = {"features": option(types.list(types.str))}, build = build)
+"#;
+
+    fn styled(fields: &str) -> Package {
+        let styles = vec![style::load("cargo.star", CARGO).unwrap()];
+        let text = format!("[[package]]\nid = \"app\"\nscope = \"runtime\"\n{fields}");
+        let mut package = recipe_from_str(&text);
+        package.check_style(&styles).unwrap();
+        let mut styled = restyle(package.clone()).unwrap();
+        styled.unstyled = Some(Box::new(package));
+        styled
+    }
+
+    fn restyle(package: Package) -> Result<Package, String> {
+        let styles = vec![style::load("cargo.star", CARGO).unwrap()];
+        let top = || Ok(vec!["Cargo.lock".to_owned()]);
+        package.styled_by(&styles, &top, &|_| Ok(String::new()))
+    }
+
+    fn options(json: &str) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn a_build_sets_a_style_option_and_the_style_makes_the_script_again() {
+        let recipe = styled("[package.cargo]\nfeatures = [\"wayland\"]\n");
+        assert_eq!(recipe.script, "cargo build wayland\n");
+        let variant = recipe.variant("app-x11", &options(r#"{"features": ["x11"]}"#), &[]);
+        let variant = restyle(variant.unwrap()).unwrap();
+        assert_eq!(
+            (variant.id.as_str(), variant.script.as_str()),
+            ("app-x11", "cargo build x11\n")
+        );
+    }
+
+    #[test]
+    fn recipe_options_and_patches_come_before_the_style_script() {
+        let recipe = styled(
+            "[package.options.small]\ntype = \"bool\"\ndefault = false\ndoc = \"Smaller.\"\n",
+        );
+        let set = options(r#"{"small": true, "features": ["a"]}"#);
+        let variant = restyle(
+            recipe
+                .variant("app-small", &set, &["--- a\n".to_owned()])
+                .unwrap(),
+        );
+        let script = variant.unwrap().script;
+        assert!(
+            script.starts_with("export OPTION_small='true'\npatch -p1"),
+            "{script}"
+        );
+        assert!(
+            script.ends_with("DISTRO_PATCH_0\ncargo build a\n"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn an_option_neither_the_recipe_nor_its_style_has_is_refused() {
+        let recipe = styled("");
+        let variant = recipe
+            .variant("app-x", &options(r#"{"feature": ["a"]}"#), &[])
+            .unwrap();
+        let error = restyle(variant).unwrap_err();
+        assert_eq!(
+            error,
+            "`app-x`: the cargo style has no option `feature`; it has `features`"
         );
     }
 }

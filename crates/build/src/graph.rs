@@ -2295,8 +2295,13 @@ fn system_from(
 }
 
 /// The recipes the model's `builds` make: each a recipe under the build's name, with the
-/// options and patches it gives.
-fn variants(recipes: &[chain::Package], model: &Value) -> Result<Vec<chain::Package>, String> {
+/// options and patches it gives, styled again when its recipe has a style.
+fn variants(
+    lab: &Lab,
+    repository: &Path,
+    recipes: &[chain::Package],
+    model: &Value,
+) -> Result<Vec<chain::Package>, String> {
     model["builds"]
         .as_object()
         .into_iter()
@@ -2319,6 +2324,7 @@ fn variants(recipes: &[chain::Package], model: &Value) -> Result<Vec<chain::Pack
                 .collect();
             recipe
                 .variant(name, &options, &patches)
+                .and_then(|variant| chain::restyled(lab, repository, variant))
                 .map_err(|e| format!("`builds.{name}.options`: {e}"))
         })
         .collect()
@@ -2332,7 +2338,7 @@ pub fn package_keys(repository: &Path, model: &Value) -> Result<BTreeMap<String,
     for file in std::iter::once(TOOLCHAIN_RECIPES.to_owned()).chain(system_recipes(repository)?) {
         packages.extend(chain::load_styled(&lab, repository, &file)?);
     }
-    let builds = variants(&packages, model)?;
+    let builds = variants(&lab, repository, &packages, model)?;
     packages.extend(builds);
     chain::keys_of(&lab, repository, packages, Arm::F)
 }
@@ -2348,7 +2354,7 @@ fn build_variants(
     model: &Value,
 ) -> Result<(), String> {
     let mut sources = chain::Sources::load(repository)?;
-    for variant in variants(recipes, model)? {
+    for variant in variants(lab, repository, recipes, model)? {
         pilot::build_and_finish(lab, repository, &variant, Arm::F, seed, &mut sources, built)?;
     }
     Ok(())
