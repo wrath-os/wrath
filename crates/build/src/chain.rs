@@ -9,6 +9,7 @@ use std::process::Command;
 use memchr::memmem;
 use serde::Deserialize;
 
+use crate::requires;
 use crate::sandbox::{self, Identity, Limits, Mount, Status, Step, View};
 use crate::seed::{self, run as run_host, sha256_of};
 use crate::split;
@@ -85,7 +86,21 @@ enum DepSpec {
         #[serde(default = "yes")]
         rpath: bool,
         skip: Option<String>,
+        #[serde(default)]
+        propagate: Propagate,
+        #[serde(default)]
+        exclude: Vec<String>,
     },
+}
+
+/// What of a dependency's requirements a dependent's view takes (decision 0019).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Propagate {
+    #[default]
+    All,
+    Public,
+    None,
 }
 
 fn yes() -> bool {
@@ -99,6 +114,8 @@ struct Dep {
     view: bool,
     rpath: bool,
     skip: Vec<String>,
+    propagate: Propagate,
+    exclude: Vec<String>,
 }
 
 /// What of the seed is left in a view once a new compiler and libc take over.
@@ -139,14 +156,16 @@ const SEED_BINUTILS: &[&str] = &[
 
 impl DepSpec {
     fn resolve(&self) -> Result<Dep, String> {
-        let (id, view, rpath, skip) = match self {
-            Self::Id(id) => (id, true, true, &None),
+        let (id, view, rpath, skip, propagate, exclude) = match self {
+            Self::Id(id) => (id, true, true, &None, Propagate::All, &[][..]),
             Self::Full {
                 id,
                 view,
                 rpath,
                 skip,
-            } => (id, *view, *rpath, skip),
+                propagate,
+                exclude,
+            } => (id, *view, *rpath, skip, *propagate, exclude.as_slice()),
         };
         let skip = match skip.as_deref() {
             None => Vec::new(),
@@ -159,6 +178,8 @@ impl DepSpec {
             view: view && id != "wrapper",
             rpath: rpath && id != "wrapper",
             skip,
+            propagate,
+            exclude: exclude.to_vec(),
         })
     }
 }
@@ -202,6 +223,12 @@ pub(crate) struct Package {
     deps: Vec<DepSpec>,
     #[serde(default)]
     extra_deps: Vec<DepSpec>,
+    /// Packages it brings into its dependents' views that no `.pc` file of its names.
+    #[serde(default)]
+    propagates: Vec<String>,
+    /// Whether what its `.pc` files require privately comes into its dependents' views too.
+    #[serde(default = "yes")]
+    propagate_private: bool,
     #[serde(default)]
     sources: Vec<Source>,
     /// A `Cargo.lock` in the first source, whose registry crates are added to the sources, each
@@ -321,6 +348,8 @@ impl Package {
                 view: true,
                 rpath: true,
                 skip: Some("compilers".to_owned()),
+                propagate: Propagate::All,
+                exclude: Vec::new(),
             },
             DepSpec::Id("gcc".to_owned()),
             DepSpec::Id("binutils".to_owned()),
@@ -412,6 +441,8 @@ impl Package {
             core: self.core,
             deps: Vec::new(),
             extra_deps,
+            propagates: Vec::new(),
+            propagate_private: true,
             sources: Vec::new(),
             crates: None,
             go: None,
@@ -461,6 +492,10 @@ pub struct Built {
     pub temporary: BTreeMap<String, StorePath>,
     pub closures: BTreeMap<String, BTreeSet<StorePath>>,
     pub views: Views,
+    /// What each package built here was built with and brings along, for its dependents.
+    pub providers: BTreeMap<String, requires::Provider>,
+    /// What each package brings into a dependent's view, once worked out.
+    pub requirements: BTreeMap<String, requires::Requirements>,
 }
 
 impl Built {
@@ -587,12 +622,54 @@ fn in_views(mut deps: Vec<Dep>, package: &Package, built: &Built) -> Result<Vec<
                     view: true,
                     rpath: false,
                     skip: Vec::new(),
+                    propagate: Propagate::All,
+                    exclude: Vec::new(),
                 })
                 .collect();
             deps.extend(extra);
             Ok(deps)
         }
     }
+}
+
+/// `listed` and what each of them brings along (decision 0019). Boot packages keep what they list.
+fn with_requirements(
+    lab: &Lab,
+    package: &Package,
+    listed: &[Dep],
+    built: &mut Built,
+) -> Result<Vec<Dep>, String> {
+    let mut deps = listed.to_vec();
+    if package.is_boot() {
+        return Ok(deps);
+    }
+    for dep in listed
+        .iter()
+        .filter(|dep| dep.view && dep.propagate != Propagate::None)
+    {
+        let brought = requires::requirements(lab, built, &dep.id)?;
+        if let Some(excluded) = dep.exclude.iter().find(|id| !brought.contains_key(*id)) {
+            return Err(format!(
+                "`{}` excludes `{excluded}` from `{}`, which doesn't bring it",
+                package.id, dep.id
+            ));
+        }
+        for (id, private) in brought {
+            let wanted =
+                !(private && dep.propagate == Propagate::Public) && !dep.exclude.contains(&id);
+            if wanted && !deps.iter().any(|known| known.id == id) {
+                deps.push(Dep {
+                    id,
+                    view: true,
+                    rpath: true,
+                    skip: Vec::new(),
+                    propagate: Propagate::All,
+                    exclude: Vec::new(),
+                });
+            }
+        }
+    }
+    Ok(deps)
 }
 
 pub(crate) fn remove(path: &Path) -> Result<(), String> {
@@ -1055,6 +1132,15 @@ fn recipe_parts(
             u8::from(package.whole),
         ],
     ];
+    if !package.propagates.is_empty() || !package.propagate_private {
+        parts.push(
+            format!(
+                "propagates {:?} {}",
+                package.propagates, package.propagate_private
+            )
+            .into_bytes(),
+        );
+    }
     for name in &package.files {
         let path = repository.join("recipes").join(name);
         parts.push(fs::read(&path).map_err(with_path(&path))?);
@@ -1073,14 +1159,19 @@ fn package_key(
     let dep_texts: Vec<String> = deps
         .iter()
         .map(|dep| {
-            format!(
+            let mut text = format!(
                 "{} {} {} {} {:?}",
                 dep.id,
                 reference(dep),
                 dep.view,
                 dep.rpath,
                 dep.skip
-            )
+            );
+            // Only a choice that differs from the default changes a key.
+            if dep.propagate != Propagate::All || !dep.exclude.is_empty() {
+                text.push_str(&format!(" {:?} {:?}", dep.propagate, dep.exclude));
+            }
+            text
         })
         .collect();
     let parts: Vec<&[u8]> = recipe
@@ -1138,7 +1229,8 @@ pub(crate) fn build_one(
     sources: &mut Sources,
     built: &mut Built,
 ) -> Result<Option<Prepared>, String> {
-    let deps = in_views(package.all_deps()?, package, built)?;
+    let listed = in_views(package.all_deps()?, package, built)?;
+    let deps = with_requirements(lab, package, &listed, built)?;
     let mut closure = BTreeSet::from([seed.clone()]);
     for dep in &deps {
         let path = built
@@ -1155,7 +1247,7 @@ pub(crate) fn build_one(
     let recipe = recipe_parts(repository, package, arm, &source_hashes)?;
     let out = package_key("build", &recipe, &deps, |dep| built.reference(&dep.id))
         .named(&package.store_name());
-    let unresolved = package_key("unresolved", &recipe, &deps, |dep| {
+    let unresolved = package_key("unresolved", &recipe, &listed, |dep| {
         built.unresolved_or_path(&dep.id)
     })
     .hash()
@@ -1180,6 +1272,19 @@ pub(crate) fn build_one(
     built.paths.insert(package.id.clone(), out.clone());
     built.temporary.insert(package.id.clone(), out.clone());
     built.closures.insert(package.id.clone(), closure.clone());
+    built.requirements.remove(&package.id);
+    built.providers.insert(
+        package.id.clone(),
+        requires::Provider {
+            deps: deps
+                .iter()
+                .filter(|dep| dep.view)
+                .map(|dep| dep.id.clone())
+                .collect(),
+            propagates: package.propagates.clone(),
+            private: package.propagate_private,
+        },
+    );
 
     let done_dir = lab.work.join("done");
     let done = done_dir.join(out.hash());
@@ -1515,6 +1620,8 @@ mod view_tests {
             view: true,
             rpath: true,
             skip: Vec::new(),
+            propagate: Propagate::All,
+            exclude: Vec::new(),
         }
     }
 
@@ -1587,6 +1694,107 @@ mod view_tests {
             [("lib".to_owned(), true), ("base".to_owned(), true)]
         );
         assert!(!result[1].rpath);
+    }
+}
+
+#[cfg(test)]
+mod requirement_tests {
+    use super::*;
+
+    fn consumer(specs: &str, scope: &str) -> Package {
+        let text = format!(
+            "[[package]]\nid = \"app\"\nscope = \"{scope}\"\nscript = \"\"\n\
+             extra_deps = [{specs}]\n"
+        );
+        toml::from_str::<Recipes>(&text).unwrap().package.remove(0)
+    }
+
+    /// gtk brings pango publicly and zlib privately. Nothing is read from disk: what each
+    /// brings is already worked out.
+    fn built() -> Built {
+        let mut built = Built::default();
+        for (tag, id) in ["gtk", "pango", "zlib", "cairo"].into_iter().enumerate() {
+            let tag = u8::try_from(tag).unwrap();
+            built
+                .paths
+                .insert(id.to_owned(), StorePath::derive("test", &[&[tag]]));
+        }
+        built.requirements.insert(
+            "gtk".to_owned(),
+            BTreeMap::from([("pango".to_owned(), false), ("zlib".to_owned(), true)]),
+        );
+        built
+    }
+
+    fn seen(specs: &str) -> Result<Vec<(String, bool)>, String> {
+        seen_as(specs, "runtime")
+    }
+
+    fn seen_as(specs: &str, scope: &str) -> Result<Vec<(String, bool)>, String> {
+        let package = consumer(specs, scope);
+        let lab = Lab::new("/nonexistent");
+        let deps = with_requirements(&lab, &package, &package.all_deps()?, &mut built())?;
+        Ok(deps.into_iter().map(|dep| (dep.id, dep.view)).collect())
+    }
+
+    fn ids(seen: &[(String, bool)]) -> Vec<&str> {
+        seen.iter().map(|(id, _)| id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_dependency_brings_all_it_requires_by_default() {
+        assert_eq!(ids(&seen("\"gtk\"").unwrap()), ["gtk", "pango", "zlib"]);
+    }
+
+    #[test]
+    fn public_leaves_private_requirements_out_and_none_brings_nothing() {
+        let public = seen(r#"{ id = "gtk", propagate = "public" }"#).unwrap();
+        assert_eq!(ids(&public), ["gtk", "pango"]);
+        let none = seen(r#"{ id = "gtk", propagate = "none" }"#).unwrap();
+        assert_eq!(ids(&none), ["gtk"]);
+    }
+
+    #[test]
+    fn an_exclusion_leaves_one_out_and_must_name_something_brought() {
+        let excluded = seen(r#"{ id = "gtk", exclude = ["zlib"] }"#).unwrap();
+        assert_eq!(ids(&excluded), ["gtk", "pango"]);
+        assert_eq!(
+            seen(r#"{ id = "gtk", exclude = ["cairo"] }"#).unwrap_err(),
+            "`app` excludes `cairo` from `gtk`, which doesn't bring it"
+        );
+    }
+
+    #[test]
+    fn what_a_recipe_lists_itself_keeps_how_it_lists_it() {
+        let listed = seen(r#"{ id = "zlib", view = false }, "gtk""#).unwrap();
+        assert_eq!(
+            listed,
+            [
+                ("zlib".to_owned(), false),
+                ("gtk".to_owned(), true),
+                ("pango".to_owned(), true)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_boot_package_sees_only_what_it_lists() {
+        assert_eq!(ids(&seen_as("\"gtk\"", "boot").unwrap()), ["gtk"]);
+    }
+
+    #[test]
+    fn only_a_choice_other_than_the_default_changes_a_key() {
+        let key = |specs: &str| {
+            let deps = consumer(specs, "runtime").all_deps().unwrap();
+            package_key("test", &[], &deps, |dep| dep.id.clone())
+        };
+        let plain = key("\"gtk\"");
+        assert_eq!(
+            key(r#"{ id = "gtk", propagate = "all", exclude = [] }"#),
+            plain
+        );
+        assert_ne!(key(r#"{ id = "gtk", propagate = "public" }"#), plain);
+        assert_ne!(key(r#"{ id = "gtk", exclude = ["zlib"] }"#), plain);
     }
 }
 
