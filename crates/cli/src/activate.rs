@@ -9,6 +9,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use distro_build::graph::BOOT_SPEC;
 use distro_eval::Unit;
 use distro_model::{Activation, Model};
 
@@ -123,29 +124,74 @@ fn boot_entries(root: &Path) -> Result<(), String> {
             let named = fs::read_link(&link).map_err(|e| format!("{}: {e}", link.display()))?;
             params.push_str(&format!(" init={}/init", named.display()));
         }
-        let entry = format!("distro-{number}.conf");
+        // An entry the boot loader is counting tries for keeps its name, which holds the count.
+        // A new one gets its tries; a boot that comes up marks it good, and one that runs out of
+        // tries is booted only when nothing else is left.
+        let entry = counted_entry(&entries, number)?
+            .unwrap_or_else(|| format!("distro-{number}+{BOOT_TRIES}.conf"));
         let initrds: String = files[1..]
             .iter()
             .map(|file| format!("initrd /EFI/distro/{file}\n"))
             .collect();
+        // The current generation sorts first, so the boot loader starts it unless it ran out of
+        // tries, and then the newest of the others.
+        let sort_key = if number == current {
+            "distro-current"
+        } else {
+            "distro-other"
+        };
         let text = format!(
-            "title distro\nversion generation {number}\nsort-key distro\nlinux /EFI/distro/{}\n\
-             {initrds}options {}\n",
+            "title distro\nversion generation {number}\nsort-key {sort_key}\n\
+             linux /EFI/distro/{}\n{initrds}options {}\n",
             files[0], params
         );
         write_replacing(&entries.join(&entry), &text, 0o644)?;
-        written.insert(entry.clone());
-        if number == current {
-            let loader = format!("default {entry}\ntimeout 3\neditor no\n");
-            write_replacing(&esp.join("loader/loader.conf"), &loader, 0o644)?;
-        }
+        written.insert(entry);
     }
+    write_replacing(
+        &esp.join("loader/loader.conf"),
+        "default distro-*\ntimeout 3\neditor no\n",
+        0o644,
+    )?;
     remove_others(&entries, |name| {
         name.starts_with("distro-") && !written.contains(name)
     })?;
     remove_others(&kernels, |name| !kept.contains(name))?;
     sync_tree(&kernels)?;
     sync_tree(&esp.join("loader"))
+}
+
+/// How many times the boot loader tries a new generation before it falls back to another.
+const BOOT_TRIES: u32 = 3;
+
+/// The file in `entries` that holds generation `number`'s entry, with or without the boot
+/// loader's count of tries in its name: `distro-4.conf`, `distro-4+3.conf`, `distro-4+1-2.conf`.
+fn counted_entry(entries: &Path, number: u32) -> Result<Option<String>, String> {
+    let error = |e: io::Error| format!("{}: {e}", entries.display());
+    let prefix = format!("distro-{number}");
+    for entry in fs::read_dir(entries).map_err(error)? {
+        let name = entry
+            .map_err(error)?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        let Some(rest) = name
+            .strip_prefix(&prefix)
+            .and_then(|r| r.strip_suffix(".conf"))
+        else {
+            continue;
+        };
+        let counted = rest.strip_prefix('+').is_some_and(|count| {
+            let (left, done) = count.split_once('-').unwrap_or((count, "0"));
+            [left, done]
+                .iter()
+                .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        });
+        if rest.is_empty() || counted {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
 }
 
 /// What boots a generation, from its `boot.json`.
@@ -167,10 +213,11 @@ impl Boot {
             let path = at(name);
             move |e: io::Error| format!("{}: {e}", path.display())
         };
-        if let Ok(text) = fs::read_to_string(at("boot.json")) {
-            let document: serde_json::Value = serde_json::from_str(&text)
-                .map_err(|e| format!("{}: {e}", at("boot.json").display()))?;
-            let spec = &document[distro_build::graph::BOOT_SPEC];
+        let json = at("boot.json");
+        if let Ok(text) = fs::read_to_string(&json) {
+            let document: serde_json::Value =
+                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", json.display()))?;
+            let spec = &document[BOOT_SPEC];
             let strings = |field: &str| -> Vec<String> {
                 spec[field]
                     .as_array()
@@ -179,13 +226,9 @@ impl Boot {
                     .filter_map(|item| item.as_str().map(str::to_owned))
                     .collect()
             };
-            let kernel = spec["kernel"].as_str().ok_or_else(|| {
-                format!(
-                    "{} has no `{}` kernel",
-                    at("boot.json").display(),
-                    distro_build::graph::BOOT_SPEC
-                )
-            })?;
+            let kernel = spec["kernel"]
+                .as_str()
+                .ok_or_else(|| format!("{} has no `{BOOT_SPEC}` kernel", json.display()))?;
             return Ok(Self {
                 kernel: PathBuf::from(kernel),
                 initrds: strings("initrds").into_iter().map(PathBuf::from).collect(),
@@ -746,6 +789,25 @@ mod tests {
     }
 
     #[test]
+    fn a_generations_entry_is_found_with_or_without_its_count_of_tries() {
+        let work = tempfile::tempdir().unwrap();
+        let entries = work.path();
+        for name in [
+            "distro-10.conf",
+            "distro-2+0-3.conf",
+            "distro-3+x.conf",
+            "other-1.conf",
+        ] {
+            fs::write(entries.join(name), "").unwrap();
+        }
+        let found = |number| counted_entry(entries, number).unwrap();
+        assert_eq!(found(10).as_deref(), Some("distro-10.conf"));
+        assert_eq!(found(2).as_deref(), Some("distro-2+0-3.conf"));
+        assert_eq!(found(1), None, "distro-10 isn't generation 1");
+        assert_eq!(found(3), None, "a count that isn't numbers isn't one");
+    }
+
+    #[test]
     fn a_generation_boots_as_its_boot_json_says_and_an_older_one_as_its_files_say() {
         let work = tempfile::tempdir().unwrap();
         let system = work.path();
@@ -758,7 +820,7 @@ mod tests {
         assert_eq!(old.params, ["quiet", "rw"]);
         assert!(old.secrets.is_empty());
 
-        let spec = serde_json::json!({distro_build::graph::BOOT_SPEC: {
+        let spec = serde_json::json!({BOOT_SPEC: {
             "kernel": "/store/k/bzImage",
             "initrds": ["/store/i/initrd", "/store/j/initrd"],
             "kernel_params": ["loglevel=3"],
@@ -784,9 +846,9 @@ mod tests {
         let esp = root.join("boot");
         assert_eq!(
             fs::read_to_string(esp.join("loader/loader.conf")).unwrap(),
-            "default distro-2.conf\ntimeout 3\neditor no\n"
+            "default distro-*\ntimeout 3\neditor no\n"
         );
-        let entry = fs::read_to_string(esp.join("loader/entries/distro-10.conf")).unwrap();
+        let entry = fs::read_to_string(esp.join("loader/entries/distro-10+3.conf")).unwrap();
         assert!(entry.contains("linux /EFI/distro/k2-bzImage\n"), "{entry}");
         assert!(entry.contains("initrd /EFI/distro/i1-initrd\n"), "{entry}");
         assert!(
@@ -852,15 +914,30 @@ mod tests {
         symlink("generations/2", root.join(CURRENT)).unwrap();
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
         fs::write(root.join("boot/loader/entries/distro-9.conf"), "old").unwrap();
+        // The boot loader counted down generation 2's tries and 1 was marked good.
+        fs::write(root.join("boot/loader/entries/distro-2+1-2.conf"), "old").unwrap();
+        fs::write(root.join("boot/loader/entries/distro-1.conf"), "old").unwrap();
 
         boot_entries(root).unwrap();
 
         let esp = root.join("boot");
         assert_eq!(
             fs::read_to_string(esp.join("loader/loader.conf")).unwrap(),
-            "default distro-2.conf\ntimeout 3\neditor no\n"
+            "default distro-*\ntimeout 3\neditor no\n"
         );
-        let entry = fs::read_to_string(esp.join("loader/entries/distro-3.conf")).unwrap();
+        let mut names: Vec<String> = fs::read_dir(esp.join("loader/entries"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["distro-1.conf", "distro-2+1-2.conf", "distro-3+3.conf"]
+        );
+        let current = fs::read_to_string(esp.join("loader/entries/distro-2+1-2.conf")).unwrap();
+        assert!(current.contains("sort-key distro-current\n"), "{current}");
+        let entry = fs::read_to_string(esp.join("loader/entries/distro-3+3.conf")).unwrap();
+        assert!(entry.contains("sort-key distro-other\n"), "{entry}");
         assert!(
             entry.contains("linux /EFI/distro/k2-bzImage-bzImage\n"),
             "{entry}"

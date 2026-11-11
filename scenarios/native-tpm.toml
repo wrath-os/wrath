@@ -1,4 +1,4 @@
-title = "a disk the TPM was enrolled for unlocks at boot without a passphrase"
+title = "the TPM unlocks an enrolled disk at boot, and the boot loader counts tries for new entries"
 
 [vm]
 config = "scenarios/fixtures/native-state-installer"
@@ -13,5 +13,11 @@ steps = [
   { boot_installed = true },
   { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
   { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pcrs":\[[0-9,]*\]' ''', stdout_contains = '"tpm2-pcrs":[7]' },
+  # The first boot came up, so its entry lost its count of tries.
+  { run = "ls /boot/loader/entries", stdout_contains = "distro-1.conf" },
+  # An entry out of tries is passed over for a fresh one, which a good boot marks good in turn.
+  { run = '''cd /boot/loader/entries && sed 's/^sort-key .*/sort-key distro-current/; s/^version .*/version generation 99/' distro-1.conf > distro-99+0-3.conf && sed 's/^sort-key .*/sort-key distro-current/; s/^version .*/version generation 50/' distro-1.conf > distro-50+3.conf && sed -i 's/^sort-key .*/sort-key distro-other/' distro-1.conf && sync && echo ready''', stdout_contains = "ready" },
+  { boot_installed = true },
+  { run = '''tr -cd '[:print:]' < /sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; echo; ls /boot/loader/entries''', stdout_contains = "distro-50+3.conf\ndistro-1.conf\ndistro-50.conf\ndistro-99+0-3.conf" },
 ]
 timeout_secs = 1500

@@ -1623,10 +1623,8 @@ fn boot_files<'a>(
             let file = directory.join("initrd");
             fs::write(&file, compressed).map_err(with_path(&file))?;
             let link = |target: String| Entry::Link { target };
-            let (kernel, initrd) = (
-                format!("{}/bzImage", linux.inside()),
-                format!("{}/initrd", path.inside()),
-            );
+            let kernel = format!("{}/bzImage", linux.inside());
+            let initrd = format!("{}/initrd", path.inside());
             let spec = boot_spec(&kernel, std::slice::from_ref(&initrd), &params);
             Ok(BTreeMap::from([
                 (
