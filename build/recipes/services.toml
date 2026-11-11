@@ -60,10 +60,9 @@ id = "locales"
 scope = "runtime"
 core = true
 script = '''
-# The locales $OPTION_locales names, such as `en_US.UTF-8/UTF-8`, each compiled into a directory
-# of its own for glibc to find through LOCPATH.
+# Each locale compiled into a directory of its own for glibc to find through LOCPATH.
 mkdir -p $DEST$PREFIX/lib/locale
-for entry in ${OPTION_locales:-C.UTF-8/UTF-8}; do
+for entry in $OPTION_locales; do
     name=${entry%/*}
     charset=${entry#*/}
     input=${name%%.*}
@@ -71,6 +70,11 @@ for entry in ${OPTION_locales:-C.UTF-8/UTF-8}; do
     test -s "$DEST$PREFIX/lib/locale/$name/LC_CTYPE"
 done
 '''
+
+[package.options.locales]
+type = "list"
+default = ["C.UTF-8/UTF-8"]
+doc = "The locales to build, each a name and its character set, such as `en_US.UTF-8/UTF-8`."
 
 [[package]]
 id = "zram-generator"

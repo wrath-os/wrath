@@ -11,7 +11,7 @@ build = types.record(
     options = option(
         types.freeform,
         default = {},
-        doc = "Values for the options the package's build takes, such as `vulkanSupport`.",
+        doc = "Values for the options the package's recipe declares, such as `enableTiny`.",
     ),
     patches = option(
         types.list(types.str),

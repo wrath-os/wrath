@@ -22,9 +22,8 @@ core = true
 deps = ["ncurses"]
 sources = [{ url = "https://www.nano-editor.org/dist/v8/nano-{version}.tar.xz" }]
 script = '''
-# OPTION_enableTiny leaves out everything but editing, for rescue systems.
 tiny=
-if [ "${OPTION_enableTiny:-false}" = true ]; then
+if [ "$OPTION_enableTiny" = true ]; then
     tiny=--enable-tiny
 fi
 ./configure --prefix=$PREFIX --disable-nls $tiny
@@ -32,6 +31,11 @@ make -j$NPROC
 make install DESTDIR=$DEST
 '''
 smoke = ["bin/nano --version"]
+
+[package.options.enableTiny]
+type = "bool"
+default = false
+doc = "Leave out everything but editing, for rescue systems."
 
 [[package]]
 id = "jq"

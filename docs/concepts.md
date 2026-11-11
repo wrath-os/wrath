@@ -50,9 +50,9 @@ A **package** is software to install, named `[source#]name[@version]`: `jq`, `st
 command line.
 
 A **build** is a package built differently from how its source builds it, with other values for
-its build options or with patches: `[builds.whisper-vulkan]` with `package = "whisper-cpp"` and
-`options.vulkanSupport = true`. The name goes in `packages` like any other. Only that package
-changes.
+its build options or with patches: `[builds.rescue-nano]` with `package = "nano"` and
+`options.enableTiny = true`. The options are the ones the recipe declares, each with a type and a
+default. The name goes in `packages` like any other. Only that package changes.
 
 A **source** is where packages, or files to include, come from: a name and the URL it follows,
 pinned in the lock. `distro` is the default: its recipes build every package and the base

@@ -184,6 +184,44 @@ impl DepSpec {
     }
 }
 
+/// An option a recipe's script reads, with what a build that doesn't set it gets.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RecipeOption {
+    #[serde(rename = "type")]
+    kind: OptionKind,
+    default: serde_json::Value,
+    /// What it does, for whoever sets it.
+    #[allow(dead_code)]
+    doc: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OptionKind {
+    Bool,
+    Str,
+    Int,
+    List,
+}
+
+impl OptionKind {
+    /// Why `value` isn't one of these, if it isn't.
+    fn refuse(self, value: &serde_json::Value) -> Option<&'static str> {
+        use serde_json::Value;
+        match (self, value) {
+            (Self::Bool, Value::Bool(_)) | (Self::Str, Value::String(_)) => None,
+            (Self::Int, Value::Number(n)) if n.is_i64() => None,
+            (Self::List, Value::Array(items)) if items.iter().all(Value::is_string) => None,
+            (Self::List, Value::Array(_)) => Some("a list of text"),
+            (Self::Bool, _) => Some("true or false"),
+            (Self::Str, _) => Some("text"),
+            (Self::Int, _) => Some("a whole number"),
+            (Self::List, _) => Some("a list"),
+        }
+    }
+}
+
 /// A version a recipe stays below, and why, such as
 /// `hold = { below = "1.58", reason = "needs glib 2.88" }`.
 #[derive(Debug, Clone, Deserialize)]
@@ -270,6 +308,9 @@ pub(crate) struct Package {
     go: Option<String>,
     #[serde(default)]
     files: Vec<String>,
+    /// What a build can set, which its script reads as `OPTION_<name>`, by name.
+    #[serde(default)]
+    options: BTreeMap<String, RecipeOption>,
     script: String,
     #[serde(default = "yes")]
     wrap: bool,
@@ -425,24 +466,35 @@ impl Package {
             .collect()
     }
 
-    /// This recipe built as `id` with `options`, which its script reads as `OPTION_<name>`
-    /// variables set at its top, so the script says what they are and they're part of its key.
-    /// A list is its items separated by spaces. `patches` apply after that, in order, from where
-    /// the script starts.
-    pub(crate) fn variant(
+    /// The `OPTION_<name>` variables for each option the recipe declares: the value in `set`, or
+    /// its default. A list is its items separated by spaces. An option it doesn't declare, or a
+    /// value of the wrong type, is refused.
+    fn option_exports(
         &self,
-        id: &str,
-        options: &serde_json::Map<String, serde_json::Value>,
-        patches: &[String],
-    ) -> Result<Self, String> {
+        set: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<String, String> {
+        let id = &self.id;
+        if let Some(name) = set.keys().find(|name| !self.options.contains_key(*name)) {
+            if self.options.is_empty() {
+                return Err(format!("`{id}` takes no options"));
+            }
+            let names: Vec<String> = self.options.keys().map(|n| format!("`{n}`")).collect();
+            let (last, rest) = names.split_last().expect("the recipe has options");
+            let listed = match rest {
+                [] => last.clone(),
+                _ => format!("{} and {last}", rest.join(", ")),
+            };
+            return Err(format!("`{id}` has no option `{name}`; it has {listed}"));
+        }
         let text_of = |value: &serde_json::Value| match value {
             serde_json::Value::String(text) => text.clone(),
             other => other.to_string(),
         };
-        let mut prelude = String::new();
-        for (name, value) in options {
-            if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(format!("`{}` has no option `{name}`", self.id));
+        let mut exports = String::new();
+        for (name, option) in &self.options {
+            let value = set.get(name).unwrap_or(&option.default);
+            if let Some(kind) = option.kind.refuse(value) {
+                return Err(format!("`{id}`'s option `{name}` is {kind}, not {value}"));
             }
             let text = match value {
                 serde_json::Value::Array(items) => {
@@ -451,8 +503,37 @@ impl Package {
                 other => text_of(other),
             };
             let quoted = text.replace('\'', "'\\''");
-            prelude.push_str(&format!("export OPTION_{name}='{quoted}'\n"));
+            exports.push_str(&format!("export OPTION_{name}='{quoted}'\n"));
         }
+        Ok(exports)
+    }
+
+    /// The recipe with its options' defaults set at the top of its script, so the script reads
+    /// them without defaults of its own.
+    fn with_option_defaults(mut self) -> Result<Self, String> {
+        if let Some(name) = self
+            .options
+            .keys()
+            .find(|name| !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        {
+            return Err(format!("`{}`'s option `{name}` isn't a name", self.id));
+        }
+        self.script = self.option_exports(&serde_json::Map::new())? + &self.script;
+        Ok(self)
+    }
+
+    /// This recipe built as `id` with `options`, which its script reads as `OPTION_<name>`
+    /// variables set at its top, so the script says what they are and they're part of its key.
+    /// `patches` apply after that, in order, from where the script starts.
+    pub(crate) fn variant(
+        &self,
+        id: &str,
+        options: &serde_json::Map<String, serde_json::Value>,
+        patches: &[String],
+    ) -> Result<Self, String> {
+        let defaults = self.option_exports(&serde_json::Map::new())?;
+        let script = self.script.strip_prefix(&defaults).unwrap_or(&self.script);
+        let mut prelude = self.option_exports(options)?;
         for (index, patch) in patches.iter().enumerate() {
             let end = if patch.ends_with('\n') { "" } else { "\n" };
             prelude.push_str(&format!(
@@ -465,7 +546,7 @@ impl Package {
         }
         Ok(Self {
             id: id.to_owned(),
-            script: format!("{prelude}{}", self.script),
+            script: format!("{prelude}{script}"),
             extra_deps,
             ..self.clone()
         })
@@ -499,6 +580,7 @@ impl Package {
             crates: None,
             go: None,
             files: Vec::new(),
+            options: BTreeMap::new(),
             script,
             wrap: true,
             fixup: true,
@@ -970,7 +1052,9 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
                         .replace("{series}", &series(version));
                 }
             }
-            Ok(package)
+            package
+                .with_option_defaults()
+                .map_err(|e| format!("{}: {e}", path.display()))
         })
         .collect()
 }
@@ -993,6 +1077,8 @@ pub(crate) fn recipe_from_str(text: &str) -> Package {
         .expect("the test recipe parses")
         .package
         .remove(0)
+        .with_option_defaults()
+        .expect("the test recipe's options are right")
 }
 
 #[cfg(test)]
@@ -2378,33 +2464,108 @@ mod variant_tests {
         toml::from_str::<Recipes>(text).unwrap().package.remove(0)
     }
 
+    /// A recipe that declares the options its script reads.
+    fn with_options() -> Package {
+        recipe_from_str(
+            "[[package]]\nid = \"locales\"\nscope = \"runtime\"\nscript = \"make\\n\"\n\
+             [package.options.locales]\ntype = \"list\"\ndefault = [\"C.UTF-8/UTF-8\"]\n\
+             doc = \"Locales to build.\"\n\
+             [package.options.small]\ntype = \"bool\"\ndefault = false\ndoc = \"Smaller.\"\n",
+        )
+    }
+
     #[test]
-    fn a_variant_is_the_recipe_with_its_options_set_at_the_top_of_its_script() {
-        let options = serde_json::json!({
-            "locales": ["en_US.UTF-8/UTF-8", "sv_SE.UTF-8/UTF-8"],
-            "note": "it's",
-            "small": true,
-        });
-        let variant = recipe()
+    fn a_recipe_starts_its_script_with_the_defaults_of_its_options() {
+        assert_eq!(
+            with_options().script,
+            "export OPTION_locales='C.UTF-8/UTF-8'\nexport OPTION_small='false'\nmake\n"
+        );
+        assert_eq!(
+            recipe().script,
+            "make\n",
+            "a recipe without options is as written"
+        );
+    }
+
+    #[test]
+    fn a_variant_sets_the_options_it_gives_and_keeps_the_defaults_of_the_rest() {
+        let options = serde_json::json!({"locales": ["en_US.UTF-8/UTF-8", "sv_SE.UTF-8/UTF-8"]});
+        let variant = with_options()
             .variant("system-locales", options.as_object().unwrap(), &[])
             .unwrap();
         assert_eq!(variant.id, "system-locales");
         assert_eq!(
             variant.script,
             "export OPTION_locales='en_US.UTF-8/UTF-8 sv_SE.UTF-8/UTF-8'\n\
-             export OPTION_note='it'\\''s'\n\
-             export OPTION_small='true'\n\
+             export OPTION_small='false'\n\
              make\n"
         );
     }
 
     #[test]
-    fn an_option_name_that_isnt_a_variable_name_is_refused() {
-        let options = serde_json::json!({"bad name": 1});
+    fn a_value_is_quoted_for_the_shell() {
+        let recipe = recipe_from_str(
+            "[[package]]\nid = \"x\"\nscope = \"runtime\"\nscript = \"make\\n\"\n\
+             [package.options.note]\ntype = \"str\"\ndefault = \"\"\ndoc = \"A note.\"\n",
+        );
+        let options = serde_json::json!({"note": "it's"});
+        let variant = recipe
+            .variant("y", options.as_object().unwrap(), &[])
+            .unwrap();
+        assert_eq!(variant.script, "export OPTION_note='it'\\''s'\nmake\n");
+    }
+
+    #[test]
+    fn an_option_the_recipe_doesnt_declare_is_refused_with_those_it_does() {
+        let options = serde_json::json!({"smal": true});
+        let error = with_options()
+            .variant("x", options.as_object().unwrap(), &[])
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "`locales` has no option `smal`; it has `locales` and `small`"
+        );
         let error = recipe()
             .variant("x", options.as_object().unwrap(), &[])
             .unwrap_err();
-        assert!(error.contains("no option `bad name`"), "{error}");
+        assert_eq!(error, "`locales` takes no options");
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_is_refused() {
+        for (value, what) in [
+            (
+                serde_json::json!({"small": "yes"}),
+                "`small` is true or false, not \"yes\"",
+            ),
+            (
+                serde_json::json!({"locales": "en_US"}),
+                "`locales` is a list, not \"en_US\"",
+            ),
+            (
+                serde_json::json!({"locales": [1]}),
+                "`locales` is a list of text, not [1]",
+            ),
+        ] {
+            let error = with_options()
+                .variant("x", value.as_object().unwrap(), &[])
+                .unwrap_err();
+            assert_eq!(error, format!("`locales`'s option {what}"));
+        }
+    }
+
+    #[test]
+    fn a_default_of_the_wrong_type_is_an_error_in_the_recipe() {
+        let text = "[[package]]\nid = \"x\"\nscope = \"runtime\"\nscript = \"make\\n\"\n\
+                    [package.options.small]\ntype = \"bool\"\ndefault = \"no\"\n\
+                    doc = \"Smaller.\"\n";
+        let error = toml::from_str::<Recipes>(text)
+            .unwrap()
+            .package
+            .remove(0)
+            .with_option_defaults()
+            .unwrap_err();
+        assert_eq!(error, "`x`'s option `small` is true or false, not \"no\"");
     }
 
     #[test]
