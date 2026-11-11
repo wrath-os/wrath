@@ -271,7 +271,10 @@ fn tree_files(root: &Path) -> Vec<String> {
 }
 
 /// Links in `to` for every file in `dir` of `package`, at any depth for [`MERGED_TREES`], and every
-/// directory where `dir` is one of [`WHOLE_ENTRIES`], leaving entries already there alone.
+/// directory where `dir` is one of [`WHOLE_ENTRIES`], leaving entries already there alone. A
+/// merged tree also takes what the package's library output has there: data its libraries
+/// refer to, such as fontconfig's presets or libX11's compose tables, is moved there when the
+/// package is split, and programs look for it where the system shares it.
 fn linked(
     lab: &Lab,
     package: &PackageRef,
@@ -279,42 +282,54 @@ fn linked(
     to: &str,
     entries: &mut Entries,
 ) -> Result<(), String> {
-    let source = lab.on_host(&package.path).join(dir);
-    let names = if MERGED_TREES.contains(&dir) {
-        tree_files(&source)
-    } else {
-        let Ok(listing) = fs::read_dir(&source) else {
-            return Ok(());
-        };
-        let mut names: Vec<_> = listing
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                let path = entry.path();
-                path.is_file() || (WHOLE_ENTRIES.contains(&dir) && path.is_dir())
-            })
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    };
     let merged = MERGED_TREES.contains(&dir);
-    for name in names {
-        let target = format!("{}/{dir}/{name}", package.path.inside());
-        let path = format!("{to}/{name}");
-        match entries.get(&path) {
-            None => {
-                entries.insert(path, Entry::Link { target });
+    let mut roots = vec![&package.path];
+    if merged {
+        roots.extend(
+            package
+                .outputs
+                .iter()
+                .filter(|output| **output != package.path),
+        );
+    }
+    for root in roots {
+        let source = lab.on_host(root).join(dir);
+        let names = if merged {
+            tree_files(&source)
+        } else {
+            let Ok(listing) = fs::read_dir(&source) else {
+                continue;
+            };
+            let mut names: Vec<_> = listing
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    let path = entry.path();
+                    path.is_file() || (WHOLE_ENTRIES.contains(&dir) && path.is_dir())
+                })
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        for name in names {
+            let target = format!("{}/{dir}/{name}", root.inside());
+            let path = format!("{to}/{name}");
+            match entries.get(&path) {
+                None => {
+                    entries.insert(path, Entry::Link { target });
+                }
+                // Packages merged file by file can't quietly win over each other: the same file
+                // twice is fine, two different ones stop the build.
+                Some(Entry::Link { target: first })
+                    if merged && *first != target && !same_contents(lab, first, &target)? =>
+                {
+                    return Err(format!(
+                        "`{path}` is in two packages with different contents: {first} and \
+                         {target}"
+                    ));
+                }
+                Some(_) => {}
             }
-            // Packages merged file by file can't quietly win over each other: the same file twice
-            // is fine, two different ones stop the build.
-            Some(Entry::Link { target: first })
-                if merged && *first != target && !same_contents(lab, first, &target)? =>
-            {
-                return Err(format!(
-                    "`{path}` is in two packages with different contents: {first} and {target}"
-                ));
-            }
-            Some(_) => {}
         }
     }
     Ok(())
@@ -3385,6 +3400,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn data_a_packages_libraries_refer_to_is_shared_from_its_library_output() {
+        let (_dir, lab, mut packages) = setup();
+        let lib = StorePath::derive("test", &[b"web-lib"]);
+        let presets = lab.on_host(&lib).join("share/web/presets");
+        fs::create_dir_all(&presets).unwrap();
+        fs::write(presets.join("hinting.conf"), "slight").unwrap();
+        packages.get_mut("web").unwrap().outputs.push(lib.clone());
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let link = fs::read_link(root.join("share/web/presets/hinting.conf")).unwrap();
+        assert_eq!(
+            link,
+            Path::new(&format!("{}/share/web/presets/hinting.conf", lib.inside()))
+        );
     }
 
     #[test]
