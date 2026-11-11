@@ -1448,6 +1448,38 @@ fn initrd_files(
     files
 }
 
+/// A modprobe deny-list of every module in `tree` that `wanted` doesn't need, for the initrd.
+/// Its udev would otherwise load a driver for each device it finds, before the root, and the
+/// firmware they read from it, is there. Loading a module by name, as for `wanted`, still works.
+fn initrd_deny_list(tree: &Path, wanted: &[String]) -> String {
+    let name = |path: &str| {
+        let file = path.rsplit('/').next().unwrap_or_default();
+        file.split(".ko")
+            .next()
+            .unwrap_or_default()
+            .replace('-', "_")
+    };
+    let mut deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for version in fs::read_dir(tree).into_iter().flatten().flatten() {
+        let text = fs::read_to_string(version.path().join("modules.dep")).unwrap_or_default();
+        for line in text.lines() {
+            let (module, needs) = line.split_once(':').unwrap_or((line, ""));
+            deps.insert(name(module), needs.split_whitespace().map(name).collect());
+        }
+    }
+    let mut needed = BTreeSet::new();
+    let mut pending: Vec<String> = wanted.iter().map(|m| m.replace('-', "_")).collect();
+    while let Some(module) = pending.pop() {
+        if needed.insert(module.clone()) {
+            pending.extend(deps.get(&module).into_iter().flatten().cloned());
+        }
+    }
+    deps.keys()
+        .filter(|module| !needed.contains(*module))
+        .map(|module| format!("blacklist {module}\n"))
+        .collect()
+}
+
 /// The modules of `wanted` that the kernel whose modules are in `tree` has, as a module or built
 /// in. Names match with `-` and `_` alike, as kmod matches them.
 fn kernel_has(tree: &Path, wanted: &[String]) -> Vec<String> {
@@ -1597,6 +1629,12 @@ fn boot_files<'a>(
             initrd::insert(
                 &mut nodes,
                 "etc/modules-load.d/distro.conf",
+                initrd::Node::File { mode: 0o644, bytes },
+            );
+            let bytes = initrd_deny_list(&modules, &disks.modules).into_bytes();
+            initrd::insert(
+                &mut nodes,
+                "etc/modprobe.d/initrd.conf",
                 initrd::Node::File { mode: 0o644, bytes },
             );
             // Roots come from `root=` or the fstab, never from a partition marked as one.
@@ -3007,6 +3045,29 @@ mod tests {
         .unwrap();
         let wanted = ["btrfs", "dm_crypt", "tmpfs", "af_alg"].map(String::from);
         assert_eq!(kernel_has(dir.path(), &wanted), ["btrfs", "dm_crypt"]);
+    }
+
+    #[test]
+    fn the_initrd_keeps_every_module_it_doesnt_need_from_loading_until_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let version = dir.path().join("7.3.4");
+        fs::create_dir_all(&version).unwrap();
+        fs::write(
+            version.join("modules.dep"),
+            "kernel/drivers/md/dm-crypt.ko: kernel/drivers/md/dm-mod.ko\n\
+             kernel/drivers/md/dm-mod.ko:\n\
+             kernel/drivers/block/virtio_blk.ko:\n\
+             kernel/net/wireless/cfg80211.ko:\n\
+             kernel/drivers/net/wireless/mediatek/mt76/mt7925/mt7925e.ko: \
+             kernel/net/wireless/cfg80211.ko\n",
+        )
+        .unwrap();
+        let wanted = ["dm_crypt", "virtio_blk"].map(String::from);
+        // Firmware is on the root, so a driver that wants some loads once the root is there.
+        assert_eq!(
+            initrd_deny_list(dir.path(), &wanted),
+            "blacklist cfg80211\nblacklist mt7925e\n"
+        );
     }
 
     #[test]
