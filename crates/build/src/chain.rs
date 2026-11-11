@@ -3085,15 +3085,49 @@ mod style_goldens {
     use super::*;
 
     #[test]
+    fn the_build_system_styles_make_their_usual_three_steps() {
+        let styles = styles(&repository()).unwrap();
+        let script = |style: &str, args: &str| {
+            let text = format!(
+                "[[package]]\nid = \"x\"\nscope = \"runtime\"\n[package.{style}]\nargs = [{args}]\n"
+            );
+            let mut package = toml::from_str::<Recipes>(&text).unwrap().package.remove(0);
+            package.check_style(&styles).unwrap();
+            let top = || Ok(Vec::new());
+            package
+                .styled_by(&styles, &top, &|_| Err(String::new()))
+                .unwrap()
+                .script
+        };
+        assert_eq!(
+            script("meson", "\"-D docs=disabled\""),
+            "meson setup /build/b . --prefix=$PREFIX --libdir=lib --buildtype=release \
+             -D docs=disabled\nninja -C /build/b -j$NPROC\n\
+             DESTDIR=$DEST ninja -C /build/b install\n"
+        );
+        assert_eq!(
+            script("autotools", "\"--disable-nls\""),
+            "./configure --prefix=$PREFIX --disable-nls\nmake -j$NPROC\n\
+             make install DESTDIR=$DEST\n"
+        );
+        assert_eq!(
+            script("cmake", ""),
+            "cmake -S . -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX \
+             -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release\nninja -C /build/b -j$NPROC\n\
+             DESTDIR=$DEST ninja -C /build/b install\n"
+        );
+    }
+
+    #[test]
     fn the_go_style_takes_the_files_the_go_sum_names_as_go_rs_did() {
         let styles = styles(&repository()).unwrap();
         let text = "[[package]]\nid = \"age\"\nscope = \"runtime\"\n[package.go]\n\
                     packages = [\"./cmd/age\"]\nldflags = \"-X main.Version=v1\"\n";
         let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
         package.check_style(&styles).unwrap();
-        let go_sum = "filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=\n\
-                      filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5=\n\
-                      github.com/BurntSushi/toml v1.2.0/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=\n";
+        let go_sum = "filippo.io/edwards25519 v1.1.0 h1:FNf4=\n\
+                      filippo.io/edwards25519 v1.1.0/go.mod h1:BxyF=\n\
+                      github.com/BurntSushi/toml v1.2.0/go.mod h1:CxXY=\n";
         let package = package
             .styled_by(&styles, &|| Ok(vec!["go.sum".to_owned()]), &|_| {
                 Ok(go_sum.to_owned())
