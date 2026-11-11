@@ -1,6 +1,6 @@
 # 0025: Build styles in typed Starlark
 
-Status: proposed, 2026-11-11.
+Status: accepted, 2026-11-11.
 
 ## Context
 

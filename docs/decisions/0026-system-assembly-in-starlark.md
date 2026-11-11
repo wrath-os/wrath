@@ -1,6 +1,6 @@
 # 0026: What a system holds is decided in Starlark
 
-Status: proposed, 2026-11-11.
+Status: accepted, 2026-11-11.
 
 ## Context
 
@@ -60,6 +60,20 @@ Discipline:
   of these modules with its own is left open.
 - A piece moves only when a module would own it. Rust that only writes a format, such as the
   cpio writer, stays.
+
+Plan stays fast and says what changes. Nix's import-from-derivation lets evaluation wait on a
+build, so its evaluation gets slow and a plan can't be made without building. Here:
+
+- Plan never builds and never runs an action. The graph's shape, meaning which actions exist and
+  what each reads, comes from the model and the recipes alone. An action's result can't add
+  packages, units or other actions.
+- An action that reads build output shows in the plan by its key: `initrd` rebuilt, because
+  `linux` changed, with the tier that brings. What's inside it shows once it's built, in
+  `distro diff`, as it does for packages now.
+- Everything a module decides at plan time, from the configuration, shows in the plan as a file
+  diff, as it does now. A choice moves into an action only when it needs build output.
+- plan-budget holds: the Framework's warm plan stays under 20 ms, and each move is measured
+  before and after.
 
 ## Consequences
 
