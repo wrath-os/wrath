@@ -4,6 +4,7 @@
 SYSTEM = "/run/system"
 LOCALES = "system-locales"
 CERTIFICATES = "/etc/ssl/certs/ca-certificates.crt"
+JOURNAL_DIR_CONF = "/etc/tmpfiles.d/journal.conf"
 
 PACKAGES = [
     "bash",
@@ -101,6 +102,28 @@ def render(ctx: Context) -> None:
         for path in [CERTIFICATES, "/etc/ssl/cert.pem", "/etc/pki/tls/certs/ca-bundle.crt"]
     ]))
 
+    # The journal on disk, where it lasts across boots and journald keeps each user's messages in
+    # a file of their own, which `journalctl --user` reads. Without the directory, journald keeps
+    # everything in memory.
+    if ctx.read("journal.persistent"):
+        ctx.file(JOURNAL_DIR_CONF, "d /var/log/journal 2755 root systemd-journal - -\n")
+        ctx.restart("systemd-journal-flush.service", on = [JOURNAL_DIR_CONF])
+        # The journal moves to disk before tmpfiles runs at boot, so the directory is made first.
+        ctx.unit("journal-directory.service", {
+            "Unit": {
+                "Description": "The journal's directory on disk",
+                "DefaultDependencies": "no",
+                "After": "systemd-remount-fs.service",
+                "Before": "systemd-journal-flush.service",
+                "RequiresMountsFor": "/var/log",
+            },
+            "Service": {
+                "Type": "oneshot",
+                "ExecStart": SYSTEM + "/systemd/bin/systemd-tmpfiles --create " + JOURNAL_DIR_CONF,
+            },
+            "Install": {"WantedBy": "systemd-journal-flush.service"},
+        })
+
     # The login shells there are, which programs such as chsh and some session scripts check.
     ctx.file("/etc/shells", lines(["/bin/sh", SYSTEM + "/bin/sh", SYSTEM + "/bin/bash"]))
     ctx.file("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n")
@@ -156,6 +179,11 @@ module(
             types.str,
             optional = True,
             doc = "The keyboard layout on the console, such as `sv-latin1`.",
+        ),
+        "journal.persistent": option(
+            types.bool,
+            default = True,
+            doc = "Keep the journal on disk, across boots, rather than in memory.",
         ),
     },
     writes = [],

@@ -14,5 +14,6 @@ steps = [
   { run = "systemctl is-active systemd-resolved; grep -c 127.0.0.53 /etc/resolv.conf", stdout_contains = "active\n1" },
   { run = "su john -c 'bwrap --ro-bind / / --unshare-all --dev /dev --proc /proc id -un' 2>&1", stdout_contains = "john" },
   { run = "test $(grep -c 'BEGIN CERTIFICATE' /etc/ssl/certs/ca-certificates.crt) -gt 100 && echo trusted; test -s /etc/pki/tls/certs/ca-bundle.crt && echo fedora; su - john -c 'echo $SSL_CERT_FILE'", stdout_contains = "trusted\nfedora\n/etc/ssl/certs/ca-certificates.crt" },
+  { run = "systemd-run -M john@ --user --wait --quiet true; sleep 1; su john -c 'journalctl --user -n 1 --no-pager >/dev/null && echo readable'; test -d /var/log/journal && echo on disk", stdout_contains = "readable\non disk" },
 ]
 timeout_secs = 120
