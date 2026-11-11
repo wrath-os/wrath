@@ -169,7 +169,7 @@ make install DESTDIR=$DEST
 [[package]]
 id = "libdisplay-info"
 version = "0.3.0"
-# Smithay, in niri, takes versions below 0.4.
+hold = { below = "0.4", reason = "Smithay, in niri, takes versions below 0.4" }
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "hwdata", "python3"]
@@ -327,7 +327,7 @@ probes = ["fribidi"]
 [[package]]
 id = "fontconfig"
 version = "2.17.1"
-# 2.18 needs Meson 1.11.
+hold = { below = "2.18", reason = "2.18 needs Meson 1.11" }
 scope = "runtime"
 core = true
 extra_deps = [
@@ -366,7 +366,7 @@ probes = ["cairo"]
 [[package]]
 id = "pango"
 version = "1.56.4"
-# 1.58 needs glib 2.88.
+hold = { below = "1.58", reason = "1.58 needs glib 2.88" }
 scope = "runtime"
 core = true
 extra_deps = [
@@ -477,7 +477,7 @@ smoke = ["bin/greetd --help"]
 [[package]]
 id = "tuigreet"
 version = "0.9.1"
-# Newer ones need Rust 1.91.
+hold = { below = "0.10", reason = "0.10 needs Rust 1.91" }
 scope = "runtime"
 core = true
 extra_deps = ["rust-bin"]

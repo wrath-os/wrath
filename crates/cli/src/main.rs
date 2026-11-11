@@ -785,7 +785,7 @@ fn outdated(root: &Path, all: bool) -> Result<ExitCode, String> {
     let reports =
         distro_build::upstream::outdated(&root.join("build"), &distro_build::upstream::run)?;
     let width = reports.iter().map(|r| r.id.len()).max().unwrap_or(0);
-    let (mut newer, mut unchecked) = (0, Vec::new());
+    let (mut newer, mut held, mut unchecked) = (0, 0, Vec::new());
     for report in &reports {
         let outdated = report.is_outdated();
         newer += usize::from(outdated);
@@ -807,9 +807,17 @@ fn outdated(root: &Path, all: bool) -> Result<ExitCode, String> {
                 report.id, report.version, report.place
             );
         }
+        if let Some((release, reason)) = &report.held {
+            held += 1;
+            println!(
+                "{:width$}  {} held back from {release}: {reason}",
+                report.id, report.version
+            );
+        }
     }
     println!(
-        "{newer} of {} recipes have a newer release upstream; {} couldn't be checked{}",
+        "{newer} of {} recipes have a newer release upstream; {held} held back; {} couldn't be \
+         checked{}",
         reports.len(),
         unchecked.len(),
         if unchecked.is_empty() || all {

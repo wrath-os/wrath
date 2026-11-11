@@ -184,6 +184,15 @@ impl DepSpec {
     }
 }
 
+/// A version a recipe stays below, and why, such as
+/// `hold = { below = "1.58", reason = "needs glib 2.88" }`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Hold {
+    pub(crate) below: String,
+    pub(crate) reason: String,
+}
+
 /// A file a package's tool makes from what every package of a generation has under `from`, by
 /// running `run`, a program in the package and its arguments (decision 0020).
 #[derive(Debug, Clone, Deserialize)]
@@ -244,6 +253,9 @@ pub(crate) struct Package {
     /// The release series it stays on, such as `3.` for GTK 3, which update checks keep to.
     #[serde(default)]
     pub(crate) track: Option<String>,
+    /// A version it can't move to yet, and why, which update checks stop below.
+    #[serde(default)]
+    pub(crate) hold: Option<Hold>,
     /// Packages it needs at run time without referring to them, such as data it reads by name,
     /// written into it so the reference scan finds them (decision 0021).
     #[serde(default)]
@@ -482,6 +494,7 @@ impl Package {
             indexes: Vec::new(),
             runtime_deps: Vec::new(),
             track: None,
+            hold: None,
             sources: Vec::new(),
             crates: None,
             go: None,
@@ -971,6 +984,15 @@ fn series(version: &str) -> String {
         (Ok(number), Some(minor)) if number < 40 => format!("{major}.{minor}"),
         _ => major.to_owned(),
     }
+}
+
+/// A recipe from its TOML, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn recipe_from_str(text: &str) -> Package {
+    toml::from_str::<Recipes>(text)
+        .expect("the test recipe parses")
+        .package
+        .remove(0)
 }
 
 #[cfg(test)]

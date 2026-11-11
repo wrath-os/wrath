@@ -241,6 +241,8 @@ pub struct Report {
     pub latest: Option<String>,
     /// What went wrong, when the check couldn't run.
     pub error: Option<String>,
+    /// A newer release the recipe holds below, and why.
+    pub held: Option<(String, String)>,
 }
 
 impl Report {
@@ -295,11 +297,12 @@ fn report(recipe: &chain::Package, fetch: Fetch<'_>) -> Report {
             place: url.unwrap_or_else(|| "no source".to_owned()),
             latest: None,
             error: Some("nothing to check its source with".to_owned()),
+            held: None,
         };
     };
-    let (latest, error) = match releases(&check, fetch) {
-        Ok(found) => (newest(&found, &version, recipe.track.as_deref()), None),
-        Err(error) => (None, Some(error)),
+    let ((latest, held), error) = match releases(&check, fetch) {
+        Ok(found) => (held_below(&found, &version, recipe), None),
+        Err(error) => ((None, None), Some(error)),
     };
     Report {
         id,
@@ -307,7 +310,27 @@ fn report(recipe: &chain::Package, fetch: Fetch<'_>) -> Report {
         place: check.place(),
         latest,
         error,
+        held,
     }
+}
+
+/// The newest of `found` a recipe can move to, below its hold if it has one, and the newer
+/// release the hold keeps it from, with the hold's reason.
+fn held_below(
+    found: &[String],
+    version: &str,
+    recipe: &chain::Package,
+) -> (Option<String>, Option<(String, String)>) {
+    let track = recipe.track.as_deref();
+    let Some(hold) = &recipe.hold else {
+        return (newest(found, version, track), None);
+    };
+    let (below, above): (Vec<String>, Vec<String>) = found
+        .iter()
+        .cloned()
+        .partition(|v| compare(v, &hold.below) == Ordering::Less);
+    let held = newest(&above, version, track).map(|v| (v, hold.reason.clone()));
+    (newest(&below, version, track), held)
 }
 
 /// Runs `argv` and gives what it printed.
@@ -460,9 +483,42 @@ mod tests {
             place: String::new(),
             latest: latest.map(str::to_owned),
             error: None,
+            held: None,
         };
         assert!(report(Some("4.10")).is_outdated());
         assert!(!report(Some("4.9")).is_outdated());
         assert!(!report(None).is_outdated());
+    }
+}
+
+#[cfg(test)]
+mod hold_tests {
+    use super::*;
+
+    fn recipe(fields: &str) -> chain::Package {
+        let text = format!(
+            "[[package]]\nid = \"pango\"\nversion = \"1.56.4\"\nscope = \"runtime\"\n\
+             script = \"\"\n{fields}\n"
+        );
+        chain::recipe_from_str(&text)
+    }
+
+    #[test]
+    fn a_hold_stops_a_recipe_below_a_version_and_says_what_it_keeps_it_from() {
+        let found: Vec<String> = ["1.56.4", "1.57.2", "1.58.0", "1.58.1"]
+            .map(str::to_owned)
+            .to_vec();
+        let held = recipe(r#"hold = { below = "1.58", reason = "needs glib 2.88" }"#);
+        assert_eq!(
+            held_below(&found, "1.56.4", &held),
+            (
+                Some("1.57.2".to_owned()),
+                Some(("1.58.1".to_owned(), "needs glib 2.88".to_owned()))
+            )
+        );
+        assert_eq!(
+            held_below(&found, "1.56.4", &recipe("")),
+            (Some("1.58.1".to_owned()), None)
+        );
     }
 }
