@@ -78,10 +78,12 @@ d1f380bc2ebc931aaf663b8bb84fc06269a4d75b9c8c9b9ed8ad4b5417499437  https://github
 2df0f01fd83ee01dc2fcd5976ac0004334b03ef567f467b6c511f11fc1c8a7b9  https://github.com/Smithay/smithay/archive/ff5fa7df392cecfba049ffed55cdaa4e98a8e7ef.tar.gz
 8b32873d7d740143ce9efa3cfb43c17d0176b89d2e8ffaa497db709f154fc478  https://github.com/Supreeeme/xwayland-satellite/archive/v0.8.3/xwayland-satellite-0.8.3.tar.gz
 a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15  https://github.com/anholt/libepoxy/archive/1.5.10/libepoxy-1.5.10.tar.gz
+9c15fa751bb8093d042dae1b9f125eb45198c32c6704cd5481ccde460d4f8151  https://github.com/benhoyt/inih/archive/refs/tags/r62.tar.gz
 80304b9c306ea799327f01d9a7549bdb28317789182631f1b54f4511b4206dd6  https://github.com/besser82/libxcrypt/releases/download/v4.4.38/libxcrypt-4.4.38.tar.xz
 988fd6b232dafa04b8b8198723efeaccdb3c6aa9c1c7936219d5791a8b7a8646  https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz
 fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7  https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2
 64926eebf90092dca21b14259a5301b7b98e7b1943e8a201c7d726084809b527  https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz
+3122966d46ab108f505525bcb2498f9121b446ee8438fbfceb73a7a1fa1ad400  https://github.com/emersion/xdg-desktop-portal-wlr/archive/refs/tags/v0.8.4.tar.gz
 eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3  https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
 47a3743d2419a8601e691db37e85bb5fac5ae4b26842177065cd5f22ada23b37  https://github.com/flatpak/xdg-desktop-portal-gtk/releases/download/1.15.3/xdg-desktop-portal-gtk-1.15.3.tar.xz
 d4879ddb3d65ff1a8f19187497e6f13dc5d267bcac404a5d501218be355753d3  https://github.com/flatpak/xdg-desktop-portal/releases/download/1.22.1/xdg-desktop-portal-1.22.1.tar.xz

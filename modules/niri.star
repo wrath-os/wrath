@@ -1,11 +1,14 @@
-# The niri session: the compositor, run as a user service, the
-# desktop portals screen sharing and file pickers go through, and GNOME Keyring for secrets.
+# The niri session: the compositor, run as a user service; the desktop portals screen sharing
+# and file pickers go through, wlroots' for the screen and GTK's for the rest; and GNOME Keyring
+# for secrets.
 
 PORTALS = """[preferred]
-default=gnome;gtk
+default=gtk
 org.freedesktop.impl.portal.Access=gtk
 org.freedesktop.impl.portal.FileChooser=gtk
 org.freedesktop.impl.portal.Notification=gtk
+org.freedesktop.impl.portal.ScreenCast=wlr
+org.freedesktop.impl.portal.Screenshot=wlr
 org.freedesktop.impl.portal.Secret=gnome-keyring
 """
 
@@ -15,8 +18,8 @@ def render(ctx):
     for package in [
         "niri",
         "xdg-desktop-portal",
-        "xdg-desktop-portal-gnome",
         "xdg-desktop-portal-gtk",
+        "xdg-desktop-portal-wlr",
         "gnome-keyring",
     ]:
         ctx.service_package(package)

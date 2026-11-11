@@ -1140,6 +1140,42 @@ ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
 
+# The wlroots portal, which shares screens and takes screenshots on compositors with wlroots'
+# screen copying, niri among them.
+
+[[package]]
+id = "inih"
+version = "62"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf"]
+sources = [{ url = "https://github.com/benhoyt/inih/archive/refs/tags/r{version}.tar.gz" }]
+script = '''
+# A small INI file reader; its C++ reader isn't needed.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
+    -D with_INIReader=false -D tests=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+
+[[package]]
+id = "xdg-desktop-portal-wlr"
+version = "0.8.4"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "pipewire", "wayland", "wayland-protocols", "inih", "mesa",
+  "libdrm", "systemd",
+]
+sources = [{ url = "https://github.com/emersion/xdg-desktop-portal-wlr/archive/refs/tags/v{version}.tar.gz" }]
+script = '''
+# Its user unit goes under its own prefix, which systemd's pkg-config file gives when asked.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
+    -D sd-bus-provider=libsystemd -D systemd=enabled -D man-pages=disabled
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+
 # GNOME Keyring, which keeps secrets for programs, and the crypto libraries it's built on.
 
 [[package]]
