@@ -113,10 +113,34 @@ def device_path(p: dict[str, typing.Any], label: str) -> str:
         return "/dev/mapper/" + label
     return "/dev/disk/by-partlabel/" + label
 
+def grow_root(ctx: Context) -> None:
+    """A system without disks of its own boots from an image, whose root is no bigger than what's
+    on it. Its partition and filesystem grow to fill the disk at boot, which does nothing once
+    they have. A partition laid out by hand that repart can't fit, such as one ending off its
+    4K grain, keeps its size, and its filesystem still grows to fill it."""
+    ctx.file("/etc/repart.d/50-root.conf", formats.systemd({
+        "Partition": {"Type": "linux-generic"},
+    }))
+    ctx.unit("grow-root.service", {
+        "Unit": {
+            "Description": "Grow the root to fill its disk",
+            "ConditionVirtualization": "!container",
+        },
+        "Service": {
+            "Type": "oneshot",
+            "ExecStart": [
+                "-/run/system/systemd/bin/systemd-repart --dry-run=no --definitions=/etc/repart.d",
+                "/run/system/systemd/lib/systemd/systemd-growfs /",
+            ],
+        },
+        "Install": {"WantedBy": "multi-user.target"},
+    })
+
 def render(ctx: Context) -> None:
     disks = ctx.read("disks")
     filesystems = ctx.read("filesystems")
     if not disks and not filesystems:
+        grow_root(ctx)
         return
     partitions = []
     mounts = []
