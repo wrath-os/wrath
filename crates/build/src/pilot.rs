@@ -895,22 +895,19 @@ pub(crate) fn build_some(
     let mut built = chain::build(lab, repository, "toolchain.toml", arm)?;
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
-    let mut loaded = Vec::new();
-    for file in recipes {
-        loaded.extend(chain::load_styled(lab, repository, file)?);
-    }
+    let loaded = match wanted {
+        Some(wanted) => chain::load_reached(lab, repository, recipes, wanted)?,
+        None => {
+            let mut loaded = Vec::new();
+            for file in recipes {
+                loaded.extend(chain::load_styled(lab, repository, file)?);
+            }
+            loaded
+        }
+    };
     let loaded = chain::in_order(loaded, |id| built.paths.contains_key(id))?;
-    let needed = wanted
-        .map(|wanted| needed_by(&loaded, wanted))
-        .transpose()?;
     let mut packages = Vec::new();
     for package in loaded {
-        if needed
-            .as_ref()
-            .is_some_and(|needed| !needed.contains(&package.id))
-        {
-            continue;
-        }
         build_and_finish(
             lab,
             repository,
@@ -948,23 +945,6 @@ pub(crate) fn build_and_finish(
         chain::finish(lab, package, arm, &prepared.out, built)?;
     }
     Ok(())
-}
-
-/// The ids of `wanted` and everything among `packages` they depend on. The toolchain's are
-/// built already, so they needn't be among them.
-fn needed_by(packages: &[Package], wanted: &[&str]) -> Result<BTreeSet<String>, String> {
-    let by_id: BTreeMap<&str, &Package> = packages.iter().map(|p| (p.id.as_str(), p)).collect();
-    let mut needed = BTreeSet::new();
-    let mut queue: Vec<String> = wanted.iter().map(|id| (*id).to_owned()).collect();
-    while let Some(id) = queue.pop() {
-        let Some(package) = by_id.get(id.as_str()) else {
-            continue;
-        };
-        if needed.insert(id) {
-            queue.extend(package.dep_ids()?);
-        }
-    }
-    Ok(needed)
 }
 
 /// Shrinks the run paths of everything already built for `arm`, then runs each package's smoke
@@ -1244,7 +1224,8 @@ mod tests {
         fs::create_dir_all(dir.path().join("recipes")).unwrap();
         let recipe = |id: &str, deps: &str| {
             format!(
-                "[[package]]\nid = \"{id}\"\nscope = \"runtime\"\nscript = \"\"\ndeps = [{deps}]\n"
+                "[[package]]\nid = \"{id}\"\nscope = \"runtime\"\nscript = \"true\"\n\
+                 deps = [{deps}]\n"
             )
         };
         let text = [
@@ -1255,14 +1236,16 @@ mod tests {
         ]
         .concat();
         fs::write(dir.path().join("recipes/r.toml"), text).unwrap();
-        let packages = chain::load(dir.path(), "r.toml").unwrap();
-
-        let needed = needed_by(&packages, &["git"]).unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let needed = |wanted: &[&str]| -> BTreeSet<String> {
+            let found = chain::load_reached(&lab, dir.path(), &["r.toml"], wanted).unwrap();
+            found.into_iter().map(|package| package.id).collect()
+        };
         assert_eq!(
-            needed,
+            needed(&["git"]),
             BTreeSet::from(["curl".into(), "git".into(), "zlib".into()])
         );
-        assert!(needed_by(&packages, &["jq"]).unwrap().contains("jq"));
+        assert_eq!(needed(&["jq"]), BTreeSet::from(["jq".into()]));
     }
 
     #[test]

@@ -2279,14 +2279,18 @@ fn variants(
         .collect()
 }
 
-/// The key each package of the toolchain and the system recipes, and of the builds `model` asks
-/// for, has before anything is built: what [`PACKAGE_KEYS`] records, from today's recipes.
+/// The key each package of the toolchain, the system recipes `model` reaches and the builds it asks
+/// for has before anything is built: what [`PACKAGE_KEYS`] records, from today's recipes.
 pub fn package_keys(repository: &Path, model: &Value) -> Result<BTreeMap<String, String>, String> {
     let lab = Lab::new(repository.join("work"));
-    let mut packages = Vec::new();
-    for file in std::iter::once(TOOLCHAIN_RECIPES.to_owned()).chain(system_recipes(repository)?) {
-        packages.extend(chain::load_styled(&lab, repository, &file)?);
-    }
+    let mut packages = chain::load_styled(&lab, repository, TOOLCHAIN_RECIPES)?;
+    let wanted = system_packages(model);
+    packages.extend(chain::load_reached(
+        &lab,
+        repository,
+        &names_of(&system_recipes(repository)?),
+        &names_of(&wanted),
+    )?);
     let builds = variants(&lab, repository, &packages, model)?;
     packages.extend(builds);
     chain::keys_of(&lab, repository, packages, Arm::F)

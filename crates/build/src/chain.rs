@@ -991,6 +991,23 @@ impl Sources {
         fs::write(&self.file, text).map_err(with_path(&self.file))
     }
 
+    /// The hash of `source`, from the recipe or `sources.lock` when either knows it, so working out
+    /// keys fetches only what was never pinned.
+    fn hash_of(&mut self, lab: &Lab, source: &Source) -> Result<String, String> {
+        let known = if source.url.starts_with("tree:") {
+            None
+        } else {
+            source
+                .sha256
+                .clone()
+                .or_else(|| self.pins.get(&source.url).cloned())
+        };
+        match known {
+            Some(hash) => Ok(hash),
+            None => self.fetch_source(lab, source).map(|(_, hash)| hash),
+        }
+    }
+
     /// Where `source` is on the host, with its hash.
     fn fetch_source(&mut self, lab: &Lab, source: &Source) -> Result<(PathBuf, String), String> {
         if let Some(tree) = source.url.strip_prefix("tree:") {
@@ -1046,6 +1063,10 @@ impl Sources {
             .strip_prefix("git+")
             .and_then(|rest| rest.split_once('#'))
             .ok_or_else(|| format!("{url} names no commit after `#`"))?;
+        eprintln!(
+            "  fetch  {repository} at {}",
+            &commit[..commit.len().min(12)]
+        );
         let checkout = dir.join(format!("git.partial{}", std::process::id()));
         fresh(&checkout)?;
         let git = |args: &[&str]| {
@@ -1117,6 +1138,7 @@ impl Sources {
         {
             return Ok((dir.join(hash), hash.to_owned()));
         }
+        eprintln!("  fetch  {}", url.rsplit('/').next().unwrap_or(url));
         let partial = dir.join(format!("partial.{}", std::process::id()));
         run_host(
             Command::new("curl")
@@ -1292,6 +1314,58 @@ pub(crate) fn load_styled(
         *package = style_one(lab, repository, &styles, &mut sources, package.clone())?;
     }
     Ok(packages)
+}
+
+/// The recipes in `files` that `wanted` needs, each styled as it's reached. Recipes nothing
+/// wanted needs aren't styled, so their sources aren't fetched: a configuration costs what it
+/// uses, however many recipes there are.
+pub(crate) fn load_reached(
+    lab: &Lab,
+    repository: &Path,
+    files: &[&str],
+    wanted: &[&str],
+) -> Result<Vec<Package>, String> {
+    let mut packages = Vec::new();
+    for file in files {
+        packages.extend(load(repository, file)?);
+    }
+    if !packages.iter().any(|package| package.styled) {
+        return reached(packages, wanted, Ok);
+    }
+    let styles = styles(repository)?;
+    let mut sources = Sources::load(repository)?;
+    reached(packages, wanted, |package| {
+        style_one(lab, repository, &styles, &mut sources, package)
+    })
+}
+
+/// The packages `wanted` needs, and what those need in turn, with `style` run on each styled one
+/// before its dependencies are followed, since a style adds some. Ids no package has are left
+/// for whoever builds to report.
+fn reached(
+    packages: Vec<Package>,
+    wanted: &[&str],
+    mut style: impl FnMut(Package) -> Result<Package, String>,
+) -> Result<Vec<Package>, String> {
+    let mut waiting: BTreeMap<String, Package> = packages
+        .into_iter()
+        .map(|package| (package.id.clone(), package))
+        .collect();
+    let mut queue: Vec<String> = wanted.iter().rev().map(|id| (*id).to_owned()).collect();
+    let mut found = Vec::new();
+    while let Some(id) = queue.pop() {
+        let Some(package) = waiting.remove(&id) else {
+            continue;
+        };
+        let package = if package.styled {
+            style(package)?
+        } else {
+            package
+        };
+        queue.extend(package.dep_ids()?.into_iter().rev());
+        found.push(package);
+    }
+    Ok(found)
 }
 
 /// `package` with its style's script, its first source fetched, if it hasn't been, for the style to
@@ -1874,8 +1948,12 @@ pub(crate) fn keys_of(
     let mut keys = BTreeMap::from([("seed".to_owned(), seed.hash().to_owned())]);
     let packages = in_order(packages, |id| keys.contains_key(id))?;
     for package in &packages {
-        let fetched = fetch_all(&mut sources, lab, package)?;
-        let hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
+        let hashes = package
+            .sources
+            .iter()
+            .map(|source| sources.hash_of(lab, source))
+            .collect::<Result<Vec<String>, String>>()?;
+        let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
         let recipe = recipe_parts(repository, package, arm, &hashes)?;
         let deps = package.all_deps()?;
         let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
@@ -2761,6 +2839,30 @@ mod crate_tests {
     }
 
     #[test]
+    fn a_known_hash_is_taken_without_fetching() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let mut sources = Sources::load(dir.path()).unwrap();
+        let gone = |name: &str| Source {
+            url: format!("file://{}/{name}", dir.path().display()),
+            into: None,
+            include: Vec::new(),
+            sha256: None,
+            file: false,
+        };
+        let carried = Source {
+            sha256: Some("ab".repeat(32)),
+            ..gone("a.crate")
+        };
+        assert_eq!(sources.hash_of(&lab, &carried).unwrap(), "ab".repeat(32));
+        let pinned = gone("b.tar.gz");
+        sources.pins.insert(pinned.url.clone(), "cd".repeat(32));
+        assert_eq!(sources.hash_of(&lab, &pinned).unwrap(), "cd".repeat(32));
+        // Neither known nor there to fetch.
+        assert!(sources.hash_of(&lab, &gone("c.tar.gz")).is_err());
+    }
+
+    #[test]
     fn a_git_commit_is_fetched_with_its_submodules_and_pinned_by_its_tree() {
         let dir = tempfile::tempdir().unwrap();
         let git = |repo: &Path, args: &[&str]| {
@@ -3198,6 +3300,42 @@ style(name = "meson", files = ["meson.build"], build = build)
             "Cargo.lock" => Ok(LOCK.to_owned()),
             other => Err(format!("no {other}")),
         })
+    }
+
+    fn named(id: &str, fields: &str) -> Package {
+        recipe(fields)
+            .map(|package| Package {
+                id: id.to_owned(),
+                ..package
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn only_the_recipes_a_configuration_reaches_are_styled() {
+        let packages = vec![
+            named("unused", "[package.cargo]\n"),
+            named("tool", "extra_deps = [\"zlib\"]\n[package.cargo]\n"),
+            named("zlib", "script = \"make\"\n"),
+            named("rust-bin", "script = \"cp\"\n"),
+        ];
+        let mut styled = Vec::new();
+        let found = reached(packages, &["tool"], |package| {
+            styled.push(package.id.clone());
+            style(package, &["Cargo.lock"])
+        })
+        .unwrap();
+        assert_eq!(styled, ["tool"]);
+        let ids: Vec<&str> = found.iter().map(|package| package.id.as_str()).collect();
+        // `rust-bin` is reached through what the style adds.
+        assert_eq!(ids, ["tool", "zlib", "rust-bin"]);
+    }
+
+    #[test]
+    fn an_id_no_recipe_has_reaches_nothing() {
+        let packages = vec![named("tool", "[package.cargo]\n")];
+        let found = reached(packages, &["missing"], |_| panic!("nothing is styled")).unwrap();
+        assert!(found.is_empty());
     }
 
     #[test]
