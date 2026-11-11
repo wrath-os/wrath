@@ -1,0 +1,123 @@
+# Fonts: faces for text and code, icons and emoji. Google's are taken from its fonts repository at
+# one commit, which the version names by its date.
+
+[[package]]
+id = "dejavu-fonts"
+version = "2.37"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-{version}.tar.bz2" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/dejavu
+cp ttf/*.ttf $DEST$PREFIX/share/fonts/dejavu/
+'''
+
+[[package]]
+id = "inter"
+version = "2026.11.11"
+scope = "runtime"
+core = true
+sources = [
+  { url = "https://raw.githubusercontent.com/google/fonts/c30b221beb0c1da59d563feb91ec8656a1fa972a/ofl/inter/Inter%5Bopsz,wght%5D.ttf", into = "Inter.ttf", file = true },
+  { url = "https://raw.githubusercontent.com/google/fonts/c30b221beb0c1da59d563feb91ec8656a1fa972a/ofl/inter/Inter-Italic%5Bopsz,wght%5D.ttf", into = "Inter-Italic.ttf", file = true },
+]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/inter
+cp *.ttf $DEST$PREFIX/share/fonts/inter/
+'''
+
+[[package]]
+id = "roboto"
+version = "2026.11.11"
+scope = "runtime"
+core = true
+sources = [
+  { url = "https://raw.githubusercontent.com/google/fonts/c30b221beb0c1da59d563feb91ec8656a1fa972a/ofl/roboto/Roboto%5Bwdth,wght%5D.ttf", into = "Roboto.ttf", file = true },
+  { url = "https://raw.githubusercontent.com/google/fonts/c30b221beb0c1da59d563feb91ec8656a1fa972a/ofl/roboto/Roboto-Italic%5Bwdth,wght%5D.ttf", into = "Roboto-Italic.ttf", file = true },
+]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/roboto
+cp *.ttf $DEST$PREFIX/share/fonts/roboto/
+'''
+
+[[package]]
+id = "noto-color-emoji"
+version = "2026.11.11"
+scope = "runtime"
+core = true
+sources = [
+  { url = "https://raw.githubusercontent.com/google/fonts/c30b221beb0c1da59d563feb91ec8656a1fa972a/ofl/notocoloremoji/NotoColorEmoji-Regular.ttf", into = "NotoColorEmoji.ttf", file = true },
+]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/noto
+cp NotoColorEmoji.ttf $DEST$PREFIX/share/fonts/noto/
+'''
+
+# Version 5, whose family names bars written for it ask for: "Font Awesome 5 Free".
+[[package]]
+id = "font-awesome"
+version = "5.15.4"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/FortAwesome/Font-Awesome/archive/{version}/Font-Awesome-{version}.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/font-awesome
+cp otfs/*.otf $DEST$PREFIX/share/fonts/font-awesome/
+'''
+
+# Nerd Fonts: programming faces with icons added, which shells, prompts and bars draw with.
+
+[[package]]
+id = "nerd-fonts-jetbrains-mono"
+version = "3.5.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v{version}/JetBrainsMono.tar.xz" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/nerd-fonts-jetbrains-mono
+find . -name "*.ttf" -o -name "*.otf" | xargs cp -t $DEST$PREFIX/share/fonts/nerd-fonts-jetbrains-mono/
+'''
+
+[[package]]
+id = "nerd-fonts-droid-sans-mono"
+version = "3.5.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v{version}/DroidSansMono.tar.xz" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/nerd-fonts-droid-sans-mono
+find . -name "*.ttf" -o -name "*.otf" | xargs cp -t $DEST$PREFIX/share/fonts/nerd-fonts-droid-sans-mono/
+'''
+
+[[package]]
+id = "nerd-fonts-iosevka"
+version = "3.5.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v{version}/Iosevka.tar.xz" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/nerd-fonts-iosevka
+find . -name "*.ttf" -o -name "*.otf" | xargs cp -t $DEST$PREFIX/share/fonts/nerd-fonts-iosevka/
+'''
+
+[[package]]
+id = "nerd-fonts-iosevka-term"
+version = "3.5.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v{version}/IosevkaTerm.tar.xz" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/nerd-fonts-iosevka-term
+find . -name "*.ttf" -o -name "*.otf" | xargs cp -t $DEST$PREFIX/share/fonts/nerd-fonts-iosevka-term/
+'''
+
+[[package]]
+id = "nerd-fonts-roboto-mono"
+version = "3.5.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v{version}/RobotoMono.tar.xz" }]
+script = '''
+mkdir -p $DEST$PREFIX/share/fonts/nerd-fonts-roboto-mono
+find . -name "*.ttf" -o -name "*.otf" | xargs cp -t $DEST$PREFIX/share/fonts/nerd-fonts-roboto-mono/
+'''

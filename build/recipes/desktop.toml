@@ -385,18 +385,7 @@ cp resources/niri.desktop $DEST$PREFIX/share/wayland-sessions/
 cp resources/niri-portals.conf $DEST$PREFIX/share/xdg-desktop-portal/
 '''
 
-# Logging in, fonts and sound.
-
-[[package]]
-id = "dejavu-fonts"
-version = "2.37"
-scope = "runtime"
-core = true
-sources = [{ url = "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-{version}.tar.bz2" }]
-script = '''
-mkdir -p $DEST$PREFIX/share/fonts/dejavu
-cp ttf/*.ttf $DEST$PREFIX/share/fonts/dejavu/
-'''
+# Logging in and sound.
 
 [[package]]
 id = "greetd"
