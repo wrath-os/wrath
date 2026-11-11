@@ -687,6 +687,54 @@ fn write_runtime_deps(
 /// Where a package keeps the store paths of its `runtime_deps`.
 const RUNTIME_DEPS: &str = "lib/distro/runtime-deps";
 
+/// A listed dependency another one brings, and the one that brings it.
+pub(crate) type Redundant = (String, String);
+
+/// For each of `packages`, the dependencies it lists by name that another dependency it lists
+/// already brings, each with one that brings it: what a recipe can leave out since 0019.
+pub(crate) fn redundant_deps(
+    lab: &Lab,
+    built: &mut Built,
+    packages: &[Package],
+) -> Result<Vec<(String, Vec<Redundant>)>, String> {
+    let mut found = Vec::new();
+    for package in packages.iter().filter(|package| !package.is_boot()) {
+        let specs: Vec<&DepSpec> = package.deps.iter().chain(&package.extra_deps).collect();
+        let listed: Vec<Dep> = specs
+            .iter()
+            .map(|spec| spec.resolve())
+            .collect::<Result<_, _>>()?;
+        let mut redundant = Vec::new();
+        for spec in specs {
+            // A dependency written as a table says something about itself; it stays.
+            let DepSpec::Id(id) = spec else {
+                continue;
+            };
+            let bringers = listed.iter().filter(|other| {
+                other.id != *id
+                    && other.view
+                    && other.propagate != Propagate::None
+                    && !other.exclude.contains(id)
+            });
+            for other in bringers {
+                let brought = requires::requirements(lab, built, &other.id)?;
+                let public_only = other.propagate == Propagate::Public;
+                if brought
+                    .get(id)
+                    .is_some_and(|private| !(public_only && *private))
+                {
+                    redundant.push((id.clone(), other.id.clone()));
+                    break;
+                }
+            }
+        }
+        if !redundant.is_empty() {
+            found.push((package.id.clone(), redundant));
+        }
+    }
+    Ok(found)
+}
+
 /// `listed` and what each of them brings along (decision 0019). Boot packages keep what they list.
 fn with_requirements(
     lab: &Lab,
@@ -1901,6 +1949,26 @@ mod requirement_tests {
     #[test]
     fn a_boot_package_sees_only_what_it_lists() {
         assert_eq!(ids(&seen_as("\"gtk\"", "boot").unwrap()), ["gtk"]);
+    }
+
+    #[test]
+    fn a_listed_dependency_another_one_brings_is_redundant_unless_written_as_a_table() {
+        let lab = Lab::new("/nonexistent");
+        let packages = [
+            consumer(r#""gtk", "pango", "zlib", "cairo""#, "runtime"),
+            consumer(
+                r#"{ id = "gtk", propagate = "public" }, "pango", "zlib""#,
+                "runtime",
+            ),
+            consumer(r#""gtk", { id = "pango", rpath = false }"#, "runtime"),
+        ];
+        let found = redundant_deps(&lab, &mut built(), &packages).unwrap();
+        let pairs = |deps: &[Redundant]| -> Vec<String> {
+            deps.iter().map(|(dep, by)| format!("{dep}<{by}")).collect()
+        };
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(pairs(&found[0].1), ["pango<gtk", "zlib<gtk"]);
+        assert_eq!(pairs(&found[1].1), ["pango<gtk"], "zlib is private to gtk");
     }
 
     #[test]
