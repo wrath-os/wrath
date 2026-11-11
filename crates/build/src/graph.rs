@@ -2080,6 +2080,13 @@ pub fn redundant(repository: &Path) -> Result<String, String> {
     Ok(lines)
 }
 
+/// Every recipe file: the toolchain's and the system's.
+pub(crate) fn recipe_files(repository: &Path) -> Result<Vec<String>, String> {
+    let mut files = vec![TOOLCHAIN_RECIPES.to_owned()];
+    files.extend(system_recipes(repository)?);
+    Ok(files)
+}
+
 /// `files` as the borrowed names the builder takes.
 pub fn names_of(files: &[String]) -> Vec<&str> {
     files.iter().map(String::as_str).collect()

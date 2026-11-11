@@ -20,4 +20,5 @@ pub mod seed_pack;
 pub mod slots;
 pub mod split;
 pub mod store;
+pub mod upstream;
 pub mod view;

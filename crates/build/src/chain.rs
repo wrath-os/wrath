@@ -241,6 +241,9 @@ pub(crate) struct Package {
     /// What its tools make from what a generation's packages share.
     #[serde(default)]
     indexes: Vec<Index>,
+    /// The release series it stays on, such as `3.` for GTK 3, which update checks keep to.
+    #[serde(default)]
+    pub(crate) track: Option<String>,
     /// Packages it needs at run time without referring to them, such as data it reads by name,
     /// written into it so the reference scan finds them (decision 0021).
     #[serde(default)]
@@ -307,6 +310,13 @@ impl Package {
     /// Whether fixups apply to it after it's installed.
     pub(crate) fn fixed_up(&self) -> bool {
         self.toolset || self.core
+    }
+
+    /// Where its first source is downloaded from, with `{version}` in it. A source from the
+    /// repository has none.
+    pub(crate) fn source_url(&self) -> Option<String> {
+        let url = &self.sources.first()?.url;
+        (!url.starts_with("tree:")).then(|| url.clone())
     }
 
     /// The name its store paths carry after their hash: its id and version, as `jq-1.8.1`.
@@ -471,6 +481,7 @@ impl Package {
             propagate_private: true,
             indexes: Vec::new(),
             runtime_deps: Vec::new(),
+            track: None,
             sources: Vec::new(),
             crates: None,
             go: None,

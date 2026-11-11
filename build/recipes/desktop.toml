@@ -1088,6 +1088,8 @@ rm $DEST$PREFIX/share/glib-2.0/schemas/gschemas.compiled
 [[package]]
 id = "gtk3"
 version = "3.24.52"
+# GTK 3 programs need it, and its last series is 3.24; GTK 4 would be a recipe of its own.
+track = "3.24."
 scope = "runtime"
 core = true
 extra_deps = [
@@ -1221,6 +1223,8 @@ probes = ["p11-kit-1"]
 [[package]]
 id = "gcr3"
 version = "3.41.2"
+# GNOME Keyring needs gcr 3; gcr 4 is for GTK 4.
+track = "3.41."
 scope = "runtime"
 core = true
 extra_deps = [

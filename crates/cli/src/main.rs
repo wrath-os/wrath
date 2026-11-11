@@ -280,6 +280,12 @@ enum DevCommand {
         #[arg(long)]
         milestone: Option<String>,
     },
+    /// Compare each recipe's version with upstream's newest release
+    Outdated {
+        /// List every recipe, including those that are current or couldn't be checked
+        #[arg(long)]
+        all: bool,
+    },
     /// Print the configuration's model as JSON
     Model,
     /// Print what an apply keeps of the configuration, as JSON
@@ -505,6 +511,7 @@ fn main() -> ExitCode {
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Status { milestone } => status(root, milestone.as_deref()),
+            DevCommand::Outdated { all } => outdated(root, all),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::ApplyRecord => {
                 config().and_then(|config| print_apply_record(&config, &modules))
@@ -771,6 +778,47 @@ fn context(root: &Path, image_override: Option<PathBuf>) -> Result<RunContext, S
         run_root: root.join("target/distro-check/runs"),
         image_override,
     })
+}
+
+/// Prints the recipes upstream has released something newer of, and those it couldn't check.
+fn outdated(root: &Path, all: bool) -> Result<ExitCode, String> {
+    let reports =
+        distro_build::upstream::outdated(&root.join("build"), &distro_build::upstream::run)?;
+    let width = reports.iter().map(|r| r.id.len()).max().unwrap_or(0);
+    let (mut newer, mut unchecked) = (0, Vec::new());
+    for report in &reports {
+        let outdated = report.is_outdated();
+        newer += usize::from(outdated);
+        if let Some(error) = &report.error {
+            unchecked.push(report.id.as_str());
+            if all {
+                println!(
+                    "{:width$}  {}  couldn't check: {error}",
+                    report.id, report.version
+                );
+            }
+            continue;
+        }
+        if outdated || all {
+            let latest = report.latest.as_deref().unwrap_or("no releases found");
+            let arrow = if outdated { "->" } else { "  " };
+            println!(
+                "{:width$}  {} {arrow} {latest}  ({})",
+                report.id, report.version, report.place
+            );
+        }
+    }
+    println!(
+        "{newer} of {} recipes have a newer release upstream; {} couldn't be checked{}",
+        reports.len(),
+        unchecked.len(),
+        if unchecked.is_empty() || all {
+            String::new()
+        } else {
+            format!(": {}", unchecked.join(", "))
+        }
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn status(root: &Path, milestone: Option<&str>) -> Result<ExitCode, String> {
