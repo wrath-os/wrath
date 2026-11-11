@@ -9,6 +9,9 @@ ea43491bc7ace1e414b3b2d957f8cf96e7049155123f0acce798accf8da1acba  https://cdn.ke
 b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f  https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.4.tar.xz
 021a2e709a0edf4250b1256bd5a9e500411a90dddabea830ed59cef90eb9d85c  https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.0p1.tar.gz
 81ee8170028865581a8e10eaf055afb620fa4baa0beb6387241241a975033508  https://cmake.org/files/v4.1/cmake-4.1.0.tar.gz
+9949fbce0826669369c3b9361ac04b0459fdc51037e2ccf2e2483794909903f4  https://codeberg.org/dnkl/fcft/archive/3.3.1.tar.gz
+963a9c15aecf3b3234be9daa5cb40c340a0e75425d2630ba2d75c94231f393f2  https://codeberg.org/dnkl/fuzzel/archive/1.12.0.tar.gz
+0e7b7094a02550dd80b7243bcffc3671550b0f1d8ba625e4dff52517827d5d23  https://codeberg.org/dnkl/tllist/archive/1.1.0.tar.gz
 6cd0a8a5b126ddfda61c94dc2c3fc53481ba7a35461cf7c5ab66aa9d6775b609  https://curl.se/download/curl-8.15.0.tar.xz
 0ba2a1a4b16afe7bceb2c07e9ce99a8c2c3508e5dec290dbb643384bd6beb7e2  https://dbus.freedesktop.org/releases/dbus/dbus-1.16.2.tar.xz
 5bb5d1be011158090157c9e7587ae5606c262a5020ecdc5caac6686b9910592e  https://deb.debian.org/debian/pool/main/h/hostname/hostname_3.25.tar.xz
@@ -67,8 +70,10 @@ fe5383204467828cd495ee8d1d3c037a7eba1389c22bc6a041f627976f9061cc  https://ftp.gn
 6e226b732e1cd739464ad6862bd1a1aba42d7982922da7a53519631d24975181  https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz
 4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16  https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz
 0329d7788fbef113fa82cb80889ca197a344ce0df7646fe000974c5d714363a6  https://ftp.gnu.org/gnu/texinfo/texinfo-7.2.tar.xz
+766e48423e79359ea31e41db9e5c289675947a7fcf2efdcedb726ac9d0da3784  https://ftp.gnu.org/gnu/wget/wget-1.25.0.tar.gz
 ee5cb70e0add4ca9c9fe57e47581ab0002d44c07743fb5492469f3b570db640b  https://git.sr.ht/~kennylevinsen/greetd/archive/0.10.3.tar.gz
 819979c922a0be258aed133d93920bce6a3d3565a60588d6d372ce9db2712cd3  https://git.sr.ht/~kennylevinsen/seatd/archive/0.9.1.tar.gz
+4c5c6136540384e5455b250f768e7ca11b03fdba1a8efc2341ee0f1111e57612  https://git.sr.ht/~sircmpwn/scdoc/archive/1.11.3.tar.gz
 4dad02a2f9c8c3c8d89434e47337aa654cb0e2aa50e806589132f186bf5c2b66  https://github.com/BurntSushi/ripgrep/archive/14.1.1/ripgrep-14.1.1.tar.gz
 d1f380bc2ebc931aaf663b8bb84fc06269a4d75b9c8c9b9ed8ad4b5417499437  https://github.com/F1bonacc1/process-compose/archive/v1.75.1/process-compose-1.75.1.tar.gz
 93bd89a16c74949ee7c69ef580d8e4cf5ce03e7d9c461b68cf1ace3e4017eef5  https://github.com/FiloSottile/age/archive/v1.2.1/age-1.2.1.tar.gz
@@ -77,6 +82,7 @@ d1f380bc2ebc931aaf663b8bb84fc06269a4d75b9c8c9b9ed8ad4b5417499437  https://github
 21547f3516120c75597e5b30a992e27a592a31950b5140e7b8bfde3f192033c4  https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.45/pcre2-10.45.tar.bz2
 2df0f01fd83ee01dc2fcd5976ac0004334b03ef567f467b6c511f11fc1c8a7b9  https://github.com/Smithay/smithay/archive/ff5fa7df392cecfba049ffed55cdaa4e98a8e7ef.tar.gz
 8b32873d7d740143ce9efa3cfb43c17d0176b89d2e8ffaa497db709f154fc478  https://github.com/Supreeeme/xwayland-satellite/archive/v0.8.3/xwayland-satellite-0.8.3.tar.gz
+b814e30c6271ae23158c66e0e2377c3600bb24041fa382a36e81be564eeb2e36  https://github.com/alacritty/alacritty/archive/v0.15.1/alacritty-0.15.1.tar.gz
 a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15  https://github.com/anholt/libepoxy/archive/1.5.10/libepoxy-1.5.10.tar.gz
 9c15fa751bb8093d042dae1b9f125eb45198c32c6704cd5481ccde460d4f8151  https://github.com/benhoyt/inih/archive/refs/tags/r62.tar.gz
 80304b9c306ea799327f01d9a7549bdb28317789182631f1b54f4511b4206dd6  https://github.com/besser82/libxcrypt/releases/download/v4.4.38/libxcrypt-4.4.38.tar.xz
@@ -91,6 +97,7 @@ d4879ddb3d65ff1a8f19187497e6f13dc5d267bcac404a5d501218be355753d3  https://github
 91eb74caed0ee6655b669711a4f350c25579778694df248e28363318e03c7fc4  https://github.com/gavinhoward/bc/releases/download/7.0.3/bc-7.0.3.tar.xz
 0fc7c565443a5f4be7da65ac5ee5bd737d9b158dc908708b7689a0a5796b0c8d  https://github.com/harfbuzz/harfbuzz/releases/download/15.1.0/harfbuzz-15.1.0.tar.xz
 19e680c9eef8c079da4da37040b5f5453763205b4edfb1e2c114de77908927e4  https://github.com/iputils/iputils/archive/20250605/iputils-20250605.tar.gz
+9e8da8ec2951ec026a2afe956ad904bb691c050040f53c3e47cfe346ead2907e  https://github.com/jj-vcs/jj/archive/v0.34.0/jj-0.34.0.tar.gz
 2be64e7129cecb11d5906290eba10af694fb9e3e7f9fc208a311dc33ca837eb0  https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz
 25df13dd2819e85fb27a1ce0431772b7047d72af81ae78dc26b4c6e0805f48d1  https://github.com/libexpat/libexpat/releases/download/R_2_7_0/expat-2.7.0.tar.xz
 354552544b8f99012e5062f7d570ec77f14b412a3ff5c7d8d0dae62c0d217c30  https://github.com/libexpat/libexpat/releases/download/R_2_7_1/expat-2.7.1.tar.xz
@@ -2025,6 +2032,7 @@ d2be4395b8f503b0ebf4b2d81db90c35a97050a358ee21fe62a0dfb66e5d5522  https://www.ke
 5a5d5073070cc7e0c7a7a3c6ec2a0e1780850c8b47b3e3892226b93ffcb9cb54  https://www.kernel.org/pub/linux/utils/kernel/kmod/kmod-34.2.tar.xz
 5900ccc15f9ac3bf7b7eae81deb5937123df35e99347a7f11a22818482f0a8d0  https://www.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.16.0.tar.xz
 be9ad9a276f4305ab7dd2f5225c8be1ff54352f565ff4dede9628c1aaa7dec57  https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-2.41.1.tar.xz
+60a7c2251cc2e588d5cd87bae567260617c6de0c22dca9cdbfc4c7d2b8990b62  https://www.kernel.org/pub/software/scm/git/git-2.51.0.tar.xz
 2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6  https://www.lua.org/ftp/lua-5.4.9.tar.gz
 5ad29222bbd55624d87ea677928b3106a743114d6c6f9b41f36c97be2a8e628d  https://www.nano-editor.org/dist/v8/nano-8.4.tar.xz
 274b9b919ef3152bfb3da3a13c950dd60d6e2bcd54230ffeca298d03b40d0525  https://www.netfilter.org/pub/libmnl/libmnl-1.0.5.tar.bz2

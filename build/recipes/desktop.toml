@@ -1307,3 +1307,104 @@ sed -i "s|^module: .*|module: $PREFIX/lib/pkcs11/gnome-keyring-pkcs11.so|" \
 # The compiled schemas are made for a whole system, from every package's.
 rm $DEST$PREFIX/share/glib-2.0/schemas/gschemas.compiled
 '''
+
+# A terminal and a launcher, which niri's own settings start with Mod+T and Mod+D.
+
+[[package]]
+id = "alacritty"
+version = "0.15.1"
+scope = "runtime"
+core = true
+extra_deps = [
+  "rust-bin", "pkgconf", "fontconfig", "freetype", "libxkbcommon", "wayland", "mesa",
+]
+crates = "Cargo.lock"
+sources = [{ url = "https://github.com/alacritty/alacritty/archive/v{version}/alacritty-{version}.tar.gz" }]
+script = '''
+# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
+awk -F'"' '
+    /^name = / { name = $2 }
+    /^version = / { version = $2 }
+    /^checksum = / {
+        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
+    }
+' Cargo.lock
+mkdir -p .cargo
+cat > .cargo/config.toml <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+CONFIG
+export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
+# Wayland only. It opens libwayland, libEGL and libxkbcommon by name when it starts, so their
+# names in it keep them in its run path.
+cargo build --release --offline --locked -j $NPROC -p alacritty --no-default-features \
+    --features wayland
+mkdir -p $DEST$PREFIX/bin $DEST$PREFIX/share/applications
+cp target/release/alacritty $DEST$PREFIX/bin/
+cp extra/linux/Alacritty.desktop $DEST$PREFIX/share/applications/
+'''
+smoke = ["bin/alacritty --version"]
+
+[[package]]
+id = "scdoc"
+version = "1.11.3"
+scope = "runtime"
+core = true
+sources = [{ url = "https://git.sr.ht/~sircmpwn/scdoc/archive/{version}.tar.gz" }]
+script = '''
+# Man pages from a small markup, which fuzzel's build makes its own with.
+make -j$NPROC PREFIX=$PREFIX
+make install PREFIX=$PREFIX DESTDIR=$DEST
+'''
+
+[[package]]
+id = "tllist"
+version = "1.1.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja"]
+sources = [{ url = "https://codeberg.org/dnkl/tllist/archive/{version}.tar.gz" }]
+script = '''
+# A typed linked list in one header, which fcft and fuzzel use.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
+DESTDIR=$DEST ninja -C /build/b install
+'''
+
+[[package]]
+id = "fcft"
+version = "3.3.1"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "tllist", "fontconfig", "freetype", "pixman", "harfbuzz",
+]
+sources = [{ url = "https://codeberg.org/dnkl/fcft/archive/{version}.tar.gz" }]
+script = '''
+# Fonts drawn into pixman images, for fuzzel.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D docs=disabled \
+    -D grapheme-shaping=disabled -D run-shaping=disabled -D test-text-shaping=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+probes = ["fcft"]
+
+[[package]]
+id = "fuzzel"
+version = "1.12.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "tllist", "fcft", "pixman", "libxkbcommon", "wayland",
+  "wayland-protocols", "libpng", "scdoc",
+]
+sources = [{ url = "https://codeberg.org/dnkl/fuzzel/archive/{version}.tar.gz" }]
+script = '''
+# The launcher: it lists the programs with a .desktop file and starts the one picked.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D enable-cairo=disabled \
+    -D png-backend=libpng -D svg-backend=nanosvg
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/fuzzel --version"]

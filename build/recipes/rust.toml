@@ -109,3 +109,35 @@ sources = [
     { url = "https://static.crates.io/crates/windows_x86_64_gnullvm/windows_x86_64_gnullvm-0.52.6.crate", into = "vendor/windows_x86_64_gnullvm-0.52.6" },
     { url = "https://static.crates.io/crates/windows_x86_64_msvc/windows_x86_64_msvc-0.52.6.crate", into = "vendor/windows_x86_64_msvc-0.52.6" },
 ]
+
+[[package]]
+id = "jujutsu"
+version = "0.34.0"
+scope = "runtime"
+core = true
+extra_deps = ["rust-bin", "pkgconf", "openssl", "zlib"]
+crates = "Cargo.lock"
+sources = [{ url = "https://github.com/jj-vcs/jj/archive/v{version}/jj-{version}.tar.gz" }]
+script = '''
+# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
+awk -F'"' '
+    /^name = / { name = $2 }
+    /^version = / { version = $2 }
+    /^checksum = / {
+        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
+    }
+' Cargo.lock
+mkdir -p .cargo
+cat > .cargo/config.toml <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+CONFIG
+export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
+# It fetches and pushes by running git.
+cargo build --release --offline --locked -j $NPROC -p jj-cli --bin jj
+mkdir -p $DEST$PREFIX/bin
+cp target/release/jj $DEST$PREFIX/bin/
+'''
+smoke = ["bin/jj --version"]

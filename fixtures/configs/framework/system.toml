@@ -1,5 +1,9 @@
 # The Framework Desktop booted from a USB stick: a console login and SSH with a key, on the wired
 # network the machine gets an address on by DHCP.
+
+# A terminal and a launcher, which niri starts with Mod+T and Mod+D, and tools to fetch with.
+packages = ["alacritty", "fuzzel", "curl", "git", "jujutsu", "wget"]
+
 [system]
 hostname = "framework"
 

@@ -84,6 +84,39 @@ make install DESTDIR=$DEST
 smoke = ["bin/curl --version"]
 
 [[package]]
+id = "git"
+version = "2.51.0"
+scope = "runtime"
+core = true
+extra_deps = ["openssl", "zlib", "curl", "expat", "pcre2", "perl"]
+sources = [{ url = "https://www.kernel.org/pub/software/scm/git/git-{version}.tar.xz" }]
+script = '''
+# Without the Tcl, Perl and Python parts: gitk, git gui, send-email and p4.
+make -j$NPROC prefix=$PREFIX NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 NO_GETTEXT=1 USE_LIBPCRE2=1 \
+    INSTALL_SYMLINKS=1 all
+make prefix=$PREFIX NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 NO_GETTEXT=1 USE_LIBPCRE2=1 \
+    INSTALL_SYMLINKS=1 DESTDIR=$DEST install
+'''
+smoke = ["bin/git --version", "sh: cd /tmp && $OUT/bin/git init -q x && $OUT/bin/git -C x status"]
+
+[[package]]
+id = "wget"
+version = "1.25.0"
+scope = "runtime"
+core = true
+extra_deps = ["openssl", "zlib", "pkgconf", "perl"]
+sources = [{ url = "https://ftp.gnu.org/gnu/wget/wget-{version}.tar.gz" }]
+script = '''
+./configure --prefix=$PREFIX --with-ssl=openssl --without-libpsl --disable-nls --disable-pcre \
+    --disable-pcre2 --disable-iri
+make -j$NPROC
+make install DESTDIR=$DEST
+# Certificates come from the system's bundle, as for curl.
+echo "ca_certificate = /etc/ssl/certs/ca-certificates.crt" >> $DEST$PREFIX/etc/wgetrc
+'''
+smoke = ["bin/wget --version"]
+
+[[package]]
 id = "hostname"
 version = "3.25"
 scope = "runtime"
