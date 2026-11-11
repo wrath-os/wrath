@@ -301,23 +301,23 @@ fn globals() -> Globals {
         LibraryExtension::Json,
         LibraryExtension::Typing,
     ])
-        .with(std_globals)
-        .with_namespace("types", |builder| {
-            types_functions(builder);
-            for (name, ty) in [
-                ("bool", Type::Bool),
-                ("int", Type::int()),
-                ("float", Type::Float),
-                ("str", Type::Str),
-                ("path", Type::Path),
-                ("port", Type::port()),
-                ("freeform", Type::Freeform),
-            ] {
-                builder.set(name, StarType(ty));
-            }
-        })
-        .with_namespace("formats", formats_functions)
-        .build()
+    .with(std_globals)
+    .with_namespace("types", |builder| {
+        types_functions(builder);
+        for (name, ty) in [
+            ("bool", Type::Bool),
+            ("int", Type::int()),
+            ("float", Type::Float),
+            ("str", Type::Str),
+            ("path", Type::Path),
+            ("port", Type::port()),
+            ("freeform", Type::Freeform),
+        ] {
+            builder.set(name, StarType(ty));
+        }
+    })
+    .with_namespace("formats", formats_functions)
+    .build()
 }
 
 #[starlark_module]

@@ -1689,7 +1689,10 @@ fn unannotated(
         if !missing.is_empty() {
             let line = module.file_span(stmt.span).resolve_span().begin.line + 1;
             let name = &def.name.node.ident;
-            out.push(format!("{file}:{line}: `{name}` lacks {}", missing.join(", ")));
+            out.push(format!(
+                "{file}:{line}: `{name}` lacks {}",
+                missing.join(", ")
+            ));
         }
     }
     stmt.visit_stmt(|child| unannotated(module, file, child, out));
