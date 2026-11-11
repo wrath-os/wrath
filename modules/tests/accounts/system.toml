@@ -1,0 +1,13 @@
+[system]
+hostname = "box"
+
+[users.ann]
+initial_hashed_password = "$y$abc"
+extra_groups = ["wheel", "video"]
+
+[users.bo]
+shell = "/bin/sh"
+extra_groups = ["wheel"]
+
+[users.cy]
+description = "Cy"

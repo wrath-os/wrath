@@ -202,7 +202,17 @@ fn rendered_by(evaluation: &Evaluation, module: &str) -> String {
     out
 }
 
-const NETWORK_MODULES: [&str; 5] = ["base", "firewall", "network", "system", "tailscale"];
+// base reads the disks and the hardware to work out the kernel's command line.
+const NETWORK_MODULES: [&str; 8] = [
+    "base",
+    "disks",
+    "firewall",
+    "kernel",
+    "network",
+    "state",
+    "system",
+    "tailscale",
+];
 
 #[test]
 fn networks_and_dns_render_for_networkd_and_resolved() {
@@ -282,7 +292,12 @@ fn tailscale_runs_its_agent_and_networkd_leaves_its_interface_alone() {
 
 #[test]
 fn ollama_runs_sandboxed_with_the_package_for_its_gpus() {
-    let evaluation = evaluate_fixture("ollama", &["base", "firewall", "ollama", "system"]);
+    let evaluation = evaluate_fixture(
+        "ollama",
+        &[
+            "base", "disks", "firewall", "kernel", "ollama", "state", "system",
+        ],
+    );
 
     insta::assert_snapshot!(rendered_by(&evaluation, "ollama"), @r#"
     ollama.service

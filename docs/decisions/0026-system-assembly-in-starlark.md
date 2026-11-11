@@ -78,8 +78,9 @@ build, so its evaluation gets slow and a plan can't be made without building. He
 ## Consequences
 
 - One evaluator serves build styles and these actions. This waits for the 0025 evaluator.
-- The plan-time pieces can move first and now: account files, the kernel command line and
-  firmware links. The initrd and units follow once actions can run Starlark.
+- The plan-time pieces moved first: account files and the kernel command line, with the same
+  bytes as before. Firmware links list each firmware package's files, so they need build output
+  and follow with the initrd and units, once actions can run Starlark.
 - The deny-list, kernel parameters and unit rendering become readable and changeable without a
   new build of the tool, and their tests become module golden tests.
 - Each kind of action evaluated in Starlark costs a lookup when cached and an evaluation when

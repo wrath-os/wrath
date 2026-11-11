@@ -1,9 +1,28 @@
 # The base system: boot, networking, audio and the graphical session. The backend provides
-# these, so this module only checks the options and passes them on as base settings.
+# these from the base settings this module works out: the kernel's command line, and what the
+# options say.
+
+# The label of the root filesystem distro's images have, which a system without disks of its own
+# boots from.
+ROOT_LABEL = "distro-root"
+
+# Where the booted generation's firmware is, which the kernel reads before /etc is there.
+FIRMWARE = "/run/system-booted/firmware"
+
+def kernel_params(ctx: Context, boot: dict[str, typing.Any]) -> list[str]:
+    """The kernel's command line. With disks of its own, the initrd mounts the root from them, so
+    it isn't named; without, it's the image's root filesystem, by its label."""
+    params = []
+    if not ctx.read("disks") and not ctx.read("filesystems"):
+        params = ["root=LABEL=" + ROOT_LABEL, "rw"]
+    params += boot["kernel_params"]
+    if ctx.read("hardware")["firmware"]:
+        params.append("firmware_class.path=" + FIRMWARE)
+    return params
 
 def render(ctx: Context) -> None:
     boot = ctx.read("boot")
-    ctx.base("boot", {"loader": boot["loader"], "kernel_params": boot["kernel_params"]})
+    ctx.base("boot", {"loader": boot["loader"], "kernel_params": kernel_params(ctx, boot)})
     ctx.base("networking", {
         "dhcp": ctx.read("networking.dhcp"),
         "resolved": ctx.read("networking.resolved"),

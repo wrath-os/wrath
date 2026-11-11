@@ -676,40 +676,6 @@ fn str_field<'a>(value: &'a Value, what: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("the model's {what} isn't text"))
 }
 
-fn account_files(model: &Value) -> Result<(String, String, String), String> {
-    let mut passwd =
-        String::from("root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/:/bin/sh\n");
-    let mut shadow = String::from("root:*:1::::::\nnobody:*:1::::::\n");
-    let mut members: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    let users = model["base"]["users"].as_object().into_iter().flatten();
-    for (index, (name, user)) in users.enumerate() {
-        for extra in user["extra_groups"].as_array().into_iter().flatten() {
-            let extra = str_field(extra, "extra group")?;
-            members.entry(extra).or_default().push(name);
-        }
-        let (home, description) = (
-            str_field(&user["home"], "user's home")?,
-            user["description"].as_str().unwrap_or(""),
-        );
-        let uid = 1000 + index;
-        let shell = user["shell"].as_str().unwrap_or("/run/system/bin/bash");
-        passwd.push_str(&format!(
-            "{name}:x:{uid}:100:{description}:{home}:{shell}\n"
-        ));
-        let hash = user["initial_hashed_password"].as_str().unwrap_or("!");
-        shadow.push_str(&format!("{name}:{hash}:1::::::\n"));
-    }
-    let wheel = members.remove("wheel").unwrap_or_default().join(",");
-    let mut group = format!("root:x:0:\nwheel:x:10:{wheel}\nnogroup:x:65534:\nusers:x:100:\n");
-    for (gid, (name, names)) in (400..).zip(members) {
-        group.push_str(&format!("{name}:x:{gid}:{}\n", names.join(",")));
-    }
-    Ok((passwd, group, shadow))
-}
-
-/// Where the booted system's firmware is.
-const BOOTED_FIRMWARE: &str = "run/system-booted/firmware";
-
 /// The packages with firmware for the kernel that the model names.
 fn firmware_ids(model: &Value) -> impl Iterator<Item = &str> {
     model["base"]["kernel"]["firmware"]
@@ -757,28 +723,15 @@ fn firmware_links<'a>(
     })
 }
 
-/// The kernel's options for the system's boot entries: where its root is, then the model's. A
-/// system on disks the model describes has its initrd mount the root from its fstab instead.
+/// The kernel's options for the system's boot entries, as the base module worked them out.
 fn kernel_params(model: &Value) -> Result<String, String> {
-    let on_disks = !early::disks(&model["base"]["storage"])
-        .initrd_fstab
-        .is_empty();
-    let mut params = if on_disks {
-        Vec::new()
-    } else {
-        vec![format!("root=LABEL={ROOT_LABEL}"), "rw".to_owned()]
-    };
-    for param in model["base"]["boot"]["kernel_params"]
+    let params = model["base"]["boot"]["kernel_params"]
         .as_array()
         .into_iter()
-        .flatten()
-    {
-        params.push(str_field(param, "kernel option")?.to_owned());
-    }
-    // The kernel looks for firmware here, given before /etc exists.
-    if firmware_ids(model).next().is_some() {
-        params.push(format!("firmware_class.path=/{BOOTED_FIRMWARE}"));
-    }
+        .flatten();
+    let params: Vec<&str> = params
+        .map(|param| str_field(param, "kernel option"))
+        .collect::<Result<_, _>>()?;
     Ok(params.join(" ") + "\n")
 }
 
@@ -1011,7 +964,6 @@ fn lower<'a>(
     let (system_services, session_services) =
         (service_dirs("system-services"), service_dirs("services"));
     let hostname = str_field(&model["base"]["system"]["hostname"], "hostname")?;
-    let (passwd, group, shadow) = account_files(model)?;
     let mut actions = vec![
         text(
             base,
@@ -1029,9 +981,6 @@ fn lower<'a>(
             &[],
             packages,
         )?,
-        text("base.users", "etc/passwd", 0o644, passwd, &[], packages)?,
-        text("base.users", "etc/group", 0o644, group, &[], packages)?,
-        text("base.users", "etc/shadow", 0o600, shadow, &[], packages)?,
         text(
             "base.users",
             "etc/tmpfiles.d/distro-homes.conf",
@@ -2961,39 +2910,6 @@ mod tests {
     }
 
     #[test]
-    fn a_user_gets_the_configured_password_hash_and_shell_or_none() {
-        let model = json!({"base": {"users": {
-            "ann": {"home": "/home/ann", "initial_hashed_password": "$y$abc"},
-            "bo": {"home": "/home/bo", "shell": "/bin/sh"},
-        }}});
-        let (passwd, _, shadow) = account_files(&model).unwrap();
-        assert!(passwd.contains("ann:x:1000:100::/home/ann:/run/system/bin/bash\n"));
-        assert!(
-            passwd.contains("bo:x:1001:100::/home/bo:/bin/sh\n"),
-            "{passwd}"
-        );
-        assert!(shadow.contains("ann:$y$abc:1::::::\n"), "{shadow}");
-        assert!(shadow.contains("bo:!:1::::::\n"), "{shadow}");
-        assert!(
-            shadow.lines().all(|line| line.split(':').count() == 9),
-            "{shadow}"
-        );
-    }
-
-    #[test]
-    fn users_join_their_extra_groups() {
-        let model = json!({"base": {"users": {
-            "ann": {"home": "/home/ann", "extra_groups": ["wheel", "video"]},
-            "bo": {"home": "/home/bo", "extra_groups": ["wheel"]},
-            "cy": {"home": "/home/cy"},
-        }}});
-        let (_, group, _) = account_files(&model).unwrap();
-        assert!(group.contains("wheel:x:10:ann,bo\n"), "{group}");
-        assert!(group.contains("video:x:400:ann\n"), "{group}");
-        assert!(group.contains("users:x:100:\n"), "{group}");
-    }
-
-    #[test]
     fn each_user_gets_a_home_they_own() {
         let model = json!({"base": {"users": {"ann": {"home": "/home/ann"}}}});
         assert_eq!(homes(&model).unwrap(), "d /home/ann 0700 ann users -\n");
@@ -3490,7 +3406,7 @@ mod tests {
     }
 
     #[test]
-    fn firmware_joins_the_system_where_the_kernel_is_told_to_look() {
+    fn firmware_joins_the_system() {
         let (_dir, lab, packages) = setup();
         let firmware = lab
             .on_host(&packages["web"].path)
@@ -3503,11 +3419,6 @@ mod tests {
         assert_eq!(
             fs::read_link(root.join("firmware/zd1211")).unwrap(),
             Path::new(&format!("{web}/lib/firmware/zd1211"))
-        );
-        let params = fs::read_to_string(root.join("kernel-params")).unwrap();
-        assert!(
-            params.contains("firmware_class.path=/run/system-booted/firmware"),
-            "{params}"
         );
     }
 
@@ -3645,10 +3556,7 @@ mod tests {
                 .ends_with("initrd")
         );
         let params = fs::read_to_string(root.join("kernel-params")).unwrap();
-        assert_eq!(
-            params,
-            format!("root=LABEL={ROOT_LABEL} rw quiet loglevel=3\n")
-        );
+        assert_eq!(params, "quiet loglevel=3\n");
     }
 
     #[test]
