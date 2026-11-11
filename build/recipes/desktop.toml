@@ -127,7 +127,7 @@ id = "libinput"
 version = "1.32.0"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "libudev", "libevdev", "mtdev"]
+extra_deps = ["meson", "ninja", "pkgconf", "systemd", "libevdev", "mtdev"]
 sources = [{ url = "https://gitlab.freedesktop.org/libinput/libinput/-/archive/{version}/libinput-{version}.tar.gz" }]
 script = '''
 # Keyboards, mice and touchpads, for the compositor.
@@ -241,7 +241,7 @@ core = true
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "mako", "markupsafe", "pyyaml", "packaging", "libdrm",
   "wayland",
-  "wayland-protocols", "libffi", "expat", "zlib", "zstd", "elfutils", "libudev", "bison-final",
+  "wayland-protocols", "libffi", "expat", "zlib", "zstd", "elfutils", "systemd", "bison-final",
   "flex", "m4-final",
   "glslang",
 ]
