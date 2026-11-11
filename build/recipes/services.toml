@@ -84,30 +84,21 @@ scope = "runtime"
 core = true
 extra_deps = ["rust-bin", "systemd"]
 sources = [{ url = "https://github.com/systemd/zram-generator/archive/v{version}/zram-generator-{version}.tar.gz" }]
-# The project doesn't ship a lock, so one made once with `cargo generate-lockfile` is kept here.
-crates = "recipes/locks/zram-generator.Cargo.lock"
 files = ["locks/zram-generator.Cargo.lock"]
-script = '''
-cp locks/zram-generator.Cargo.lock Cargo.lock
-# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
-awk -F'"' '
-    /^name = / { name = $2 }
-    /^version = / { version = $2 }
-    /^checksum = / {
-        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
-    }
-' Cargo.lock
-mkdir -p .cargo
-cat > .cargo/config.toml <<CONFIG
-[source.crates-io]
-replace-with = "vendored"
-[source.vendored]
-directory = "vendor"
-CONFIG
-export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
-dirs="SYSTEMD_UTIL_DIR=$LAB_DEP_systemd/lib/systemd \
-    SYSTEMD_SYSTEM_UNIT_DIR=$PREFIX/lib/systemd/system \
-    SYSTEMD_SYSTEM_GENERATOR_DIR=$PREFIX/lib/systemd/system-generators"
-make build NOMAN=1 CARGOFLAGS="--offline --locked" $dirs
-make install NOMAN=1 DESTDIR=$DEST $dirs
+
+# The project doesn't ship a lock, so one made once with `cargo generate-lockfile` is kept beside
+# the recipes. Its Makefile installs the generator and its unit where systemd looks.
+[package.cargo]
+lock = "recipes/locks/zram-generator.Cargo.lock"
+programs = []
+install = '''
+make install NOMAN=1 CARGOFLAGS="--offline --locked" DESTDIR=$DEST \
+    SYSTEMD_UTIL_DIR=$SYSTEMD_UTIL_DIR \
+    SYSTEMD_SYSTEM_UNIT_DIR=$SYSTEMD_SYSTEM_UNIT_DIR \
+    SYSTEMD_SYSTEM_GENERATOR_DIR=$SYSTEMD_SYSTEM_GENERATOR_DIR
 '''
+
+[package.cargo.env]
+SYSTEMD_UTIL_DIR = "$LAB_DEP_systemd/lib/systemd"
+SYSTEMD_SYSTEM_UNIT_DIR = "$PREFIX/lib/systemd/system"
+SYSTEMD_SYSTEM_GENERATOR_DIR = "$PREFIX/lib/systemd/system-generators"

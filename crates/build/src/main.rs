@@ -171,14 +171,6 @@ fn main() -> ExitCode {
                 distro_build::graph::write_records(Path::new(path), writer, records)
             })
         }
-        ["cargo-sources", lock] => std::fs::read_to_string(lock)
-            .map_err(|e| e.to_string())
-            .and_then(|text| distro_build::cargo::crates(&text))
-            .and_then(|crates| {
-                distro_build::cargo::pin(&crates, Path::new("sources.lock"))?;
-                print!("{}", distro_build::cargo::source_lines(&crates));
-                Ok(())
-            }),
         ["recheck", arm] => Arm::parse(arm).and_then(|arm| {
             distro_build::pilot::recheck(&lab, Path::new("."), &names_of(&boot_recipes()?), arm)
         }),

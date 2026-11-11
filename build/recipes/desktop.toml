@@ -367,40 +367,23 @@ extra_deps = [
   "pango",
   "libevdev", "mtdev", "wayland",
 ]
-crates = "Cargo.lock"
 sources = [{ url = "https://github.com/niri-wm/niri/archive/v{version}/niri-{version}.tar.gz" }]
-script = '''
-# Cargo checks each vendored crate against a hash in this file, and its Cargo.lock has them.
-awk -F'"' '
-    /^name = / { name = $2 }
-    /^version = / { version = $2 }
-    /^checksum = / {
-        printf "{\"files\":{},\"package\":\"%s\"}\n", $2 > ("vendor/" name "-" version "/.cargo-checksum.json")
-    }
-' Cargo.lock
-# The lock takes Smithay from git, which is unpacked in git/smithay at the commit it pins. The patch
-# changes its source in the lock, so the build can't be --locked, but every other crate is the lock's.
-mkdir -p .cargo
-cat > .cargo/config.toml <<CONFIG
-[source.crates-io]
-replace-with = "vendored"
-[source.vendored]
-directory = "vendor"
-[patch."https://github.com/Smithay/smithay.git"]
-smithay = { path = "git/smithay" }
-smithay-drm-extras = { path = "git/smithay/smithay-drm-extras" }
-CONFIG
-export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
-# Without screen casting, which needs PipeWire and the GNOME portal.
-cargo build --release --offline -j $NPROC --no-default-features --features systemd
-mkdir -p $DEST$PREFIX/bin $DEST$PREFIX/lib/systemd/user $DEST$PREFIX/share/wayland-sessions \
+smoke = ["bin/niri --version"]
+
+# The lock takes Smithay from git, at the commit it pins. Without screen casting, which needs
+# PipeWire and the GNOME portal.
+[package.cargo]
+default_features = false
+features = ["systemd"]
+git = { smithay = "git/smithay", smithay-drm-extras = "git/smithay/smithay-drm-extras" }
+install = '''
+mkdir -p $DEST$PREFIX/lib/systemd/user $DEST$PREFIX/share/wayland-sessions \
     $DEST$PREFIX/share/xdg-desktop-portal
-cp target/release/niri resources/niri-session $DEST$PREFIX/bin/
+cp resources/niri-session $DEST$PREFIX/bin/
 cp resources/niri.service resources/niri-shutdown.target $DEST$PREFIX/lib/systemd/user/
 cp resources/niri.desktop $DEST$PREFIX/share/wayland-sessions/
 cp resources/niri-portals.conf $DEST$PREFIX/share/xdg-desktop-portal/
 '''
-smoke = ["bin/niri --version"]
 
 # Logging in, fonts and sound.
 

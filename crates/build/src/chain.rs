@@ -302,9 +302,6 @@ pub(crate) struct Package {
     runtime_deps: Vec<String>,
     #[serde(default)]
     sources: Vec<Source>,
-    /// A `Cargo.lock` in the first source, whose registry crates are added to the sources, each
-    /// under `vendor/` and checked against the lock's hash.
-    crates: Option<String>,
     #[serde(default)]
     files: Vec<String>,
     /// What a build can set, which its script reads as `OPTION_<name>`, by name.
@@ -588,7 +585,6 @@ impl Package {
             track: None,
             hold: None,
             sources: Vec::new(),
-            crates: None,
             files: Vec::new(),
             options: BTreeMap::new(),
             build: None,
@@ -1130,7 +1126,15 @@ pub(crate) fn load_styled(
             .ok_or_else(|| format!("`{}` has a build style but no source", package.id))?;
         let (archive, _) = sources.fetch_source(lab, first)?;
         let top = || top_files(&archive);
-        let read = |path: &str| read_in(&archive, path);
+        // A lock under `recipes/` is one kept beside the recipes, for a project that ships none.
+        let read = |path: &str| {
+            if path.starts_with("recipes/") {
+                let file = repository.join(path);
+                fs::read_to_string(&file).map_err(with_path(&file))
+            } else {
+                read_in(&archive, path)
+            }
+        };
         *package = package.clone().styled_by(&styles, &top, &read)?;
     }
     Ok(packages)
@@ -1321,8 +1325,7 @@ mod series_tests {
     }
 }
 
-/// Fetches `package`'s sources, and then those the locks in its first source list: a project's
-/// own lock says what it depends on, so a recipe names the lock instead of copying it.
+/// Fetches `package`'s sources, those a style added included.
 fn fetch_all(
     sources: &mut Sources,
     lab: &Lab,
@@ -1333,52 +1336,7 @@ fn fetch_all(
         let (path, hash) = sources.fetch_source(lab, source)?;
         fetched.push((source.clone(), path, hash));
     }
-    let repository = sources.file.parent().unwrap_or(Path::new("."));
-    let first = fetched.first().map(|(_, path, _)| path.as_path());
-    let locked = locked_sources(package, repository, first)?;
-    for source in locked {
-        let (path, hash) = sources.fetch_source(lab, &source)?;
-        fetched.push((source, path, hash));
-    }
     Ok(fetched)
-}
-
-/// The sources `package`'s locks list, read from its first source, `first`.
-/// A lock under `recipes/` is one kept beside the recipes, for a project that doesn't ship one.
-fn locked_sources(
-    package: &Package,
-    repository: &Path,
-    first: Option<&Path>,
-) -> Result<Vec<Source>, String> {
-    let read = |lock: &str| {
-        if lock.starts_with("recipes/") {
-            let path = repository.join(lock);
-            return fs::read_to_string(&path).map_err(with_path(&path));
-        }
-        let first = first.ok_or_else(|| format!("`{}` names a lock but no source", package.id))?;
-        read_in(first, lock)
-    };
-    let mut locked = Vec::new();
-    if let Some(lock) = &package.crates {
-        let text = read(lock)?;
-        locked.extend(crate::cargo::crates(&text)?.into_iter().map(|c| Source {
-            url: c.url(),
-            into: Some(format!("vendor/{}-{}", c.name, c.version)),
-            include: Vec::new(),
-            sha256: Some(c.checksum),
-            file: false,
-        }));
-        for repository in crate::cargo::git_repositories(&text)? {
-            locked.push(Source {
-                url: repository.archive()?,
-                into: Some(repository.dir()),
-                include: Vec::new(),
-                sha256: None,
-                file: false,
-            });
-        }
-    }
-    Ok(locked)
 }
 
 /// The text of `relative`, a path inside the source archive at `archive`, under its top directory.
@@ -2454,18 +2412,6 @@ mod tree_tests {
 mod crate_tests {
     use super::*;
 
-    const LOCK: &str = r#"
-[[package]]
-name = "app"
-version = "0.1.0"
-
-[[package]]
-name = "itoa"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
-"#;
-
     /// A source archive with a lock in its top directory, as a release tarball has.
     fn archive(dir: &Path, files: &[(&str, &str)]) -> PathBuf {
         let top = dir.join("project-1.0");
@@ -2486,68 +2432,13 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
         archive
     }
 
-    fn package(fields: &str) -> Package {
-        let recipe =
-            format!("[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\n{fields}");
-        toml::from_str::<Recipes>(&recipe)
-            .unwrap()
-            .package
-            .remove(0)
-    }
-
     #[test]
-    fn a_recipe_takes_each_crate_of_the_cargo_lock_in_its_source_pinned_by_its_checksum() {
+    fn the_names_at_the_top_of_a_source_are_listed_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let archive = archive(dir.path(), &[("Cargo.lock", LOCK)]);
-        let locked = locked_sources(
-            &package("crates = \"Cargo.lock\"\n"),
-            dir.path(),
-            Some(&archive),
-        )
-        .unwrap();
-        let sources: Vec<(&str, Option<&str>, Option<&str>, bool)> = locked
-            .iter()
-            .map(|s| {
-                (
-                    s.url.as_str(),
-                    s.into.as_deref(),
-                    s.sha256.as_deref(),
-                    s.file,
-                )
-            })
-            .collect();
-        assert_eq!(
-            sources,
-            [(
-                "https://static.crates.io/crates/itoa/itoa-1.0.15.crate",
-                Some("vendor/itoa-1.0.15"),
-                Some("4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"),
-                false,
-            )]
-        );
-    }
-
-    #[test]
-    fn a_recipe_takes_each_git_repository_of_the_cargo_lock_under_git() {
-        let dir = tempfile::tempdir().unwrap();
-        let lock = format!(
-            "{LOCK}\n[[package]]\nname = \"smithay\"\nversion = \"0.7.0\"\n\
-             source = \"git+https://github.com/Smithay/smithay.git?rev=ff5f#ff5f\"\n"
-        );
-        let archive = archive(dir.path(), &[("Cargo.lock", &lock)]);
-        let locked = locked_sources(
-            &package("crates = \"Cargo.lock\"\n"),
-            dir.path(),
-            Some(&archive),
-        )
-        .unwrap();
-        let git = &locked[1];
-        assert_eq!(
-            git.url,
-            "https://github.com/Smithay/smithay/archive/ff5f.tar.gz"
-        );
-        assert_eq!(git.into.as_deref(), Some("git/smithay"));
-        assert_eq!(git.sha256, None);
+        let archive = archive(dir.path(), &[("meson.build", ""), ("Cargo.lock", "")]);
+        assert_eq!(top_files(&archive).unwrap(), ["Cargo.lock", "meson.build"]);
+        fs::write(&archive, "not an archive any more").unwrap();
+        assert_eq!(top_files(&archive).unwrap(), ["Cargo.lock", "meson.build"]);
     }
 
     #[test]
@@ -2560,33 +2451,6 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
         fs::write(&archive, "not an archive any more").unwrap();
         assert_eq!(read_in(&archive, "go.sum").unwrap(), go_sum);
         assert!(read_in(&archive, "go.mod").is_err());
-    }
-
-    #[test]
-    fn a_lock_kept_beside_the_recipes_is_read_from_there() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("recipes/locks")).unwrap();
-        fs::write(dir.path().join("recipes/locks/app.Cargo.lock"), LOCK).unwrap();
-        let fields = "crates = \"recipes/locks/app.Cargo.lock\"\n";
-        let locked = locked_sources(&package(fields), dir.path(), None).unwrap();
-        assert_eq!(locked.len(), 1);
-        assert_eq!(locked[0].into.as_deref(), Some("vendor/itoa-1.0.15"));
-    }
-
-    #[test]
-    fn a_lock_the_source_doesnt_have_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let archive = archive(dir.path(), &[("README", "")]);
-        let error = locked_sources(
-            &package("crates = \"Cargo.lock\"\n"),
-            dir.path(),
-            Some(&archive),
-        )
-        .unwrap_err();
-        assert!(error.contains("no `Cargo.lock`"), "{error}");
-        let error =
-            locked_sources(&package("crates = \"Cargo.lock\"\n"), dir.path(), None).unwrap_err();
-        assert!(error.contains("no source"), "{error}");
     }
 
     #[test]
@@ -3083,6 +2947,48 @@ style(name = "meson", files = ["meson.build"], build = build)
 #[cfg(test)]
 mod style_goldens {
     use super::*;
+
+    #[test]
+    fn the_cargo_style_patches_in_crates_from_git_at_the_paths_the_recipe_gives() {
+        let styles = styles(&repository()).unwrap();
+        let text = "[[package]]\nid = \"niri\"\nscope = \"runtime\"\n[package.cargo]\n\
+                    git = { smithay = \"git/smithay\" }\n";
+        let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        package.check_style(&styles).unwrap();
+        let lock = "[[package]]\nname = \"smithay\"\nversion = \"0.7.0\"\n\
+                    source = \"git+https://github.com/Smithay/smithay.git?rev=ff5f#ff5f\"\n";
+        let read = |_: &str| Ok(lock.to_owned());
+        let package = package
+            .styled_by(&styles, &|| Ok(Vec::new()), &read)
+            .unwrap();
+        assert_eq!(
+            package.sources[0].url,
+            "https://github.com/Smithay/smithay/archive/ff5f.tar.gz"
+        );
+        assert_eq!(package.sources[0].into.as_deref(), Some("git/smithay"));
+        assert!(package.script.contains(
+            "[patch.\"https://github.com/Smithay/smithay.git\"]\n\
+             smithay = { path = \"git/smithay\" }\n"
+        ));
+        assert!(
+            package
+                .script
+                .contains("cargo build --release --offline -j $NPROC\n")
+        );
+        let mut unmapped =
+            toml::from_str::<Recipes>("[[package]]\nid = \"niri\"\nscope = \"runtime\"\n")
+                .unwrap()
+                .package
+                .remove(0);
+        unmapped.build = Some("cargo".to_owned());
+        let error = unmapped
+            .styled_by(&styles, &|| Ok(Vec::new()), &read)
+            .unwrap_err();
+        assert!(
+            error.contains("give its path under `git/` in `git`"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn the_build_system_styles_make_their_usual_three_steps() {

@@ -1,6 +1,5 @@
 //! The builder and store. See `docs/store.md` for the design and the experiments behind it.
 
-pub mod cargo;
 pub mod chain;
 pub mod content;
 pub mod early;

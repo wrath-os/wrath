@@ -1,6 +1,6 @@
-# Programs in Rust, built by Cargo with every crate its Cargo.lock names, each fetched from the
-# registry and checked against the lock's hash. Nothing is resolved: a project without a lock
-# can't use this style.
+# Programs in Rust, built by Cargo with every crate its Cargo.lock names: each crate from the
+# registry fetched and checked against the lock's hash, and each repository the lock takes crates
+# from at the commit it pins. Nothing is resolved: a project without a lock can't use this style.
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 
@@ -18,52 +18,89 @@ cat > .cargo/config.toml <<CONFIG
 replace-with = "vendored"
 [source.vendored]
 directory = "vendor"
-CONFIG
+"""
+
+HOME = """CONFIG
 export CARGO_HOME=/build/cargo RUSTFLAGS="--remap-path-prefix=/build/src=/src"
 """
 
-def crates(lock: dict[str, typing.Any]) -> list[dict[str, typing.Any]]:
-    """A source for each crate the lock takes from the registry, by its hash."""
-    sources = []
+def registry_crate(package: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    name, version = package["name"], package["version"]
+    return {
+        "url": "https://static.crates.io/crates/%s/%s-%s.crate" % (name, name, version),
+        "into": "vendor/%s-%s" % (name, version),
+        "sha256": package["checksum"],
+    }
+
+def repository(source: str) -> tuple[str, ...]:
+    """The repository and commit of a lock's `git+URL?query#COMMIT` source."""
+    url, _, commit = source.removeprefix("git+").partition("#")
+    if not commit:
+        fail("%s names no commit" % source)
+    return url.partition("?")[0], commit
+
+def git_archive(url: str, commit: str) -> dict[str, typing.Any]:
+    """The commit as GitHub serves it, under `git/` and the repository's name."""
+    if not url.startswith("https://github.com/"):
+        fail("crates from %s can't be fetched, only from GitHub" % url)
+    path = url.removeprefix("https://github.com/").removesuffix(".git")
+    return {
+        "url": "https://github.com/%s/archive/%s.tar.gz" % (path, commit),
+        "into": "git/" + path.rpartition("/")[2],
+    }
+
+def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    lock = decode.toml(recipe.read(options["lock"]))
+    sources, patches = [], {}
     for package in lock["package"]:
         source = package.get("source")
         if source == None:
             continue
-        if source != REGISTRY:
-            fail("`%s` comes from %s; only crates from the registry are fetched" % (
-                package["name"],
-                source,
-            ))
-        sources.append({
-            "url": "https://static.crates.io/crates/%s/%s-%s.crate" % (
-                package["name"],
-                package["name"],
-                package["version"],
-            ),
-            "into": "vendor/%s-%s" % (package["name"], package["version"]),
-            "sha256": package["checksum"],
-        })
-    return sources
+        if source == REGISTRY:
+            sources.append(registry_crate(package))
+        elif source.startswith("git+"):
+            url, commit = repository(source)
+            if url not in patches:
+                patches[url] = []
+                sources.append(git_archive(url, commit))
+            path = options["git"].get(package["name"])
+            if path == None:
+                fail("`%s` comes from %s: give its path under `git/` in `git`" % (
+                    package["name"],
+                    url,
+                ))
+            patches[url].append('%s = { path = "%s" }' % (package["name"], path))
+        else:
+            fail("`%s` comes from %s, which isn't fetched" % (package["name"], source))
 
-def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.Any]:
-    lock = decode.toml(recipe.read("Cargo.lock"))
-    command = "cargo build --release --offline --locked -j $NPROC"
+    prepare = ""
+    if options["lock"] != "Cargo.lock":
+        prepare = "cp %s Cargo.lock\n" % options["lock"].removeprefix("recipes/")
+    config = "".join([
+        "[patch.\"%s\"]\n%s" % (url, "".join([line + "\n" for line in lines]))
+        for url, lines in patches.items()
+    ])
+    # Crates patched in from git change the lock, so such a build can't be --locked.
+    locked = "" if patches else " --locked"
+    command = "cargo build --release --offline%s -j $NPROC" % locked
     for package in options["packages"]:
         command += " -p " + package
     if not options["default_features"]:
         command += " --no-default-features"
     if options["features"]:
         command += " --features " + ",".join(options["features"])
-    programs = options["programs"] or [recipe.id]
-    lines = ["export %s=%s" % item for item in options["env"].items()] + [
-        command,
-        "mkdir -p $DEST$PREFIX/bin",
-        "cp %s $DEST$PREFIX/bin/" % " ".join(["target/release/" + p for p in programs]),
-    ]
+    programs = options.get("programs", [recipe.id])
+    lines = ["export %s=%s" % item for item in options["env"].items()] + [command]
+    if programs:
+        lines += [
+            "mkdir -p $DEST$PREFIX/bin",
+            "cp %s $DEST$PREFIX/bin/" % " ".join(["target/release/" + p for p in programs]),
+        ]
     return {
-        "script": VENDOR + "".join([line + "\n" for line in lines]) + options["install"],
+        "script": prepare + VENDOR + config + HOME + "".join([line + "\n" for line in lines]) +
+                  options["install"],
         "deps": ["rust-bin"],
-        "sources": crates(lock),
+        "sources": sources,
     }
 
 style(
@@ -83,8 +120,20 @@ style(
         ),
         "programs": option(
             types.list(types.str),
-            doc = "The programs from `target/release` it installs. The one named like the " +
-                  "recipe when empty.",
+            optional = True,
+            doc = "The programs from `target/release` it installs, by default the one named " +
+                  "like the recipe. An empty list installs none, for an `install` that does.",
+        ),
+        "lock": option(
+            types.str,
+            default = "Cargo.lock",
+            doc = "The lock, in the source, or kept beside the recipes as `recipes/locks/...` " +
+                  "and listed in `files`, for a project that ships none.",
+        ),
+        "git": option(
+            types.map(types.str),
+            doc = "Where each crate the lock takes from git is, under `git/` and its " +
+                  "repository's name, such as `git/smithay/smithay-drm-extras`.",
         ),
         "env": option(
             types.map(types.str),
