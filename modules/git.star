@@ -36,7 +36,7 @@ include = types.record(
     settings = option(types.freeform, default = {}),
 )
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for user, u in ctx.read("users").items():
         git = u["programs"]["git"]
         if not git["enable"]:

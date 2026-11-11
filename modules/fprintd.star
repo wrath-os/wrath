@@ -2,7 +2,7 @@
 
 SERVICES = ["login", "sudo"]
 
-def render(ctx):
+def render(ctx: Context) -> None:
     if not ctx.read("services.fprintd.enable"):
         return
     ctx.package("fprintd")

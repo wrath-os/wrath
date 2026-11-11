@@ -1,7 +1,7 @@
 # Packages for everyone on the machine, or for a project's shell. A user's own packages go under
 # `packages` in `users/<name>.toml`.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for package in ctx.read("packages"):
         ctx.package(package)
 

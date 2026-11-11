@@ -31,7 +31,7 @@ user = types.record(
     ),
 )
 
-def render(ctx):
+def render(ctx: Context) -> None:
     users = {}
     for name, u in ctx.read("users").items():
         record = {

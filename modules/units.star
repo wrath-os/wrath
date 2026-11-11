@@ -21,7 +21,7 @@ def is_unit_name(name):
     stem, _, kind = unit.rpartition(".")
     return bool(stem) and kind in KINDS
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for name, sections in ctx.read("units").items():
         at = ["units", name]
         if not is_unit_name(name):

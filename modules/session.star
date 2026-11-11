@@ -2,7 +2,7 @@
 # graphical sessions read `~/.config/environment.d`, and login shells source
 # `~/.config/distro/session.sh`.
 
-def check(ctx, user, name, v):
+def check(ctx: Context, user, name, v):
     where = ["users", user, "environment", name]
     if "\n" in v:
         ctx.error(where, "a value can't span lines")
@@ -13,7 +13,7 @@ def sh_quote(v):
     """Double quotes, so `$NAME` still expands as it does in environment.d."""
     return '"%s"' % v.replace("\\", "\\\\").replace('"', '\\"')
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for user, u in ctx.read("users").items():
         variables = u["environment"]
         if not variables:

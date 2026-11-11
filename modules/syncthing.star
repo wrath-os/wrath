@@ -97,7 +97,7 @@ instance = types.record(
     folders = types.map(folder),
 )
 
-def desired(ctx, name, cfg):
+def desired(ctx: Context, name, cfg):
     devices = [
         {"deviceID": d["id"], "name": device_name, "addresses": d["addresses"]}
         for device_name, d in cfg["devices"].items()
@@ -123,7 +123,7 @@ def desired(ctx, name, cfg):
         })
     return {"devices": devices, "folders": folders}
 
-def render(ctx):
+def render(ctx: Context) -> None:
     open = False
     for name, cfg in ctx.read("services.syncthing").items():
         user = cfg["user"]

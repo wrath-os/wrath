@@ -3,7 +3,7 @@
 
 NETWORK = "/etc/systemd/network/80-wireless.network"
 
-def render(ctx):
+def render(ctx: Context) -> None:
     cfg = ctx.read("networking.wireless")
     ctx.package("iwd")
     ctx.service_package("iwd")

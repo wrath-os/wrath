@@ -3,7 +3,7 @@
 
 load("lib/merge.star", "merge")
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for user, u in ctx.read("users").items():
         jj = u["programs"]["jujutsu"]
         if not jj["enable"]:

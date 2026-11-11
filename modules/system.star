@@ -2,7 +2,7 @@
 # expects them. Without a hostname, the machine uses its name, filled in on the machine when it
 # switches, so every machine with a role gets the same build.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     system = ctx.read("system")
     hostname = system.get("hostname") or machine_value("machine.name")
     if type(hostname) == "runtime_value":

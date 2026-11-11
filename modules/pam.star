@@ -13,7 +13,7 @@ def stack():
 
 KINDS = ["account", "auth", "password", "session"]
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for service, stacks in ctx.read("security.pam.services").items():
         rules = []
         for kind in KINDS:

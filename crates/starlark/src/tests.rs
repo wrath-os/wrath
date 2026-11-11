@@ -1619,3 +1619,37 @@ fn a_switch_needs_one_table_of_options_without_its_own() {
     let text = distro_eval::render(&[error], &sources);
     assert!(text.contains("declares `enable` itself"), "{text}");
 }
+
+/// A module whose render calls `ctx` with `call`, and which is off, so nothing renders.
+fn never_rendered(call: &str) -> String {
+    format!(
+        "def render(ctx: Context) -> None:\n    {call}\n\
+         module(name = \"app\", enable = False, writes = [], render = render,\n\
+         options = {{\"services.app\": types.record(port = option(types.port, default = 80))}})\n"
+    )
+}
+
+#[test]
+fn a_misspelt_ctx_call_is_an_error_before_anything_renders() {
+    let error = evaluate_module(&never_rendered("ctx.packge(\"jq\")"), "").unwrap_err();
+    assert!(error.contains("packge"), "{error}");
+}
+
+#[test]
+fn a_ctx_call_with_the_wrong_type_is_an_error_before_anything_renders() {
+    let error = evaluate_module(&never_rendered("ctx.package(1)"), "").unwrap_err();
+    assert!(error.contains("int"), "{error}");
+}
+
+#[test]
+fn an_annotated_render_that_is_called_right_renders() {
+    let source = "def render(ctx: Context) -> None:\n    ctx.package(\"jq\")\n\
+                  module(name = \"m\", options = {}, writes = [], render = render)\n";
+    let evaluation = evaluate_module(source, "").unwrap();
+    assert!(
+        output_of(&evaluation, "m")
+            .packages
+            .iter()
+            .any(|p| p == "jq")
+    );
+}

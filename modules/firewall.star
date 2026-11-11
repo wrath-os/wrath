@@ -1,6 +1,6 @@
 # A host firewall, rendered as an nftables ruleset.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     firewall = ctx.read("networking.firewall")
     rules = [
         "table inet filter {",

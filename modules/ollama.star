@@ -22,7 +22,7 @@ GPU_DEVICES = [
     "char-kfd",
 ]
 
-def render(ctx):
+def render(ctx: Context) -> None:
     cfg = ctx.read("services.ollama")
     ctx.package(PACKAGES[cfg["acceleration"]])
 

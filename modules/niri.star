@@ -12,7 +12,7 @@ org.freedesktop.impl.portal.Screenshot=wlr
 org.freedesktop.impl.portal.Secret=gnome-keyring
 """
 
-def render(ctx):
+def render(ctx: Context) -> None:
     if ctx.read("desktop").get("session") != "niri":
         return
     for package in [

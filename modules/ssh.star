@@ -6,7 +6,7 @@ load("lib/pam.star", "unix_stacks")
 HOST_KEY = "/etc/ssh/ssh_host_ed25519_key"
 CONFIG = "/etc/ssh/sshd_config"
 
-def render(ctx):
+def render(ctx: Context) -> None:
     cfg = ctx.read("services.ssh")
     for user, u in ctx.read("users").items():
         if u["authorized_keys"]:

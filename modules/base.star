@@ -1,7 +1,7 @@
 # The base system: boot, networking, audio and the graphical session. The backend provides
 # these, so this module only checks the options and passes them on as base settings.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     boot = ctx.read("boot")
     ctx.base("boot", {"loader": boot["loader"], "kernel_params": boot["kernel_params"]})
     ctx.base("networking", {

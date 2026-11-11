@@ -2,7 +2,7 @@
 # with WirePlumber managing it and RealtimeKit giving it realtime priority. Programs that speak
 # PulseAudio talk to PipeWire's PulseAudio server.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     if not ctx.read("audio.enable"):
         return
     for package in ["pipewire", "wireplumber", "rtkit"]:

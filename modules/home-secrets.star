@@ -17,7 +17,7 @@ secret = types.record(
     ),
 )
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for user, u in ctx.read("users").items():
         secrets = u["secrets"]
         for name, s in secrets.items():

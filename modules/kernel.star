@@ -11,7 +11,7 @@ def modprobe_config(kernel):
     lines += ["options %s %s" % item for item in sorted(kernel["module_options"].items())]
     return "".join([line + "\n" for line in lines])
 
-def render(ctx):
+def render(ctx: Context) -> None:
     kernel = ctx.read("kernel")
     hardware = ctx.read("hardware")
     if kernel["sysctl"]:

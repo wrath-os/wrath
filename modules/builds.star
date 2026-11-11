@@ -19,7 +19,7 @@ build = types.record(
     ),
 )
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for name, b in ctx.read("builds").items():
         ctx.build(name, package = b.get("package"), options = b["options"], patches = b["patches"])
 

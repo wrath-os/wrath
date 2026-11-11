@@ -32,7 +32,7 @@ file = types.record(
     **fields
 )
 
-def contents(ctx, at, f):
+def contents(ctx: Context, at, f):
     """What the file described by `f`, at the option path `at`, holds."""
     if "text" in f and "settings" in f:
         ctx.error(at, "a file has `text` or `settings`, not both")
@@ -44,7 +44,7 @@ def contents(ctx, at, f):
         ctx.error(at + ["settings"], "`settings` need a `format` to be written in")
     return FORMATS[f["format"]](f["settings"])
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for path, f in ctx.read("files").items():
         at = ["files", path]
         if not path.startswith("/"):

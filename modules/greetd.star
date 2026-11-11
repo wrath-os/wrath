@@ -3,7 +3,7 @@
 
 SESSIONS = {"niri": "niri-session"}
 
-def render(ctx):
+def render(ctx: Context) -> None:
     desktop = ctx.read("desktop")
     if "session" not in desktop:
         return

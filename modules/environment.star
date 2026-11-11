@@ -1,7 +1,7 @@
 # Environment variables a project's shell has, from `environment` in `distro.toml`. A home's are
 # under `environment` in `users/<name>.toml`.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for name, v in ctx.read("environment").items():
         if "\n" in v:
             ctx.error(["environment", name], "a value can't span lines")

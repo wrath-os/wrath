@@ -5,7 +5,7 @@ load("lib/pam.star", "unix_stacks")
 
 SW = "/run/system/bin/"
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for package in ["sudo", "linux-pam", "shadow"]:
         ctx.package(package)
     # unix_chkpwd lets PAM check a password for someone who isn't root.

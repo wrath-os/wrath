@@ -12,21 +12,21 @@ kept = types.record(
     files = option(types.set(types.str)),
 )
 
-def check_inside(ctx, at, path):
+def check_inside(ctx: Context, at, path):
     if ".." in path.split("/"):
         ctx.error(at, "`%s` goes outside where it's kept" % path)
 
-def check_absolute(ctx, at, path):
+def check_absolute(ctx: Context, at, path):
     check_inside(ctx, at, path)
     if not path.startswith("/") or path == "/":
         ctx.error(at, "`%s` isn't an absolute path below `/`" % path)
 
-def check_relative(ctx, at, path):
+def check_relative(ctx: Context, at, path):
     check_inside(ctx, at, path)
     if not path or path.startswith("/") or path.startswith("~"):
         ctx.error(at, "`%s` is a path inside the user's home, such as `.ssh`" % path)
 
-def check_identities(ctx, directories, files):
+def check_identities(ctx: Context, directories, files):
     """The keys secrets are decrypted with have to be there after a reboot."""
     if not ctx.read("secrets"):
         return
@@ -35,7 +35,7 @@ def check_identities(ctx, directories, files):
         if identity not in files and not inside:
             ctx.error("state.files", "secrets are decrypted with `%s`, which isn't kept" % identity)
 
-def render(ctx):
+def render(ctx: Context) -> None:
     state = ctx.read("state")
     users = ctx.read("users")
     directories = sorted(state["directories"])

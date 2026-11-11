@@ -1,7 +1,7 @@
 # Networking: systemd-networkd, and DHCP on every wired interface
 # unless the configuration describes its networks.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     dhcp = ctx.read("networking.dhcp")
     resolved = ctx.read("networking.resolved")
     if dhcp:

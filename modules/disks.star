@@ -113,7 +113,7 @@ def device_path(p, label):
         return "/dev/mapper/" + label
     return "/dev/disk/by-partlabel/" + label
 
-def render(ctx):
+def render(ctx: Context) -> None:
     disks = ctx.read("disks")
     filesystems = ctx.read("filesystems")
     if not disks and not filesystems:

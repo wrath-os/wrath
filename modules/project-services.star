@@ -3,7 +3,7 @@
 
 load("lib/service.star", "check_services", "service")
 
-def render(ctx):
+def render(ctx: Context) -> None:
     check_services(ctx, ["services"], ctx.read("services"))
 
 module(

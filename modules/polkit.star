@@ -3,7 +3,7 @@
 
 load("lib/pam.star", "unix_stacks")
 
-def render(ctx):
+def render(ctx: Context) -> None:
     ctx.service_package("polkit")
     ctx.package("polkit")
     # Agents check a user's password through this helper, started for each request.

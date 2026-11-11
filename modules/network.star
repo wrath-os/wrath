@@ -30,7 +30,7 @@ DNS_KEYS = {
     "cache": "Cache",
 }
 
-def render_network(ctx, name, cfg):
+def render_network(ctx: Context, name, cfg):
     sections = {
         "Match": {"Name": cfg["match"]},
         "Network": {"DHCP": cfg["dhcp"], "IPv6PrivacyExtensions": cfg["ipv6_privacy"]},
@@ -46,7 +46,7 @@ def render_network(ctx, name, cfg):
     ctx.file(path, formats.systemd(sections))
     return path
 
-def render(ctx):
+def render(ctx: Context) -> None:
     networks = ctx.read("networking.networks")
     paths = [render_network(ctx, name, cfg) for name, cfg in networks.items()]
     if paths:

@@ -26,7 +26,7 @@ PACKAGES = [
     "util-linux",
 ]
 
-def getty(ctx, unit, args):
+def getty(ctx: Context, unit, args):
     ctx.unit(unit + ".d/distro.conf", {
         "Service": {
             "ExecStart": [
@@ -36,7 +36,7 @@ def getty(ctx, unit, args):
         },
     })
 
-def locale_environment(ctx):
+def locale_environment(ctx: Context):
     """The variables that select the machine's language, with its locale built when it's needed."""
     locale = ctx.read("system.locale")
     environment = [("LANG", locale)]
@@ -51,7 +51,7 @@ def locale_environment(ctx):
         environment.append(("LOCPATH", SYSTEM + "/lib/locale"))
     return environment
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for package in PACKAGES:
         ctx.package(package)
     # device-mapper's udev rules, which tools such as cryptsetup wait on.

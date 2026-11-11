@@ -45,7 +45,7 @@ def tcp_port(ready):
         return None
     return int(port)
 
-def check_services(ctx, where, services):
+def check_services(ctx: Context, where, services):
     """Reports what's wrong with `services`, found at the option path `where`."""
     for name, s in services.items():
         at = where + [name]

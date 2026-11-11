@@ -1,7 +1,7 @@
 # The Tailscale node agent. Logging in stays manual (`tailscale up`), since the login is state
 # on the machine rather than configuration.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     cfg = ctx.read("services.tailscale")
     interface = cfg["interface"]
     ctx.package("tailscale")

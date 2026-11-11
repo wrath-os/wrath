@@ -41,7 +41,7 @@ use starlark::environment::{
 use starlark::eval::{Evaluator, ReturnFileLoader};
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::syntax::{AstModule, Dialect};
+use starlark::syntax::{AstModule, Dialect, DialectTypes};
 use starlark::values::none::{NoneOr, NoneType};
 use starlark::values::{
     Heap, NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue, ValueLike,
@@ -87,6 +87,7 @@ pub fn load(
         let loader = loader(&libraries);
         let file_loader = ReturnFileLoader { modules: &loader };
         let mut eval = Evaluator::new(&module);
+        eval.enable_static_typechecking(true);
         eval.extra = Some(&loading);
         eval.set_loader(&file_loader);
         set_time_limit(&mut eval);
@@ -164,6 +165,7 @@ fn load_libraries(
                 let loader = loader(libraries);
                 let file_loader = ReturnFileLoader { modules: &loader };
                 let mut eval = Evaluator::new(&module);
+                eval.enable_static_typechecking(true);
                 eval.extra = Some(&LoadingLibrary);
                 eval.set_loader(&file_loader);
                 set_time_limit(&mut eval);
@@ -178,7 +180,13 @@ fn load_libraries(
 }
 
 fn parse(path: &str, source: &str) -> starlark::Result<AstModule> {
-    AstModule::parse(path, source.to_owned(), &Dialect::Standard)
+    // Annotations are checked when a function is called. The evaluators also turn on static
+    // type checking, so a misspelt or mistyped call fails before anything runs.
+    let dialect = Dialect {
+        enable_types: DialectTypes::Enable,
+        ..Dialect::Standard
+    };
+    AstModule::parse(path, source.to_owned(), &dialect)
 }
 
 fn set_time_limit(eval: &mut Evaluator<'_, '_, '_>) {
@@ -309,6 +317,7 @@ fn globals() -> Globals {
 }
 
 #[starlark_module]
+#[starlark_types(Ctx as Context)]
 fn std_globals(builder: &mut GlobalsBuilder) {
     /// A machine value, such as `machine_value("machine.name")`, filled in on the machine when it
     /// switches. Only options and files filled in there take it, like a secret.
@@ -626,7 +635,7 @@ impl fmt::Display for Ctx {
     }
 }
 
-#[starlark_value(type = "ctx")]
+#[starlark_value(type = "Context")]
 impl<'v> StarlarkValue<'v> for Ctx {
     fn get_methods() -> Option<&'static Methods> {
         static METHODS: MethodsStatic = MethodsStatic::new("ctx", ctx_methods);
@@ -1132,6 +1141,7 @@ impl Module for StarlarkModule {
             let loader = loader(&self.libraries);
             let file_loader = ReturnFileLoader { modules: &loader };
             let mut eval = Evaluator::new(&module);
+            eval.enable_static_typechecking(true);
             eval.extra = Some(&rendering);
             eval.set_loader(&file_loader);
             set_time_limit(&mut eval);

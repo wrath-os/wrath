@@ -2,7 +2,7 @@
 
 load("lib/pam.star", "unix_stacks")
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for service in ["login", "sudo"]:
         ctx.set("security.pam.services." + service, unix_stacks())
 

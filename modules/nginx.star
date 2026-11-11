@@ -26,7 +26,7 @@ def server(port, s):
     out.append("  }")
     return "\n".join(out)
 
-def render(ctx):
+def render(ctx: Context) -> None:
     ports = []
     for name, cfg in ctx.read("services.nginx").items():
         if not cfg["enable"]:

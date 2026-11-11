@@ -3,7 +3,7 @@
 
 load("lib/service.star", "check_services", "service", "systemd_unit")
 
-def render(ctx):
+def render(ctx: Context) -> None:
     for user, u in ctx.read("users").items():
         check_services(ctx, ["users", user, "services"], u["services"])
         for name, s in u["services"].items():

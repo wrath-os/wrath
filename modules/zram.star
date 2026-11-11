@@ -1,6 +1,6 @@
 # Swap on compressed memory.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     zram = ctx.read("zram")
     ctx.service_package("zram-generator")
     ctx.file("/etc/modules-load.d/zram.conf", "zram\n")

@@ -1,6 +1,6 @@
 # Graphics drivers for a desktop, packages like any other.
 
-def render(ctx):
+def render(ctx: Context) -> None:
     if "session" not in ctx.read("desktop"):
         return
     ctx.package("mesa")

@@ -9,7 +9,7 @@ FONTS_CONF = """<?xml version="1.0"?>
 </fontconfig>
 """
 
-def render(ctx):
+def render(ctx: Context) -> None:
     if "session" not in ctx.read("desktop"):
         return
     ctx.package("dejavu-fonts")
