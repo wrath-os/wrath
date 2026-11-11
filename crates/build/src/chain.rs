@@ -1015,6 +1015,9 @@ pub(crate) fn finish(
         return Ok(());
     }
     let (outputs, whole) = place_outputs(lab, package, arm, out)?;
+    for path in outputs.values() {
+        references_of(lab, path)?;
+    }
     if let Some(reason) = whole {
         note_whole(lab, arm, package, &reason)?;
     }
@@ -1324,6 +1327,8 @@ pub(crate) fn build_one(
     let build_dir = lab.work.join("build").join(out.hash());
     fresh(&build_dir)?;
     fresh(&lab.on_host(&out))?;
+    // A build under the same path may make different files, which refer to other paths.
+    forget_references(lab, &out)?;
     let src = build_dir.join("src");
     fs::create_dir_all(&src).map_err(with_path(&src))?;
     for (source, path, _) in &fetched {
@@ -1516,6 +1521,48 @@ pub(crate) fn build_one(
     }))
 }
 
+/// Where the store paths a store path refers to are recorded, beside the store (decision 0021).
+fn references_record(lab: &Lab, path: &StorePath) -> PathBuf {
+    lab.work.join("refs").join(path.hash())
+}
+
+/// Forgets what `path` refers to, for a path about to be built again.
+fn forget_references(lab: &Lab, path: &StorePath) -> Result<(), String> {
+    let record = references_record(lab, path);
+    match fs::remove_file(&record) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(with_path(&record)(error))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The store paths `path` refers to, other than itself. A store path never changes, so they're
+/// recorded the first time they're found and read from the record afterwards.
+pub fn references_of(lab: &Lab, path: &StorePath) -> Result<Vec<StorePath>, String> {
+    let record = references_record(lab, path);
+    if let Ok(text) = fs::read_to_string(&record) {
+        return Ok(text.lines().map(StorePath::from_hash).collect());
+    }
+    let found: Vec<String> = references(&lab.on_host(path))?
+        .into_keys()
+        .filter(|hash| hash != path.hash())
+        .collect();
+    let text: String = found.iter().map(|hash| format!("{hash}\n")).collect();
+    // A record that can't be written is only a scan to do again next time.
+    let temporary = record.with_extension(format!("tmp{}", std::process::id()));
+    if let Some(parent) = record.parent()
+        && fs::create_dir_all(parent).is_ok()
+        && fs::write(&temporary, text).is_ok()
+    {
+        let _ = fs::rename(&temporary, &record);
+    }
+    Ok(found
+        .iter()
+        .map(|hash| StorePath::from_hash(hash))
+        .collect())
+}
+
 /// The store paths `dir` refers to, with one file referring to each.
 pub fn references(dir: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     let mut found = BTreeMap::new();
@@ -1576,8 +1623,7 @@ pub fn runtime_closure(lab: &Lab, start: &StorePath) -> Result<BTreeSet<StorePat
         if !seen.insert(path.clone()) {
             continue;
         }
-        for hash in references(&lab.on_host(&path))?.into_keys() {
-            let next = StorePath::from_hash(&hash);
+        for next in references_of(lab, &path)? {
             if lab.on_host(&next).exists() && !seen.contains(&next) {
                 queue.push(next);
             }
@@ -2176,6 +2222,30 @@ mod variant_tests {
             .filter(|id| *id == "patch")
             .count();
         assert_eq!(count, 1, "patch is a dependency once");
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+
+    #[test]
+    fn references_are_recorded_the_first_time_and_read_from_the_record_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path());
+        let (path, other) = (
+            StorePath::derive("test", &[b"a"]),
+            StorePath::derive("test", &[b"b"]),
+        );
+        let root = lab.on_host(&path);
+        fs::create_dir_all(root.join("bin")).unwrap();
+        let text = format!("#!{0}/bin/sh\n{1}/lib\n", other.inside(), path.inside());
+        fs::write(root.join("bin/run"), text).unwrap();
+        assert_eq!(references_of(&lab, &path).unwrap(), std::slice::from_ref(&other));
+        fs::remove_file(root.join("bin/run")).unwrap();
+        assert_eq!(references_of(&lab, &path).unwrap(), [other]);
+        forget_references(&lab, &path).unwrap();
+        assert!(references_of(&lab, &path).unwrap().is_empty());
     }
 }
 
