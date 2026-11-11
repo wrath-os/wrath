@@ -385,6 +385,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     replace_link(&programs.join("bash"), &root.join("bin/sh"))?;
     replace_link(&programs.join("env"), &root.join("usr/bin/env"))?;
     link_kernel_modules(root, system)?;
+    link_foreign(root, system)?;
     // /run doesn't allow setuid programs, so the wrappers get a filesystem of their own.
     run(Command::new(programs.join("mount")).args([
         "-t",
@@ -435,6 +436,25 @@ fn link_kernel_modules(root: &Path, system: &Path) -> Result<(), String> {
     )
 }
 
+/// Links /lib64 and /run/ld.so.cache to the running generation's loader and library cache for
+/// programs built elsewhere (decision 0015), or removes the links when it has none.
+fn link_foreign(root: &Path, system: &Path) -> Result<(), String> {
+    let links = [
+        ("lib64", "/run/system/lib64"),
+        ("run/ld.so.cache", "/run/system/foreign/ld.so.cache"),
+    ];
+    let has_foreign = system.join("lib64").exists();
+    for (link, target) in links {
+        let link = root.join(link);
+        if has_foreign {
+            replace_link(Path::new(target), &link)?;
+        } else if fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink()) {
+            fs::remove_file(&link).map_err(|e| format!("{}: {e}", link.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn switch(root: &Path, system: &Path) -> Result<(), String> {
     let current = root.join(RUNNING);
     let old = fs::read_link(&current)
@@ -464,7 +484,8 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     systemctl("try-restart", &activation.restart)?;
     systemctl("try-reload-or-restart", &activation.reload)?;
     systemctl("start", &installed(&activation, &after))?;
-    point_at(root, system, &[RUNNING])
+    point_at(root, system, &[RUNNING])?;
+    link_foreign(root, system)
 }
 
 /// Says what activation left out, and carries on.
@@ -1141,6 +1162,31 @@ mod tests {
             Path::new("/store/systemd/lib/systemd/system/multi-user.target")
         );
         assert!(fs::symlink_metadata(etc.join(gone)).is_err());
+    }
+
+    #[test]
+    fn lib64_and_the_foreign_cache_follow_whether_the_system_has_them() {
+        let work = tempfile::tempdir().unwrap();
+        let (root, system) = (work.path().join("root"), work.path().join("system"));
+        fs::create_dir_all(system.join("lib64")).unwrap();
+        fs::create_dir_all(root.join("run")).unwrap();
+        link_foreign(&root, &system).unwrap();
+        assert_eq!(
+            fs::read_link(root.join("lib64")).unwrap(),
+            Path::new("/run/system/lib64")
+        );
+        assert_eq!(
+            fs::read_link(root.join("run/ld.so.cache")).unwrap(),
+            Path::new("/run/system/foreign/ld.so.cache")
+        );
+        fs::remove_dir(system.join("lib64")).unwrap();
+        link_foreign(&root, &system).unwrap();
+        assert!(fs::symlink_metadata(root.join("lib64")).is_err());
+        assert!(fs::symlink_metadata(root.join("run/ld.so.cache")).is_err());
+        // A real /lib64 is left alone.
+        fs::create_dir(root.join("lib64")).unwrap();
+        link_foreign(&root, &system).unwrap();
+        assert!(root.join("lib64").is_dir());
     }
 
     #[test]

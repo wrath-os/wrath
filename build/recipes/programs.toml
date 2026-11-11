@@ -144,3 +144,18 @@ ninja -C /build/b -j$NPROC
 DESTDIR=$DEST ninja -C /build/b install
 '''
 smoke = ["bin/bwrap --version"]
+
+[[package]]
+id = "foreign-hello"
+version = "1"
+scope = "runtime"
+core = true
+wrap = false
+fixup = false
+files = ["foreign-hello.cc"]
+script = '''
+# For tests of running programs built elsewhere: no run path, and the usual loader.
+mkdir -p $DEST$PREFIX/bin
+g++ -O2 foreign-hello.cc -o $DEST$PREFIX/bin/foreign-hello \
+    -Wl,--dynamic-linker=/lib64/ld-linux-x86-64.so.2
+'''

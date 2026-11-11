@@ -1,0 +1,10 @@
+packages = ["foreign-hello"]
+
+[system]
+hostname = "native"
+
+[users.john]
+extra_groups = ["wheel"]
+
+[programs.foreign]
+enable = true

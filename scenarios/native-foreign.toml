@@ -1,0 +1,13 @@
+title = "programs built for other distributions run once the system allows them"
+
+[vm]
+config = "scenarios/fixtures/native-foreign"
+store = "distro"
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { run = "foreign-hello >/dev/null 2>&1 || echo refused; test -e /lib64 || echo no lib64", stdout_contains = "refused\nno lib64" },
+  { apply_config = "scenarios/fixtures/native-foreign-on", expect_plan = ["foreign"] },
+  { run = "foreign-hello", stdout_contains = "hello from elsewhere\n/store/" },
+  { run = "foreign-hello | tail -1; test -e /etc/ld.so.cache || echo no system cache", stdout_contains = "library path: none\nno system cache" },
+]
+timeout_secs = 900

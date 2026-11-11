@@ -1205,6 +1205,15 @@ fn lower<'a>(
     if !firmware.is_empty() {
         actions.push(firmware_links(lab, firmware, packages)?);
     }
+    let foreign: Vec<&str> = model["base"]["foreign"]["libraries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    if !foreign.is_empty() {
+        actions.push(foreign_files(lab, foreign, packages)?);
+    }
     let keys = built_from(&actions, packages);
     actions.push(text("model", PACKAGE_KEYS, 0o644, keys, &[], packages)?);
     Ok(Lowered {
@@ -1514,6 +1523,118 @@ fn kernel_has(tree: &Path, wanted: &[String]) -> Vec<String> {
         .filter(|module| known.contains(&module.replace('-', "_")))
         .cloned()
         .collect()
+}
+
+/// Where a program built elsewhere asks for its loader, under the generation (decision 0015).
+const FOREIGN_LOADER: &str = "lib64/ld-linux-x86-64.so.2";
+/// The library cache that loader reads, under the generation.
+const FOREIGN_CACHE: &str = "foreign/ld.so.cache";
+
+/// glibc's loader with the cache it reads moved to `/run/ld.so.cache`, which activation links to
+/// the running generation's. The path has the same length, so nothing else in the file moves.
+fn foreign_loader(loader: &[u8]) -> Result<Vec<u8>, String> {
+    const FROM: &[u8] = b"/etc/ld.so.cache\0";
+    const TO: &[u8] = b"/run/ld.so.cache\0";
+    let mut found = memchr::memmem::find_iter(loader, FROM);
+    let (Some(at), None) = (found.next(), found.next()) else {
+        return Err("glibc's loader doesn't name `/etc/ld.so.cache` once".to_owned());
+    };
+    let mut patched = loader.to_vec();
+    patched[at..at + TO.len()].copy_from_slice(TO);
+    Ok(patched)
+}
+
+/// The loader and library cache for programs built elsewhere, from glibc and the libraries of
+/// `ids`, made with glibc's `ldconfig`.
+fn foreign_files<'a>(
+    lab: &'a Lab,
+    ids: Vec<&'a str>,
+    packages: &'a Packages,
+) -> Result<Action<'a>, String> {
+    let mut deps = vec!["glibc"];
+    deps.extend(ids.iter().filter(|id| **id != "glibc"));
+    let (unresolved, resolved) = action_records(
+        &deps,
+        packages,
+        |deps| json!({"kind": "foreign", "deps": deps, "order": ids}),
+    )?;
+    let key = key_of(&resolved);
+    Ok(Action {
+        origin: "programs.foreign".to_owned(),
+        unresolved,
+        resolved,
+        run: Box::new(move |objects| {
+            let glibc = &package(packages, "glibc")?.path;
+            let from = lab.on_host(glibc).join("lib/ld-linux-x86-64.so.2");
+            let loader = foreign_loader(&fs::read(&from).map_err(with_path(&from))?)?;
+            let dir = lab.work.join("foreign").join(&key);
+            chain::fresh(&dir)?;
+            let mut inputs = chain::runtime_closure(lab, glibc)?;
+            let mut conf = String::new();
+            for id in &ids {
+                let package = package(packages, id)?;
+                for path in std::iter::once(&package.path).chain(&package.outputs) {
+                    if lab.on_host(path).join("lib").is_dir() {
+                        conf.push_str(&format!("{}/lib\n", path.inside()));
+                        inputs.extend(chain::runtime_closure(lab, path)?);
+                    }
+                }
+            }
+            let build = dir.join("build");
+            fs::create_dir_all(&build).map_err(with_path(&build))?;
+            fs::write(build.join("ld.so.conf"), conf).map_err(with_path(&build))?;
+            let log = dir.join("log");
+            let argv = vec![
+                format!("{}/bin/ldconfig", glibc.inside()),
+                "-X".to_owned(),
+                "-f".to_owned(),
+                "ld.so.conf".to_owned(),
+                "-C".to_owned(),
+                "ld.so.cache".to_owned(),
+            ];
+            let outcome = sandbox::run(
+                lab,
+                &sandbox::Step {
+                    name: "foreign libraries".to_owned(),
+                    argv,
+                    inputs: inputs.into_iter().collect(),
+                    output: None,
+                    view: None,
+                    build_dir: build.clone(),
+                    log: log.clone(),
+                    env: BTreeMap::new(),
+                    limits: sandbox::Limits::DEFAULT,
+                    links: Vec::new(),
+                },
+            )?;
+            if outcome.status != sandbox::Status::Passed {
+                let text = fs::read_to_string(&log).unwrap_or_default();
+                return Err(format!(
+                    "`ldconfig` failed for the foreign libraries:\n{text}"
+                ));
+            }
+            let cache = build.join("ld.so.cache");
+            let cache = fs::read(&cache).map_err(with_path(&cache))?;
+            let entries = Entries::from([
+                (
+                    FOREIGN_LOADER.to_owned(),
+                    Entry::File {
+                        mode: 0o755,
+                        object: objects.put(&loader)?,
+                    },
+                ),
+                (
+                    FOREIGN_CACHE.to_owned(),
+                    Entry::File {
+                        mode: 0o644,
+                        object: objects.put(&cache)?,
+                    },
+                ),
+            ]);
+            chain::remove(&dir)?;
+            Ok(entries)
+        }),
+    })
 }
 
 /// The kernel and an initrd that reaches the root: systemd, which unlocks the disks the model
@@ -2268,6 +2389,11 @@ fn system_packages(model: &Value) -> Vec<String> {
     ids.extend(kernel["package"].as_str().map(str::to_owned));
     ids.extend(kernel["microcode"]["package"].as_str().map(str::to_owned));
     ids.extend(strings(&kernel["firmware"]));
+    let foreign = strings(&model["base"]["foreign"]["libraries"]);
+    if !foreign.is_empty() {
+        ids.insert("glibc".to_owned());
+        ids.extend(foreign);
+    }
     ids.into_iter().collect()
 }
 
@@ -3061,6 +3187,15 @@ mod tests {
         .unwrap();
         let wanted = ["btrfs", "dm_crypt", "tmpfs", "af_alg"].map(String::from);
         assert_eq!(kernel_has(dir.path(), &wanted), ["btrfs", "dm_crypt"]);
+    }
+
+    #[test]
+    fn the_foreign_loader_reads_its_cache_from_run_and_is_otherwise_glibc_s() {
+        let loader = b"\x7fELF\0/etc/ld.so.cache\0/etc/ld.so.preload\0";
+        let patched = foreign_loader(loader).unwrap();
+        assert_eq!(patched, b"\x7fELF\0/run/ld.so.cache\0/etc/ld.so.preload\0");
+        let error = foreign_loader(b"\x7fELF\0").unwrap_err();
+        assert_eq!(error, "glibc's loader doesn't name `/etc/ld.so.cache` once");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # 0015: Running programs built elsewhere
 
-Status: proposed, 2026-11-10.
+Status: accepted, 2026-11-11.
 
 ## Context
 
@@ -26,40 +26,49 @@ A system can opt in to running programs built elsewhere:
 ```toml
 [programs.foreign]
 enable = true
-libraries = ["libstdc++", "openssl", "zlib", "libxcrypt"]
+libraries = ["sdl2"]    # beside the usual ones
 ```
 
-- The generation gets `lib64/ld-linux-x86-64.so.2`, a small loader of our own, and distro links
-  `/lib64` to it at boot and on every switch. It's the only thing a store system adds outside
-  `/store`, `/etc`, `/run` and the user directories.
-- The loader execs glibc's real loader from the store with `--library-path` set to the
-  generation's `foreign/lib`, which links the libraries of the packages listed, and passes the
-  program and its arguments through. The program sees no change in its environment, so what it
-  starts doesn't inherit a library path meant for it.
+- The generation gets `lib64/ld-linux-x86-64.so.2`: a copy of glibc's loader from the store, with
+  the path of the cache it reads, `/etc/ld.so.cache`, changed in place to `/run/ld.so.cache`, a
+  path of the same length. Nothing else in it changes.
+- The generation gets `foreign/ld.so.cache`, which glibc's `ldconfig` makes when the generation is
+  built, from the library directories of the packages listed.
+- Activation links `/lib64` to the running generation's `lib64`, and `/run/ld.so.cache` to its
+  cache, at boot and on every switch, and removes both when the generation has neither.
+- A program from elsewhere runs as itself: the kernel starts the copied loader, which finds its
+  libraries through the cache. Nothing goes into the environment, so nothing reaches what it
+  starts, and `/proc/self/exe` is the program, so programs that start themselves again, as
+  Chromium and Electron do, work.
+- Programs distro builds name the store's loader, which reads `/etc/ld.so.cache`, and there is
+  none, so they never see the cache.
+- A usual set of libraries comes without listing: glibc's, the C++ runtime, zlib, OpenSSL and
+  curl, and with a desktop, Wayland, Mesa, fontconfig, FreeType, X11 and ALSA. `libraries` adds
+  more.
 - Nothing appears in `/usr` or `/lib`. Programs that open data by fixed paths, such as
-  `/usr/share/fonts` or `/usr/lib/locale`, still miss them. That's the case for a namespace run,
-  which this decision leaves for later.
-- A plan shows the option like any other, and `why /lib64/ld-linux-x86-64.so.2` names it.
+  `/usr/share/fonts`, still miss them. That's the case for a namespace run, which this decision
+  leaves for later.
 
-Off by default. A system that doesn't need it keeps having nothing at `/lib64`.
+Off by default. A system that doesn't need it has nothing at `/lib64`. A plan shows the option
+like any other, on the `live` tier.
 
 ## Consequences
 
-- One more path outside the store. The rule that store systems need no FHS paths holds for
-  everything distro builds, and the exception is named in the configuration.
-- The libraries listed are ours, built from our recipes, so a program built against a newer glibc
-  than ours fails with glibc's usual version error. That error says what's wrong.
-- Programs that check for `/usr/bin/env` or `/bin/bash` already find them, since distro links
-  both.
-- Tests: a static program runs without the option; a dynamic one fails without it with a message
-  that names the option; with it, the same binary runs, and a child it starts doesn't see the
-  library path.
+- One more path outside the store, named in the configuration. The rule that store systems need no
+  FHS paths holds for everything distro builds.
+- The libraries are ours, built from our recipes, so a program built against a newer glibc than
+  ours fails with glibc's usual version error, which says what's wrong.
+- A library a program needs and the cache lacks fails with the loader's usual message, naming it.
+- Tests: a program linked against `/lib64` with no run path fails without the option, and with it
+  runs, finds its C++ runtime, and sees itself as `/proc/self/exe`.
 
 ## Alternatives
 
-- Link glibc's loader at `/lib64` directly and write `/etc/ld.so.cache`. Simpler, but every
-  program on the machine would then consult a cache that names store paths, including ours,
-  which so far never do.
+- A loader of our own that execs glibc's with `--library-path`, as this decision first proposed.
+  It keeps the environment clean, but `/proc/self/exe` becomes glibc's loader, and programs that
+  start themselves again by that path break.
+- glibc's loader at `/lib64` unchanged, with `/etc/ld.so.cache`. Every program on the machine,
+  including ours, would then consult a cache.
 - An environment variable for the library path, as nix-ld does. It leaks into children, which
   then load the wrong libraries when they're our own programs.
 - Only a namespace that looks like a conventional distribution, as buildFHSEnv does. That covers
