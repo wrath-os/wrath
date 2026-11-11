@@ -1080,7 +1080,26 @@ fn locked_sources(
 }
 
 /// The text of `relative`, a path inside the source archive at `archive`, under its top directory.
+/// Archives are kept by their hash, so what was read from one is kept beside it and read from
+/// there next time, which spares a plan unpacking every lock.
 fn read_in(archive: &Path, relative: &str) -> Result<String, String> {
+    let mut name = archive.as_os_str().to_owned();
+    name.push(".files");
+    let dir = PathBuf::from(name);
+    let kept = dir.join(relative.replace('/', "%"));
+    if let Ok(text) = fs::read_to_string(&kept) {
+        return Ok(text);
+    }
+    let text = unpack_one(archive, relative)?;
+    let partial = kept.with_extension(format!("partial{}", std::process::id()));
+    fs::create_dir_all(&dir)
+        .and_then(|()| fs::write(&partial, &text))
+        .and_then(|()| fs::rename(&partial, &kept))
+        .map_err(with_path(&kept))?;
+    Ok(text)
+}
+
+fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
     let listing = Command::new("tar")
         .arg("-tf")
         .arg(archive)
@@ -2242,6 +2261,18 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
             Some("goproxy/filippo.io/edwards25519/@v/v1.1.0.mod")
         );
         assert!(locked[0].file);
+    }
+
+    #[test]
+    fn a_lock_read_from_a_source_once_is_read_again_without_unpacking_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let go_sum = "filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5=\n";
+        let archive = archive(dir.path(), &[("go.sum", go_sum)]);
+        assert_eq!(read_in(&archive, "go.sum").unwrap(), go_sum);
+        // Sources are kept by their hash, so what was read from one stays true of it.
+        fs::write(&archive, "not an archive any more").unwrap();
+        assert_eq!(read_in(&archive, "go.sum").unwrap(), go_sum);
+        assert!(read_in(&archive, "go.mod").is_err());
     }
 
     #[test]
