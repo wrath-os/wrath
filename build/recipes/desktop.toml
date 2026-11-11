@@ -373,7 +373,7 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "harfbuzz", "fribidi",
   "cairo",
 ]
-sources = [{ url = "https://download.gnome.org/sources/pango/1.56/pango-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/pango/{series}/pango-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
     -D documentation=false -D build-testsuite=false -D build-examples=false -D libthai=disabled \
@@ -626,7 +626,7 @@ core = true
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "glib",
 ]
-sources = [{ url = "https://download.gnome.org/sources/json-glib/1.10/json-glib-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/json-glib/{series}/json-glib-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
     -D documentation=disabled -D man=false -D tests=false -D nls=disabled
@@ -660,7 +660,7 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "glib",
   "libpng",
 ]
-sources = [{ url = "https://download.gnome.org/sources/gdk-pixbuf/2.44/gdk-pixbuf-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/gdk-pixbuf/{series}/gdk-pixbuf-{version}.tar.xz" }]
 script = '''
 # PNG built in, which is what icons are.
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D png=enabled \
@@ -1059,7 +1059,7 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "glib", "dbus",
   "libxml2",
 ]
-sources = [{ url = "https://download.gnome.org/sources/at-spi2-core/2.60/at-spi2-core-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/at-spi2-core/{series}/at-spi2-core-{version}.tar.xz" }]
 script = '''
 # The accessibility bus and its libraries, ATK among them, without X.
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D x11=disabled \
@@ -1076,7 +1076,7 @@ version = "51.0"
 scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "glib"]
-sources = [{ url = "https://download.gnome.org/sources/gsettings-desktop-schemas/51/gsettings-desktop-schemas-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/gsettings-desktop-schemas/{series}/gsettings-desktop-schemas-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=false
 ninja -C /build/b -j$NPROC
@@ -1137,7 +1137,7 @@ extra_deps = [
   "gdk-pixbuf", "libepoxy", "at-spi2-core",
   "wayland", "wayland-protocols", "libxkbcommon", "gettext",
 ]
-sources = [{ url = "https://download.gnome.org/sources/gtk/3.24/gtk-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/gtk/{series}/gtk-{version}.tar.xz" }]
 script = '''
 # Wayland only, printing to files only.
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D x11_backend=false \
@@ -1270,7 +1270,7 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "glib",
   "libgcrypt", "p11-kit", "systemd", "gettext", "openssh",
 ]
-sources = [{ url = "https://download.gnome.org/sources/gcr/3.41/gcr-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/gcr/{series}/gcr-{version}.tar.xz" }]
 script = '''
 # The certificate and key library GNOME Keyring uses, without its GTK widgets.
 # It asks where ssh-add is even with its SSH agent off.
@@ -1293,7 +1293,7 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3",
   "gcr3", "libgcrypt", "systemd", "linux-pam", "gettext",
 ]
-sources = [{ url = "https://download.gnome.org/sources/gnome-keyring/51/gnome-keyring-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/gnome-keyring/{series}/gnome-keyring-{version}.tar.xz" }]
 script = '''
 # The secrets service, started in each user's session. Its PAM module unlocks it at login.
 meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D ssh-agent=false \

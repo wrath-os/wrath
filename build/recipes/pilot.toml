@@ -212,7 +212,7 @@ version = "2.14.5"
 scope = "runtime"
 toolset = true
 extra_deps = ["zlib", "xz"]
-sources = [{ url = "https://download.gnome.org/sources/libxml2/2.14/libxml2-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/libxml2/{series}/libxml2-{version}.tar.xz" }]
 script = '''
 ./configure --prefix=$PREFIX --disable-static --without-python --with-history=no
 make -j$NPROC

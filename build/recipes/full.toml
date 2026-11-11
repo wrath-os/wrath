@@ -747,7 +747,7 @@ extra_deps = ["meson", "ninja", "python3", "pkgconf", "zlib", "pcre2", "libffi",
 indexes = [
   { from = "share/glib-2.0/schemas", run = "bin/glib-compile-schemas share/glib-2.0/schemas" },
 ]
-sources = [{ url = "https://download.gnome.org/sources/glib/2.84/glib-{version}.tar.xz" }]
+sources = [{ url = "https://download.gnome.org/sources/glib/{series}/glib-{version}.tar.xz" }]
 script = '''
 meson setup /build/b --prefix=$PREFIX --buildtype=release -D tests=true -D introspection=disabled \
     -D man-pages=disabled -D selinux=disabled -D xattr=false

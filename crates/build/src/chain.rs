@@ -951,12 +951,37 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
                 .map_err(|e| format!("{}: {e}", path.display()))?;
             if let Some(version) = &package.version {
                 for source in &mut package.sources {
-                    source.url = source.url.replace("{version}", version);
+                    source.url = source
+                        .url
+                        .replace("{version}", version)
+                        .replace("{series}", &series(version));
                 }
             }
             Ok(package)
         })
         .collect()
+}
+
+/// The release series a version belongs to, as GNOME names its download directories: `2.84` for
+/// `2.84.4`, and the major version alone from 40 on, so `51` for `51.1`.
+fn series(version: &str) -> String {
+    let mut parts = version.split('.');
+    let major = parts.next().unwrap_or_default();
+    match (major.parse::<u64>(), parts.next()) {
+        (Ok(number), Some(minor)) if number < 40 => format!("{major}.{minor}"),
+        _ => major.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod series_tests {
+    #[test]
+    fn a_series_is_major_and_minor_or_from_40_the_major_alone() {
+        assert_eq!(super::series("2.84.4"), "2.84");
+        assert_eq!(super::series("1.10.8"), "1.10");
+        assert_eq!(super::series("51.1"), "51");
+        assert_eq!(super::series("7"), "7");
+    }
 }
 
 /// Fetches `package`'s sources, and then those the locks in its first source list: a project's
