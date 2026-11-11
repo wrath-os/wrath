@@ -1,0 +1,179 @@
+# Packaging findings
+
+What went wrong while writing and moving recipes, what each recipe did about it, and what the
+tool could do so the next recipe doesn't hit it. Add to it as things come up: one entry per kind
+of problem, with the recipes that showed it. When something is done about one, say so in its
+status, and move it to the end once it's prevented for every recipe.
+
+Each entry: what happened, what we did then, what would prevent it, and where it belongs: a
+style (Starlark), the builder (Rust), or the recipe.
+
+## Open
+
+### Option names drift between releases
+
+- **Seen in:** libsecret 0.21 (`gir` became `introspection`), libical 4 (`SHARED_ONLY` removed,
+  most options renamed with a `LIBICAL_` prefix).
+- **What happened:** the build failed at configure, one option at a time, after a full fetch and
+  setup.
+- **What we did:** read the options from the source archive and renamed them in the recipe.
+- **What would prevent it:** the meson style reads `meson.options` (or `meson_options.txt`) from
+  the source at plan time, with `recipe.read`, and refuses a `-D name` the project doesn't declare,
+  naming the ones it does. The autotools style passes `--enable-option-checking=fatal`. CMake can't
+  be checked before it runs; the cmake style passes `--warn-unused-cli`, and a warning about an
+  unused variable fails the build.
+- **Belongs in:** the styles.
+- **Status:** open.
+
+### A configure script finds a compiler that isn't the wrapper
+
+- **Seen in:** libqalculate, whose configure looks for a compiler for the build machine
+  (`CC_FOR_BUILD`) by the full target name, `x86_64-pc-linux-gnu-gcc`.
+- **What happened:** the compiler it found links programs that can't run in the sandbox, so
+  configure stopped with "cannot run C compiled programs".
+- **What we did:** set `CC_FOR_BUILD` and `CXX_FOR_BUILD` in the recipe's `env`.
+- **What would prevent it:** the wrapper also answers to the target-named compilers
+  (`x86_64-pc-linux-gnu-gcc`, `-g++`, `-cc`), so whatever name a build looks for, it gets the
+  wrapper.
+- **Belongs in:** the builder, in the wrapper and the toolchain.
+- **Status:** open.
+
+### A build tool is missing, and only configure says so
+
+- **Seen in:** fuzzel (scdoc, for its man pages), tomlplusplus (cmake, to write CMake package
+  files), libsndfile (python, which configure insists on).
+- **What happened:** each failed at configure with its own message, and the fix was always one
+  word in `extra_deps`.
+- **What we did:** added the tool to `extra_deps`.
+- **What would prevent it:** when a build fails, the builder matches the end of the log against a
+  short table of known messages (`Program 'X' not found`, `no suitable Python interpreter`,
+  `Dependency "X" not found`) and says "add `X` to `extra_deps`", naming the recipe that provides
+  it.
+- **Belongs in:** the builder.
+- **Status:** open.
+
+### Headers include what the library's .pc file doesn't name
+
+- **Seen in:** libqalculate, whose headers include `gmp.h` and `mpfr.h`.
+- **What happened:** noctalia failed to compile partway through with `gmp.h: No such file`.
+- **What we did:** `propagates = ["gmp-lib", "mpfr"]` in libqalculate's recipe.
+- **What would prevent it:** after a build, the builder already reads the package's `.pc` files.
+  It also scans the headers it installed for `#include <...>`, and when one comes from a
+  dependency the `.pc` doesn't require, it propagates that dependency or warns that it should be.
+- **Belongs in:** the builder, beside what `requires.rs` does now.
+- **Status:** open.
+
+### A package of only headers is split away from its own path
+
+- **Seen in:** stb.
+- **What happened:** output splitting moved `include/` to the dev output, so `$LAB_DEP_stb`
+  pointed at an empty directory.
+- **What we did:** `whole = true` in stb's recipe.
+- **What would prevent it:** a package whose only content would go to its dev output stays whole,
+  or builds get a `$LAB_INC_<name>` that points where its headers went.
+- **Belongs in:** the builder, in output splitting.
+- **Status:** open.
+
+### Quoting compiler flags in TOML
+
+- **Seen in:** bc and procps (`CC`, `CFLAGS` with spaces), libsndfile (`-std=gnu17`).
+- **What happened:** `env` exports values as they are, so a value with spaces needs shell quotes
+  inside the TOML string: `"'-O2 -std=gnu17'"`.
+- **What we did:** quoted by hand.
+- **What would prevent it:** every style takes `cflags` and `cxxflags` as lists, and quotes them
+  itself.
+- **Belongs in:** the styles.
+- **Status:** open.
+
+### GCC 15 compiles C23 by default
+
+- **Seen in:** libsndfile, whose ALAC code defines its own `bool`.
+- **What happened:** `bool`, `true` and `false` are keywords in C23, so the code didn't compile.
+- **What we did:** `-std=gnu17` for that recipe.
+- **What would prevent it:** nothing general; old C code needs it said per recipe. With the
+  `cflags` option above, it's one line. Worth noting so the next one is recognised quickly.
+- **Belongs in:** the recipe.
+- **Status:** known.
+
+### A Rust project's repository has no lock, but its published crate does
+
+- **Seen in:** cargo-c.
+- **What happened:** the cargo style found no `Cargo.lock` in the GitHub archive. The crate on
+  crates.io has one, since crates with programs publish their lock, but its version carries build
+  metadata (`0.10.26+cargo-0.100.0`) that the release tag doesn't.
+- **What we did:** took the source from `static.crates.io` with the full version.
+- **What would prevent it:** a cargo style option, `crates_io = true`, that takes the source from
+  the registry by the recipe's id and version, so the recipe doesn't spell the URL.
+- **Belongs in:** the cargo style.
+- **Status:** open.
+
+### A file moves inside a project that has no releases
+
+- **Seen in:** stb, where `stb_image_resize2.h` moved into `deprecated/` at the commit we took.
+- **What happened:** the recipe installed every header at the top, so the one noctalia needed was
+  missing, and the error looked like a search path problem.
+- **What we did:** copied it from `deprecated/` too.
+- **What would prevent it:** a `smoke` or `probes` line for the headers its users need, so the
+  recipe fails where the file is missing and not two packages later.
+- **Belongs in:** the recipe.
+- **Status:** known.
+
+### Reading a project's real options takes digging
+
+- **Seen in:** libsecret, libical, noctalia.
+- **What happened:** each time, the options had to be read by hand from the source archive in the
+  store.
+- **What would prevent it:** `lab options <package>`, which lists a project's options from
+  `meson.options`, `configure --help` or the CMake cache, for whoever writes or updates a recipe.
+- **Belongs in:** the builder's tools.
+- **Status:** open.
+
+### A build tool calls another, which reads its configuration from elsewhere
+
+- **Seen in:** librsvg, whose Meson build runs Cargo and cargo-c from its build directory.
+- **What happened:** Cargo looks for `.cargo/config.toml` from where it runs, which isn't the
+  source, so the vendored crates weren't found.
+- **What we did:** the cargo style's `vendor_only` writes the configuration to `$CARGO_HOME` too,
+  with absolute paths and `offline = true`.
+- **Status:** done, for Cargo. Other tools that nest the same way will need the same.
+
+### Machines without a supported GPU
+
+- **Seen in:** noctalia in the VM tests.
+- **What happened:** Mesa had only the AMD driver, so EGL failed to start without an AMD GPU and
+  the shell exited.
+- **What we did:** added softpipe, which draws without a GPU.
+- **Status:** done.
+
+## Prevented
+
+### Crates from git, fetched as GitHub archives
+
+- **Seen in:** niri's Smithay.
+- **What happened:** only GitHub worked, submodules were missing, and an archive's hash could
+  change if GitHub changed how it compresses.
+- **What we did:** git sources, cloned at the commit from any host and pinned by their files
+  (decision 0028).
+
+### Library names written back to back
+
+- **Seen in:** alacritty, whose binary holds `libEGL.so.1libEGL.so` with no NUL between them,
+  since Rust's strings have none.
+- **What happened:** the run path scan read one long name and dropped Mesa from the run path, so
+  EGL couldn't be loaded.
+- **What we did:** a name ends after its version numbers.
+
+### No certificate authorities
+
+- **Seen in:** curl and wget on the Framework.
+- **What happened:** nothing provided a CA bundle, so every TLS connection failed.
+- **What we did:** every system has Mozilla's bundle where programs look for it.
+
+## Working on recipes
+
+- Don't edit `build/` while a build is running from it. Styles load once per process, so a build
+  can pair an old style with a new recipe and fail in ways that have nothing to do with either.
+- TOML 1.0 has no line breaks inside an inline table: use a sub-table, such as
+  `[package.cargo.env]`, for anything longer than a line.
+- Starlark's `r"..."` strings don't keep backslashes as Python's do: write `\\` in an ordinary
+  string.
