@@ -1086,12 +1086,51 @@ rm $DEST$PREFIX/share/glib-2.0/schemas/gschemas.compiled
 '''
 
 [[package]]
+id = "shared-mime-info"
+version = "2.5.1"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "glib", "libxml2", "gettext"]
+# The MIME database is made from every package's types with each generation.
+indexes = [{ from = "share/mime", run = "bin/update-mime-database share/mime" }]
+sources = [{ url = "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/{version}/shared-mime-info-{version}.tar.gz" }]
+script = '''
+# What kinds of file there are, by name and contents, which file choosers and openers ask.
+meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D update-mimedb=false \
+    -D build-tests=false -D build-translations=false -D build-spec=false
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+smoke = ["bin/update-mime-database -v"]
+
+[[package]]
+id = "hicolor-icon-theme"
+version = "0.18"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja"]
+sources = [{ url = "https://icon-theme.freedesktop.org/releases/hicolor-icon-theme-{version}.tar.xz" }]
+script = '''
+# The theme every icon theme falls back to, where programs put their own icons.
+meson setup /build/b --prefix=$PREFIX --buildtype=release
+ninja -C /build/b -j$NPROC
+DESTDIR=$DEST ninja -C /build/b install
+'''
+
+[[package]]
 id = "gtk3"
 version = "3.24.52"
 # GTK 3 programs need it, and its last series is 3.24; GTK 4 would be a recipe of its own.
 track = "3.24."
 scope = "runtime"
 core = true
+# Its file chooser and icons read what kind of file each is, and the icon theme every theme
+# falls back to, without referring to either.
+runtime_deps = ["shared-mime-info", "hicolor-icon-theme"]
+# The icon cache is made from every package's icons with each generation.
+indexes = [
+  { from = "share/icons/hicolor", run = "bin/gtk-update-icon-cache --force share/icons/hicolor" },
+]
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3",
   "pango",

@@ -126,11 +126,13 @@ f3f70c4af173cc93d05070a9d412efe3ef5889bdf4ac32298e2c0d9ae1350559  https://gitlab
 f9454eae3a5a6ca903c05ead2a7e47d7d3957fb0ffac3ebb11d92842603ae80f  https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/0.5.19/wireplumber-0.5.19.tar.gz
 4460c20cfcf68b994a5ee206ed15fc19ad312f16c96075186e83b0e3f4aa48a5  https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.50/downloads/wayland-protocols-1.50.tar.xz
 64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3  https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.26.0/downloads/wayland-1.26.0.tar.xz
+ea248ea157b7fa0165f4fe282c84919fa84c3f175553642f229c8f1ab7539128  https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.5.1/shared-mime-info-2.5.1.tar.gz
 d77f68f48879510e79a2f65977ccc68981781ea0923e5bdffac2a193ea3d660e  https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.12.4.tar.bz2
 7a85413f2bc354f4f8aa832b718af122e48965e9e0eb9012ee659c13c6385c93  https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.61.tar.bz2
 7716a0d940a0f6ae8e1f3b3f4f36299dc53e31b16840dbd171254312c41ca12e  https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
 c1fda668b520e6aef763c0eb962c032c9fe52bce322e8b00c69b4e9e847bddc1  https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-1.28.9.tar.xz
 6dbf744f583131a34845cc641e803843766a9ba80ce00378a9043fd6d8d5fb38  https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.9.tar.xz
+db0e50a80aa3bf64bb45cbca5cf9f75efd9348cf2ac690b907435238c3cf81d7  https://icon-theme.freedesktop.org/releases/hicolor-icon-theme-0.18.tar.xz
 d89a5e45c7180170e19be828f9e944a768c593758094fc57a358d0e7c4cb1a49  https://mirrors.edge.kernel.org/pub/linux/network/wireless/iwd-3.12.tar.xz
 b22e0901227b820cd1c280abe681a15b773a5103a5e10dc442e94ebb34cbf58d  https://mirrors.edge.kernel.org/pub/software/network/wireless-regdb/wireless-regdb-2026.09.03.tar.xz
 c6b5c6b086c0df9d3ca3ff5e084c1d0ef909e6038279c71c1c3e985f576ff76a  https://nginx.org/download/nginx-1.28.0.tar.gz
