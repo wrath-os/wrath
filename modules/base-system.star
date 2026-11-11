@@ -3,10 +3,12 @@
 
 SYSTEM = "/run/system"
 LOCALES = "system-locales"
+CERTIFICATES = "/etc/ssl/certs/ca-certificates.crt"
 
 PACKAGES = [
     "bash",
     "bubblewrap",
+    "ca-certificates",
     "coreutils",
     "findutils",
     "gawk",
@@ -63,7 +65,8 @@ def render(ctx: Context) -> None:
     ctx.file("/etc/systemd/system.conf.d/distro.conf", formats.systemd({
         "Manager": {
             "ManagerEnvironment": path,
-            "DefaultEnvironment": [path] + ["%s=%s" % item for item in locale_variables],
+            "DefaultEnvironment": [path, "SSL_CERT_FILE=" + CERTIFICATES] +
+                                  ["%s=%s" % item for item in locale_variables],
         },
     }))
     ctx.file("/etc/locale.conf", "LANG=%s\n" % ctx.read("system.locale"))
@@ -89,6 +92,15 @@ def render(ctx: Context) -> None:
         },
     })
 
+    # Certificate authorities where programs look for them: Debian's and Arch's path, which curl,
+    # wget and Go use, the shorter one some others use, and Fedora's, for programs built there.
+    # OpenSSL's own directory is in its package, so it's pointed at them too.
+    certificates = SYSTEM + "/share/ca-certificates/ca-certificates.crt"
+    ctx.file("/etc/tmpfiles.d/ca-certificates.conf", lines([
+        "L+ %s - - - - %s" % (path, certificates)
+        for path in [CERTIFICATES, "/etc/ssl/cert.pem", "/etc/pki/tls/certs/ca-bundle.crt"]
+    ]))
+
     ctx.file("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n")
     ctx.file("/etc/nsswitch.conf", lines([
         "passwd: files systemd",
@@ -102,6 +114,7 @@ def render(ctx: Context) -> None:
         ("PATH", "/run/wrappers/bin:%s/users/${USER}/bin:%s/bin" % (SYSTEM, SYSTEM)),
         ("XDG_DATA_DIRS", SYSTEM + "/share"),
         ("XDG_CONFIG_DIRS", "/etc/xdg"),
+        ("SSL_CERT_FILE", CERTIFICATES),
     ] + locale_variables
     ctx.file(
         "/etc/profile",
