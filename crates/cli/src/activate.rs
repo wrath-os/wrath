@@ -485,7 +485,93 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     systemctl("try-reload-or-restart", &activation.reload)?;
     systemctl("start", &installed(&activation, &after))?;
     point_at(root, system, &[RUNNING])?;
+    switch_user_managers(root, &before, &after);
     link_foreign(root, system)
+}
+
+/// The user units enabled for every user that `after` adds and those it drops, against `before`.
+fn user_unit_changes(before: &Model, after: &Model) -> (Vec<String>, Vec<String>) {
+    let added = after
+        .enabled_user
+        .keys()
+        .filter(|unit| !before.enabled_user.contains_key(*unit))
+        .cloned()
+        .collect();
+    let dropped = before
+        .enabled_user
+        .keys()
+        .filter(|unit| !after.enabled_user.contains_key(*unit))
+        .cloned()
+        .collect();
+    (added, dropped)
+}
+
+/// The names of the users whose service managers `listing` shows running, as
+/// `systemctl list-units --plain 'user@*.service'` prints them, by their uid in `passwd`.
+fn running_users(listing: &str, passwd: &str) -> Vec<String> {
+    let names: BTreeMap<&str, &str> = passwd
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split(':');
+            let name = fields.next()?;
+            Some((fields.nth(1)?, name))
+        })
+        .collect();
+    listing
+        .lines()
+        .filter_map(|line| line.split_whitespace().next()?.strip_prefix("user@"))
+        .filter_map(|unit| unit.strip_suffix(".service"))
+        .filter_map(|uid| names.get(uid).map(|name| (*name).to_owned()))
+        .collect()
+}
+
+/// Brings the service managers of users logged in to the new generation: each reloads, starts the
+/// user units newly enabled for a target it has reached, such as a shell for the graphical session,
+/// and stops those no longer enabled. A user's session going wrong doesn't fail the switch, so
+/// failures are warnings.
+fn switch_user_managers(root: &Path, before: &Model, after: &Model) {
+    let (added, dropped) = user_unit_changes(before, after);
+    let listing = Command::new("systemctl")
+        .args([
+            "list-units",
+            "--type=service",
+            "--state=active",
+            "--no-legend",
+            "--plain",
+            "user@*.service",
+        ])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default();
+    let passwd = fs::read_to_string(root.join("etc/passwd")).unwrap_or_default();
+    for user in running_users(&listing, &passwd) {
+        let manager = format!("{user}@");
+        let user_systemctl = |args: &[&str]| {
+            Command::new("systemctl")
+                .args(["--user", "--machine", &manager])
+                .args(args)
+                .output()
+        };
+        let warn = |what: &str, args: &[&str]| match user_systemctl(args) {
+            Ok(out) if out.status.success() => {}
+            _ => eprintln!("distro: {user}'s session: couldn't {what}"),
+        };
+        warn("reload its units", &["daemon-reload"]);
+        for unit in &dropped {
+            warn(&format!("stop {unit}"), &["stop", unit]);
+        }
+        for unit in &added {
+            let wanted_by = user_systemctl(&["show", "--property=WantedBy", "--value", unit])
+                .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+                .unwrap_or_default();
+            let reached = wanted_by.split_whitespace().any(|target| {
+                user_systemctl(&["is-active", "--quiet", target]).is_ok_and(|o| o.status.success())
+            });
+            if reached {
+                warn(&format!("start {unit}"), &["start", "--no-block", unit]);
+            }
+        }
+    }
 }
 
 /// Says what activation left out, and carries on.
@@ -1162,6 +1248,40 @@ mod tests {
             Path::new("/store/systemd/lib/systemd/system/multi-user.target")
         );
         assert!(fs::symlink_metadata(etc.join(gone)).is_err());
+    }
+
+    #[test]
+    fn a_switch_starts_user_units_newly_enabled_and_stops_those_dropped() {
+        let mut before = Model::default();
+        let mut after = Model::default();
+        before
+            .enabled_user
+            .insert("old.service".to_owned(), BTreeSet::new());
+        before
+            .enabled_user
+            .insert("kept.service".to_owned(), BTreeSet::new());
+        after
+            .enabled_user
+            .insert("kept.service".to_owned(), BTreeSet::new());
+        after
+            .enabled_user
+            .insert("noctalia.service".to_owned(), BTreeSet::new());
+        assert_eq!(
+            user_unit_changes(&before, &after),
+            (
+                vec!["noctalia.service".to_owned()],
+                vec!["old.service".to_owned()]
+            )
+        );
+    }
+
+    #[test]
+    fn the_users_whose_service_managers_run_are_named_by_their_uid() {
+        let listing = "user@1000.service loaded active running User Manager for UID 1000\n\
+                       user@1001.service loaded active running User Manager for UID 1001\n";
+        let passwd = "root:x:0:0::/root:/bin/sh\ndemo:x:1000:100::/home/demo:/bin/sh\n";
+        // A uid with no account, as for a user gone since, is left out.
+        assert_eq!(running_users(listing, passwd), ["demo"]);
     }
 
     #[test]

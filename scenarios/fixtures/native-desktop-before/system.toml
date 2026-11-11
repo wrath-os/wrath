@@ -1,0 +1,9 @@
+[system]
+hostname = "desktop"
+
+[audio]
+enable = true
+
+[desktop]
+session = "niri"
+autologin = "demo"

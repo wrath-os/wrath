@@ -1,0 +1,2 @@
+description = "Demo user"
+extra_groups = ["audio", "video"]
