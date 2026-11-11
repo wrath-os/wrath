@@ -41,14 +41,13 @@ scope = "runtime"
 core = true
 extra_deps = ["cmake", "ninja"]
 sources = [{ url = "https://s3.amazonaws.com/json-c_releases/releases/json-c-{version}.tar.gz" }]
-script = '''
-cmake -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
-    -DCMAKE_BUILD_TYPE=Release -DBUILD_STATIC_LIBS=OFF -DDISABLE_WERROR=ON -DBUILD_APPS=OFF \
-    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["json-c"]
+
+[package.cmake]
+args = [
+    "-DBUILD_STATIC_LIBS=OFF", "-DDISABLE_WERROR=ON", "-DBUILD_APPS=OFF",
+    "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+]
 
 [[package]]
 id = "popt"
@@ -56,12 +55,10 @@ version = "1.19"
 scope = "runtime"
 core = true
 sources = [{ url = "http://ftp.rpm.org/popt/releases/popt-1.x/popt-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 probes = ["popt"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-nls"]
 
 [[package]]
 id = "libudev"
@@ -116,15 +113,16 @@ scope = "runtime"
 core = true
 extra_deps = ["json-c", "popt", "device-mapper", "openssl", "util-linux", "pkgconf"]
 sources = [{ url = "https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --disable-static --disable-nls --disable-asciidoc \
-    --disable-ssh-token --disable-selinux --with-crypto_backend=openssl --disable-internal-argon2 \
-    --disable-libargon2 --with-tmpfilesdir=$PREFIX/lib/tmpfiles.d
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/cryptsetup --version"]
 probes = ["cryptsetup"]
+
+[package.autotools]
+args = [
+    "--sbindir=$PREFIX/bin", "--disable-static", "--disable-nls", "--disable-asciidoc",
+    "--disable-ssh-token", "--disable-selinux", "--with-crypto_backend=openssl",
+    "--disable-internal-argon2", "--disable-libargon2",
+    "--with-tmpfilesdir=$PREFIX/lib/tmpfiles.d",
+]
 
 [[package]]
 id = "tpm2-tss"
@@ -133,19 +131,20 @@ scope = "runtime"
 core = true
 extra_deps = ["openssl", "pkgconf"]
 sources = [{ url = "https://github.com/tpm2-software/tpm2-tss/releases/download/{version}/tpm2-tss-{version}.tar.gz" }]
-script = '''
+probes = ["tss2-esys", "tss2-rc", "tss2-mu", "tss2-tcti-device"]
+
 # The libraries systemd talks to the TPM through, to unlock disks with it. The feature API and
 # policy library need a JSON parser and a web client, and systemd uses neither.
-./configure --prefix=$PREFIX --disable-static --disable-fapi --disable-policy \
-    --disable-doxygen-doc --disable-unit --disable-integration --disable-tcti-libtpms \
-    --disable-tcti-spi-helper --disable-tcti-spi-ltt2go --disable-tcti-spi-ftdi --disable-tcti-i2c-helper \
-    --disable-tcti-i2c-ftdi --with-udevrulesdir=$PREFIX/lib/udev/rules.d \
-    --with-sysusersdir=$PREFIX/lib/sysusers.d --with-tmpfilesdir=$PREFIX/lib/tmpfiles.d \
-    --with-runstatedir=/run --sysconfdir=$PREFIX/etc
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
-probes = ["tss2-esys", "tss2-rc", "tss2-mu", "tss2-tcti-device"]
+[package.autotools]
+args = [
+    "--disable-static", "--disable-fapi", "--disable-policy", "--disable-doxygen-doc",
+    "--disable-unit", "--disable-integration", "--disable-tcti-libtpms",
+    "--disable-tcti-spi-helper", "--disable-tcti-spi-ltt2go", "--disable-tcti-spi-ftdi",
+    "--disable-tcti-i2c-helper", "--disable-tcti-i2c-ftdi",
+    "--with-udevrulesdir=$PREFIX/lib/udev/rules.d", "--with-sysusersdir=$PREFIX/lib/sysusers.d",
+    "--with-tmpfilesdir=$PREFIX/lib/tmpfiles.d", "--with-runstatedir=/run",
+    "--sysconfdir=$PREFIX/etc",
+]
 
 [[package]]
 id = "btrfs-progs"
@@ -154,13 +153,13 @@ scope = "runtime"
 core = true
 extra_deps = ["util-linux", "zlib", "zstd", "pkgconf"]
 sources = [{ url = "https://www.kernel.org/pub/linux/kernel/people/kdave/btrfs-progs/btrfs-progs-v{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --bindir=$PREFIX/bin --disable-documentation --disable-python \
-    --disable-convert --disable-zoned --disable-lzo --disable-libudev --disable-backtrace
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/btrfs --version", "bin/mkfs.btrfs --version"]
+
+[package.autotools]
+args = [
+    "--bindir=$PREFIX/bin", "--disable-documentation", "--disable-python", "--disable-convert",
+    "--disable-zoned", "--disable-lzo", "--disable-libudev", "--disable-backtrace",
+]
 
 [[package]]
 id = "dosfstools"
@@ -168,9 +167,7 @@ version = "4.2"
 scope = "runtime"
 core = true
 sources = [{ url = "https://github.com/dosfstools/dosfstools/releases/download/v{version}/dosfstools-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --enable-compat-symlinks --without-udev
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/mkfs.vfat --help"]
+
+[package.autotools]
+args = ["--sbindir=$PREFIX/bin", "--enable-compat-symlinks", "--without-udev"]

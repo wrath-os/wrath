@@ -26,19 +26,20 @@ extra_deps = [
     "python3",
 ]
 sources = [{ url = "https://github.com/polkit-org/polkit/archive/{version}/polkit-{version}.tar.gz" }]
-script = '''
+smoke = ["bin/pkexec --version", "bin/pkaction --version"]
+
+[package.meson]
+args = [
+    "--sysconfdir=/etc", "-D authfw=pam", "-D session_tracking=logind", "-D introspection=false",
+    "-D man=false", "-D examples=false", "-D tests=false", "-D gtk_doc=false",
+    "-D systemdsystemunitdir=$PREFIX/lib/systemd/system", "-D polkitd_user=polkitd",
+    "-D privileged_group=wheel",
+]
+prepare = '''
 # It asks systemd where sysusers and tmpfiles entries go, which is systemd's own store path.
 sed -i "s#systemd_dep.get_variable(pkgconfig : 'sysusers_dir')#'$PREFIX/lib/sysusers.d'#; \
     s#systemd_dep.get_variable(pkgconfig : 'tmpfiles_dir')#'$PREFIX/lib/tmpfiles.d'#" meson.build
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release --sysconfdir=/etc \
-    -D authfw=pam -D session_tracking=logind -D introspection=false \
-    -D man=false -D examples=false -D tests=false -D gtk_doc=false \
-    -D systemdsystemunitdir=$PREFIX/lib/systemd/system -D polkitd_user=polkitd \
-    -D privileged_group=wheel
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
 '''
-smoke = ["bin/pkexec --version", "bin/pkaction --version"]
 
 [[package]]
 id = "iputils"
@@ -47,13 +48,13 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libcap"]
 sources = [{ url = "https://github.com/iputils/iputils/archive/{version}/iputils-{version}.tar.gz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --sbindir=bin --buildtype=release -D BUILD_MANS=false \
-    -D USE_IDN=false -D USE_GETTEXT=false -D SKIP_TESTS=true
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/ping -V"]
+
+[package.meson]
+args = [
+    "--sbindir=bin", "-D BUILD_MANS=false", "-D USE_IDN=false", "-D USE_GETTEXT=false",
+    "-D SKIP_TESTS=true",
+]
 
 [[package]]
 id = "locales"

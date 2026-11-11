@@ -7,12 +7,10 @@ version = "2.12.2"
 scope = "runtime"
 core = true
 sources = [{ url = "https://ftp.gnu.org/gnu/hello/hello-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/hello --version"]
+
+[package.autotools]
+args = ["--disable-nls"]
 
 [[package]]
 id = "nano"
@@ -21,15 +19,6 @@ scope = "runtime"
 core = true
 deps = ["ncurses"]
 sources = [{ url = "https://www.nano-editor.org/dist/v8/nano-{version}.tar.xz" }]
-script = '''
-tiny=
-if [ "$OPTION_enableTiny" = true ]; then
-    tiny=--enable-tiny
-fi
-./configure --prefix=$PREFIX --disable-nls $tiny
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/nano --version"]
 
 [package.options.enableTiny]
@@ -37,19 +26,26 @@ type = "bool"
 default = false
 doc = "Leave out everything but editing, for rescue systems."
 
+[package.autotools]
+args = ["--disable-nls", "$tiny"]
+prepare = '''
+tiny=
+if [ "$OPTION_enableTiny" = true ]; then
+    tiny=--enable-tiny
+fi
+'''
+
 [[package]]
 id = "jq"
 version = "1.8.1"
 scope = "runtime"
 core = true
 sources = [{ url = "https://github.com/jqlang/jq/releases/download/jq-{version}/jq-{version}.tar.gz" }]
-script = '''
-# The release carries oniguruma, the regular expression library, and builds it in.
-./configure --prefix=$PREFIX --with-oniguruma=builtin --disable-docs --disable-static
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/jq --version", "echo '{\"a\":1}' | bin/jq -e .a"]
+
+# The release carries oniguruma, the regular expression library, and builds it in.
+[package.autotools]
+args = ["--with-oniguruma=builtin", "--disable-docs", "--disable-static"]
 
 [[package]]
 id = "process-compose"
@@ -74,14 +70,14 @@ scope = "runtime"
 core = true
 extra_deps = ["openssl", "zlib", "perl"]
 sources = [{ url = "https://curl.se/download/curl-{version}.tar.xz" }]
-script = '''
-# Certificates come from the system's bundle, which the system puts in /etc/ssl.
-./configure --prefix=$PREFIX --with-openssl --with-zlib --without-libpsl --disable-static \
-    --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt --disable-manual
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/curl --version"]
+
+# Certificates come from the system's bundle, which the system puts in /etc/ssl.
+[package.autotools]
+args = [
+    "--with-openssl", "--with-zlib", "--without-libpsl", "--disable-static",
+    "--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt", "--disable-manual",
+]
 
 [[package]]
 id = "git"
@@ -106,15 +102,17 @@ scope = "runtime"
 core = true
 extra_deps = ["openssl", "zlib", "pkgconf", "perl"]
 sources = [{ url = "https://ftp.gnu.org/gnu/wget/wget-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --with-ssl=openssl --without-libpsl --disable-nls --disable-pcre \
-    --disable-pcre2 --disable-iri
-make -j$NPROC
-make install DESTDIR=$DEST
+smoke = ["bin/wget --version"]
+
+[package.autotools]
+args = [
+    "--with-ssl=openssl", "--without-libpsl", "--disable-nls", "--disable-pcre",
+    "--disable-pcre2", "--disable-iri",
+]
+install = '''
 # Certificates come from the system's bundle, as for curl.
 echo "ca_certificate = /etc/ssl/certs/ca-certificates.crt" >> $DEST$PREFIX/etc/wgetrc
 '''
-smoke = ["bin/wget --version"]
 
 [[package]]
 id = "hostname"
@@ -136,14 +134,11 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libcap"]
 sources = [{ url = "https://github.com/containers/bubblewrap/releases/download/v{version}/bubblewrap-{version}.tar.xz" }]
-script = '''
-# The sandbox every build runs in, and `run` and `shell` in a checkout.
-meson setup /build/b --prefix=$PREFIX --buildtype=release -D man=disabled -D selinux=disabled \
-    -D tests=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/bwrap --version"]
+
+# The sandbox every build runs in, and `run` and `shell` in a checkout.
+[package.meson]
+args = ["-D man=disabled", "-D selinux=disabled", "-D tests=false"]
 
 [[package]]
 id = "foreign-hello"

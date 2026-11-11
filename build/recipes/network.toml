@@ -23,20 +23,20 @@ scope = "runtime"
 core = true
 extra_deps = ["readline", "dbus", "pkgconf", "python3"]
 sources = [{ url = "https://mirrors.edge.kernel.org/pub/linux/network/wireless/iwd-{version}.tar.xz" }]
-script = '''
+smoke = ["bin/iwctl --help", "libexec/iwd --version"]
+
 # The wifi daemon and its `iwctl`. It carries ell, the library it's built on.
 # readline needs ncurses linked beside it, which its configure check doesn't add.
-export LIBS=-lncursesw
-./configure --prefix=$PREFIX --sysconfdir=/etc --localstatedir=/var --libexecdir=$PREFIX/libexec \
-    --disable-manual-pages --with-dbus-datadir=$PREFIX/share \
-    --with-dbus-busdir=$PREFIX/share/dbus-1/system-services \
-    --with-systemd-unitdir=$PREFIX/lib/systemd/system \
-    --with-systemd-networkdir=$PREFIX/lib/systemd/network \
-    --with-systemd-modloaddir=$PREFIX/lib/modules-load.d
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
-smoke = ["bin/iwctl --help", "libexec/iwd --version"]
+[package.autotools]
+args = [
+    "--sysconfdir=/etc", "--localstatedir=/var", "--libexecdir=$PREFIX/libexec",
+    "--disable-manual-pages", "--with-dbus-datadir=$PREFIX/share",
+    "--with-dbus-busdir=$PREFIX/share/dbus-1/system-services",
+    "--with-systemd-unitdir=$PREFIX/lib/systemd/system",
+    "--with-systemd-networkdir=$PREFIX/lib/systemd/network",
+    "--with-systemd-modloaddir=$PREFIX/lib/modules-load.d",
+]
+env = { LIBS = "-lncursesw" }
 
 [[package]]
 id = "wireless-regdb"

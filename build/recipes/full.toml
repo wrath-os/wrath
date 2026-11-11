@@ -175,14 +175,12 @@ version = "1.4.20"
 scope = "runtime"
 core = true
 sources = [{ url = "https://ftp.gnu.org/gnu/m4/m4-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/m4 --version"]
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-nls"]
 
 [[package]]
 id = "bison-final"
@@ -191,15 +189,13 @@ scope = "runtime"
 core = true
 extra_deps = ["m4-final"]
 sources = [{ url = "https://ftp.gnu.org/gnu/bison/bison-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/bison --version", "sh: printf '%%%%\\ns: ;\\n' > /tmp/g.y; $OUT/bin/bison -o /tmp/g.c /tmp/g.y"]
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
 check_in_view = true
+
+[package.autotools]
+args = ["--disable-nls"]
 
 [[package]]
 id = "flex"
@@ -208,15 +204,15 @@ scope = "runtime"
 core = true
 extra_deps = ["m4-final"]
 sources = [{ url = "https://github.com/westes/flex/releases/download/v{version}/flex-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-nls --disable-static
-make -j$NPROC
-make install DESTDIR=$DEST
-ln -s flex $DEST$PREFIX/bin/lex
-'''
 smoke = ["bin/flex --version", "sh: printf '%%%%\\n%%%%\\n' > /tmp/x.l; $OUT/bin/flex -o /tmp/x.c /tmp/x.l"]
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-nls", "--disable-static"]
+install = '''
+ln -s flex $DEST$PREFIX/bin/lex
+'''
 
 [[package]]
 id = "pkgconf"
@@ -239,14 +235,11 @@ scope = "runtime"
 core = true
 extra_deps = ["m4-final", "perl"]
 sources = [{ url = "https://ftp.gnu.org/gnu/autoconf/autoconf-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/autoconf --version"]
 check_in_view = true
 check = "make -j$NPROC check"
+
+[package.autotools]
 
 [[package]]
 id = "automake"
@@ -255,14 +248,11 @@ scope = "runtime"
 core = true
 extra_deps = ["autoconf", "m4-final", "perl"]
 sources = [{ url = "https://ftp.gnu.org/gnu/automake/automake-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/automake --version"]
 check_in_view = true
 check = "make -j$NPROC check"
+
+[package.autotools]
 
 [[package]]
 id = "libtool"
@@ -271,15 +261,13 @@ scope = "runtime"
 core = true
 extra_deps = ["m4-final"]
 sources = [{ url = "https://ftp.gnu.org/gnu/libtool/libtool-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/libtool --version"]
 probes = ["ltdl"]
 check_in_view = true
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "gettext"
@@ -288,14 +276,12 @@ scope = "runtime"
 core = true
 extra_deps = ["ncurses", "libxml2", "expat"]
 sources = [{ url = "https://ftp.gnu.org/gnu/gettext/gettext-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-java --without-emacs
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/gettext --version", "bin/msgfmt --version"]
 check_in_view = true
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-static", "--disable-java", "--without-emacs"]
 
 [[package]]
 id = "gperf"
@@ -303,14 +289,11 @@ version = "3.3"
 scope = "runtime"
 core = true
 sources = [{ url = "https://ftp.gnu.org/gnu/gperf/gperf-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/gperf --version"]
 check_in_view = true
 check = "make -j1 check"
+
+[package.autotools]
 
 [[package]]
 id = "texinfo"
@@ -319,14 +302,12 @@ scope = "runtime"
 core = true
 extra_deps = ["perl", "ncurses"]
 sources = [{ url = "https://ftp.gnu.org/gnu/texinfo/texinfo-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/makeinfo --version"]
 check_in_view = true
 check = "mkdir -p /build/locale; localedef -i en_US -f UTF-8 /build/locale/en_US.UTF-8; localedef -i C -f UTF-8 /build/locale/C.UTF-8; export LOCPATH=/build/locale; make -j$NPROC check || { head -c 40000 tp/tests/test-suite.log; exit 1; }"
+
+[package.autotools]
+args = ["--disable-nls"]
 
 [[package]]
 id = "lz4"
@@ -368,13 +349,11 @@ scope = "runtime"
 core = true
 extra_deps = ["cmake"]
 sources = [{ url = "https://github.com/facebook/zstd/releases/download/v{version}/zstd-{version}.tar.gz" }]
-script = '''
-cmake -S build/cmake -B /build/b -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_BUILD_TYPE=Release \
-    -DZSTD_BUILD_TESTS=OFF
-cmake --build /build/b -j$NPROC
-DESTDIR=$DEST cmake --install /build/b
-'''
 smoke = ["bin/zstd --version"]
+
+[package.cmake]
+source = "build/cmake"
+args = ["-DZSTD_BUILD_TESTS=OFF"]
 
 [[package]]
 id = "file"
@@ -383,15 +362,13 @@ scope = "runtime"
 core = true
 extra_deps = ["zlib", "bzip2", "xz", "zstd"]
 sources = [{ url = "https://astron.com/pub/file/file-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/file --version", "bin/file /proc/self/exe"]
 probes = ["magic"]
 check_in_view = true
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "bc"
@@ -399,13 +376,12 @@ version = "7.0.3"
 scope = "runtime"
 core = true
 sources = [{ url = "https://github.com/gavinhoward/bc/releases/download/{version}/bc-{version}.tar.xz" }]
-script = '''
-CC='gcc -std=c99' ./configure --prefix=$PREFIX -G -O3 -r
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/bc --version"]
 check = "make test"
+
+[package.autotools]
+args = ["-G", "-O3", "-r"]
+env = { CC = "'gcc -std=c99'" }
 
 [[package]]
 id = "mpfr"
@@ -414,14 +390,12 @@ scope = "runtime"
 core = true
 extra_deps = ["gmp-lib"]
 sources = [{ url = "https://ftp.gnu.org/gnu/mpfr/mpfr-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --enable-thread-safe
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 probes = ["mpfr"]
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-static", "--enable-thread-safe"]
 
 [[package]]
 id = "mpc"
@@ -430,14 +404,12 @@ scope = "runtime"
 core = true
 extra_deps = ["gmp-lib", "mpfr"]
 sources = [{ url = "https://ftp.gnu.org/gnu/mpc/mpc-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 probes = ["mpc"]
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "attr"
@@ -445,16 +417,14 @@ version = "2.5.2"
 scope = "runtime"
 core = true
 sources = [{ url = "https://download.savannah.gnu.org/releases/attr/attr-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-nls --sysconfdir=$PREFIX/etc
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/getfattr --version"]
 probes = ["attr"]
 check_in_view = true
 check = "make -j$NPROC check"
 check_deps = ["perl"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-nls", "--sysconfdir=$PREFIX/etc"]
 
 [[package]]
 id = "acl"
@@ -463,16 +433,14 @@ scope = "runtime"
 core = true
 extra_deps = ["attr"]
 sources = [{ url = "https://download.savannah.gnu.org/releases/acl/acl-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/getfacl --version"]
 probes = ["acl"]
 check_in_view = true
 check = "make -j$NPROC check"
 check_deps = ["perl"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-nls"]
 
 [[package]]
 id = "libcap"
@@ -497,16 +465,16 @@ scope = "runtime"
 core = true
 extra_deps = ["perl"]
 sources = [{ url = "https://github.com/besser82/libxcrypt/releases/download/v{version}/libxcrypt-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --enable-hashes=strong,glibc \
-    --enable-obsolete-api=no --disable-failure-tokens
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 probes = ["crypt"]
 check_in_view = true
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = [
+    "--disable-static", "--enable-hashes=strong,glibc", "--enable-obsolete-api=no",
+    "--disable-failure-tokens",
+]
 
 [[package]]
 id = "pcre2"
@@ -515,17 +483,17 @@ scope = "runtime"
 core = true
 extra_deps = ["zlib", "bzip2"]
 sources = [{ url = "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-{version}/pcre2-{version}.tar.bz2" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --enable-unicode --enable-pcre2-16 --enable-pcre2-32 \
-    --enable-pcre2grep-libz --enable-pcre2grep-libbz2
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/pcre2grep --version"]
 probes = ["pcre2-8"]
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
 check_in_view = true
+
+[package.autotools]
+args = [
+    "--disable-static", "--enable-unicode", "--enable-pcre2-16", "--enable-pcre2-32",
+    "--enable-pcre2grep-libz", "--enable-pcre2grep-libbz2",
+]
 
 [[package]]
 id = "gdbm"
@@ -534,15 +502,13 @@ scope = "runtime"
 core = true
 extra_deps = ["readline"]
 sources = [{ url = "https://ftp.gnu.org/gnu/gdbm/gdbm-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --enable-libgdbm-compat --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/gdbmtool --version"]
 probes = ["gdbm"]
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-static", "--enable-libgdbm-compat", "--disable-nls"]
 
 [[package]]
 id = "less"
@@ -551,12 +517,10 @@ scope = "runtime"
 core = true
 extra_deps = ["ncurses"]
 sources = [{ url = "https://www.greenwoodsoftware.com/less/less-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --sysconfdir=/etc
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/less --version"]
+
+[package.autotools]
+args = ["--sysconfdir=/etc"]
 
 [[package]]
 id = "psmisc"
@@ -565,12 +529,10 @@ scope = "runtime"
 core = true
 extra_deps = ["ncurses"]
 sources = [{ url = "https://sourceforge.net/projects/psmisc/files/psmisc/psmisc-{version}.tar.xz/download" }]
-script = '''
-./configure --prefix=$PREFIX --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/pstree --version"]
+
+[package.autotools]
+args = ["--disable-nls"]
 
 [[package]]
 id = "libpipeline"
@@ -578,12 +540,10 @@ version = "1.5.8"
 scope = "runtime"
 core = true
 sources = [{ url = "https://download.savannah.gnu.org/releases/libpipeline/libpipeline-{version}.tar.gz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 probes = ["pipeline"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "ninja"
@@ -622,14 +582,14 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "zlib", "xz", "zstd", "openssl"]
 sources = [{ url = "https://www.kernel.org/pub/linux/utils/kernel/kmod/kmod-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --buildtype=release -D manpages=false -D bashcompletiondir=no \
-    -D fishcompletiondir=no -D zshcompletiondir=no
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/kmod --version"]
 probes = ["kmod"]
+
+[package.meson]
+args = [
+    "-D manpages=false", "-D bashcompletiondir=no", "-D fishcompletiondir=no",
+    "-D zshcompletiondir=no",
+]
 
 [[package]]
 id = "util-linux"
@@ -638,20 +598,21 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "ncurses", "zlib"]
 sources = [{ url = "https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --bindir=$PREFIX/bin --sbindir=$PREFIX/bin --libdir=$PREFIX/lib \
-    --runstatedir=/run --disable-static --disable-nls --disable-liblastlog2 --disable-chfn-chsh \
-    --disable-login --disable-nologin --disable-su --disable-setpriv --disable-runuser \
-    --disable-pylibmount --without-python --without-systemd --without-systemdsystemunitdir \
-    --disable-makeinstall-chown --disable-makeinstall-setuid
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/lsblk --version", "bin/mount --version"]
 probes = ["blkid", "uuid"]
 check_build = "make -j$NPROC check-programs"
 check = "tests/run.sh --parallel=$NPROC --exclude=script"
 check_in_view = true
+
+[package.autotools]
+args = [
+    "--bindir=$PREFIX/bin", "--sbindir=$PREFIX/bin", "--libdir=$PREFIX/lib", "--runstatedir=/run",
+    "--disable-static", "--disable-nls", "--disable-liblastlog2", "--disable-chfn-chsh",
+    "--disable-login", "--disable-nologin", "--disable-su", "--disable-setpriv",
+    "--disable-runuser", "--disable-pylibmount", "--without-python", "--without-systemd",
+    "--without-systemdsystemunitdir", "--disable-makeinstall-chown",
+    "--disable-makeinstall-setuid",
+]
 
 [[package]]
 id = "e2fsprogs"
@@ -679,14 +640,12 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "ncurses"]
 sources = [{ url = "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-{version}.tar.xz/download" }]
-script = '''
-CFLAGS='-O2 -include stdbool.h' ./configure --prefix=$PREFIX --disable-static --disable-nls --disable-kill \
-    --without-systemd
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/ps --version"]
 probes = ["proc2"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-nls", "--disable-kill", "--without-systemd"]
+env = { CFLAGS = "'-O2 -include stdbool.h'" }
 
 [[package]]
 id = "iproute2"
@@ -709,14 +668,12 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "flex", "bison-final", "m4-final", "autoconf", "automake", "perl"]
 sources = [{ url = "https://www.kernel.org/pub/linux/utils/kbd/kbd-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-vlock --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/loadkeys --version"]
 check_in_view = true
 check = "PATH=/build/src:$PATH make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-vlock", "--disable-nls"]
 
 [[package]]
 id = "elfutils"
@@ -725,17 +682,17 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "zlib", "bzip2", "xz", "zstd", "flex", "bison-final", "m4-final"]
 sources = [{ url = "https://sourceware.org/ftp/elfutils/{version}/elfutils-{version}.tar.bz2" }]
-script = '''
-./configure --prefix=$PREFIX --disable-debuginfod --enable-libdebuginfod=dummy --disable-nls
-make -j$NPROC
-make install DESTDIR=$DEST
-rm -f $DEST$PREFIX/lib/lib*.a
-'''
 smoke = ["bin/eu-readelf --version"]
 probes = ["elf"]
 check_in_view = true
 check_build = "make -j$NPROC check TESTS="
 check = "make -j$NPROC check"
+
+[package.autotools]
+args = ["--disable-debuginfod", "--enable-libdebuginfod=dummy", "--disable-nls"]
+install = '''
+rm -f $DEST$PREFIX/lib/lib*.a
+'''
 
 [[package]]
 id = "glib"
@@ -748,16 +705,16 @@ indexes = [
   { from = "share/glib-2.0/schemas", run = "bin/glib-compile-schemas share/glib-2.0/schemas" },
 ]
 sources = [{ url = "https://download.gnome.org/sources/glib/{series}/glib-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --buildtype=release -D tests=true -D introspection=disabled \
-    -D man-pages=disabled -D selinux=disabled -D xattr=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/gio version", "bin/glib-compile-schemas --version"]
 probes = ["glib-2.0", "gio-2.0"]
 check_in_view = true
 check = "meson test -C /build/b --num-processes $NPROC --print-errorlogs"
+
+[package.meson]
+args = [
+    "-D tests=true", "-D introspection=disabled", "-D man-pages=disabled", "-D selinux=disabled",
+    "-D xattr=false",
+]
 
 # Goes in the seed, which has to point its binaries at wherever it's unpacked.
 [[package]]
@@ -766,9 +723,6 @@ version = "0.18.0"
 scope = "runtime"
 core = true
 sources = [{ url = "https://github.com/NixOS/patchelf/releases/download/{version}/patchelf-{version}.tar.bz2" }]
-script = '''
-./configure --prefix=$PREFIX
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/patchelf --version"]
+
+[package.autotools]

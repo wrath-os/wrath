@@ -78,15 +78,15 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "libxcrypt", "flex", "bison-final", "m4-final"]
 sources = [{ url = "https://github.com/linux-pam/linux-pam/releases/download/v{version}/Linux-PAM-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --buildtype=release --sysconfdir=/etc --libdir=lib \
-    --sbindir=bin -D i18n=disabled -D docs=disabled -D audit=disabled -D econf=disabled \
-    -D logind=disabled -D elogind=disabled -D selinux=disabled -D nis=disabled \
-    -D pam_userdb=disabled -D examples=false -D xtests=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["pam"]
+
+[package.meson]
+args = [
+    "--sysconfdir=/etc", "--sbindir=bin", "-D i18n=disabled", "-D docs=disabled",
+    "-D audit=disabled", "-D econf=disabled", "-D logind=disabled", "-D elogind=disabled",
+    "-D selinux=disabled", "-D nis=disabled", "-D pam_userdb=disabled", "-D examples=false",
+    "-D xtests=false",
+]
 
 [[package]]
 id = "shadow"
@@ -95,16 +95,17 @@ scope = "runtime"
 core = true
 extra_deps = ["linux-pam", "libxcrypt", "pkgconf"]
 sources = [{ url = "https://github.com/shadow-maint/shadow/releases/download/{version}/shadow-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --bindir=$PREFIX/bin --sbindir=$PREFIX/bin --sysconfdir=/etc \
-    --disable-static --disable-nls --disable-man --disable-account-tools-setuid \
-    --disable-subordinate-ids --disable-lastlog --disable-logind --with-libpam --with-yescrypt \
-    --without-libbsd --without-selinux --without-audit --without-acl --without-attr \
-    --without-tcb --without-nscd --without-sssd --without-btrfs --without-group-name-max-length
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 smoke = ["bin/passwd --help"]
+
+[package.autotools]
+args = [
+    "--bindir=$PREFIX/bin", "--sbindir=$PREFIX/bin", "--sysconfdir=/etc", "--disable-static",
+    "--disable-nls", "--disable-man", "--disable-account-tools-setuid",
+    "--disable-subordinate-ids", "--disable-lastlog", "--disable-logind", "--with-libpam",
+    "--with-yescrypt", "--without-libbsd", "--without-selinux", "--without-audit",
+    "--without-acl", "--without-attr", "--without-tcb", "--without-nscd", "--without-sssd",
+    "--without-btrfs", "--without-group-name-max-length",
+]
 
 [[package]]
 id = "sudo"
@@ -143,7 +144,31 @@ extra_deps = [
     "linux-pam", "cryptsetup", "tpm2-tss",
 ]
 sources = [{ url = "https://github.com/systemd/systemd/archive/v{version}/systemd-{version}.tar.gz" }]
-script = '''
+smoke = ["bin/systemctl --version", "lib/systemd/systemd --version", "bin/udevadm --version",
+    "bin/systemd-repart --version", "lib/systemd/systemd-cryptsetup --version"]
+probes = ["systemd"]
+
+[package.meson]
+args = [
+    "--auto-features=disabled", "--sysconfdir=/etc", "--localstatedir=/var",
+    "-D c_link_args=-Wl,-rpath,$PREFIX/lib/systemd",
+    "-D mode=release", "-D man=disabled", "-D html=disabled", "-D install-tests=false",
+    "-D tests=false", "-D bootloader=enabled", "-D sbat-distro=", "-D acl=enabled",
+    "-D kmod=enabled", "-D blkid=enabled", "-D xz=enabled", "-D lz4=enabled", "-D zstd=enabled",
+    "-D openssl=enabled", "-D libcryptsetup=enabled", "-D fdisk=enabled", "-D repart=enabled",
+    "-D pam=enabled", "-D sysusers=true", "-D tpm2=enabled", "-D firstboot=false",
+    "-D homed=disabled", "-D userdb=false", "-D sysupdate=disabled", "-D ukify=disabled",
+    "-D ldconfig=false", "-D rpmmacrosdir=no", "-D pamconfdir=no", "-D bashcompletiondir=no",
+    "-D zshcompletiondir=no", "-D default-dnssec=no", "-D dev-kvm-mode=0660",
+    "-D nobody-group=nogroup", "-D create-log-dirs=false", "-D install-sysconfdir=false",
+    "-D mount-path=$LAB_DEP_util_linux/bin/mount",
+    "-D umount-path=$LAB_DEP_util_linux/bin/umount",
+    "-D sulogin-path=$LAB_DEP_util_linux/bin/sulogin", "-D kmod-path=$LAB_DEP_kmod/bin/kmod",
+    "-D loadkeys-path=$LAB_DEP_kbd/bin/loadkeys", "-D setfont-path=$LAB_DEP_kbd/bin/setfont",
+    "-D nologin-path=$LAB_DEP_coreutils/bin/false",
+]
+env = { PYTHONPATH = "$LAB_DEP_jinja2/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyelftools/site" }
+prepare = '''
 # Swap units run swapon and swapoff from a fixed path, which a system without /sbin lacks.
 sed -i "s#\"/sbin/swapon\"#\"$LAB_DEP_util_linux/bin/swapon\"#; s#\"/sbin/swapoff\"#\"$LAB_DEP_util_linux/bin/swapoff\"#" \
     src/core/swap.c
@@ -151,24 +176,8 @@ sed -i "s#\"/sbin/swapon\"#\"$LAB_DEP_util_linux/bin/swapon\"#; s#\"/sbin/swapof
 # them up in its own list of directories, never in PATH. A system's programs are in /run/system/bin.
 sed -i 's|^#define DEFAULT_PATH_WITH\(OUT\)\?_SBIN |&"/run/wrappers/bin:/run/system/bin:" |' \
     src/basic/path-util.h
-export PYTHONPATH=$LAB_DEP_jinja2/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyelftools/site
-meson setup /build/b --prefix=$PREFIX --buildtype=release --auto-features=disabled \
-    --sysconfdir=/etc --localstatedir=/var \
-    -D c_link_args=-Wl,-rpath,$PREFIX/lib/systemd \
-    -D mode=release -D man=disabled -D html=disabled -D install-tests=false -D tests=false \
-    -D bootloader=enabled -D sbat-distro= -D acl=enabled -D kmod=enabled -D blkid=enabled -D xz=enabled -D lz4=enabled -D zstd=enabled \
-    -D openssl=enabled -D libcryptsetup=enabled -D fdisk=enabled -D repart=enabled -D pam=enabled -D sysusers=true \
-    -D tpm2=enabled \
-    -D firstboot=false -D homed=disabled -D userdb=false -D sysupdate=disabled -D ukify=disabled \
-    -D ldconfig=false -D rpmmacrosdir=no -D pamconfdir=no -D bashcompletiondir=no \
-    -D zshcompletiondir=no -D default-dnssec=no -D dev-kvm-mode=0660 -D nobody-group=nogroup \
-    -D create-log-dirs=false -D install-sysconfdir=false \
-    -D mount-path=$LAB_DEP_util_linux/bin/mount -D umount-path=$LAB_DEP_util_linux/bin/umount \
-    -D sulogin-path=$LAB_DEP_util_linux/bin/sulogin -D kmod-path=$LAB_DEP_kmod/bin/kmod \
-    -D loadkeys-path=$LAB_DEP_kbd/bin/loadkeys -D setfont-path=$LAB_DEP_kbd/bin/setfont \
-    -D nologin-path=$LAB_DEP_coreutils/bin/false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
+'''
+install = '''
 # Units name helpers bare, and systemd looks those up in a compiled-in /usr/bin.
 for unit in $(grep -rlE '^Exec[A-Za-z]*=[-@:+!]*[a-z]' $DEST$PREFIX/lib/systemd --include='*.service'); do
     for name in $(ls $DEST$PREFIX/bin); do
@@ -181,9 +190,6 @@ sed -i "s#/sbin/agetty#$LAB_DEP_util_linux/bin/agetty#" $DEST$PREFIX/lib/systemd
 sed -i "s#^ExecStart=-/sbin/modprobe #ExecStart=-@$LAB_DEP_kmod/bin/kmod modprobe #" \
     $DEST$PREFIX/lib/systemd/system/modprobe@.service
 '''
-smoke = ["bin/systemctl --version", "lib/systemd/systemd --version", "bin/udevadm --version",
-    "bin/systemd-repart --version", "lib/systemd/systemd-cryptsetup --version"]
-probes = ["systemd"]
 
 [[package]]
 id = "dbus"
@@ -192,18 +198,17 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "python3", "pkgconf", "expat", "systemd", "libcap"]
 sources = [{ url = "https://dbus.freedesktop.org/releases/dbus/dbus-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --buildtype=release --auto-features=disabled \
-    --sysconfdir=/etc --localstatedir=/var \
-    -D systemd=enabled -D systemd_system_unitdir=$PREFIX/lib/systemd/system \
-    -D systemd_user_unitdir=$PREFIX/lib/systemd/user -D runtime_dir=/run \
-    -D system_socket=/run/dbus/system_bus_socket -D system_pid_file=/run/dbus/pid \
-    -D message_bus=true -D tools=true -D modular_tests=disabled -D xml_docs=disabled \
-    -D doxygen_docs=disabled -D ducktype_docs=disabled -D qt_help=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/dbus-daemon --version"]
+
+[package.meson]
+args = [
+    "--auto-features=disabled", "--sysconfdir=/etc", "--localstatedir=/var",
+    "-D systemd=enabled", "-D systemd_system_unitdir=$PREFIX/lib/systemd/system",
+    "-D systemd_user_unitdir=$PREFIX/lib/systemd/user", "-D runtime_dir=/run",
+    "-D system_socket=/run/dbus/system_bus_socket", "-D system_pid_file=/run/dbus/pid",
+    "-D message_bus=true", "-D tools=true", "-D modular_tests=disabled", "-D xml_docs=disabled",
+    "-D doxygen_docs=disabled", "-D ducktype_docs=disabled", "-D qt_help=disabled",
+]
 
 [[package]]
 id = "zlib-version"

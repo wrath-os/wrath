@@ -8,15 +8,15 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf"]
 sources = [{ url = "https://dri.freedesktop.org/libdrm/libdrm-{version}.tar.xz" }]
-script = '''
-# The kernel's display interface, with AMD's and Radeon's parts.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D amdgpu=enabled \
-    -D radeon=enabled -D intel=disabled -D nouveau=disabled -D vmwgfx=disabled \
-    -D valgrind=disabled -D man-pages=disabled -D tests=false -D cairo-tests=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["libdrm"]
+
+# The kernel's display interface, with AMD's and Radeon's parts.
+[package.meson]
+args = [
+  "-D amdgpu=enabled", "-D radeon=enabled", "-D intel=disabled", "-D nouveau=disabled",
+  "-D vmwgfx=disabled", "-D valgrind=disabled", "-D man-pages=disabled", "-D tests=false",
+  "-D cairo-tests=disabled",
+]
 
 [[package]]
 id = "wayland"
@@ -25,14 +25,11 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libffi", "expat", "libxml2"]
 sources = [{ url = "https://gitlab.freedesktop.org/wayland/wayland/-/releases/{version}/downloads/wayland-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D documentation=false \
-    -D tests=false -D dtd_validation=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/wayland-scanner --version"]
 probes = ["wayland-client"]
+
+[package.meson]
+args = ["-D documentation=false", "-D tests=false", "-D dtd_validation=false"]
 
 [[package]]
 id = "wayland-protocols"
@@ -41,11 +38,9 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "wayland"]
 sources = [{ url = "https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/{version}/downloads/wayland-protocols-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D tests=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
+
+[package.meson]
+args = ["-D tests=false"]
 
 [[package]]
 id = "xkeyboard-config"
@@ -54,12 +49,9 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "python3", "gettext", "perl"]
 sources = [{ url = "https://www.x.org/releases/individual/data/xkeyboard-config/xkeyboard-config-{version}.tar.xz" }]
-script = '''
+
 # Keyboard layouts, which libxkbcommon reads.
-meson setup /build/b --prefix=$PREFIX --buildtype=release
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
+[package.meson]
 
 [[package]]
 id = "libxkbcommon"
@@ -68,16 +60,16 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "bison-final", "m4-final", "xkeyboard-config", "libxml2"]
 sources = [{ url = "https://github.com/xkbcommon/libxkbcommon/archive/xkbcommon-{version}/libxkbcommon-xkbcommon-{version}.tar.gz" }]
-script = '''
-# Keymaps from keyboard layouts, read from xkeyboard-config where it is in the store.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
-    -D xkb-config-root=$LAB_DEP_xkeyboard_config/share/xkeyboard-config-2 \
-    -D x-locale-root=/run/system/share/X11/locale \
-    -D enable-x11=false -D enable-wayland=false -D enable-docs=false -D enable-tools=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["xkbcommon"]
+
+# Keymaps from keyboard layouts, read from xkeyboard-config where it is in the store.
+[package.meson]
+args = [
+  "-D xkb-config-root=$LAB_DEP_xkeyboard_config/share/xkeyboard-config-2",
+  "-D x-locale-root=/run/system/share/X11/locale",
+  "-D enable-x11=false", "-D enable-wayland=false", "-D enable-docs=false",
+  "-D enable-tools=false",
+]
 
 [[package]]
 id = "pixman"
@@ -86,13 +78,10 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf"]
 sources = [{ url = "https://cairographics.org/releases/pixman-{version}.tar.gz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D tests=disabled \
-    -D demos=disabled -D gtk=disabled -D libpng=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["pixman-1"]
+
+[package.meson]
+args = ["-D tests=disabled", "-D demos=disabled", "-D gtk=disabled", "-D libpng=disabled"]
 
 [[package]]
 id = "libevdev"
@@ -101,13 +90,10 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "python3"]
 sources = [{ url = "https://www.freedesktop.org/software/libevdev/libevdev-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D tests=disabled \
-    -D documentation=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["libevdev"]
+
+[package.meson]
+args = ["-D tests=disabled", "-D documentation=disabled"]
 
 [[package]]
 id = "mtdev"
@@ -115,12 +101,10 @@ version = "1.1.7"
 scope = "runtime"
 core = true
 sources = [{ url = "http://bitmath.org/code/mtdev/mtdev-{version}.tar.bz2" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make install DESTDIR=$DEST
-'''
 probes = ["mtdev"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "libinput"
@@ -129,14 +113,14 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "systemd", "libevdev", "mtdev"]
 sources = [{ url = "https://gitlab.freedesktop.org/libinput/libinput/-/archive/{version}/libinput-{version}.tar.gz" }]
-script = '''
-# Keyboards, mice and touchpads, for the compositor.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D libwacom=false \
-    -D debug-gui=false -D tests=false -D documentation=false -D udev-dir=$PREFIX/lib/udev
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["libinput"]
+
+# Keyboards, mice and touchpads, for the compositor.
+[package.meson]
+args = [
+  "-D libwacom=false", "-D debug-gui=false", "-D tests=false", "-D documentation=false",
+  "-D udev-dir=$PREFIX/lib/udev",
+]
 
 [[package]]
 id = "seatd"
@@ -145,14 +129,14 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "systemd"]
 sources = [{ url = "https://git.sr.ht/~kennylevinsen/seatd/archive/{version}.tar.gz" }]
-script = '''
-# libseat, which the compositor opens displays and input devices through, with logind.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D libseat-logind=systemd \
-    -D server=disabled -D examples=disabled -D man-pages=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["libseat"]
+
+# libseat, which the compositor opens displays and input devices through, with logind.
+[package.meson]
+args = [
+  "-D libseat-logind=systemd", "-D server=disabled", "-D examples=disabled",
+  "-D man-pages=disabled",
+]
 
 [[package]]
 id = "hwdata"
@@ -174,13 +158,10 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "hwdata", "python3"]
 sources = [{ url = "https://gitlab.freedesktop.org/emersion/libdisplay-info/-/releases/{version}/downloads/libdisplay-info-{version}.tar.xz" }]
-script = '''
-# What a monitor says about itself.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["display-info"]
+
+# What a monitor says about itself.
+[package.meson]
 
 [[package]]
 id = "mako"
@@ -223,15 +204,12 @@ scope = "runtime"
 core = true
 extra_deps = ["cmake", "ninja", "python3"]
 sources = [{ url = "https://github.com/KhronosGroup/glslang/archive/{version}/glslang-{version}.tar.gz" }]
-script = '''
+smoke = ["bin/glslangValidator --version"]
+
 # The GLSL compiler, which Mesa compiles its built-in Vulkan shaders with. Without the SPIR-V
 # optimizer, which nothing here uses.
-cmake -S . -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
-    -DCMAKE_BUILD_TYPE=Release -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DBUILD_SHARED_LIBS=ON
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
-smoke = ["bin/glslangValidator --version"]
+[package.cmake]
+args = ["-DENABLE_OPT=OFF", "-DGLSLANG_TESTS=OFF", "-DBUILD_SHARED_LIBS=ON"]
 
 [[package]]
 id = "mesa"
@@ -246,19 +224,19 @@ extra_deps = [
   "glslang",
 ]
 sources = [{ url = "https://archive.mesa3d.org/mesa-{version}.tar.xz" }]
-script = '''
+probes = ["egl", "gbm"]
+
 # OpenGL and Vulkan for AMD GPUs: radeonsi and RADV, which compile shaders with ACO, so without
 # LLVM. EGL and GBM for Wayland compositors.
-export PYTHONPATH=$LAB_DEP_mako/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyyaml/site:$LAB_DEP_packaging/site
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
-    -D platforms=wayland -D gallium-drivers=radeonsi -D vulkan-drivers=amd -D llvm=disabled \
-    -D egl=enabled -D gbm=enabled -D gles2=enabled -D glx=disabled -D xlib-lease=disabled \
-    -D valgrind=disabled -D libunwind=disabled -D lmsensors=disabled -D video-codecs=all \
-    -D microsoft-clc=disabled -D amd-use-llvm=false -D build-tests=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
-probes = ["egl", "gbm"]
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_mako/site:$LAB_DEP_markupsafe/site:$LAB_DEP_pyyaml/site:$LAB_DEP_packaging/site" }
+args = [
+  "-D platforms=wayland", "-D gallium-drivers=radeonsi", "-D vulkan-drivers=amd",
+  "-D llvm=disabled", "-D egl=enabled", "-D gbm=enabled", "-D gles2=enabled", "-D glx=disabled",
+  "-D xlib-lease=disabled", "-D valgrind=disabled", "-D libunwind=disabled",
+  "-D lmsensors=disabled", "-D video-codecs=all", "-D microsoft-clc=disabled",
+  "-D amd-use-llvm=false", "-D build-tests=false",
+]
 
 # Drawing text and shapes: images, fonts and their shaping, and the 2D libraries on top.
 
@@ -269,13 +247,10 @@ scope = "runtime"
 core = true
 extra_deps = ["cmake", "ninja", "zlib"]
 sources = [{ url = "https://github.com/pnggroup/libpng/archive/v{version}/libpng-{version}.tar.gz" }]
-script = '''
-cmake -S . -B /build/b -G Ninja -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_INSTALL_LIBDIR=lib \
-    -DCMAKE_BUILD_TYPE=Release -DPNG_STATIC=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["libpng"]
+
+[package.cmake]
+args = ["-DPNG_STATIC=OFF", "-DPNG_TESTS=OFF", "-DPNG_TOOLS=OFF"]
 
 [[package]]
 id = "freetype"
@@ -284,14 +259,14 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libpng"]
 sources = [{ url = "https://download.savannah.gnu.org/releases/freetype/freetype-{version}.tar.xz" }]
-script = '''
-# Without HarfBuzz, which is built on FreeType.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D harfbuzz=disabled \
-    -D png=enabled -D zlib=system -D brotli=disabled -D bzip2=disabled -D tests=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["freetype2"]
+
+# Without HarfBuzz, which is built on FreeType.
+[package.meson]
+args = [
+  "-D harfbuzz=disabled", "-D png=enabled", "-D zlib=system", "-D brotli=disabled",
+  "-D bzip2=disabled", "-D tests=disabled",
+]
 
 [[package]]
 id = "harfbuzz"
@@ -300,14 +275,14 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "python3", "freetype", "glib"]
 sources = [{ url = "https://github.com/harfbuzz/harfbuzz/releases/download/{version}/harfbuzz-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D freetype=enabled \
-    -D glib=enabled -D gobject=disabled -D cairo=disabled -D icu=disabled -D chafa=disabled \
-    -D introspection=disabled -D tests=disabled -D docs=disabled -D utilities=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["harfbuzz"]
+
+[package.meson]
+args = [
+  "-D freetype=enabled", "-D glib=enabled", "-D gobject=disabled", "-D cairo=disabled",
+  "-D icu=disabled", "-D chafa=disabled", "-D introspection=disabled", "-D tests=disabled",
+  "-D docs=disabled", "-D utilities=disabled",
+]
 
 [[package]]
 id = "fribidi"
@@ -316,13 +291,10 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf"]
 sources = [{ url = "https://github.com/fribidi/fribidi/releases/download/v{version}/fribidi-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D docs=false -D bin=false \
-    -D tests=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["fribidi"]
+
+[package.meson]
+args = ["-D docs=false", "-D bin=false", "-D tests=false"]
 
 [[package]]
 id = "fontconfig"
@@ -334,15 +306,15 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "gperf", "freetype", "expat",
 ]
 sources = [{ url = "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/{version}/fontconfig-{version}.tar.xz" }]
-script = '''
+probes = ["fontconfig"]
+
 # Finds fonts by name. The configuration and cache are in /etc and /var, where the system keeps
 # them.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release --sysconfdir=/etc \
-    --localstatedir=/var -D doc=disabled -D tests=disabled -D tools=enabled -D nls=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
-probes = ["fontconfig"]
+[package.meson]
+args = [
+  "--sysconfdir=/etc", "--localstatedir=/var", "-D doc=disabled", "-D tests=disabled",
+  "-D tools=enabled", "-D nls=disabled",
+]
 
 [[package]]
 id = "cairo"
@@ -354,14 +326,14 @@ extra_deps = [
   "glib",
 ]
 sources = [{ url = "https://cairographics.org/releases/cairo-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D xlib=disabled \
-    -D xcb=disabled -D lzo=disabled -D tests=disabled -D spectre=disabled -D symbol-lookup=disabled \
-    -D glib=enabled -D png=enabled -D freetype=enabled -D fontconfig=enabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["cairo"]
+
+[package.meson]
+args = [
+  "-D xlib=disabled", "-D xcb=disabled", "-D lzo=disabled", "-D tests=disabled",
+  "-D spectre=disabled", "-D symbol-lookup=disabled", "-D glib=enabled", "-D png=enabled",
+  "-D freetype=enabled", "-D fontconfig=enabled",
+]
 
 [[package]]
 id = "pango"
@@ -374,14 +346,14 @@ extra_deps = [
   "cairo",
 ]
 sources = [{ url = "https://download.gnome.org/sources/pango/{series}/pango-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
-    -D documentation=false -D build-testsuite=false -D build-examples=false -D libthai=disabled \
-    -D xft=disabled -D cairo=enabled -D fontconfig=enabled -D freetype=enabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["pango", "pangocairo"]
+
+[package.meson]
+args = [
+  "-D introspection=disabled", "-D documentation=false", "-D build-testsuite=false",
+  "-D build-examples=false", "-D libthai=disabled", "-D xft=disabled", "-D cairo=enabled",
+  "-D fontconfig=enabled", "-D freetype=enabled",
+]
 
 # The compositor.
 
@@ -471,12 +443,10 @@ version = "1.2.16.1"
 scope = "runtime"
 core = true
 sources = [{ url = "https://www.alsa-project.org/files/pub/lib/alsa-lib-{version}.tar.bz2" }]
-script = '''
-./configure --prefix=$PREFIX --disable-python --disable-static --without-debug
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["alsa"]
+
+[package.autotools]
+args = ["--disable-python", "--disable-static", "--without-debug"]
 
 [[package]]
 id = "lua"
@@ -512,22 +482,22 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "python3", "alsa-lib", "dbus", "glib"]
 sources = [{ url = "https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/{version}/pipewire-{version}.tar.gz" }]
-script = '''
+smoke = ["bin/pipewire --version"]
+probes = ["libpipewire-0.3"]
+
 # Audio through ALSA, with the PulseAudio server for programs that speak it, run as each user's
 # service. Every optional feature is off unless named, and the session manager is WirePlumber,
 # built on its own.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D auto_features=disabled \
-    -D session-managers=[] -D alsa=enabled -D pipewire-alsa=enabled -D dbus=enabled \
-    -D libsystemd=enabled -D systemd-user-service=enabled -D systemd-system-service=disabled \
-    -D udevrulesdir=$PREFIX/lib/udev/rules.d -D udev=enabled -D spa-plugins=enabled \
-    -D support=enabled -D audioconvert=enabled -D audiomixer=enabled -D control=enabled \
-    -D volume=enabled -D flatpak=disabled \
-    -D examples=disabled -D tests=disabled -D man=disabled -D docs=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
-smoke = ["bin/pipewire --version"]
-probes = ["libpipewire-0.3"]
+[package.meson]
+args = [
+  "-D auto_features=disabled", "-D session-managers=[]", "-D alsa=enabled",
+  "-D pipewire-alsa=enabled", "-D dbus=enabled", "-D libsystemd=enabled",
+  "-D systemd-user-service=enabled", "-D systemd-system-service=disabled",
+  "-D udevrulesdir=$PREFIX/lib/udev/rules.d", "-D udev=enabled", "-D spa-plugins=enabled",
+  "-D support=enabled", "-D audioconvert=enabled", "-D audiomixer=enabled",
+  "-D control=enabled", "-D volume=enabled", "-D flatpak=disabled", "-D examples=disabled",
+  "-D tests=disabled", "-D man=disabled", "-D docs=disabled",
+]
 
 [[package]]
 id = "wireplumber"
@@ -540,16 +510,15 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "pipewire", "glib", "lua", "systemd",
 ]
 sources = [{ url = "https://gitlab.freedesktop.org/pipewire/wireplumber/-/archive/{version}/wireplumber-{version}.tar.gz" }]
-script = '''
-# The session manager: it links PipeWire's devices and streams, by its Lua scripts.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D system-lua=true \
-    -D introspection=disabled -D doc=disabled -D tests=false -D dbus-tests=false \
-    -D elogind=disabled -D systemd=enabled -D systemd-user-service=true \
-    -D systemd-system-service=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/wireplumber --version"]
+
+# The session manager: it links PipeWire's devices and streams, by its Lua scripts.
+[package.meson]
+args = [
+  "-D system-lua=true", "-D introspection=disabled", "-D doc=disabled", "-D tests=false",
+  "-D dbus-tests=false", "-D elogind=disabled", "-D systemd=enabled",
+  "-D systemd-user-service=true", "-D systemd-system-service=false",
+]
 
 [[package]]
 id = "rtkit"
@@ -558,22 +527,24 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "dbus", "libcap", "polkit"]
 sources = [{ url = "https://gitlab.freedesktop.org/pipewire/rtkit/-/archive/v{version}/rtkit-v{version}.tar.gz" }]
-script = '''
+
 # Gives processes that ask, such as PipeWire, realtime priority within limits.
+[package.meson]
+prepare = '''
 # Its D-Bus description goes into the program as bytes, which it would make with xxd.
 od -An -v -tx1 org.freedesktop.RealtimeKit1.xml | tr -s ' \n' '\n' | sed '/^$/d; s/^/0x/' \
     | paste -sd, > xml-introspection.h
 # Its users file goes with its own files, instead of where systemd keeps its own.
 sed -i "s|^sysusersdir = ''|sysusersdir = '$PREFIX/lib/sysusers.d'|" meson.build
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D installed_tests=false \
-    -D libsystemd=enabled -D dbus_interfacedir=$PREFIX/share/dbus-1/interfaces \
-    -D dbus_rulesdir=$PREFIX/share/dbus-1/system.d \
-    -D dbus_systemservicedir=$PREFIX/share/dbus-1/system-services \
-    -D polkit_actiondir=$PREFIX/share/polkit-1/actions \
-    -D systemd_systemunitdir=$PREFIX/lib/systemd/system
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
 '''
+args = [
+  "-D installed_tests=false", "-D libsystemd=enabled",
+  "-D dbus_interfacedir=$PREFIX/share/dbus-1/interfaces",
+  "-D dbus_rulesdir=$PREFIX/share/dbus-1/system.d",
+  "-D dbus_systemservicedir=$PREFIX/share/dbus-1/system-services",
+  "-D polkit_actiondir=$PREFIX/share/polkit-1/actions",
+  "-D systemd_systemunitdir=$PREFIX/lib/systemd/system",
+]
 
 # Desktop portals, which programs open files and share screens through.
 
@@ -586,13 +557,13 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "glib",
 ]
 sources = [{ url = "https://download.gnome.org/sources/json-glib/{series}/json-glib-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
-    -D documentation=disabled -D man=false -D tests=false -D nls=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["json-glib-1.0"]
+
+[package.meson]
+args = [
+  "-D introspection=disabled", "-D documentation=disabled", "-D man=false", "-D tests=false",
+  "-D nls=disabled",
+]
 
 [[package]]
 id = "fuse3"
@@ -601,14 +572,11 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf"]
 sources = [{ url = "https://github.com/libfuse/libfuse/releases/download/fuse-{version}/fuse-{version}.tar.gz" }]
-script = '''
-# The library only: fusermount3 has to be setuid, which a wrapper gives it when a system needs it.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D utils=false \
-    -D examples=false -D tests=false -D useroot=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["fuse3"]
+
+# The library only: fusermount3 has to be setuid, which a wrapper gives it when a system needs it.
+[package.meson]
+args = ["-D utils=false", "-D examples=false", "-D tests=false", "-D useroot=false"]
 
 [[package]]
 id = "gdk-pixbuf"
@@ -620,16 +588,16 @@ extra_deps = [
   "libpng",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gdk-pixbuf/{series}/gdk-pixbuf-{version}.tar.xz" }]
-script = '''
-# PNG built in, which is what icons are.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D png=enabled \
-    -D jpeg=disabled -D tiff=disabled -D gif=disabled -D others=disabled -D glycin=disabled \
-    -D builtin_loaders=png -D introspection=disabled -D documentation=false -D man=false \
-    -D tests=false -D installed_tests=false -D thumbnailer=disabled -D gio_sniffing=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["gdk-pixbuf-2.0"]
+
+# PNG built in, which is what icons are.
+[package.meson]
+args = [
+  "-D png=enabled", "-D jpeg=disabled", "-D tiff=disabled", "-D gif=disabled",
+  "-D others=disabled", "-D glycin=disabled", "-D builtin_loaders=png",
+  "-D introspection=disabled", "-D documentation=false", "-D man=false", "-D tests=false",
+  "-D installed_tests=false", "-D thumbnailer=disabled", "-D gio_sniffing=false",
+]
 
 [[package]]
 id = "gstreamer"
@@ -640,15 +608,14 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "bison-final", "m4-final", "flex", "glib",
 ]
 sources = [{ url = "https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=disabled \
-    -D doc=disabled -D tests=disabled -D examples=disabled -D benchmarks=disabled \
-    -D ptp-helper=disabled -D libunwind=disabled -D libdw=disabled -D bash-completion=disabled \
-    -D nls=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["gstreamer-1.0"]
+
+[package.meson]
+args = [
+  "-D introspection=disabled", "-D doc=disabled", "-D tests=disabled", "-D examples=disabled",
+  "-D benchmarks=disabled", "-D ptp-helper=disabled", "-D libunwind=disabled",
+  "-D libdw=disabled", "-D bash-completion=disabled", "-D nls=disabled",
+]
 
 [[package]]
 id = "gst-plugins-base"
@@ -659,14 +626,14 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "gstreamer",
 ]
 sources = [{ url = "https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-{version}.tar.xz" }]
-script = '''
-# The base libraries, among them pbutils, which the portal checks sounds with. No plugins.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D auto_features=disabled \
-    -D introspection=disabled -D doc=disabled -D tests=disabled -D examples=disabled -D nls=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["gstreamer-pbutils-1.0"]
+
+# The base libraries, among them pbutils, which the portal checks sounds with. No plugins.
+[package.meson]
+args = [
+  "-D auto_features=disabled", "-D introspection=disabled", "-D doc=disabled",
+  "-D tests=disabled", "-D examples=disabled", "-D nls=disabled",
+]
 
 [[package]]
 id = "xdg-desktop-portal"
@@ -679,18 +646,17 @@ extra_deps = [
   "systemd",
 ]
 sources = [{ url = "https://github.com/flatpak/xdg-desktop-portal/releases/download/{version}/xdg-desktop-portal-{version}.tar.xz" }]
-script = '''
+
 # The portal programs talk to, which hands each request to the portal that implements it for the
 # desktop. It checks images and sounds in process, without a sandbox of its own.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
-    -D dbus-service-dir=$PREFIX/share/dbus-1/services \
-    -D systemd-user-unit-dir=$PREFIX/lib/systemd/user -D flatpak-interfaces=disabled \
-    -D geoclue=disabled -D gudev=disabled -D systemd=enabled -D documentation=disabled \
-    -D tests=disabled -D installed-tests=false -D man-pages=disabled \
-    -D sandboxed-image-validation=disabled -D sandboxed-sound-validation=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
+[package.meson]
+args = [
+  "-D dbus-service-dir=$PREFIX/share/dbus-1/services",
+  "-D systemd-user-unit-dir=$PREFIX/lib/systemd/user", "-D flatpak-interfaces=disabled",
+  "-D geoclue=disabled", "-D gudev=disabled", "-D systemd=enabled", "-D documentation=disabled",
+  "-D tests=disabled", "-D installed-tests=false", "-D man-pages=disabled",
+  "-D sandboxed-image-validation=disabled", "-D sandboxed-sound-validation=disabled",
+]
 
 # Xwayland, which runs X programs in a Wayland session, and the X libraries it and they use.
 
@@ -701,12 +667,10 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf"]
 sources = [{ url = "https://www.x.org/archive/individual/proto/xorgproto-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D legacy=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["xproto"]
+
+[package.meson]
+args = ["-D legacy=false"]
 
 [[package]]
 id = "xtrans"
@@ -727,12 +691,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "xorgproto"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libXau-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xau"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "libXdmcp"
@@ -741,12 +703,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "xorgproto"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libXdmcp-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-docs
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xdmcp"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-docs"]
 
 [[package]]
 id = "xcb-proto"
@@ -767,12 +727,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "python3", "xcb-proto", "libXau", "libXdmcp"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libxcb-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-devel-docs --without-doxygen
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xcb"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-devel-docs", "--without-doxygen"]
 
 [[package]]
 id = "libX11"
@@ -781,12 +739,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "xtrans", "libxcb"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libX11-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-specs --without-xmlto --without-fop
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["x11"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-specs", "--without-xmlto", "--without-fop"]
 
 [[package]]
 id = "libxkbfile"
@@ -795,12 +751,9 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libX11"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libxkbfile-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["xkbfile"]
+
+[package.meson]
 
 [[package]]
 id = "xkbcomp"
@@ -811,13 +764,10 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "bison-final", "m4-final", "libxkbfile",
 ]
 sources = [{ url = "https://www.x.org/archive/individual/app/xkbcomp-{version}.tar.xz" }]
-script = '''
-# Compiles keymaps for Xwayland.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/xkbcomp -version"]
+
+# Compiles keymaps for Xwayland.
+[package.meson]
 
 [[package]]
 id = "libfontenc"
@@ -826,12 +776,9 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "xorgproto", "zlib"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libfontenc-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["fontenc"]
+
+[package.meson]
 
 [[package]]
 id = "libXfont2"
@@ -840,12 +787,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "xtrans", "libfontenc", "freetype"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libXfont2-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-devel-docs
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xfont2"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-devel-docs"]
 
 [[package]]
 id = "libxcvt"
@@ -854,12 +799,9 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libxcvt-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["libxcvt"]
+
+[package.meson]
 
 [[package]]
 id = "libxshmfence"
@@ -868,12 +810,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "xorgproto"]
 sources = [{ url = "https://www.x.org/archive/individual/lib/libxshmfence-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xshmfence"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "libepoxy"
@@ -882,14 +822,11 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "python3", "mesa"]
 sources = [{ url = "https://github.com/anholt/libepoxy/archive/{version}/libepoxy-{version}.tar.gz" }]
-script = '''
-# OpenGL function loading over EGL, without GLX.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D glx=no -D x11=false \
-    -D egl=yes -D tests=false -D docs=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["epoxy"]
+
+# OpenGL function loading over EGL, without GLX.
+[package.meson]
+args = ["-D glx=no", "-D x11=false", "-D egl=yes", "-D tests=false", "-D docs=false"]
 
 [[package]]
 id = "xwayland"
@@ -903,17 +840,17 @@ extra_deps = [
   "xkeyboard-config", "xkbcomp", "expat",
 ]
 sources = [{ url = "https://www.x.org/archive/individual/xserver/xwayland-{version}.tar.xz" }]
-script = '''
-# Keymaps come from xkeyboard-config and are compiled with xkbcomp, both found where they are.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D glamor=true -D glx=false \
-    -D dri3=true -D secure-rpc=false -D xdmcp=false -D xdm-auth-1=false -D sha1=libcrypto \
-    -D docs=false -D devel-docs=false -D dtrace=false -D libdecor=false -D xvfb=false \
-    -D xkb_dir=$LAB_DEP_xkeyboard_config/share/X11/xkb -D xkb_bin_dir=$LAB_DEP_xkbcomp/bin \
-    -D xkb_output_dir=/var/lib/xkb
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/Xwayland -version"]
+
+# Keymaps come from xkeyboard-config and are compiled with xkbcomp, both found where they are.
+[package.meson]
+args = [
+  "-D glamor=true", "-D glx=false", "-D dri3=true", "-D secure-rpc=false", "-D xdmcp=false",
+  "-D xdm-auth-1=false", "-D sha1=libcrypto", "-D docs=false", "-D devel-docs=false",
+  "-D dtrace=false", "-D libdecor=false", "-D xvfb=false",
+  "-D xkb_dir=$LAB_DEP_xkeyboard_config/share/X11/xkb", "-D xkb_bin_dir=$LAB_DEP_xkbcomp/bin",
+  "-D xkb_output_dir=/var/lib/xkb",
+]
 
 [[package]]
 id = "xcb-util"
@@ -922,12 +859,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "libxcb"]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xcb-util"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "xcb-util-renderutil"
@@ -936,12 +871,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "libxcb"]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-renderutil-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xcb-renderutil"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "xcb-util-image"
@@ -950,12 +883,10 @@ scope = "runtime"
 core = true
 extra_deps = ["pkgconf", "xcb-util"]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-image-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xcb-image"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "xcb-util-cursor"
@@ -966,12 +897,10 @@ extra_deps = [
   "pkgconf", "m4-final", "xcb-util", "xcb-util-renderutil", "xcb-util-image",
 ]
 sources = [{ url = "https://www.x.org/archive/individual/xcb/xcb-util-cursor-{version}.tar.xz" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["xcb-cursor"]
+
+[package.autotools]
+args = ["--disable-static"]
 
 [[package]]
 id = "xwayland-satellite"
@@ -1001,15 +930,14 @@ extra_deps = [
   "libxml2",
 ]
 sources = [{ url = "https://download.gnome.org/sources/at-spi2-core/{series}/at-spi2-core-{version}.tar.xz" }]
-script = '''
-# The accessibility bus and its libraries, ATK among them, without X.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D x11=disabled \
-    -D introspection=disabled -D docs=false -D use_systemd=true \
-    -D systemd_user_dir=$PREFIX/lib/systemd/user
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["atk", "atk-bridge-2.0"]
+
+# The accessibility bus and its libraries, ATK among them, without X.
+[package.meson]
+args = [
+  "-D x11=disabled", "-D introspection=disabled", "-D docs=false", "-D use_systemd=true",
+  "-D systemd_user_dir=$PREFIX/lib/systemd/user",
+]
 
 [[package]]
 id = "gsettings-desktop-schemas"
@@ -1018,10 +946,10 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "glib"]
 sources = [{ url = "https://download.gnome.org/sources/gsettings-desktop-schemas/{series}/gsettings-desktop-schemas-{version}.tar.xz" }]
-script = '''
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D introspection=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
+
+[package.meson]
+args = ["-D introspection=false"]
+install = '''
 # The compiled schemas are made for a whole system, from every package's.
 rm $DEST$PREFIX/share/glib-2.0/schemas/gschemas.compiled
 '''
@@ -1035,14 +963,14 @@ extra_deps = ["meson", "ninja", "pkgconf", "glib", "libxml2", "gettext"]
 # The MIME database is made from every package's types with each generation.
 indexes = [{ from = "share/mime", run = "bin/update-mime-database share/mime" }]
 sources = [{ url = "https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/{version}/shared-mime-info-{version}.tar.gz" }]
-script = '''
-# What kinds of file there are, by name and contents, which file choosers and openers ask.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D update-mimedb=false \
-    -D build-tests=false -D build-translations=false -D build-spec=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/update-mime-database -v"]
+
+# What kinds of file there are, by name and contents, which file choosers and openers ask.
+[package.meson]
+args = [
+  "-D update-mimedb=false", "-D build-tests=false", "-D build-translations=false",
+  "-D build-spec=false",
+]
 
 [[package]]
 id = "hicolor-icon-theme"
@@ -1051,12 +979,9 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja"]
 sources = [{ url = "https://icon-theme.freedesktop.org/releases/hicolor-icon-theme-{version}.tar.xz" }]
-script = '''
+
 # The theme every icon theme falls back to, where programs put their own icons.
-meson setup /build/b --prefix=$PREFIX --buildtype=release
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
+[package.meson]
 
 [[package]]
 id = "gtk3"
@@ -1079,19 +1004,20 @@ extra_deps = [
   "wayland", "wayland-protocols", "libxkbcommon", "gettext",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gtk/{series}/gtk-{version}.tar.xz" }]
-script = '''
+probes = ["gtk+-3.0"]
+
 # Wayland only, printing to files only.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D x11_backend=false \
-    -D wayland_backend=true -D broadway_backend=false -D print_backends=file \
-    -D introspection=false -D gtk_doc=false -D man=false -D demos=false -D examples=false \
-    -D tests=false -D installed_tests=false -D colord=no -D cloudproviders=false \
-    -D tracker3=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
+[package.meson]
+args = [
+  "-D x11_backend=false", "-D wayland_backend=true", "-D broadway_backend=false",
+  "-D print_backends=file", "-D introspection=false", "-D gtk_doc=false", "-D man=false",
+  "-D demos=false", "-D examples=false", "-D tests=false", "-D installed_tests=false",
+  "-D colord=no", "-D cloudproviders=false", "-D tracker3=false",
+]
+install = '''
 # The compiled schemas are made for a whole system, from every package's.
 rm $DEST$PREFIX/share/glib-2.0/schemas/gschemas.compiled
 '''
-probes = ["gtk+-3.0"]
 
 [[package]]
 id = "xdg-desktop-portal-gtk"
@@ -1106,15 +1032,14 @@ extra_deps = [
   "gettext",
 ]
 sources = [{ url = "https://github.com/flatpak/xdg-desktop-portal-gtk/releases/download/{version}/xdg-desktop-portal-gtk-{version}.tar.xz" }]
-script = '''
+
 # The file chooser, app chooser and settings; the wallpaper portal needs GNOME's desktop library.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
-    -D dbus-service-dir=$PREFIX/share/dbus-1/services \
-    -D systemd-user-unit-dir=$PREFIX/lib/systemd/user -D wallpaper=disabled \
-    -D settings=enabled -D appchooser=enabled -D lockdown=enabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
+[package.meson]
+args = [
+  "-D dbus-service-dir=$PREFIX/share/dbus-1/services",
+  "-D systemd-user-unit-dir=$PREFIX/lib/systemd/user", "-D wallpaper=disabled",
+  "-D settings=enabled", "-D appchooser=enabled", "-D lockdown=enabled",
+]
 
 # The wlroots portal, which shares screens and takes screenshots on compositors with wlroots'
 # screen copying, niri among them.
@@ -1126,13 +1051,10 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf"]
 sources = [{ url = "https://github.com/benhoyt/inih/archive/refs/tags/r{version}.tar.gz" }]
-script = '''
+
 # A small INI file reader; its C++ reader isn't needed.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
-    -D with_INIReader=false -D tests=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
+[package.meson]
+args = ["-D with_INIReader=false", "-D tests=false"]
 
 [[package]]
 id = "xdg-desktop-portal-wlr"
@@ -1144,13 +1066,10 @@ extra_deps = [
   "systemd",
 ]
 sources = [{ url = "https://github.com/emersion/xdg-desktop-portal-wlr/archive/refs/tags/v{version}.tar.gz" }]
-script = '''
+
 # Its user unit goes under its own prefix, which systemd's pkg-config file gives when asked.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release \
-    -D sd-bus-provider=libsystemd -D systemd=enabled -D man-pages=disabled
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
+[package.meson]
+args = ["-D sd-bus-provider=libsystemd", "-D systemd=enabled", "-D man-pages=disabled"]
 
 # GNOME Keyring, which keeps secrets for programs, and the crypto libraries it's built on.
 
@@ -1160,12 +1079,10 @@ version = "1.61"
 scope = "runtime"
 core = true
 sources = [{ url = "https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-{version}.tar.bz2" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-doc --disable-nls
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["gpg-error"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-doc", "--disable-nls"]
 
 [[package]]
 id = "libgcrypt"
@@ -1174,13 +1091,12 @@ scope = "runtime"
 core = true
 extra_deps = ["libgpg-error"]
 sources = [{ url = "https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-{version}.tar.bz2" }]
-script = '''
-./configure --prefix=$PREFIX --disable-static --disable-doc \
-    --with-libgpg-error-prefix=$LAB_DEP_libgpg_error
-make -j$NPROC
-make DESTDIR=$DEST install
-'''
 probes = ["libgcrypt"]
+
+[package.autotools]
+args = [
+  "--disable-static", "--disable-doc", "--with-libgpg-error-prefix=$LAB_DEP_libgpg_error",
+]
 
 [[package]]
 id = "p11-kit"
@@ -1189,16 +1105,16 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja", "pkgconf", "libffi"]
 sources = [{ url = "https://github.com/p11-glue/p11-kit/releases/download/{version}/p11-kit-{version}.tar.xz" }]
-script = '''
+probes = ["p11-kit-1"]
+
 # Loads PKCS#11 modules, such as GNOME Keyring's. Without the trust module, which would hold
 # certificates.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release --sysconfdir=/etc \
-    -D trust_module=disabled -D systemd=disabled -D bash_completion=disabled \
-    -D zsh_completion=disabled -D gtk_doc=false -D man=false -D nls=false -D test=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
-probes = ["p11-kit-1"]
+[package.meson]
+args = [
+  "--sysconfdir=/etc", "-D trust_module=disabled", "-D systemd=disabled",
+  "-D bash_completion=disabled", "-D zsh_completion=disabled", "-D gtk_doc=false",
+  "-D man=false", "-D nls=false", "-D test=false",
+]
 
 [[package]]
 id = "gcr3"
@@ -1212,18 +1128,19 @@ extra_deps = [
   "libgcrypt", "p11-kit", "systemd", "gettext", "openssh",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gcr/{series}/gcr-{version}.tar.xz" }]
-script = '''
+probes = ["gcr-base-3", "gck-1"]
+
 # The certificate and key library GNOME Keyring uses, without its GTK widgets.
 # It asks where ssh-add is even with its SSH agent off.
+[package.meson]
+prepare = '''
 # Its install script updates caches a system makes for itself, and a link for compatibility.
 sed -i "/^meson.add_install_script('meson_post_install.py',/,/^)/d" meson.build
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D gtk=false \
-    -D introspection=false -D gtk_doc=false -D ssh_agent=false -D systemd=enabled \
-    -D gpg_path=/run/system/bin/gpg
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
 '''
-probes = ["gcr-base-3", "gck-1"]
+args = [
+  "-D gtk=false", "-D introspection=false", "-D gtk_doc=false", "-D ssh_agent=false",
+  "-D systemd=enabled", "-D gpg_path=/run/system/bin/gpg",
+]
 
 [[package]]
 id = "gnome-keyring"
@@ -1235,13 +1152,15 @@ extra_deps = [
   "gcr3", "libgcrypt", "systemd", "linux-pam", "gettext",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gnome-keyring/{series}/gnome-keyring-{version}.tar.xz" }]
-script = '''
+
 # The secrets service, started in each user's session. Its PAM module unlocks it at login.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D ssh-agent=false \
-    -D selinux=disabled -D systemd=enabled -D pam=true -D manpage=false -D libcap-ng=disabled \
-    -D pkcs11-modules=$PREFIX/lib/pkcs11 -D pkcs11-config=$PREFIX/share/p11-kit/modules
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
+[package.meson]
+args = [
+  "-D ssh-agent=false", "-D selinux=disabled", "-D systemd=enabled", "-D pam=true",
+  "-D manpage=false", "-D libcap-ng=disabled", "-D pkcs11-modules=$PREFIX/lib/pkcs11",
+  "-D pkcs11-config=$PREFIX/share/p11-kit/modules",
+]
+install = '''
 # The module config names the library alone, which p11-kit would look for in its own directory.
 sed -i "s|^module: .*|module: $PREFIX/lib/pkcs11/gnome-keyring-pkcs11.so|" \
     $DEST$PREFIX/share/p11-kit/modules/gnome-keyring.module
@@ -1292,11 +1211,9 @@ scope = "runtime"
 core = true
 extra_deps = ["meson", "ninja"]
 sources = [{ url = "https://codeberg.org/dnkl/tllist/archive/{version}.tar.gz" }]
-script = '''
+
 # A typed linked list in one header, which fcft and fuzzel use.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release
-DESTDIR=$DEST ninja -C /build/b install
-'''
+[package.meson]
 
 [[package]]
 id = "fcft"
@@ -1307,14 +1224,14 @@ extra_deps = [
   "meson", "ninja", "pkgconf", "tllist", "fontconfig", "freetype", "pixman", "harfbuzz",
 ]
 sources = [{ url = "https://codeberg.org/dnkl/fcft/archive/{version}.tar.gz" }]
-script = '''
-# Fonts drawn into pixman images, for fuzzel.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D docs=disabled \
-    -D grapheme-shaping=disabled -D run-shaping=disabled -D test-text-shaping=false
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 probes = ["fcft"]
+
+# Fonts drawn into pixman images, for fuzzel.
+[package.meson]
+args = [
+  "-D docs=disabled", "-D grapheme-shaping=disabled", "-D run-shaping=disabled",
+  "-D test-text-shaping=false",
+]
 
 [[package]]
 id = "fuzzel"
@@ -1326,11 +1243,8 @@ extra_deps = [
   "wayland-protocols", "libpng", "scdoc",
 ]
 sources = [{ url = "https://codeberg.org/dnkl/fuzzel/archive/{version}.tar.gz" }]
-script = '''
-# The launcher: it lists the programs with a .desktop file and starts the one picked.
-meson setup /build/b --prefix=$PREFIX --libdir=lib --buildtype=release -D enable-cairo=disabled \
-    -D png-backend=libpng -D svg-backend=nanosvg
-ninja -C /build/b -j$NPROC
-DESTDIR=$DEST ninja -C /build/b install
-'''
 smoke = ["bin/fuzzel --version"]
+
+# The launcher: it lists the programs with a .desktop file and starts the one picked.
+[package.meson]
+args = ["-D enable-cairo=disabled", "-D png-backend=libpng", "-D svg-backend=nanosvg"]
