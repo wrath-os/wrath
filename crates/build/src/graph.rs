@@ -7,7 +7,6 @@ use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Instant;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -54,12 +53,7 @@ impl Db {
                  CREATE TABLE IF NOT EXISTS actions(key TEXT PRIMARY KEY, record TEXT NOT NULL);
                  CREATE TABLE IF NOT EXISTS outputs(key TEXT PRIMARY KEY, output TEXT NOT NULL);
                  CREATE TABLE IF NOT EXISTS parts(generation TEXT, path TEXT, entry TEXT,
-                     PRIMARY KEY(generation, path));
-                 CREATE TABLE IF NOT EXISTS applies(
-                     seq INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER NOT NULL,
-                     who TEXT NOT NULL, kind TEXT NOT NULL, sources TEXT NOT NULL,
-                     lock TEXT NOT NULL, explanation TEXT NOT NULL, model TEXT NOT NULL,
-                     generation TEXT NOT NULL, previous INTEGER);",
+                     PRIMARY KEY(generation, path));",
             )
             .map_err(sql)?;
         Ok(Self(connection))
@@ -853,11 +847,6 @@ fn unit_action<'a>(
 const INIT: &str = include_str!("../system/init");
 const INITRD_ROOT: &str = include_str!("../system/initrd-root");
 const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
-const REPORT: &str = include_str!("../system/report");
-const REPORT_UNIT: &str = "[Unit]\nDescription=Report how the boot went\n\
-    After=multi-user.target\n\n\
-    [Service]\nType=exec\nExecStart=/run/system/report\nStandardOutput=tty\n\
-    StandardError=tty\nTTYPath=/dev/ttyS0\n";
 
 /// The label of the file system a system's root is on.
 pub const ROOT_LABEL: &str = "distro-root";
@@ -869,8 +858,9 @@ pub struct Kept {
     pub hash: String,
 }
 
+#[cfg(test)]
 impl Kept {
-    /// For a model that didn't come from distro, such as one `lab` reads from a file.
+    /// For a test model that didn't come from distro.
     pub fn plain(model: &Value) -> Self {
         let text = format!("{model}\n");
         Self {
@@ -1773,31 +1763,6 @@ fn boot_files<'a>(
     })
 }
 
-/// What the UEFI boot test adds to its systems: a service that reports how each boot went, on the
-/// serial port, switches live on the first one, and powers off.
-fn report_actions(packages: &Packages) -> Result<Vec<Action<'_>>, String> {
-    let origin = "e2e";
-    Ok(vec![
-        text(
-            origin,
-            "etc/systemd/system/report.service",
-            0o644,
-            REPORT_UNIT.into(),
-            &[],
-            packages,
-        )?,
-        text(origin, "report", 0o755, REPORT.into(), &["bash"], packages)?,
-        links_to(
-            origin,
-            &[(
-                "etc/systemd/system/multi-user.target.wants/report.service",
-                "../report.service",
-            )],
-            packages,
-        )?,
-    ])
-}
-
 /// The packages links can point into, by `@id@`.
 const LINKED: [&str; 2] = ["systemd", "linux"];
 
@@ -1979,135 +1944,8 @@ fn realise(lab: &Lab, db: &mut Db, actions: Vec<Action>) -> Result<Outcome, Stri
     })
 }
 
-/// One row of the history. Provenance hangs off this, never off a generation or an action: both
-/// are named by content, so two applies can reach them with different answers.
-struct Apply {
-    kind: String,
-    sources: String,
-    lock: String,
-    explanation: String,
-    model: String,
-    generation: String,
-}
-
-/// Who runs an apply: the process's uid and its name in `passwd`, the person `sudo` ran it for,
-/// and the name an agent is given in `DISTRO_AGENT`. `$USER` is left out, since anything can set
-/// it, and `SUDO_USER` is only believed from root, the only caller `sudo` leaves behind.
-fn caller(uid: u32, passwd: &str, var: impl Fn(&str) -> Option<String>) -> Value {
-    let uid_field = uid.to_string();
-    let name = passwd.lines().find_map(|line| {
-        let mut fields = line.split(':');
-        let name = fields.next()?;
-        (fields.nth(1)? == uid_field).then_some(name)
-    });
-    let sudo_user = if uid == 0 { var("SUDO_USER") } else { None };
-    json!({"uid": uid, "name": name, "sudo_user": sudo_user, "agent": var("DISTRO_AGENT")})
-}
-
-/// This process's real uid.
-fn uid() -> Result<u32, String> {
-    let status = fs::read_to_string("/proc/self/status").map_err(|e| e.to_string())?;
-    status
-        .lines()
-        .find_map(|line| line.strip_prefix("Uid:"))
-        .and_then(|ids| ids.split_whitespace().next()?.parse().ok())
-        .ok_or_else(|| "no uid in /proc/self/status".to_owned())
-}
-
-fn insert_apply(db: &Db, apply: &Apply) -> Result<i64, String> {
-    let time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-    let passwd = fs::read_to_string("/etc/passwd").unwrap_or_default();
-    let who = caller(uid()?, &passwd, |name| std::env::var(name).ok()).to_string();
-    db.0.execute(
-        "INSERT INTO applies(time, who, kind, sources, lock, explanation, model, generation,
-             previous)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT MAX(seq) FROM applies))",
-        params![
-            time,
-            who,
-            apply.kind,
-            apply.sources,
-            apply.lock,
-            apply.explanation,
-            apply.model,
-            apply.generation
-        ],
-    )
-    .map_err(sql)?;
-    Ok(db.0.last_insert_rowid())
-}
-
-/// Apply number `seq`, or an error when there was none.
-fn apply_at(db: &Db, seq: i64) -> Result<Apply, String> {
-    db.0.query_row(
-        "SELECT kind, sources, lock, explanation, model, generation FROM applies WHERE seq = ?1",
-        [seq],
-        |row| {
-            Ok(Apply {
-                kind: row.get(0)?,
-                sources: row.get(1)?,
-                lock: row.get(2)?,
-                explanation: row.get(3)?,
-                model: row.get(4)?,
-                generation: row.get(5)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(sql)?
-    .ok_or_else(|| format!("there was no apply {seq}"))
-}
-
 fn objects_of(lab: &Lab) -> Objects {
     Objects(lab.work.join("e2e/objects"))
-}
-
-/// What applies keep: the configuration's files, the lock and the explanation. Apart from the
-/// objects, so publishing a generation's objects never publishes the configuration behind it.
-fn provenance_of(lab: &Lab) -> Objects {
-    Objects(lab.work.join("e2e/provenance"))
-}
-
-/// Records an apply of `model`. `inputs` is what `distro dev apply-record` prints.
-fn record_apply(
-    lab: &Lab,
-    db: &Db,
-    model: &Value,
-    outcome: &Outcome,
-    inputs: &Value,
-) -> Result<i64, String> {
-    let provenance = provenance_of(lab);
-    fs::create_dir_all(&provenance.0).map_err(with_path(&provenance.0))?;
-    let put = |value: &Value| provenance.put(value.to_string().as_bytes());
-    let explanation = json!({"paths": outcome.made, "evaluation": inputs["explanation"]});
-    insert_apply(
-        db,
-        &Apply {
-            kind: "apply".to_owned(),
-            sources: put(&inputs["sources"])?,
-            lock: put(&inputs["lock"])?,
-            explanation: put(&explanation)?,
-            model: key_of(model),
-            generation: outcome.generation.clone(),
-        },
-    )
-}
-
-/// Records going back to apply `seq` as a new apply with its inputs and generation. Returns the
-/// new apply's sequence number.
-pub fn rollback(lab: &Lab, seq: i64) -> Result<i64, String> {
-    let db = Db::open(&db_path(lab))?;
-    let apply = apply_at(&db, seq)?;
-    insert_apply(
-        &db,
-        &Apply {
-            kind: "rollback".to_owned(),
-            ..apply
-        },
-    )
 }
 
 fn db_path(lab: &Lab) -> PathBuf {
@@ -2152,19 +1990,10 @@ fn record_packages(db: &mut Db, built: &Built) -> Result<(), String> {
     tx.commit().map_err(sql)
 }
 
-fn elapsed_ms(start: Instant) -> f64 {
-    start.elapsed().as_secs_f64() * 1000.0
-}
-
-fn read_json(path: &Path) -> Result<Value, String> {
-    let text = fs::read_to_string(path).map_err(with_path(path))?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
-}
-
 /// The recipe files systems are built from: every file in `recipes/` but the toolchain's, which
 /// is built first. Which file a recipe is in doesn't matter; each package is built after what it
 /// depends on.
-pub fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
     let dir = repository.join("recipes");
     let mut files: Vec<String> = fs::read_dir(&dir)
         .map_err(with_path(&dir))?
@@ -2180,10 +2009,8 @@ pub fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
 /// one line per recipe, after building what isn't built yet.
 pub fn redundant(repository: &Path, only: &[&str]) -> Result<String, String> {
     let lab = Lab::new(repository.join("work"));
-    let files = system_recipes(repository)?;
     let wanted = (!only.is_empty()).then_some(only);
-    let (mut built, _, mut packages) =
-        pilot::build_some(&lab, repository, &names_of(&files), Arm::F, wanted)?;
+    let (mut built, _, mut packages) = pilot::build_some(&lab, repository, wanted)?;
     if let Some(wanted) = wanted {
         packages.retain(|package| wanted.contains(&package.id.as_str()));
     }
@@ -2206,7 +2033,7 @@ pub(crate) fn recipe_files(repository: &Path) -> Result<Vec<String>, String> {
 }
 
 /// `files` as the borrowed names the builder takes.
-pub fn names_of(files: &[String]) -> Vec<&str> {
+pub(crate) fn names_of(files: &[String]) -> Vec<&str> {
     files.iter().map(String::as_str).collect()
 }
 
@@ -2222,41 +2049,28 @@ pub struct System {
     pub skipped: Vec<String>,
     /// Units the model enables that no package the system has provides.
     pub unfound: Vec<String>,
-    /// The apply recorded, when there were inputs to record.
-    pub apply: Option<i64>,
     pub outcome: Outcome,
 }
 
-/// Lowers `model` with `packages` and realises it, and records an apply with `inputs`, what
-/// `distro dev apply-record` prints, when given.
+/// Lowers `model` with `packages` and realises it.
 fn system_from(
     lab: &Lab,
     db: &mut Db,
     packages: &Packages,
     model: &Value,
     kept: &Kept,
-    inputs: Option<&Value>,
-    report: bool,
 ) -> Result<System, String> {
     let Lowered {
-        mut actions,
+        actions,
         skipped,
         unfound,
     } = lower(lab, model, kept, packages)?;
-    if report {
-        actions.extend(report_actions(packages)?);
-    }
     let outcome = realise(lab, db, actions)?;
-    let apply = match inputs {
-        Some(inputs) => Some(record_apply(lab, db, model, &outcome, inputs)?),
-        None => None,
-    };
     Ok(System {
         path: lab.on_host(&StorePath::from_hash(&outcome.generation)),
         generation: outcome.generation.clone(),
         skipped,
         unfound,
-        apply,
         outcome,
     })
 }
@@ -2376,42 +2190,21 @@ fn system_packages(model: &Value) -> Vec<String> {
 
 /// Builds the system `model` describes from the recipes in `repository`, which holds `recipes/`,
 /// the pins and the `work` directory with the store, building packages it doesn't have yet.
-pub fn system(
-    repository: &Path,
-    model: &Value,
-    kept: &Kept,
-    inputs: Option<&Value>,
-) -> Result<System, String> {
+pub fn system(repository: &Path, model: &Value, kept: &Kept) -> Result<System, String> {
     let lab = Lab::new(repository.join("work"));
     let wanted = system_packages(model);
-    let (mut built, seed, recipes) = pilot::build_some(
-        &lab,
-        repository,
-        &names_of(&system_recipes(repository)?),
-        Arm::F,
-        Some(&names_of(&wanted)),
-    )?;
+    let (mut built, seed, recipes) = pilot::build_some(&lab, repository, Some(&names_of(&wanted)))?;
     build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
     let mut db = Db::open(&db_path(&lab))?;
     record_packages(&mut db, &built)?;
-    system_from(
-        &lab,
-        &mut db,
-        &known_packages(&built),
-        model,
-        kept,
-        inputs,
-        false,
-    )
+    system_from(&lab, &mut db, &known_packages(&built), model, kept)
 }
 
 /// Builds the packages `names` from the recipes in `repository`, as [`system`] would, and returns
 /// where each one is in the store.
 pub fn packages(repository: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {
     let lab = Lab::new(repository.join("work"));
-    let recipes = system_recipes(repository)?;
-    let (built, ..) =
-        pilot::build_some(&lab, repository, &names_of(&recipes), Arm::F, Some(names))?;
+    let (built, ..) = pilot::build_some(&lab, repository, Some(names))?;
     names
         .iter()
         .map(|name| {
@@ -2422,221 +2215,6 @@ pub fn packages(repository: &Path, names: &[&str]) -> Result<Vec<StorePath>, Str
                 .ok_or_else(|| format!("there's no recipe for `{name}`"))
         })
         .collect()
-}
-
-/// Lowers `model` and realises it. Prints the generation and how long each part took.
-pub fn run(
-    lab: &Lab,
-    repository: &Path,
-    recipes: &[&str],
-    arm: Arm,
-    model_path: &Path,
-    inputs_path: Option<&Path>,
-) -> Result<(), String> {
-    let start = Instant::now();
-    let model = read_json(model_path)?;
-    let inputs = inputs_path.map(read_json).transpose()?;
-    let read = elapsed_ms(start);
-
-    let start = Instant::now();
-    let (built, ..) = pilot::build_recipes(lab, repository, recipes, arm)?;
-    let packages = known_packages(&built);
-    let resolve = elapsed_ms(start);
-
-    let start = Instant::now();
-    let mut db = Db::open(&db_path(lab))?;
-    record_packages(&mut db, &built)?;
-    let records = elapsed_ms(start);
-
-    let start = Instant::now();
-    let kept = Kept::plain(&model);
-    let system = system_from(
-        lab,
-        &mut db,
-        &packages,
-        &model,
-        &kept,
-        inputs.as_ref(),
-        true,
-    )?;
-    let realised = elapsed_ms(start);
-    let skipped: Vec<&str> = system
-        .skipped
-        .iter()
-        .chain(&system.unfound)
-        .map(String::as_str)
-        .collect();
-    if !skipped.is_empty() {
-        println!("skipped {}", skipped.join(" "));
-    }
-    println!("generation {}", system.generation);
-    if let Some(seq) = system.apply {
-        println!("apply {seq}");
-    }
-    let outcome = &system.outcome;
-    println!(
-        "actions {} ran {} files {} new {}",
-        outcome.actions, outcome.ran, outcome.files, outcome.materialized
-    );
-    println!(
-        "ms read {read:.1} packages {resolve:.1} records {records:.1} lower and realise \
-         {realised:.1}"
-    );
-    Ok(())
-}
-
-fn parts_of(db: &Db, generation: &str) -> Result<BTreeMap<String, String>, String> {
-    let mut statement =
-        db.0.prepare("SELECT path, entry FROM parts WHERE generation = ?1")
-            .map_err(sql)?;
-    let rows = statement
-        .query_map([generation], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(sql)?;
-    rows.collect::<Result<_, _>>().map_err(sql)
-}
-
-/// The generation apply `seq` reached, and the explanation it recorded.
-fn explained(lab: &Lab, db: &Db, seq: i64) -> Result<(String, Value), String> {
-    let apply = apply_at(db, seq)?;
-    let explanation = read_json(&provenance_of(lab).0.join(&apply.explanation))?;
-    Ok((apply.generation, explanation))
-}
-
-/// Where the values behind a path came from, as `web.port set at a.toml:1:1`: each option a
-/// module that wrote `origin` read, whose value or source differs from the `other` apply's.
-/// Modules record what they read as option prefixes, so `web` covers `web.port`.
-fn set_at(explanation: &Value, other: &Value, origin: &str) -> BTreeSet<String> {
-    let output = origin
-        .strip_prefix("files.")
-        .or_else(|| origin.strip_prefix("units."))
-        .unwrap_or(origin);
-    let evaluation = &explanation["evaluation"];
-    let other_options = &other["evaluation"]["options"];
-    let reads: Vec<&str> = evaluation["modules"]
-        .as_object()
-        .into_iter()
-        .flat_map(Map::values)
-        .filter(|module| {
-            module["outputs"]
-                .as_array()
-                .is_some_and(|o| o.contains(&output.into()))
-        })
-        .flat_map(|module| module["reads"].as_array().into_iter().flatten())
-        .filter_map(Value::as_str)
-        .collect();
-    let read = |option: &str| {
-        reads.iter().any(|prefix| {
-            option
-                .strip_prefix(prefix)
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
-        })
-    };
-    let mut found = BTreeSet::new();
-    for (option, resolved) in evaluation["options"].as_object().into_iter().flatten() {
-        if !read(option) || other_options.get(option) == Some(resolved) {
-            continue;
-        }
-        for set in resolved["set_by"].as_array().into_iter().flatten() {
-            if let Some(at) = set["origin"].as_str() {
-                found.insert(format!("{option} {at}"));
-            }
-        }
-    }
-    found
-}
-
-/// What changes going from one apply to another: each file with the action and the part of the
-/// model behind it and where its values were set, as each apply recorded it, and which units
-/// restart. Applies are named by number, since two can reach one generation for different reasons.
-pub fn diff(lab: &Lab, first: i64, second: i64) -> Result<String, String> {
-    let db = Db::open(&db_path(lab))?;
-    let (first, explained_old) = explained(lab, &db, first)?;
-    let (second, explained_new) = explained(lab, &db, second)?;
-    let (old, new) = (parts_of(&db, &first)?, parts_of(&db, &second)?);
-    let mut report = String::new();
-    let mut changed = BTreeSet::new();
-    for path in old.keys().chain(new.keys()).collect::<BTreeSet<_>>() {
-        let (before, after) = (old.get(path), new.get(path));
-        if before == after {
-            continue;
-        }
-        let what = match (before, after) {
-            (None, _) => "added",
-            (_, None) => "removed",
-            _ => "changed",
-        };
-        let (explanation, other) = if after.is_some() {
-            (&explained_new, &explained_old)
-        } else {
-            (&explained_old, &explained_new)
-        };
-        let made = &explanation["paths"][path.as_str()];
-        match made["origin"].as_str() {
-            Some(origin) => {
-                report.push_str(&format!(
-                    "{what} {path} action {} from {origin}",
-                    made["action"].as_str().unwrap_or("?"),
-                ));
-                for set in set_at(explanation, other, origin) {
-                    report.push_str(&format!(", {set}"));
-                }
-                report.push('\n');
-            }
-            None => report.push_str(&format!("{what} {path} unaccounted for\n")),
-        }
-        changed.insert(format!("/{path}"));
-    }
-    let kept = read_json(
-        &lab.on_host(&StorePath::from_hash(&second))
-            .join("etc/distro/model.json"),
-    )?;
-    let units: BTreeSet<&str> = kept["units"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(_, unit)| {
-            unit["restart_on"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .any(|file| changed.contains(file))
-        })
-        .map(|(name, _)| name.as_str())
-        .collect();
-    let units: Vec<&str> = units.into_iter().collect();
-    report.push_str(&format!("restarts {}\n", units.join(" ")));
-    Ok(report)
-}
-
-/// The packages a graph needs, for an image: `path <hash>` for each in their closure, and
-/// `root <id> <hash>` for the ones a boot script refers to by name.
-pub fn closure(
-    lab: &Lab,
-    repository: &Path,
-    recipes: &[&str],
-    arm: Arm,
-    model_path: &Path,
-) -> Result<String, String> {
-    let model = read_json(model_path)?;
-    let (built, ..) = pilot::build_recipes(lab, repository, recipes, arm)?;
-    let mut ids: BTreeSet<String> = BASE_PACKAGES.iter().map(|id| (*id).to_owned()).collect();
-    ids.insert("linux".to_owned());
-    let (named, _) = model_packages(&model, |id| built.paths.contains_key(id))?;
-    ids.extend(named.into_iter().map(str::to_owned));
-    let (mut lines, mut all) = (String::new(), BTreeSet::new());
-    for id in &ids {
-        let path = built
-            .paths
-            .get(id)
-            .ok_or_else(|| format!("no package called `{id}`"))?;
-        lines.push_str(&format!("root {id} {}\n", path.hash()));
-        all.extend(chain::runtime_closure(lab, path)?);
-    }
-    for path in all {
-        lines.push_str(&format!("path {}\n", path.hash()));
-    }
-    Ok(lines)
 }
 
 #[cfg(test)]
@@ -2790,45 +2368,23 @@ mod tests {
     }
 
     #[test]
-    fn a_system_is_its_generation_what_it_skipped_and_the_apply_it_recorded() {
+    fn a_system_is_its_generation_and_what_it_skipped() {
         let (_dir, lab, packages) = setup();
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let mut model = model(80, false);
         model["packages"] = json!(["web", "missing"]);
 
-        let built = system_from(
-            &lab,
-            &mut db,
-            &packages,
-            &model,
-            &Kept::plain(&model),
-            None,
-            false,
-        )
-        .unwrap();
+        let built = system_from(&lab, &mut db, &packages, &model, &Kept::plain(&model)).unwrap();
         assert_eq!(built.skipped, ["missing"]);
-        assert_eq!(built.apply, None);
         assert_eq!(
             built.path,
             lab.on_host(&StorePath::from_hash(&built.generation))
         );
         assert!(built.path.join("etc/web.conf").exists());
 
-        let inputs = inputs("a.toml", 80);
-        let again = system_from(
-            &lab,
-            &mut db,
-            &packages,
-            &model,
-            &Kept::plain(&model),
-            Some(&inputs),
-            false,
-        )
-        .unwrap();
+        let again = system_from(&lab, &mut db, &packages, &model, &Kept::plain(&model)).unwrap();
         assert_eq!(again.generation, built.generation);
         assert_eq!(again.outcome.ran, 0);
-        let seq = again.apply.unwrap();
-        assert_eq!(row(&db, seq).3, built.generation);
     }
 
     #[test]
@@ -3592,208 +3148,10 @@ mod tests {
     }
 
     #[test]
-    fn a_diff_names_the_changed_file_its_origin_where_it_was_set_and_what_restarts() {
-        let (_dir, lab, packages) = setup();
-        let mut db = Db::open(&db_path(&lab)).unwrap();
-        let (_, one) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        let (_, two) = applied(&lab, &mut db, &packages, 81, "a.toml");
-        let report = diff(&lab, one, two).unwrap();
-        assert!(report.contains("changed etc/web.conf"), "{report}");
-        assert!(report.contains("from files./etc/web.conf"), "{report}");
-        assert!(report.contains("web.port set at a.toml:1:1"), "{report}");
-        assert!(!report.contains("web.name"), "{report}");
-        assert!(report.ends_with("restarts web.service\n"), "{report}");
-    }
-
-    #[test]
-    fn applies_that_reach_one_generation_each_cite_their_own_file() {
-        let (_dir, lab, packages) = setup();
-        let mut db = Db::open(&db_path(&lab)).unwrap();
-        let (_, base) = applied(&lab, &mut db, &packages, 81, "base.toml");
-        let (first, one) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        let (second, two) = applied(&lab, &mut db, &packages, 80, "b.toml");
-        assert_eq!(first.generation, second.generation);
-        let (to_one, to_two) = (
-            diff(&lab, base, one).unwrap(),
-            diff(&lab, base, two).unwrap(),
-        );
-        assert!(
-            to_one.contains("set at a.toml") && !to_one.contains("b.toml"),
-            "{to_one}"
-        );
-        assert!(
-            to_two.contains("set at b.toml") && !to_two.contains("a.toml"),
-            "{to_two}"
-        );
-    }
-
-    #[test]
-    fn a_diff_says_when_an_apply_cant_account_for_a_file() {
-        let (_dir, lab, packages) = setup();
-        let mut db = Db::open(&db_path(&lab)).unwrap();
-        let (_, one) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        let model = model(81, false);
-        let mut outcome = realised(&lab, &mut db, &packages, &model);
-        outcome.made.clear();
-        let two = record_apply(&lab, &db, &model, &outcome, &inputs("a.toml", 81)).unwrap();
-        let report = diff(&lab, one, two).unwrap();
-        assert!(
-            report.contains("changed etc/web.conf unaccounted for"),
-            "{report}"
-        );
-    }
-
-    #[test]
-    fn a_diff_of_an_apply_that_never_happened_is_an_error() {
-        let (_dir, lab, packages) = setup();
-        let mut db = Db::open(&db_path(&lab)).unwrap();
-        let (_, one) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        let error = diff(&lab, one, 99).unwrap_err();
-        assert!(error.contains("99"), "{error}");
-    }
-
-    /// What distro records for a configuration that sets `web.port` to `port` in `file`. Modules
-    /// record what they read as option prefixes.
-    fn inputs(file: &str, port: u32) -> Value {
-        json!({
-            "sources": {file: format!("port = {port}\n")},
-            "lock": {},
-            "explanation": {
-                "options": {
-                    "web.port": {"value": port.to_string(), "set_by": [
-                        {"origin": format!("set at {file}:1:1"), "value": port.to_string()},
-                    ]},
-                    "web.name": {"value": "\"web\"", "set_by": [
-                        {"origin": "default", "value": "\"web\""},
-                    ]},
-                },
-                "modules": {"web": {"reads": ["web"], "outputs": ["/etc/web.conf"]}},
-            },
-        })
-    }
-
-    fn applied(
-        lab: &Lab,
-        db: &mut Db,
-        packages: &Packages,
-        port: u32,
-        file: &str,
-    ) -> (Outcome, i64) {
-        let model = model(port, false);
-        let outcome = realised(lab, db, packages, &model);
-        let seq = record_apply(lab, db, &model, &outcome, &inputs(file, port)).unwrap();
-        (outcome, seq)
-    }
-
-    fn row(db: &Db, seq: i64) -> (String, String, String, String, Option<i64>) {
-        db.0.query_row(
-            "SELECT kind, sources, explanation, generation, previous FROM applies WHERE seq = ?1",
-            [seq],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )
-        .unwrap()
-    }
-
-    fn object(lab: &Lab, digest: &str) -> String {
-        fs::read_to_string(provenance_of(lab).0.join(digest)).unwrap()
-    }
-
-    #[test]
-    fn moving_a_value_keeps_the_generation_and_each_apply_its_own_answer() {
-        let (_dir, lab, packages) = setup();
-        let mut db = Db::open(&db_path(&lab)).unwrap();
-        let (first, one) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        let (second, two) = applied(&lab, &mut db, &packages, 80, "b.toml");
-        assert_eq!(first.generation, second.generation);
-        assert_eq!(second.ran, 0);
-        let (before, after) = (row(&db, one), row(&db, two));
-        assert_eq!(after.4, Some(one));
-        assert!(object(&lab, &before.2).contains("set at a.toml"));
-        assert!(object(&lab, &after.2).contains("set at b.toml"));
-        assert!(object(&lab, &before.1).contains("a.toml"));
-    }
-
-    #[test]
-    fn the_same_inputs_applied_twice_are_kept_once() {
-        let (_dir, lab, packages) = setup();
-        let mut db = Db::open(&db_path(&lab)).unwrap();
-        let (_, one) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        let (_, two) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        assert_ne!(one, two);
-        assert_eq!(row(&db, one).2, row(&db, two).2);
-    }
-
-    #[test]
-    fn a_rollback_is_a_new_apply_with_the_old_inputs() {
-        let (_dir, lab, packages) = setup();
-        let mut db = Db::open(&db_path(&lab)).unwrap();
-        let (first, one) = applied(&lab, &mut db, &packages, 80, "a.toml");
-        let (_, two) = applied(&lab, &mut db, &packages, 81, "b.toml");
-        let seq = rollback(&lab, one).unwrap();
-        let (original, back) = (row(&db, one), row(&db, seq));
-        assert_eq!(back.0, "rollback");
-        assert_eq!(back.1, original.1);
-        assert_eq!(back.2, original.2);
-        assert_eq!(back.3, first.generation);
-        assert_eq!(back.4, Some(two));
-    }
-
-    #[test]
-    fn rolling_back_to_an_apply_that_never_happened_is_an_error() {
-        let (_dir, lab, _) = setup();
-        let error = rollback(&lab, 7).unwrap_err();
-        assert!(error.contains('7'), "{error}");
-    }
-
-    fn env<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        |name| {
-            vars.iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| (*value).to_owned())
-        }
-    }
-
-    const PASSWD: &str = "root:x:0:0:root:/root:/bin/sh\njohn:x:1000:100::/home/john:/bin/sh\n";
-
-    #[test]
-    fn an_apply_records_who_by_uid_and_ignores_user() {
-        let who = caller(1000, PASSWD, env(&[("USER", "mallory")]));
-        assert_eq!(
-            who,
-            json!({"uid": 1000, "name": "john", "sudo_user": null, "agent": null})
-        );
-    }
-
-    #[test]
-    fn an_agent_applying_through_sudo_is_recorded_with_the_person_behind_it() {
-        let vars = [("SUDO_USER", "john"), ("DISTRO_AGENT", "claude")];
-        let who = caller(0, PASSWD, env(&vars));
-        assert_eq!(
-            who,
-            json!({"uid": 0, "name": "root", "sudo_user": "john", "agent": "claude"})
-        );
-    }
-
-    #[test]
-    fn sudo_user_is_only_believed_from_root() {
-        let who = caller(1000, PASSWD, env(&[("SUDO_USER", "root")]));
-        assert_eq!(who["sudo_user"], Value::Null);
-        assert_eq!(caller(4242, PASSWD, env(&[]))["name"], Value::Null);
-    }
-
-    #[test]
     fn records_and_outputs_carry_no_provenance() {
         let (_dir, lab, packages) = setup();
         let mut db = Db::open(&db_path(&lab)).unwrap();
-        applied(&lab, &mut db, &packages, 80, "secret-path.toml");
+        realised(&lab, &mut db, &packages, &model(80, false));
         for query in ["SELECT record FROM actions", "SELECT output FROM outputs"] {
             let mut statement = db.0.prepare(query).unwrap();
             let rows: Vec<String> = statement
@@ -3803,14 +3161,12 @@ mod tests {
                 .unwrap();
             assert!(!rows.is_empty());
             for text in rows {
-                assert!(!text.contains("secret-path"), "{text}");
                 assert!(!text.contains("files./etc/web.conf"), "{text}");
             }
         }
-        // Publishing a generation's objects must not publish the configuration behind it.
         for entry in fs::read_dir(&objects_of(&lab).0).unwrap() {
             let text = fs::read_to_string(entry.unwrap().path()).unwrap();
-            assert!(!text.contains("secret-path"), "{text}");
+            assert!(!text.contains("files./etc/web.conf"), "{text}");
         }
     }
 

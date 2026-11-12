@@ -335,7 +335,9 @@ pub(crate) struct Package {
     /// Commands to run from the final location, with paths relative to the package.
     #[serde(default)]
     pub(crate) smoke: Vec<String>,
-    /// Libraries to link a small program against and run.
+    /// Libraries to link a small program against. Recipes still list them, but nothing links
+    /// the probes any more.
+    #[allow(dead_code)]
     #[serde(default)]
     pub(crate) probes: Vec<String>,
     /// Builds the tests, in the view, for tests that need a compiler.
@@ -568,50 +570,6 @@ impl Package {
             extra_deps,
             ..self.clone()
         })
-    }
-
-    /// A package linking a small program against `library` from this package.
-    pub(crate) fn probe(&self, library: &str) -> Self {
-        let mut extra_deps = vec![DepSpec::Id(self.id.clone())];
-        extra_deps.extend(self.extra_deps.iter().cloned());
-        let script = format!(
-            "mkdir -p $DEST$PREFIX/bin\n\
-             printf 'int main(void) {{ return 0; }}\\n' > probe.c\n\
-             gcc probe.c -o $DEST$PREFIX/bin/probe -Wl,--no-as-needed -l{library}\n"
-        );
-        Self {
-            id: format!("probe-{}-{library}", self.id),
-            version: None,
-            scope: Scope::Runtime,
-            toolset: true,
-            whole: false,
-            core: self.core,
-            deps: Vec::new(),
-            extra_deps,
-            propagates: Vec::new(),
-            propagate_private: true,
-            indexes: Vec::new(),
-            runtime_deps: Vec::new(),
-            track: None,
-            hold: None,
-            sources: Vec::new(),
-            files: Vec::new(),
-            options: BTreeMap::new(),
-            style_options: BTreeMap::new(),
-            styled: false,
-            style: None,
-            unstyled: None,
-            script,
-            wrap: true,
-            fixup: true,
-            silent_for: None,
-            smoke: vec!["bin/probe".to_owned()],
-            probes: Vec::new(),
-            check_build: None,
-            check: None,
-            check_in_view: false,
-            check_deps: Vec::new(),
-        }
     }
 }
 

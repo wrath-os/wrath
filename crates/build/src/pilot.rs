@@ -1,5 +1,5 @@
-//! Step 3: building packages on the final toolchain, and finding out whether they work with no
-//! `/usr` and what they still say about it.
+//! Step 3: building packages on the final toolchain, fixing up what they say about `/usr`, and
+//! checking them with their smoke commands and tests.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -7,7 +7,6 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use memchr::memmem;
-use serde::{Deserialize, Serialize};
 
 use crate::chain::{self, Arm, Built, Package, Prepared, Sources};
 use crate::runpath;
@@ -15,20 +14,10 @@ use crate::sandbox::{self, Limits, Mount, Status, Step, View};
 use crate::seed;
 use crate::store::{Lab, StorePath, with_path};
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub(crate) struct Leaks {
-    usr_in_elf: usize,
-    usr_in_pkgconfig: usize,
-    usr_in_cmake: usize,
-    usr_in_config_script: usize,
-    usr_in_script: usize,
-    usr_in_docs: usize,
-    usr_in_other: usize,
-    sentinel: usize,
     sentinel_directories: usize,
     unresolved_shebangs: usize,
-    undeclared_references: Vec<String>,
-    mentions_seed: bool,
     samples: Vec<String>,
 }
 
@@ -40,28 +29,14 @@ impl Leaks {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct Check {
     what: String,
     status: Status,
     log: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Record {
-    package: String,
-    arm: String,
-    /// `built`, `failed` or `blocked`.
-    build: String,
-    detail: String,
-    smoke: Vec<Check>,
-    probes: Vec<Check>,
-    check: Option<Check>,
-    leaks: Leaks,
-    fixups: Fixups,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub(crate) struct Fixups {
     la_removed: usize,
     shebangs: usize,
@@ -324,76 +299,6 @@ pub(crate) fn fix_up(
     Ok(())
 }
 
-fn scan_leaks(
-    lab: &Lab,
-    prepared: &Prepared,
-    seed: &StorePath,
-    leaks: &mut Leaks,
-) -> Result<(), String> {
-    let out = lab.on_host(&prepared.out);
-    let finder = memmem::Finder::new(b"/usr/");
-    let sentinel = match &prepared.view.mount {
-        Mount::Sentinel(path) => Some(path.inside()),
-        Mount::Usr => None,
-    };
-    for file in files_under(&out)? {
-        let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
-        if meta.is_symlink() {
-            continue;
-        }
-        let bytes = fs::read(&file).map_err(with_path(&file))?;
-        if let Some(sentinel) = &sentinel {
-            leaks.sentinel += memmem::find_iter(&bytes, sentinel.as_bytes()).count();
-        }
-        let count = finder.find_iter(&bytes).count();
-        if count == 0 {
-            continue;
-        }
-        let relative = file
-            .strip_prefix(&out)
-            .unwrap_or(&file)
-            .display()
-            .to_string();
-        let slot = if relative.starts_with("share/man")
-            || relative.starts_with("share/doc")
-            || relative.starts_with("share/info")
-            || relative.ends_with(".html")
-            || relative.ends_with(".txt")
-            || relative.ends_with(".pod")
-            || relative.ends_with(".md")
-        {
-            &mut leaks.usr_in_docs
-        } else if bytes.starts_with(b"\x7fELF") {
-            leaks.sample(format!("elf: {relative}"));
-            &mut leaks.usr_in_elf
-        } else if relative.ends_with(".pc") {
-            &mut leaks.usr_in_pkgconfig
-        } else if relative.ends_with(".cmake") {
-            &mut leaks.usr_in_cmake
-        } else if relative.ends_with("-config") {
-            &mut leaks.usr_in_config_script
-        } else if bytes.starts_with(b"#!") {
-            leaks.sample(format!("script: {relative}"));
-            &mut leaks.usr_in_script
-        } else {
-            &mut leaks.usr_in_other
-        };
-        *slot += count;
-    }
-
-    for hash in chain::references(&out)?.into_keys() {
-        let path = StorePath::from_hash(&hash);
-        if path == *seed {
-            leaks.mentions_seed = true;
-        }
-        if path != prepared.out && !prepared.closure.contains(&path) && lab.on_host(&path).exists()
-        {
-            leaks.undeclared_references.push(hash);
-        }
-    }
-    Ok(())
-}
-
 /// Runs `command` from the package's final location with no view and no `/usr`.
 fn run_final(
     lab: &Lab,
@@ -617,21 +522,6 @@ fn tools_only(prepared: &Prepared) -> Result<View, String> {
     })
 }
 
-fn record_path(repository: &Path, arm: &str, package: &str) -> PathBuf {
-    repository
-        .join("results/raw")
-        .join(arm)
-        .join(format!("{package}.json"))
-}
-
-fn write_record(repository: &Path, record: &Record) -> Result<(), String> {
-    let path = record_path(repository, &record.arm, &record.package);
-    let dir = path.parent().expect("a record is in a directory");
-    fs::create_dir_all(dir).map_err(with_path(dir))?;
-    let json = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
-    fs::write(&path, json + "\n").map_err(with_path(&path))
-}
-
 /// One smoke command or test run of a package, from `distro build --check`.
 pub struct Checked {
     pub id: String,
@@ -646,9 +536,7 @@ pub struct Checked {
 /// own tests, when its recipe has them, run in a build of it made again and thrown away.
 pub fn check_packages(repository: &Path, ids: &[&str]) -> Result<Vec<Checked>, String> {
     let lab = Lab::new(repository.join("work"));
-    let files = crate::graph::system_recipes(repository)?;
-    let names = crate::graph::names_of(&files);
-    let (mut built, seed, packages) = build_some(&lab, repository, &names, Arm::F, Some(ids))?;
+    let (mut built, seed, packages) = build_some(&lab, repository, Some(ids))?;
     let mut sources = Sources::load(repository)?;
     let mut checked = Vec::new();
     for id in ids {
@@ -691,172 +579,20 @@ fn passed(check: &Check) -> bool {
     check.status == Status::Passed
 }
 
-/// Forgets that `package` was built, and builds it again.
-fn rebuild(
-    lab: &Lab,
-    repository: &Path,
-    package: &Package,
-    arm: Arm,
-    seed: &StorePath,
-    sources: &mut Sources,
-    built: &mut Built,
-) -> Result<Option<Prepared>, String> {
-    let done = lab
-        .work
-        .join("done")
-        .join(built.temporary[&package.id].hash());
-    fs::remove_file(&done).map_err(with_path(&done))?;
-    chain::build_one(lab, repository, package, arm, seed, sources, built)
-}
-
-/// Runs `package`'s smoke tests and links its probes, from wherever the package ended up.
-/// Returns the smoke results and the probe results.
-fn check_installed(
-    lab: &Lab,
-    repository: &Path,
-    package: &Package,
-    arm: Arm,
-    seed: &StorePath,
-    sources: &mut Sources,
-    built: &mut Built,
-) -> Result<(Vec<Check>, Vec<Check>), String> {
-    let out = &built.paths[&package.id];
-    let mut smoke = Vec::new();
-    for (index, command) in package.smoke.iter().enumerate() {
-        let name = format!("{}-smoke-{index}", package.id);
-        smoke.push(run_final(lab, seed, out, &name, command)?);
-    }
-    let mut probes = Vec::new();
-    for library in &package.probes {
-        let probe = package.probe(library);
-        match chain::build_one(lab, repository, &probe, arm, seed, sources, built) {
-            Ok(Some(done)) => {
-                chain::remove(&done.build_dir)?;
-                fix_up(
-                    lab,
-                    arm,
-                    &done,
-                    &mut Fixups::default(),
-                    &mut Leaks::default(),
-                )?;
-                chain::finish(lab, &probe, arm, &done.out, built)?;
-            }
-            Ok(None) => {}
-            Err(message) => {
-                probes.push(Check {
-                    what: format!("linking -l{library}: {message}"),
-                    status: Status::Failed,
-                    log: String::new(),
-                });
-                continue;
-            }
-        }
-        let name = format!("{}-run", probe.id);
-        probes.push(run_final(
-            lab,
-            seed,
-            &built.paths[&probe.id],
-            &name,
-            "bin/probe",
-        )?);
-    }
-    Ok((smoke, probes))
-}
-
-fn passed_of(checks: &[Check]) -> String {
-    format!(
-        "{}/{}",
-        checks.iter().filter(|c| passed(c)).count(),
-        checks.len()
-    )
-}
-
-/// Builds and tests one package, recording what happened.
-fn pilot_one(
-    lab: &Lab,
-    repository: &Path,
-    package: &Package,
-    arm: Arm,
-    seed: &StorePath,
-    sources: &mut Sources,
-    built: &mut Built,
-) -> Result<Record, String> {
-    let mut record = Record {
-        package: package.id.clone(),
-        arm: arm.name().to_owned(),
-        build: "built".to_owned(),
-        detail: String::new(),
-        smoke: Vec::new(),
-        probes: Vec::new(),
-        check: None,
-        leaks: Leaks::default(),
-        fixups: Fixups::default(),
-    };
-    let record_path = record_path(repository, arm.name(), &package.id);
-    let first = chain::build_one(lab, repository, package, arm, seed, sources, built);
-    let result = match first {
-        // Built before, but with nothing written down: the tests have to run again.
-        Ok(None) if !record_path.exists() => {
-            rebuild(lab, repository, package, arm, seed, sources, built)
-        }
-        other => other,
-    };
-    let prepared = match result {
-        Ok(Some(prepared)) => prepared,
-        Ok(None) => {
-            let text = fs::read_to_string(&record_path).map_err(with_path(&record_path))?;
-            return serde_json::from_str(&text)
-                .map_err(|e| format!("{}: {e}", record_path.display()));
-        }
-        Err(message) => {
-            built.paths.remove(&package.id);
-            built.closures.remove(&package.id);
-            record.build = if message.contains("not built before it") {
-                "blocked".to_owned()
-            } else {
-                "failed".to_owned()
-            };
-            record.detail = message;
-            return Ok(record);
-        }
-    };
-    fix_up(lab, arm, &prepared, &mut record.fixups, &mut record.leaks)?;
-    scan_leaks(lab, &prepared, seed, &mut record.leaks)?;
-    record.check = run_check(lab, arm, package, &prepared, built)?;
-    // A failed suite's own logs are the only way to tell why.
-    if record.check.as_ref().is_none_or(passed) {
-        chain::remove(&prepared.build_dir)?;
-    }
-    chain::finish(lab, package, arm, &prepared.out, built)?;
-    (record.smoke, record.probes) =
-        check_installed(lab, repository, package, arm, seed, sources, built)?;
-    Ok(record)
-}
-
-/// Builds the toolchain and then `recipes` for `arm`. Returns what was built, the seed and the
-/// packages of `recipes`.
-pub(crate) fn build_recipes(
-    lab: &Lab,
-    repository: &Path,
-    recipes: &[&str],
-    arm: Arm,
-) -> Result<(Built, StorePath, Vec<Package>), String> {
-    build_some(lab, repository, recipes, arm, None)
-}
-
-/// Like [`build_recipes`], building only `wanted` and what it depends on when it says.
+/// Builds the toolchain and then the system recipes, only `wanted` and what it depends on when
+/// given. Returns what was built, the seed and the packages built.
 pub(crate) fn build_some(
     lab: &Lab,
     repository: &Path,
-    recipes: &[&str],
-    arm: Arm,
     wanted: Option<&[&str]>,
 ) -> Result<(Built, StorePath, Vec<Package>), String> {
-    let mut built = chain::build(lab, repository, "toolchain.toml", arm)?;
+    let files = crate::graph::system_recipes(repository)?;
+    let recipes = crate::graph::names_of(&files);
+    let mut built = chain::build(lab, repository, "toolchain.toml", Arm::F)?;
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let loaded = match wanted {
-        Some(wanted) => chain::load_reached(lab, repository, recipes, wanted)?,
+        Some(wanted) => chain::load_reached(lab, repository, &recipes, wanted)?,
         None => {
             let mut loaded = Vec::new();
             for file in recipes {
@@ -871,7 +607,7 @@ pub(crate) fn build_some(
             lab,
             repository,
             package,
-            arm,
+            Arm::F,
             &seed,
             &mut sources,
             &mut built,
@@ -942,87 +678,6 @@ pub(crate) fn build_and_finish(
         chain::finish(lab, package, arm, &prepared.out, built)?;
     }
     Ok(())
-}
-
-/// Builds the packages in `recipes` for `arm`, and returns whether the arm passes.
-pub fn run(
-    lab: &Lab,
-    repository: &Path,
-    label: &str,
-    recipes: &[&str],
-    arm: Arm,
-) -> Result<bool, String> {
-    let mut built = chain::build(lab, repository, "toolchain.toml", arm)?;
-    let seed = seed::prepare(lab)?;
-    let mut sources = Sources::load(repository)?;
-    let mut packages = Vec::new();
-    for file in recipes {
-        packages.extend(chain::load_styled(lab, repository, file)?);
-    }
-    let mut lines = vec![
-        format!("# {label}, arm {}", arm.name()),
-        String::new(),
-        "| Package | Build | Runs with no /usr | Links with no /usr | Tests | /usr in binaries | \
-         /usr elsewhere | Sentinel left | Bad shebangs | Undeclared |"
-            .to_owned(),
-        "|---|---|---|---|---|---|---|---|---|---|".to_owned(),
-    ];
-    let mut working = 0;
-    let total = packages.len();
-    for package in &packages {
-        let record = pilot_one(
-            lab,
-            repository,
-            package,
-            arm,
-            &seed,
-            &mut sources,
-            &mut built,
-        )?;
-        write_record(repository, &record)?;
-        let tests = match &record.check {
-            Some(check) if passed(check) => "pass".to_owned(),
-            Some(check) => format!("{:?}", check.status).to_lowercase(),
-            None => "-".to_owned(),
-        };
-        let leaks = &record.leaks;
-        let elsewhere = leaks.usr_in_pkgconfig
-            + leaks.usr_in_cmake
-            + leaks.usr_in_config_script
-            + leaks.usr_in_script
-            + leaks.usr_in_other;
-        let row = format!(
-            "| {} | {} | {} | {} | {tests} | {} | {elsewhere} | {} | {} | {} |",
-            record.package,
-            record.build,
-            passed_of(&record.smoke),
-            passed_of(&record.probes),
-            leaks.usr_in_elf,
-            leaks.sentinel + leaks.sentinel_directories,
-            leaks.unresolved_shebangs,
-            leaks.undeclared_references.len(),
-        );
-        let works = record.build == "built"
-            && record.smoke.iter().all(passed)
-            && record.probes.iter().all(passed)
-            && !(record.smoke.is_empty() && record.probes.is_empty());
-        if works {
-            working += 1;
-        }
-        println!("{row}");
-        lines.push(row);
-    }
-    lines.push(String::new());
-    lines.push(format!(
-        "{working} of {total} run from their final location."
-    ));
-    let path = repository.join(format!("results/{label}-{}.md", arm.name()));
-    fs::write(&path, lines.join("\n") + "\n").map_err(with_path(&path))?;
-    println!(
-        "arm {}: {working} of {total} run from their final location",
-        arm.name()
-    );
-    Ok(working >= 10)
 }
 
 #[cfg(test)]

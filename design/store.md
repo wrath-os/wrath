@@ -152,6 +152,10 @@ and fetching take most of the real time, and neither has been optimized or measu
 
 ## An apply is the unit of history
 
+This is the design. The builder's experiment that recorded applies, diffed them and rolled them
+back went with the old `lab` harness; nothing records applies yet, and `distro dev apply-record`
+prints what one would keep.
+
 One row per apply or rollback: who (the uid and its name, the person behind `sudo` when root ran
 it, and an agent's name from `DISTRO_AGENT`), when, the model hash, the generation, the apply
 before it, and digests of the configuration's TOML, its lock and an explanation. The explanation

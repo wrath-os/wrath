@@ -9,11 +9,6 @@ publish.workspace = true
 [lib]
 name = "distro_build"
 
-# Run from `build/`, where the recipes, pins and work directory are.
-[[bin]]
-name = "lab"
-path = "src/main.rs"
-
 [dependencies]
 distro-starlark.workspace = true
 memchr = "2"

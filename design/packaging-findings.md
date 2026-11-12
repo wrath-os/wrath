@@ -161,8 +161,8 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What happened:** the recipe installed every header at the top, so the one noctalia needed was
   missing, and the error looked like a search path problem.
 - **What we did:** copied it from `deprecated/` too.
-- **What would prevent it:** a `smoke` or `probes` line for the headers its users need, so the
-  recipe fails where the file is missing and not two packages later.
+- **What would prevent it:** a `smoke` line for the headers its users need, so the recipe
+  fails where the file is missing and not two packages later.
 - **Belongs in:** the recipe.
 - **Status:** known.
 

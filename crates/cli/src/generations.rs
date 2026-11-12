@@ -65,7 +65,7 @@ pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBu
     if test {
         add_test_layer(&mut model);
     }
-    let system = distro_build::graph::system(&repository, &model, &kept, None)?;
+    let system = distro_build::graph::system(&repository, &model, &kept)?;
     match missing(&system.skipped, &system.unfound) {
         Some(message) => Err(message),
         None => Ok(system.path),
