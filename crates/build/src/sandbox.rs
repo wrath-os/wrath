@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::progress::{self, Mode, Tail};
 use crate::store::{Lab, StorePath, with_path};
 
 /// Where a view appears in the sandbox.
@@ -232,26 +233,49 @@ fn bwrap_args(lab: &Lab, step: &Step, etc: &Path) -> Vec<String> {
     args
 }
 
-/// Copies `from` to the log, noting the time of everything read.
-fn pump(
-    mut from: impl Read + Send + 'static,
+/// Where what a step prints goes: its log, the time it last printed, and its last line.
+#[derive(Clone)]
+struct Output {
     log: Arc<Mutex<File>>,
-    last_output: Arc<Mutex<Instant>>,
-) -> thread::JoinHandle<()> {
+    last: Arc<Mutex<Instant>>,
+    tail: Arc<Mutex<Tail>>,
+    /// Whether it's also copied to stderr, as `--verbose` asks.
+    echo: bool,
+}
+
+/// Copies `from` to the log, noting the time of everything read and its last line.
+fn pump(mut from: impl Read + Send + 'static, output: Output) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut buffer = [0; 8192];
         while let Ok(count) = from.read(&mut buffer) {
             if count == 0 {
                 break;
             }
-            *last_output.lock().unwrap() = Instant::now();
-            let _ = log.lock().unwrap().write_all(&buffer[..count]);
+            let read = &buffer[..count];
+            *output.last.lock().unwrap() = Instant::now();
+            output.tail.lock().unwrap().push(read);
+            let _ = output.log.lock().unwrap().write_all(read);
+            if output.echo {
+                let _ = std::io::stderr().lock().write_all(read);
+            }
         }
     })
 }
 
 /// Runs `step` and writes what happened next to its log, as `<log>.json`.
 pub fn run(lab: &Lab, step: &Step) -> Result<Outcome, String> {
+    run_shown(lab, step, None)
+}
+
+/// Runs `step` as [`run`] does, showing it on stderr by `verbs`, such as `("build", "built")` for
+/// while it runs and once it has, the way the progress mode says: a line as it starts, a status
+/// line kept up to date, or all it prints.
+pub fn run_shown(lab: &Lab, step: &Step, verbs: Option<(&str, &str)>) -> Result<Outcome, String> {
+    let mode = progress::mode();
+    let live = verbs.filter(|_| mode == Mode::Live);
+    if let Some((verb, _)) = verbs.filter(|_| mode != Mode::Live) {
+        eprintln!("  {verb}  {}", step.name);
+    }
     let etc = lab.work.join("sandbox-etc");
     fs::create_dir_all(&etc).map_err(with_path(&etc))?;
     let uid = Identity::current().uid.to_string();
@@ -283,19 +307,18 @@ pub fn run(lab: &Lab, step: &Step) -> Result<Outcome, String> {
                  needs to be installed"
             )
         })?;
-    let last_output = Arc::new(Mutex::new(Instant::now()));
+    let output = Output {
+        log,
+        last: Arc::new(Mutex::new(Instant::now())),
+        tail: Arc::default(),
+        echo: verbs.is_some() && mode == Mode::Verbose,
+    };
     let pumps = [
-        pump(
-            child.stdout.take().expect("piped"),
-            log.clone(),
-            last_output.clone(),
-        ),
-        pump(
-            child.stderr.take().expect("piped"),
-            log.clone(),
-            last_output.clone(),
-        ),
+        pump(child.stdout.take().expect("piped"), output.clone()),
+        pump(child.stderr.take().expect("piped"), output.clone()),
     ];
+    let width = progress::width();
+    let mut drawn: Option<Instant> = None;
 
     let (status, exit_code) = loop {
         if let Some(exit) = child.try_wait().map_err(|e| format!("waiting: {e}"))? {
@@ -312,7 +335,7 @@ pub fn run(lab: &Lab, step: &Step) -> Result<Outcome, String> {
             .is_some_and(|total| start.elapsed() > total)
         {
             Some(Status::Timeout)
-        } else if last_output.lock().unwrap().elapsed() > step.limits.silence {
+        } else if output.last.lock().unwrap().elapsed() > step.limits.silence {
             Some(Status::Silent)
         } else {
             None
@@ -323,10 +346,27 @@ pub fn run(lab: &Lab, step: &Step) -> Result<Outcome, String> {
             let _ = child.wait();
             break (status, None);
         }
+        if let Some((verb, _)) = live
+            && drawn.is_none_or(|at| at.elapsed() >= Duration::from_millis(250))
+        {
+            let tail = output.tail.lock().unwrap().line().to_owned();
+            let line = progress::status(verb, &step.name, start.elapsed(), &tail, width);
+            eprint!("\r\x1b[K{line}");
+            drawn = Some(Instant::now());
+        }
         thread::sleep(Duration::from_millis(50));
     };
     for pump in pumps {
         let _ = pump.join();
+    }
+    if let Some((_, done)) = verbs.filter(|_| mode != Mode::Lines) {
+        let how = match status {
+            Status::Passed => String::new(),
+            other => format!("  {other:?}").to_lowercase(),
+        };
+        let clear = if live.is_some() { "\r\x1b[K" } else { "" };
+        let time = progress::clock(start.elapsed());
+        eprintln!("{clear}  {done}  {}  {time}{how}", step.name);
     }
 
     let outcome = Outcome {

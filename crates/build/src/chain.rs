@@ -2115,8 +2115,6 @@ pub(crate) fn build_one(
             return Ok(None);
         }
     }
-    eprintln!("  build  {}", package.id);
-
     let build_dir = lab.work.join("build").join(out.hash());
     fresh(&build_dir)?;
     fresh(&lab.on_host(&out))?;
@@ -2264,7 +2262,7 @@ pub(crate) fn build_one(
         dir: view_dir,
         mount,
     };
-    let outcome = sandbox::run(
+    let outcome = sandbox::run_shown(
         lab,
         &Step {
             name: package.id.clone(),
@@ -2278,6 +2276,7 @@ pub(crate) fn build_one(
             limits,
             links: links.clone(),
         },
+        Some(("build", "built")),
     )?;
     if outcome.status != Status::Passed {
         let hint = fs::read_to_string(&log)

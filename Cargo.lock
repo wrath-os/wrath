@@ -558,6 +558,7 @@ dependencies = [
  "distro-starlark",
  "memchr",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

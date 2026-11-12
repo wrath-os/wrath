@@ -10,6 +10,7 @@ pub mod image;
 pub mod initrd;
 pub mod layouts;
 pub mod pilot;
+pub mod progress;
 pub mod requires;
 pub mod runpath;
 pub mod sandbox;

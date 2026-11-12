@@ -53,6 +53,9 @@ struct Cli {
     /// Print data as JSON instead of text, where a command supports it
     #[arg(long, global = true)]
     json: bool,
+    /// Show everything each build prints, as it prints it
+    #[arg(short, long, global = true)]
+    verbose: bool,
     /// Directory of modules [default: modules under the root]
     #[arg(long, global = true, hide = true)]
     modules: Option<PathBuf>,
@@ -327,6 +330,10 @@ struct TestOptions {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     ROLE.set(cli.role.clone()).expect("the role is set once");
+    distro_build::progress::set(distro_build::progress::chosen(
+        cli.verbose,
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    ));
     fetch::set(match &cli.command {
         Command::Update { sources } => fetch::Fetching::Newest(sources.clone()),
         Command::Lock
