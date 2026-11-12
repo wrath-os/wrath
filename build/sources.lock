@@ -44,6 +44,7 @@ a37bb0e78a419dcbeaa9c7027bcff52f5ec2367c25ec859da31dfde2928f279a  https://downlo
 7fd725deb2cb3f8dc218ad862c5056ff8548f49d3b0e4081796e444c22d19686  https://download.gnome.org/sources/gtk/4.22/gtk-4.22.5.tar.xz
 19e383c82d5dd89db275e00b82864e90414d4c3fb3d100b2f996bcc2338a4cc7  https://download.gnome.org/sources/gtkmm/3.24/gtkmm-3.24.11.tar.xz
 55c5c141a564245b8f8fbe7698663c87a45a7333c2a2c56f06f811ab73b212dd  https://download.gnome.org/sources/json-glib/1.10/json-glib-1.10.8.tar.xz
+f5ab3453ee743dc293cdf96d6821789cd20e8d125d9b41637703c12bfa4162ee  https://download.gnome.org/sources/libadwaita/1.9/libadwaita-1.9.4.tar.xz
 c906bb084027ea512f94a60fbfc0cc8d4f17e4b4d525bed370d07a6d8714c923  https://download.gnome.org/sources/libnotify/0.8/libnotify-0.8.9.tar.xz
 c982b8157a054b803493bf994d31e50105eb948dd8da6b4ab9734e8d392712a3  https://download.gnome.org/sources/librsvg/2.62/librsvg-2.62.4.tar.xz
 70e7279ccc7e8cce1bb0e1c57a3785e2c79aea6d1dd9a538abda3886f11cdf72  https://download.gnome.org/sources/libsecret/0.21/libsecret-0.21.8.tar.xz
@@ -177,6 +178,7 @@ f9e62d3774a9c4cfd198ec3abaa88294aaade2e31c04d5ab02bcf4abc98b1df5  https://github
 27c8bc3eba46bc7bab1e3629c6b28ff94882eeff17366b3ea69cd8ceffba7541  https://github.com/helix-editor/helix/archive/25.07.1/helix-25.07.1.tar.gz
 e7b803b6a248c18aea067dbccacaf651c29946db75d05fb23f318ff2f15961c6  https://github.com/helm/helm/archive/v4.3.1/helm-4.3.1.tar.gz
 a8b164386494cb85bb255a415a3f5f80afe7a0c4491da5d113b3a0f951087e65  https://github.com/htop-dev/htop/releases/download/3.5.3/htop-3.5.3.tar.xz
+42bccefed2c210fd6161485bdc0c76574d1c8d24e397f21cf29ff25003e8026a  https://github.com/hughsie/libxmlb/archive/0.3.30/libxmlb-0.3.30.tar.gz
 a4e374c8f864f51df48c2cfd0e1413ec3b2ea030deae852d6a655402ebb61ac4  https://github.com/ip7z/7zip/releases/download/26.06/7z2606-src.tar.xz
 19e680c9eef8c079da4da37040b5f5453763205b4edfb1e2c114de77908927e4  https://github.com/iputils/iputils/archive/20250605/iputils-20250605.tar.gz
 49e80d28e03e53048105f6ebb5afefbe5caacffa8549347d8a59eab3a00dafe1  https://github.com/jesseduffield/lazygit/archive/v0.66.3/lazygit-0.66.3.tar.gz
@@ -219,6 +221,7 @@ ccb5640f8f88b48787c946daf87a349972b939c2edbc5a3b4ca6fc0921bddd6b  https://github
 c53a47e5e441c930c3928cf7bf6fb00e5d129b630e0aa873b08258656e7345ec  https://github.com/openssl/openssl/releases/download/openssl-3.5.2/openssl-3.5.2.tar.gz
 acb73b84a4f32150f8a097841fe2c48a2e13d35656ddab4851f46a4d681cdde4  https://github.com/opentofu/opentofu/archive/v1.13.9/opentofu-1.13.9.tar.gz
 f2cc09111e44bf3fea58f023180b33acea90aa82d042d6fbb623fbc5ba033bb7  https://github.com/p11-glue/p11-kit/releases/download/0.26.5/p11-kit-0.26.5.tar.xz
+99ec52a528c629de11da7ead35ffa3c0e8cb548e4acafbd292db47535720f04c  https://github.com/pantoniou/libfyaml/archive/v0.9.3/libfyaml-0.9.3.tar.gz
 2540302a1844ad2b2b501977abecfa850f265f97b78f065a712ab4074a89f5b5  https://github.com/pnggroup/libpng/archive/v1.6.59/libpng-1.6.59.tar.gz
 9b7bc16f086479dcc626c575976568ba4a85d34297a750d8ab3d2e57f6d8b988  https://github.com/polkit-org/polkit/archive/127/polkit-127.tar.gz
 841ca1d6fc33f87ca0065208052dffd7c49489cfd1119ce572176c1d5428a1e0  https://github.com/pwmt/girara/archive/2026.07.18/girara-2026.07.18.tar.gz
@@ -231,6 +234,8 @@ bb9b1a19040744d26d8a79be029d4e6b189c45ccc9d8831d7fe367d3c33df725  https://github
 054a4a369cdcc5d57e9bc91ea56dfefd66c71c253dcb0c0d7b72c0810373da26  https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/IosevkaTerm.tar.xz
 04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf  https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/JetBrainsMono.tar.xz
 61f53438b240a00c87c92dc2c372db0bbb264473b36a8144ea62babf787f8383  https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/RobotoMono.tar.xz
+11f0bb3709a4f20285507419d7618f3877a425c0131ea8df40fe6196129df15d  https://github.com/sass/libsass/archive/3.6.6/libsass-3.6.6.tar.gz
+608dc9002b45a91d11ed59e352469ecc05e4f58fc1259fc9a9f5b8f0f8348a03  https://github.com/sass/sassc/archive/3.6.2/sassc-3.6.2.tar.gz
 8d7dc7b4495e5812b5613274c250ba5d3900933d78888ce7921c01247f191cc8  https://github.com/sentriz/cliphist/archive/v0.7.0/cliphist-0.7.0.tar.gz
 add4604d3bc410344433122a819ee4154b79dd8316a56298c60417e637c07608  https://github.com/shadow-maint/shadow/releases/download/4.18.0/shadow-4.18.0.tar.xz
 4474de87e084953eefc1120cf905a79f72bbbf85091e30cf37c9214eafcaa9c9  https://github.com/sharkdp/bat/archive/v0.26.1/bat-0.26.1.tar.gz
@@ -262,6 +267,9 @@ a1d5b63d2d38ec9bd03acf643caa51fa22edd1e89c5a109c4807717216bbec07  https://github
 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
 8ee1d1e0c2560d20c43032aca05c399d4e9b7b304c14c67e7e61ff5f2f984bba  https://github.com/wezterm/wezterm/archive/ce8e6b140c2a52c8be1cc31c1274104b01422fdc.tar.gz
 88c3a3e0a5300532f3d368d5df64838a87f1fb85273f22d41df0a6b8d0ec59c6  https://github.com/wmww/gtk-layer-shell/archive/v0.10.1/gtk-layer-shell-0.10.1.tar.gz
+1ebb01ab14e98afd1727f68f64981c37bd23305b1f131f5667c02b94cf593192  https://github.com/wmww/gtk4-layer-shell/archive/v1.3.0/gtk4-layer-shell-1.3.0.tar.gz
+564ec87b16e9e4ee81fb021e612250fd27f3a3ecd31c209a5dd1ff59def3022d  https://github.com/ximion/appstream/archive/v1.1.2/appstream-1.1.2.tar.gz
+12f01e127081c485a3e3056b6d30f54d003101689ff815adac6f1ef2b19af6ab  https://github.com/ximion/appstream/archive/v1.2.3/appstream-1.2.3.tar.gz
 acc4d5f7c3cbba5f9f8d08d8bdbeede84ecede46792f47929aa9321873385528  https://github.com/xkbcommon/libxkbcommon/archive/xkbcommon-1.13.2/libxkbcommon-xkbcommon-1.13.2.tar.gz
 2dfa237fea447f3cc98954e81b0097b9d25841010036720e11f67880fe7861f0  https://github.com/zellij-org/zellij/archive/v0.46.0/zellij-0.46.0.tar.gz
 513a53cbc42ca1f4ea06af2bab1f5283524a3848266b1d162416f8033afc4985  https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.3.2/unix-tree-2.3.2.tar.gz

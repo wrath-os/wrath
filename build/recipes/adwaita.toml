@@ -1,0 +1,112 @@
+# libadwaita, GNOME's widgets and style for GTK 4 apps such as Ghostty, and what it needs:
+# AppStream reads apps' metadata for its about dialog. Also the layer-shell GTK 4 apps put panels
+# and drop-down terminals on.
+
+# YAML, as AppStream reads its catalogs in.
+[[package]]
+id = "libfyaml"
+version = "0.9.3"
+scope = "runtime"
+core = true
+extra_deps = ["cmake", "ninja"]
+sources = [{ url = "https://github.com/pantoniou/libfyaml/archive/v{version}/libfyaml-{version}.tar.gz" }]
+probes = ["libfyaml"]
+
+[package.cmake]
+args = ["-D BUILD_SHARED_LIBS=ON", "-D BUILD_TESTING=OFF"]
+
+# A query store for XML, which AppStream keeps its catalog cache in.
+[[package]]
+id = "libxmlb"
+version = "0.3.30"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "glib", "xz", "zstd"]
+sources = [{ url = "https://github.com/hughsie/libxmlb/archive/{version}/libxmlb-{version}.tar.gz" }]
+probes = ["xmlb"]
+
+[package.meson]
+args = [
+  "-D gtkdoc=false", "-D introspection=false", "-D tests=false", "-D stemmer=false",
+  "-D cli=false",
+]
+
+[[package]]
+id = "appstream"
+hold = { below = "1.2", reason = "1.2 needs libfyaml 1.0, a release candidate for now" }
+version = "1.1.2"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "gperf", "glib", "curl", "libxml2", "libfyaml", "libxmlb",
+  "gettext", "wayland",
+]
+sources = [{ url = "https://github.com/ximion/appstream/archive/v{version}/appstream-{version}.tar.gz" }]
+probes = ["appstream"]
+smoke = ["bin/appstreamcli --version"]
+
+[package.meson]
+# Without the translated description of its own command-line tool, which needs itstool and
+# libxml2's Python bindings to make.
+prepare = '''
+sed -i '/^metainfo_i18n = i18n.itstool_join(/,/^)/d; s/metainfo_i18n\]/metainfo_with_relinfo]/' data/meson.build
+! grep -q itstool_join data/meson.build
+'''
+args = [
+  "-D stemming=false", "-D systemd=false", "-D vapi=false", "-D qt=false", "-D compose=false",
+  "-D gir=false", "-D zstd-support=false", "-D docs=false", "-D apidocs=false",
+  "-D install-docs=false", "-D man=false", "-D bash-completion=false", "-D svg-support=false",
+]
+
+# Sass to CSS, which libadwaita compiles its stylesheet with. libsass goes in whole, as sassc's
+# own build does.
+[[package]]
+id = "sassc"
+version = "3.6.2"
+scope = "runtime"
+core = true
+sources = [
+  { url = "https://github.com/sass/sassc/archive/{version}/sassc-{version}.tar.gz" },
+  { url = "https://github.com/sass/libsass/archive/3.6.6/libsass-3.6.6.tar.gz", into = "libsass" },
+]
+script = '''
+make -j$NPROC SASS_LIBSASS_PATH=$PWD/libsass SASSC_VERSION=3.6.2 LIBSASS_VERSION=3.6.6
+install -Dm755 bin/sassc $DEST$PREFIX/bin/sassc
+'''
+smoke = ["bin/sassc --version"]
+
+# With its typelib, which blueprint-compiler reads Ghostty's interfaces against.
+[[package]]
+id = "libadwaita"
+version = "1.9.4"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "sassc", "glib", "gtk4", "fribidi", "appstream",
+  "gettext", "gobject-introspection", "setuptools", "glib-gir", "gobject-introspection-gir",
+  "harfbuzz-gir", "pango-gir", "gdk-pixbuf-gir", "graphene-gir", "gtk4-gir",
+]
+sources = [{ url = "https://download.gnome.org/sources/libadwaita/{series}/libadwaita-{version}.tar.xz" }]
+probes = ["libadwaita-1"]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = [
+  "-D introspection=enabled", "-D vapi=false", "-D documentation=false", "-D tests=false",
+  "-D examples=false",
+]
+
+[[package]]
+id = "gtk4-layer-shell"
+version = "1.3.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "glib", "gtk4", "wayland", "wayland-protocols"]
+sources = [{ url = "https://github.com/wmww/gtk4-layer-shell/archive/v{version}/gtk4-layer-shell-{version}.tar.gz" }]
+probes = ["gtk4-layer-shell-0"]
+
+[package.meson]
+args = [
+  "-D introspection=false", "-D vapi=false", "-D examples=false", "-D docs=false",
+  "-D tests=false", "-D smoke-tests=false",
+]
