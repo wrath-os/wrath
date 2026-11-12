@@ -92,6 +92,11 @@ args = [
     "-D selinux=disabled", "-D nis=disabled", "-D pam_userdb=disabled", "-D examples=false",
     "-D xtests=false",
 ]
+# pam_unix checks a password for someone who isn't root, such as a lock screen, by running
+# unix_chkpwd, which reads /etc/shadow only when setuid: the system's wrapper, not the store copy.
+prepare = '''
+sed -i "s|sbindir / 'unix_chkpwd'|'/run/wrappers/bin/unix_chkpwd'|" modules/*/meson.build
+'''
 
 [[package]]
 id = "shadow"

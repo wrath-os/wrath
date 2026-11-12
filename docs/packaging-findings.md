@@ -184,6 +184,25 @@ style (Starlark), the builder (Rust), or the recipe.
   crate as one of ours and failed for want of its checksum file.
 - **What we did:** crates go in `.cargo-vendor/`.
 
+### Data a library refers to was missing from the system
+
+- **Seen in:** fontconfig, whose presets went unused, and libX11, whose compose tables xkbcommon
+  couldn't find, so dead keys didn't work in niri.
+- **What happened:** splitting moves data a library refers to into the library output, with the
+  library, and a system linked only each package's main output into what it shares.
+- **What we did:** a system shares the `share` of a package's library output too.
+
+### A helper compiled in by its store path, which can't be setuid
+
+- **Seen in:** Linux-PAM, whose `pam_unix` checks a password for someone who isn't root, such as
+  noctalia's lock screen, by running `unix_chkpwd`.
+- **What happened:** the helper's path was its copy in the store, which isn't setuid, so it couldn't
+  read `/etc/shadow` and every password was refused.
+- **What we did:** the recipe points `pam_unix` at the system's setuid wrapper in
+  `/run/wrappers/bin`.
+- **What would prevent it:** a check that no package names a store path to a program the system
+  wraps setuid.
+
 ### A crate from git joined the project's workspace
 
 - **Seen in:** yazi, which patches `ratatui-core` from a fork on GitHub.
