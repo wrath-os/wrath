@@ -191,6 +191,10 @@ The commands that only make sense in this repository move under `distro dev`: `d
 (running scenarios), `dev acceptance`, `dev bench`. `fill-templates` stays hidden;
 activation runs it, and people don't.
 
+`dev lint [PKG...]` points out needless dependencies in recipes, `dev outdated` compares recipes
+with upstream releases, `dev repro [PKG...]` builds packages a second time and says which
+differ, and `dev seed check|pack|addresses` works on the seed.
+
 `dev test DIR` checks each configuration in `DIR`. One with an `expected/` directory renders:
 each file there must be what the configuration writes at that path, with units under
 `etc/systemd/system/` and a user's files under `home/NAME/`. Any other case is a bad

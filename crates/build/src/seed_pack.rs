@@ -10,6 +10,7 @@ use std::process::Command;
 use crate::chain::{self, Arm, Built, Sources};
 use crate::experiments::all_packages;
 use crate::runpath;
+use crate::sandbox::Status;
 use crate::seed::{self, run, sha256_of};
 use crate::store::{Lab, StorePath, with_path};
 
@@ -338,7 +339,7 @@ fn built(lab: &Lab, repository: &Path, arm: Arm) -> Result<(Vec<String>, Built),
     let mut sources = Sources::load(repository)?;
     let mut built = chain::built_from_seed(&seed);
     let mut ids = Vec::new();
-    for package in all_packages(repository)? {
+    for package in all_packages(lab, repository)? {
         let made = chain::build_one(
             lab,
             repository,
@@ -387,6 +388,62 @@ pub fn pack(lab: &Lab, repository: &Path, arm: Arm) -> Result<(), String> {
     let hash = tarball(lab, &stage)?;
     println!("{hash}");
     chain::remove(&stage)
+}
+
+/// What must be left behind once the final toolchain is built.
+const BOOTSTRAP: [&str; 7] = [
+    "seed",
+    "wrapper",
+    "m4",
+    "bison",
+    "python",
+    "binutils-stage1",
+    "gcc-stage1",
+];
+const FINAL: [&str; 4] = ["glibc", "binutils", "gcc", "hello"];
+
+/// Builds the toolchain for `arm` and checks it: the final compiler, C library and binutils
+/// refer to nothing from the bootstrap, and a C and a C++ program run with no `/usr` at all.
+pub fn check_toolchain(lab: &Lab, repository: &Path, arm: Arm) -> Result<(), String> {
+    let built = chain::build(lab, repository, "toolchain.toml", arm)?;
+    let mut failed = false;
+
+    for name in FINAL {
+        let found = chain::references(&lab.on_host(&built.paths[name]))?;
+        for bootstrap in BOOTSTRAP {
+            if let Some(file) = found.get(built.paths[bootstrap].hash()) {
+                println!(
+                    "  LEAK   {name} refers to {bootstrap}, in {}",
+                    file.display()
+                );
+                failed = true;
+            }
+        }
+    }
+
+    for (program, expected) in [
+        ("bin/hello", "hello from the store\n"),
+        ("bin/hello-cxx", "hello from libstdc++\n"),
+    ] {
+        let (status, text) = chain::run_alone(
+            lab,
+            &built.paths["hello"],
+            program,
+            &program.replace('/', "-"),
+        )?;
+        if status == Status::Passed && text == expected {
+            println!("  ran    {program} with /usr absent");
+        } else {
+            println!("  FAILED {program}: {status:?}: {text}");
+            failed = true;
+        }
+    }
+    if failed {
+        Err("the toolchain leaks its bootstrap or doesn't run on its own".to_owned())
+    } else {
+        println!("the toolchain stands on its own");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

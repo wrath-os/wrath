@@ -4,6 +4,9 @@ use std::process::ExitCode;
 use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
+use distro_build::chain::Arm;
+use distro_build::seed_pack;
+use distro_build::store::Lab;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use distro_eval::{ConfigKind, Evaluation, OptionPath, Value};
 use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};
@@ -298,6 +301,17 @@ enum DevCommand {
         /// Only these recipes [default: every recipe, which builds what isn't built yet]
         packages: Vec<String>,
     },
+    /// Build packages a second time, as another user on fewer cores, and say which come out
+    /// different [default: every recipe, writing a report to build/results]
+    Repro {
+        /// Only these recipes
+        packages: Vec<String>,
+    },
+    /// Work on the seed, the prebuilt compilers every build starts from
+    Seed {
+        #[command(subcommand)]
+        command: SeedCommand,
+    },
     /// Compare each recipe's version with upstream's newest release
     Outdated {
         /// List every recipe, including those that are current or couldn't be checked
@@ -321,6 +335,17 @@ enum DevCommand {
         #[arg(long, default_value_t = 500)]
         budget_ms: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum SeedCommand {
+    /// Build the toolchain and check it stands on its own: nothing refers to the seed, and a C
+    /// and a C++ program run without /usr
+    Check,
+    /// Pack the toolchain and what it needs into a new seed, and print its hash for seed.pin
+    Pack,
+    /// Print where every package lands, to compare what two seeds build
+    Addresses,
 }
 
 #[derive(clap::Args)]
@@ -556,6 +581,21 @@ fn main() -> ExitCode {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
             DevCommand::Lint { packages } => lint(root, &packages),
+            DevCommand::Repro { packages } => {
+                let only: Vec<&str> = packages.iter().map(String::as_str).collect();
+                let (lab, repository) = builder(root);
+                distro_build::experiments::reproduce(&lab, &repository, Arm::F, &only)
+                    .map(|()| ExitCode::SUCCESS)
+            }
+            DevCommand::Seed { command } => {
+                let (lab, repository) = builder(root);
+                match command {
+                    SeedCommand::Check => seed_pack::check_toolchain(&lab, &repository, Arm::F),
+                    SeedCommand::Pack => seed_pack::pack(&lab, &repository, Arm::F),
+                    SeedCommand::Addresses => seed_pack::addresses(&lab, &repository, Arm::F),
+                }
+                .map(|()| ExitCode::SUCCESS)
+            }
             DevCommand::Outdated { all } => outdated(root, all),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::ApplyRecord => {
@@ -839,7 +879,12 @@ fn context(root: &Path, image_override: Option<PathBuf>) -> Result<RunContext, S
     })
 }
 
-/// Prints the recipes upstream has released something newer of, and those it couldn't check.
+/// The builder's work directory and the recipes, in the repository at `root`.
+fn builder(root: &Path) -> (Lab, PathBuf) {
+    let repository = root.join("build");
+    (Lab::new(repository.join("work")), repository)
+}
+
 /// Prints each recipe's needless dependencies, and fails when there are any.
 fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
     let only: Vec<&str> = packages.iter().map(String::as_str).collect();
@@ -852,6 +897,7 @@ fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::FAILURE)
 }
 
+/// Prints the recipes upstream has released something newer of, and those it couldn't check.
 fn outdated(root: &Path, all: bool) -> Result<ExitCode, String> {
     let reports =
         distro_build::upstream::outdated(&root.join("build"), &distro_build::upstream::run)?;

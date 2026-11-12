@@ -62,12 +62,14 @@ fn tree(dir: &Path) -> Result<BTreeMap<String, (String, String)>, String> {
     Ok(found)
 }
 
-pub(crate) fn all_packages(repository: &Path) -> Result<Vec<Package>, String> {
+/// Every recipe, the toolchain's and the system's, with its build style applied, in the order
+/// they build from the seed.
+pub(crate) fn all_packages(lab: &Lab, repository: &Path) -> Result<Vec<Package>, String> {
     let mut packages = Vec::new();
-    for file in ["toolchain.toml", "pilot.toml", "full.toml", "rust.toml"] {
-        packages.extend(chain::load(repository, file)?);
+    for file in crate::graph::recipe_files(repository)? {
+        packages.extend(chain::load_styled(lab, repository, &file)?);
     }
-    Ok(packages)
+    chain::in_order(packages, |id| id == "seed")
 }
 
 fn fix_up_if_needed(
@@ -287,9 +289,10 @@ pub fn reproduce(lab: &Lab, repository: &Path, arm: Arm, only: &[&str]) -> Resul
     let mut sources = Sources::load(repository)?;
     let mut built = chain::built_from_seed(&seed);
     let mut results = Vec::new();
-    for package in all_packages(repository)? {
+    for package in all_packages(lab, repository)? {
         if package.is_boot() || !(only.is_empty() || only.contains(&package.id.as_str())) {
-            chain::build_one(
+            // As a build would, so what it depends on is where and how a build leaves it.
+            crate::pilot::build_and_finish(
                 lab,
                 repository,
                 &package,
