@@ -23,6 +23,8 @@ def render(ctx: Context) -> None:
         "Unit": {
             "Description": "greetd, the login manager",
             "Wants": "systemd-user-sessions.service",
+            # Restarting it would end the desktop session, and a switch run from in it.
+            "X-RestartIfChanged": "false",
             "After": "systemd-user-sessions.service getty@tty1.service",
             "Conflicts": "getty@tty1.service",
         },

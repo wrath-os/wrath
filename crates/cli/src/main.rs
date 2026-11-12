@@ -1204,7 +1204,7 @@ fn switch(
     modules: &Path,
 ) -> Result<ExitCode, String> {
     if let Some(system) = system {
-        return generations::switch_to(&system, how);
+        return generations::apply_built(&system, how, yes);
     }
     let config = config()?;
     let role = role(&config);

@@ -17,6 +17,8 @@ cp -r modules $DEST$PREFIX/share/distro/
 cat > $DEST$PREFIX/lib/systemd/system/distro-agent.service <<UNIT
 [Unit]
 Description=distro test harness agent
+# A switch it runs would end with it.
+X-RestartIfChanged=false
 
 [Service]
 Environment=PATH=/run/wrappers/bin:/run/system/bin

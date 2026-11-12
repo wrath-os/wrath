@@ -216,8 +216,38 @@ pub fn apply(
     if let Some(record) = &record {
         println!("{record}");
     }
+    let Some(tier) = planned(&model, rebuilt, yes)? else {
+        println!("nothing changed");
+        return Ok(ExitCode::SUCCESS);
+    };
+    let system = build_generation(root, &model, false)?;
+    if let Some(record) = record {
+        record.write()?;
+    }
+    switched(&system, how, tier)
+}
+
+/// Switches to `system`, built before, after showing the plan from the running system to it and
+/// asking, as `apply` does for a configuration.
+pub fn apply_built(system: &Path, how: Switch, yes: bool) -> Result<ExitCode, String> {
+    let model = crate::read_model(&system.join("etc/distro/model.json"))
+        .map_err(|e| format!("{} isn't a system distro built: {e}", system.display()))?;
+    let Some(tier) = planned(&model, None, yes)? else {
+        println!("nothing changed");
+        return Ok(ExitCode::SUCCESS);
+    };
+    switched(system, how, tier)
+}
+
+/// Shows the plan from the running system to `model` and asks whether to switch. Gives the tier
+/// to say when the switch takes full effect, or `None` when the answer is no.
+fn planned(
+    model: &Model,
+    rebuilt: Option<Vec<distro_model::Change>>,
+    yes: bool,
+) -> Result<Option<Option<Tier>>, String> {
     let running = here::running_model().and_then(|path| crate::read_model(&path).ok());
-    let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
+    let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), model);
     let plan = with_rebuilt(plan, rebuilt);
     match &running {
         Some(_) => crate::print_plan(&plan),
@@ -227,15 +257,14 @@ pub fn apply(
         ),
     }
     if !confirmed(yes, "switch to it?")? {
-        println!("nothing changed");
-        return Ok(ExitCode::SUCCESS);
+        return Ok(None);
     }
-    let system = build_generation(root, &model, false)?;
-    if let Some(record) = record {
-        record.write()?;
-    }
-    let code = switch_to(&system, how)?;
-    if let Some(note) = running.and(plan.tier()).and_then(full_effect) {
+    Ok(Some(running.and(plan.tier())))
+}
+
+fn switched(system: &Path, how: Switch, tier: Option<Tier>) -> Result<ExitCode, String> {
+    let code = switch_to(system, how)?;
+    if let Some(note) = tier.and_then(full_effect) {
         println!("{note}");
     }
     Ok(code)
@@ -446,7 +475,7 @@ fn matching(running: Option<&str>, model: &Model) -> &'static str {
 }
 
 /// Switches to `system`, already built, as `how` says.
-pub fn switch_to(system: &Path, how: Switch) -> Result<ExitCode, String> {
+fn switch_to(system: &Path, how: Switch) -> Result<ExitCode, String> {
     match how {
         Switch::Apply => activate(system),
         Switch::Try(seconds) => {

@@ -207,9 +207,10 @@ Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `t
 `lock`, `update`, `sources`, `check`, `why` for options, files and packages, `options`,
 `secret`, the `dev` commands, `--json` for `plan`, `status`, `history` and `sources`, and
 `--role` for configurations with `roles/`, which defaults to the machine's role from install or
-`machines.toml`. `apply` and `try` check `[machine.requires]` first. Projects: found from the
-current directory, with `shell`, `up`, `run`, `add`, `remove`, `check`, `lock`, `update` and
-`why`, and `distro.local.lock` for what only `distro.local.toml` adds.
+`machines.toml`. `apply` and `try` check `[machine.requires]` first, except for a system built
+elsewhere (`apply PATH`), which shows its plan and asks but whose requirements aren't recorded
+yet. Projects: found from the current directory, with `shell`, `up`, `run`, `add`, `remove`,
+`check`, `lock`, `update` and `why`, and `distro.local.lock` for what only `distro.local.toml` adds.
 
 A home of its own, `home.toml` in `~/.config/distro`, isn't supported for now: a user's
 packages and files go under `[users.NAME]` in the system's configuration.

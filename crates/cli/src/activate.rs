@@ -577,7 +577,12 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
         .or_else(|_| fs::read_link(root.join("run/current-system")))
         .ok();
     let after = model_of(system)?;
-    let (before, activation) = against(old.as_deref().map(model_of), &after);
+    let running = old.as_deref().map(model_of);
+    let compared = matches!(running, Some(Ok(_)));
+    let (before, mut activation) = against(running, &after);
+    if let Some(old) = old.as_deref().filter(|_| compared) {
+        activation.restart_too(&after, changed_on_disk(old, system));
+    }
     let passwd = fs::read_to_string(system.join("etc/passwd")).unwrap_or_default();
     let moved = homes_owned_by_others(root, &passwd);
     if !moved.is_empty() {
@@ -589,7 +594,16 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     if let Some(state) = &state {
         state.keep_system(root, system, State::of(&before).as_ref());
     }
-    switch_etc(root, old.as_deref(), system)?;
+    if let Err(e) = switch_etc(root, old.as_deref(), system) {
+        // Nothing else has changed yet, so what stopped starts again and the machine runs as it
+        // did.
+        let restarted = systemctl("start", &activation.stop)
+            .map_or("", |()| ", and what it stopped runs again");
+        return Err(format!("switching /etc failed: {e}{restarted}"));
+    }
+    // Units run programs through /run/system, so it moves before any start, and a switch that
+    // fails from here on is one rollback compares against.
+    point_at(root, system, &[RUNNING])?;
     run(&mut Command::new("systemd-sysusers"))?;
     if let Some(state) = &state {
         state.save_accounts(root);
@@ -601,7 +615,6 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     systemctl("try-restart", &activation.restart)?;
     systemctl("try-reload-or-restart", &activation.reload)?;
     systemctl("start", &installed(&activation, &after))?;
-    point_at(root, system, &[RUNNING])?;
     switch_user_managers(root, &before, &after);
     link_foreign(root, system)
 }
@@ -886,6 +899,70 @@ fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<Vec<String
         }
     }
     Ok(left_out)
+}
+
+/// The units both systems have whose files differ on disk though the models may not say so:
+/// their text, where a link to a package's unit points, or where a program they run from
+/// /run/system resolves, which moves with its package while the unit's text stays. A drop-in's
+/// change counts for its unit. A unit file saying `X-RestartIfChanged=false`, as the model's units
+/// can, is left running.
+fn changed_on_disk(old: &Path, new: &Path) -> BTreeSet<String> {
+    let Ok(entries) = fs::read_dir(new.join(UNITS)) else {
+        return BTreeSet::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            let unit = match name.strip_suffix(".d") {
+                Some(unit) if is_dir => unit.to_owned(),
+                // What a target wants, which enabling shows in the model.
+                _ if is_dir => return None,
+                _ => name.clone(),
+            };
+            let before = fingerprint(old, &name)?;
+            let asks_not_to = fs::read_to_string(new.join(UNITS).join(&unit))
+                .is_ok_and(|text| text.lines().any(|l| l.trim() == "X-RestartIfChanged=false"));
+            (before != fingerprint(new, &name)? && !asks_not_to).then_some(unit)
+        })
+        .collect()
+}
+
+/// Where systems keep their units.
+const UNITS: &str = "etc/systemd/system";
+
+/// What decides whether the unit file, or drop-in directory, `name` in `system` changed.
+fn fingerprint(system: &Path, name: &str) -> Option<String> {
+    let path = system.join(UNITS).join(name);
+    let files = if fs::symlink_metadata(&path).ok()?.is_dir() {
+        let mut files: Vec<_> = fs::read_dir(&path)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        files.sort();
+        files
+    } else {
+        vec![path]
+    };
+    let mut seen = String::new();
+    for file in files {
+        if let Ok(target) = fs::read_link(&file) {
+            seen.push_str(&target.to_string_lossy());
+        }
+        let text = fs::read_to_string(&file).unwrap_or_default();
+        let programs = text
+            .split(|c: char| c.is_whitespace() || "'\";=".contains(c))
+            .filter_map(|word| word.strip_prefix("/run/system/"));
+        for program in programs {
+            if let Ok(resolved) = fs::canonicalize(system.join(program)) {
+                seen.push_str(&resolved.to_string_lossy());
+            }
+        }
+        seen.push_str(&text);
+    }
+    Some(seen)
 }
 
 /// What's wrong with each user in `passwd` whose home under `root` already exists and belongs to
@@ -1465,6 +1542,48 @@ mod tests {
             Path::new("/store/systemd/lib/systemd/system/multi-user.target")
         );
         assert!(fs::symlink_metadata(etc.join(gone)).is_err());
+    }
+
+    #[test]
+    fn units_whose_programs_or_package_files_changed_restart_though_their_text_didnt() {
+        let dir = tempfile::tempdir().unwrap();
+        let system = |name: &str, ssh: &str, dbus: &str, limits: &str| {
+            let root = dir.path().join(name);
+            let units = root.join("etc/systemd/system");
+            fs::create_dir_all(units.join("nginx.service.d")).unwrap();
+            fs::create_dir_all(units.join("multi-user.target.wants")).unwrap();
+            fs::create_dir_all(root.join("bin")).unwrap();
+            for package in [ssh, dbus] {
+                fs::create_dir_all(dir.path().join(package)).unwrap();
+                for file in ["unit", "sshd"] {
+                    fs::write(dir.path().join(package).join(file), package).unwrap();
+                }
+            }
+            symlink(format!("../../{ssh}/sshd"), root.join("bin/sshd")).unwrap();
+            fs::write(
+                units.join("sshd.service"),
+                "ExecStart=/run/system/bin/sshd -D\n",
+            )
+            .unwrap();
+            symlink(
+                dir.path().join(dbus).join("unit"),
+                units.join("dbus.service"),
+            )
+            .unwrap();
+            fs::write(units.join("same.service"), "ExecStart=/bin/true\n").unwrap();
+            let agent = format!("[Unit]\nX-RestartIfChanged=false\n[Service]\nExecStart={dbus}\n");
+            fs::write(units.join("agent.service"), agent).unwrap();
+            fs::write(units.join("nginx.service.d/limits.conf"), limits).unwrap();
+            root
+        };
+        let old = system("old", "ssh-1", "dbus-1", "a");
+        let new = system("new", "ssh-2", "dbus-2", "b");
+        fs::write(new.join("etc/systemd/system/added.service"), "x").unwrap();
+        assert_eq!(
+            changed_on_disk(&old, &new),
+            BTreeSet::from(["dbus.service", "nginx.service", "sshd.service"].map(String::from))
+        );
+        assert!(changed_on_disk(&old, &old).is_empty());
     }
 
     #[test]

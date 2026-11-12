@@ -92,7 +92,7 @@ impl Activation {
             // A drop-in such as `nginx.service.d/limits.conf` changes the unit it belongs to. One
             // for a template, such as `getty@.service.d/`, reaches its instances as they start.
             if let Some((unit, _)) = change.name.split_once(".d/") {
-                if !unit.contains("@.") {
+                if !is_template(unit) {
                     activation.restart.insert(unit.to_owned());
                 }
                 continue;
@@ -115,11 +115,51 @@ impl Activation {
                 };
             }
         }
+        activation.start.retain(|unit| !is_template(unit));
+        activation.stop.retain(|unit| !is_template(unit));
+        activation
+            .restart
+            .retain(|unit| !keeps_running(after, unit));
         activation
             .reload
-            .retain(|unit| !activation.restart.contains(unit));
+            .retain(|unit| !keeps_running(after, unit) && !activation.restart.contains(unit));
         activation
     }
+
+    /// Restarts `units` too, such as those whose programs changed though their files didn't,
+    /// except what starts or stops anyway and what [`keeps_running`] leaves be.
+    pub fn restart_too(&mut self, after: &Model, units: impl IntoIterator<Item = String>) {
+        for unit in units {
+            if !keeps_running(after, &unit)
+                && !self.start.contains(&unit)
+                && !self.stop.contains(&unit)
+            {
+                self.reload.remove(&unit);
+                self.restart.insert(unit);
+            }
+        }
+    }
+}
+
+/// Whether a switch leaves `unit` running as it is when it changes: a template, which reaches its
+/// instances as they start, a mount or swap, which restarting would take away, and a unit whose
+/// `[Unit]` says `X-RestartIfChanged=false`, such as a login manager whose restart would end the
+/// sessions it started. Its changes take effect at the next boot.
+fn keeps_running(after: &Model, unit: &str) -> bool {
+    is_template(unit)
+        || unit.ends_with(".mount")
+        || unit.ends_with(".swap")
+        || after.units.get(unit).is_some_and(|unit| {
+            unit.sections
+                .iter()
+                .filter(|section| section.name == "Unit")
+                .flat_map(|section| &section.entries)
+                .any(|(key, value)| key == "X-RestartIfChanged" && value == "false")
+        })
+}
+
+fn is_template(unit: &str) -> bool {
+    unit.contains("@.")
 }
 
 impl Plan {

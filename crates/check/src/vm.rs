@@ -767,8 +767,8 @@ impl VmRun<'_> {
         let system = format!("/store/{name}");
         let system = system.as_str();
         let switch = match try_for {
-            Some(duration) => argv(&["distro", "try", "--for", duration, system]),
-            None => argv(&["distro", "apply", system]),
+            Some(duration) => argv(&["distro", "try", "-y", "--for", duration, system]),
+            None => argv(&["distro", "apply", "-y", system]),
         };
         let (code, _, stderr) = run_shell(agent, switch, deadline)?;
         if code != Some(0) {

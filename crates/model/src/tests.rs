@@ -751,6 +751,62 @@ fn the_activation_stops_starts_restarts_and_reloads_what_the_plan_shows() {
 }
 
 #[test]
+fn templates_mounts_and_units_that_ask_not_to_are_left_running_when_they_change() {
+    let unit = |section: &str, entries: &[(&str, &str)]| Unit {
+        sections: vec![Section {
+            name: section.into(),
+            entries: entries
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect(),
+        }],
+        restart_on: BTreeSet::new(),
+    };
+    let mut before = Model::default();
+    let names = [
+        "worker@.service",
+        "data.mount",
+        "swapfile.swap",
+        "greetd.service",
+        "web.service",
+    ];
+    for name in names {
+        before
+            .units
+            .insert(name.into(), unit("Service", &[("ExecStart", "a")]));
+    }
+    let mut after = Model::default();
+    for name in names {
+        after
+            .units
+            .insert(name.into(), unit("Service", &[("ExecStart", "b")]));
+    }
+    after.units.insert(
+        "greetd.service".into(),
+        Unit {
+            sections: vec![
+                unit("Unit", &[("X-RestartIfChanged", "false")]).sections[0].clone(),
+                unit("Service", &[("ExecStart", "b")]).sections[0].clone(),
+            ],
+            restart_on: BTreeSet::new(),
+        },
+    );
+    after
+        .units
+        .insert("job@.service".into(), unit("Service", &[]));
+    let activation = plan(&before, &after).activation;
+    assert_eq!(
+        activation.restart,
+        BTreeSet::from(["web.service".to_owned()])
+    );
+    assert!(activation.start.is_empty() && activation.reload.is_empty());
+
+    let activation = plan(&after, &Model::default()).activation;
+    assert!(!activation.stop.contains("job@.service"));
+    assert!(activation.stop.contains("greetd.service"));
+}
+
+#[test]
 fn enabling_a_unit_starts_it_and_wrappers_show_as_files() {
     let before = Model::default();
     let mut after = Model::default();
