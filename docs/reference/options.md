@@ -162,6 +162,11 @@
 - `programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section and `true` a flag such as `prefer-no-csd`. `match = { app-id = "firefox" }` and a bind's `allow-when-locked` are properties, and in a rule `true` is given, as `open-floating true`. A key can carry arguments, such as `'output "eDP-1"'`, and a list of tables or lists repeats a node, such as `spawn-at-startup`.
 - `users.<name>.programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section and `true` a flag such as `prefer-no-csd`. `match = { app-id = "firefox" }` and a bind's `allow-when-locked` are properties, and in a rule `true` is given, as `open-floating true`. A key can carry arguments, such as `'output "eDP-1"'`, and a list of tables or lists repeats a node, such as `spawn-at-startup`.
 
+### noctalia
+
+- `programs.noctalia.settings`: any value, default {}. noctalia's settings, as in its `config.toml`, such as `bar.main.position = "top"`. The system's are every user's, and a user's own go over them.
+- `users.<name>.programs.noctalia.settings`: any value, default {}. noctalia's settings, as in its `config.toml`, such as `bar.main.position = "top"`. The system's are every user's, and a user's own go over them.
+
 ### ollama
 
 - `services.ollama.acceleration`: one of "auto", "cpu", "rocm", "vulkan", "cuda", default "auto". Which GPUs to use; `auto` picks what the system's packages support.
@@ -187,7 +192,6 @@
 
 - `programs.alacritty.settings`: any value, optional. Written as toml to `/etc/xdg/alacritty/alacritty.toml`, where alacritty reads it.
 - `users.<name>.programs.alacritty.settings`: any value, optional. Written as toml to `alacritty/alacritty.toml`, where alacritty reads it.
-- `users.<name>.programs.noctalia.settings`: any value, optional. Written as toml to `noctalia/config.toml`, where noctalia reads it.
 
 ### secrets
 

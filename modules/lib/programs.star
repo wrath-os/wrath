@@ -14,7 +14,4 @@ SETTINGS = {
             "format": "toml",
         },
     },
-    "noctalia": {
-        "settings": {"file": "noctalia/config.toml", "format": "toml"},
-    },
 }

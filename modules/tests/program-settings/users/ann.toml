@@ -3,6 +3,3 @@ size = 12
 
 [programs.alacritty.settings.window]
 opacity = 0.95
-
-[programs.noctalia.settings.bar]
-position = "top"

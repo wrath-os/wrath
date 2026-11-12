@@ -1,0 +1,6 @@
+error: noctalia is the shell only with `desktop.shell = "noctalia"`
+ --> fixtures/bad-configs/noctalia-settings-without-shell/system.toml:5:12
+  |
+5 | position = "top"
+  |            ^^^^^ `programs.noctalia.settings` is set here
+  = reported by modules/noctalia.star

@@ -1,5 +1,5 @@
 [system]
 hostname = "box"
 
-[programs.noctalia.settings.bar]
+[programs.noctalia.settings.bar.main]
 position = "top"

@@ -113,7 +113,7 @@ A program's settings go in its own format into the file it reads, for a user und
 [users.john.programs.alacritty.settings]
 font.size = 12
 
-[users.john.programs.noctalia.settings.bar]
+[users.john.programs.noctalia.settings.bar.main]
 position = "top"
 
 [users.john.programs.niri.settings]

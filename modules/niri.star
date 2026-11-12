@@ -105,10 +105,6 @@ def render(ctx: Context) -> None:
     for user, own in users.items():
         if own:
             ctx.file(USER_CONFIG, config(SYSTEM_CONFIG, own), user = user, setting = True)
-    # The shell starts with the graphical session niri brings up.
-    if desktop.get("shell") == "noctalia":
-        ctx.service_package("noctalia")
-        ctx.enable("noctalia.service", user = True)
 
 SETTINGS = types.record(
     settings = option(

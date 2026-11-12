@@ -1,0 +1,14 @@
+[system]
+hostname = "box"
+
+[desktop]
+session = "niri"
+shell = "noctalia"
+
+[programs.noctalia.settings]
+bar.main.position = "bottom"
+bar.main.thickness = 30
+
+[users.ann]
+
+[users.bob]
