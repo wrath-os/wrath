@@ -1207,6 +1207,8 @@ enum Missing {
     /// A pkg-config module.
     Module(String),
     Header(String),
+    /// An autoconf macro left unexpanded in `configure`, which the shell then runs as a command.
+    Macro(String),
 }
 
 /// What the last lines of `log` say a build was missing, when they say it the way Meson,
@@ -1229,14 +1231,31 @@ fn missing_in(log: &str) -> Option<Missing> {
         if let Some(name) = between(line, "fatal error: ", ": No such file or directory") {
             return Some(Missing::Header(name));
         }
-        let program = line.strip_suffix(": command not found")?;
-        Some(Missing::Program(program.rsplit(": ").next()?.to_owned()))
+        let program = line
+            .strip_suffix(": command not found")?
+            .rsplit(": ")
+            .next()?;
+        let macro_like = program.contains('_')
+            && program
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+        Some(match macro_like {
+            true => Missing::Macro(program.to_owned()),
+            false => Missing::Program(program.to_owned()),
+        })
     })
 }
 
 /// Which built recipe has what a build was missing, said as what to do about it.
 fn failure_hint(lab: &Lab, built: &Built, missing: &Missing) -> String {
     let (what, name, file, places): (&str, &str, String, &[&str]) = match missing {
+        Missing::Macro(name) => {
+            return format!(
+                "`{name}` is an autoconf macro configure was made without: when it's made in \
+                 the build, aclocal finds macros in the build's /usr with \
+                 ACLOCAL_PATH=/usr/share/aclocal"
+            );
+        }
         Missing::Program(name) => ("the program", name, name.clone(), &["bin"]),
         Missing::Module(name) => (
             "the pkg-config module",
@@ -2827,7 +2846,10 @@ mod crate_tests {
         assert_eq!(unpack_one(&archive, "Cargo.lock").unwrap(), "version = 4\n");
         let target = dir.path().join("src");
         unpack(&archive, &target).unwrap();
-        assert_eq!(fs::read_to_string(target.join("Cargo.lock")).unwrap(), "version = 4\n");
+        assert_eq!(
+            fs::read_to_string(target.join("Cargo.lock")).unwrap(),
+            "version = 4\n"
+        );
     }
 
     #[test]
@@ -3812,6 +3834,10 @@ mod hint_tests {
             (
                 "/bin/sh: line 3: scdoc: command not found",
                 Missing::Program("scdoc".into()),
+            ),
+            (
+                "./configure: line 6130: PKG_PROG_PKG_CONFIG: command not found",
+                Missing::Macro("PKG_PROG_PKG_CONFIG".into()),
             ),
         ];
         for (line, missing) in cases {
