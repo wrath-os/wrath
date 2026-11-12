@@ -367,6 +367,14 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What happened:** nothing provided a CA bundle, so every TLS connection failed.
 - **What we did:** every system has Mozilla's bundle where programs look for it.
 
+### The compiler in every C++ program's closure
+
+- **Seen in:** shared-mime-info, and through it every system with GTK 3 or 4.
+- **What happened:** libstdc++'s headers put their own paths in assertion messages through
+  `__FILE__`, so programs referred to gcc's output, and its 251 MiB came with them.
+- **What we did:** the compiler wrapper maps gcc's `include` to `/usr/include` in every compile
+  (`-fmacro-prefix-map`).
+
 ## Working on recipes
 
 - Don't edit `build/` while a build is running from it. Styles load once per process, so a build

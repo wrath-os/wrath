@@ -2247,12 +2247,16 @@ pub(crate) fn build_one(
             .paths
             .get("wrapper")
             .ok_or("nothing built the wrapper")?;
-        let mut flags = vec![format!("-Wl,--dynamic-linker={interpreter}")];
-        if arm == Arm::D {
-            flags.push("-Wl,--enable-new-dtags".to_owned());
+        env.insert(
+            "LAB_LINK_FLAGS".to_owned(),
+            link_flags(&interpreter, arm, &rpath_dirs),
+        );
+        if let Some(gcc) = deps.iter().find(|dep| dep.id == "gcc") {
+            env.insert(
+                "LAB_COMPILE_FLAGS".to_owned(),
+                compile_flags(&built.paths[&gcc.id]),
+            );
         }
-        flags.extend(rpath_dirs.iter().map(|dir| format!("-Wl,-rpath,{dir}")));
-        env.insert("LAB_LINK_FLAGS".to_owned(), flags.join(" "));
         format!("{}/bin:{real_bin}", wrapper.inside())
     } else {
         real_bin
@@ -2334,6 +2338,29 @@ pub(crate) fn build_one(
             .map(|dep| built.paths[&dep.id].clone())
             .collect(),
     }))
+}
+
+/// What the compiler wrapper adds to every compile with the store's `gcc`: its own headers' paths
+/// in `__FILE__`, such as libstdc++'s in its assertion messages, read as `/usr/include`, so a
+/// program doesn't refer to the whole compiler.
+fn compile_flags(gcc: &StorePath) -> String {
+    format!("-fmacro-prefix-map={}/include=/usr/include", gcc.inside())
+}
+
+/// What the compiler wrapper adds when it links: the interpreter and run paths a program needs to
+/// run from the store, and relocations made read-only once they're resolved at start (`relro`,
+/// `now`), so they can't be overwritten later.
+fn link_flags(interpreter: &str, arm: Arm, rpath_dirs: &[String]) -> String {
+    let mut flags = vec![
+        format!("-Wl,--dynamic-linker={interpreter}"),
+        "-Wl,-z,relro".to_owned(),
+        "-Wl,-z,now".to_owned(),
+    ];
+    if arm == Arm::D {
+        flags.push("-Wl,--enable-new-dtags".to_owned());
+    }
+    flags.extend(rpath_dirs.iter().map(|dir| format!("-Wl,-rpath,{dir}")));
+    flags.join(" ")
 }
 
 /// Clears setuid and setgid under `dir`, which would make a program run as root wherever the
@@ -2725,6 +2752,24 @@ mod requirement_tests {
         assert_eq!(found.len(), 2, "{found:?}");
         assert_eq!(pairs(&found[0].1), ["pango<gtk", "zlib<gtk"]);
         assert_eq!(pairs(&found[1].1), ["pango<gtk"], "zlib is private to gtk");
+    }
+
+    #[test]
+    fn compiles_name_the_compilers_headers_without_its_store_path() {
+        let gcc = StorePath::from_hash("abc").named("gcc-15.2.0");
+        assert_eq!(
+            compile_flags(&gcc),
+            "-fmacro-prefix-map=/store/abc-gcc-15.2.0/include=/usr/include"
+        );
+    }
+
+    #[test]
+    fn links_are_hardened_and_run_from_the_store() {
+        let flags = link_flags("/store/s/ld.so", Arm::C, &["/store/a/lib".to_owned()]);
+        assert_eq!(
+            flags,
+            "-Wl,--dynamic-linker=/store/s/ld.so -Wl,-z,relro -Wl,-z,now -Wl,-rpath,/store/a/lib"
+        );
     }
 
     #[test]

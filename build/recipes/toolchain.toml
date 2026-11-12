@@ -178,8 +178,11 @@ sources = [
 script = '''
 sed -i '/m64=/s/lib64/lib/' gcc/config/i386/t-linux64
 mkdir ../b && cd ../b
+# What it compiles is position-independent with a stack protector unless asked otherwise, as
+# other distributions build theirs.
 ../src/configure --prefix=$PREFIX --libdir=$PREFIX/lib --disable-bootstrap --disable-multilib \
     --disable-nls --disable-libsanitizer --enable-languages=c,c++ MAKEINFO=true \
+    --enable-default-pie --enable-default-ssp \
     LDFLAGS_FOR_TARGET="${LAB_LINK_FLAGS:-}" \
     CFLAGS=-O2 CXXFLAGS=-O2 CFLAGS_FOR_TARGET=-O2 CXXFLAGS_FOR_TARGET=-O2 \
     LDFLAGS="-static-libstdc++ -static-libgcc"

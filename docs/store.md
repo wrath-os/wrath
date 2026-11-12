@@ -39,7 +39,10 @@ booting one (step 11).
 ### Packages are built with real prefixes and a compiler wrapper
 
 `--prefix` is the store path. The wrapper sets the interpreter and library search path at link
-time. The build sees a composed `/usr` holding exactly the declared dependencies.
+time. Every link is `-z relro -z now`, gcc makes position-independent code with a stack
+protector by default, and compiles name gcc's own headers as `/usr/include`, so C++ programs
+don't refer to the compiler. The build sees a composed `/usr` holding exactly the declared
+dependencies.
 
 Firm. A view that's too narrow silently loses features, and one that's too wide silently changes
 output (step 6). The arm that patched binaries afterwards did worst. Store paths may have names,
