@@ -104,7 +104,10 @@ configuration. Each change has a **tier**, saying when it takes full effect:
 | reboot | after a reboot, for the kernel and bootloader |
 
 A **generation** is a built configuration that can be switched to. `apply` makes a new one,
-`rollback` goes back to an earlier one, and `history` lists them.
+`rollback` goes back to an earlier one, and `history` lists them. The generation being switched to
+does the switching with its own distro, so a newer or older distro on either side doesn't matter.
+When it can't read the running generation, it only starts what's new, and the rest takes effect at
+the next boot.
 
 The **builder** turns a model into a generation: it builds every package from its recipe, from
 source, into a content-addressed store, and assembles the system from them. Nothing above this

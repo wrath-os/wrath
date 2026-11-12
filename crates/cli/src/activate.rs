@@ -576,12 +576,8 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     let old = fs::read_link(&current)
         .or_else(|_| fs::read_link(root.join("run/current-system")))
         .ok();
-    let before = match &old {
-        Some(old) => model_of(old)?,
-        None => Model::default(),
-    };
     let after = model_of(system)?;
-    let activation = distro_model::plan(&before, &after).activation;
+    let (before, activation) = against(old.as_deref().map(model_of), &after);
 
     systemctl("stop", &activation.stop)?;
     let state = State::of(&after);
@@ -603,6 +599,31 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     point_at(root, system, &[RUNNING])?;
     switch_user_managers(root, &before, &after);
     link_foreign(root, system)
+}
+
+/// What switching to `after` compares against and does, from the running system's model if
+/// there is one. A running model this distro can't read, such as one in another format version,
+/// is compared as nothing, and only what's new starts: nothing it ran is known to be gone or
+/// changed, so nothing stops or restarts, and the changes take effect at the next boot. A switch
+/// across formats then still goes through, either way.
+fn against(running: Option<Result<Model, String>>, after: &Model) -> (Model, Activation) {
+    let before = match running {
+        Some(Ok(before)) => before,
+        Some(Err(e)) => {
+            eprintln!(
+                "distro: the running system's model can't be read ({e}), so nothing stops or \
+                 restarts; changed services take effect at the next boot"
+            );
+            let mut activation = distro_model::plan(&Model::default(), after).activation;
+            activation.restart.clear();
+            activation.reload.clear();
+            activation.stop.clear();
+            return (Model::default(), activation);
+        }
+        None => Model::default(),
+    };
+    let activation = distro_model::plan(&before, after).activation;
+    (before, activation)
 }
 
 /// The user units enabled for every user that `after` adds and those it drops, against `before`.
@@ -1413,6 +1434,35 @@ mod tests {
             Path::new("/store/systemd/lib/systemd/system/multi-user.target")
         );
         assert!(fs::symlink_metadata(etc.join(gone)).is_err());
+    }
+
+    #[test]
+    fn a_running_model_in_another_format_starts_whats_new_and_stops_nothing() {
+        let unit = |name: &str| Unit {
+            sections: vec![distro_eval::Section {
+                name: "Service".to_owned(),
+                entries: vec![("ExecStart".to_owned(), name.to_owned())],
+            }],
+            restart_on: BTreeSet::new(),
+        };
+        let mut before = Model::default();
+        before.units.insert("old.service".to_owned(), unit("old"));
+        before.units.insert("kept.service".to_owned(), unit("kept"));
+        let mut after = Model::default();
+        after
+            .units
+            .insert("kept.service".to_owned(), unit("changed"));
+        after.units.insert("new.service".to_owned(), unit("new"));
+
+        let (_, read) = against(Some(Ok(before)), &after);
+        assert!(read.stop.contains("old.service"));
+        assert!(read.restart.contains("kept.service"));
+
+        let (compared, unread) = against(Some(Err("format version 15".to_owned())), &after);
+        assert_eq!(compared, Model::default());
+        assert!(unread.stop.is_empty() && unread.restart.is_empty() && unread.reload.is_empty());
+        assert!(unread.start.contains("new.service"));
+        assert_eq!(against(None, &after).1.start, unread.start);
     }
 
     #[test]
