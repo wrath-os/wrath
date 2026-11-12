@@ -8,6 +8,7 @@ mod diag;
 mod eval;
 pub mod formats;
 mod fs;
+mod ids;
 mod load;
 mod machines;
 mod module;
@@ -28,6 +29,7 @@ pub use eval::{
     Contribution, EvalError, Evaluation, Input, MACHINE_VALUES, Rendered, Resolved, Use, evaluate,
 };
 pub use fs::{ConfigFs, DirFs, MemFs};
+pub use ids::{Ids, LOCK_FILE};
 pub use load::{ConfigKind, DeclaredSource, kind_of, roles};
 pub use machines::Machine;
 pub use module::{

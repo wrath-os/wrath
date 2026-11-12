@@ -732,6 +732,19 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         }
     }
 
+    /// The uids and gids the lock keeps, as `{"users": {name: uid}, "groups": {name: gid}}`. A
+    /// module that hands out new ones records them all with `ctx.base("ids", ...)`, and the lock
+    /// keeps them from then on.
+    fn locked_ids<'v>(
+        #[starlark(this)] _this: StarValue<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<StarValue<'v>> {
+        let heap = eval.heap();
+        let (rendering, _) = rendering(eval)?;
+        let ids = rendering.config.borrow().locked_ids();
+        Ok(convert::to_starlark(heap, &ids))
+    }
+
     /// Sets an option.
     fn set<'v>(
         #[starlark(this)] _this: StarValue<'v>,

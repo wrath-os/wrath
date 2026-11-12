@@ -353,6 +353,7 @@ fn source(url: &str, rev: &str) -> Source {
 fn lock(rev: &str) -> Lock {
     Lock {
         sources: [(DISTRO_SOURCE.to_owned(), source(DISTRO, rev))].into(),
+        ..Lock::default()
     }
 }
 

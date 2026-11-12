@@ -527,3 +527,28 @@ fn a_home_of_its_own_is_refused_and_points_at_the_system_configuration() {
         );
     }
 }
+
+#[test]
+fn locking_keeps_each_users_uid_as_users_come_and_go() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().to_str().unwrap();
+    let users = |names: &[&str]| {
+        let tables: String = names
+            .iter()
+            .map(|name| format!("[users.{name}]\n"))
+            .collect();
+        let text = format!("[system]\nhostname = \"box\"\n{tables}");
+        std::fs::write(dir.path().join("system.toml"), text).unwrap();
+        stdout(&distro(&["-C", config, "lock"]));
+        std::fs::read_to_string(dir.path().join("distro.lock")).unwrap()
+    };
+    assert!(users(&["bo"]).contains("[ids.users]\nbo = 1000\n"));
+    // A new name sorting first takes the next free uid.
+    assert!(users(&["aaron", "bo"]).contains("[ids.users]\naaron = 1001\nbo = 1000\n"));
+    // A removed user's uid stays theirs.
+    let lock = users(&["carl"]);
+    assert!(
+        lock.contains("aaron = 1001\nbo = 1000\ncarl = 1002\n"),
+        "{lock}"
+    );
+}

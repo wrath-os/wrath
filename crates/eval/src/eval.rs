@@ -253,6 +253,13 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     };
     diagnostics.extend(machine_diagnostics);
 
+    let ids = match config.read(crate::LOCK_FILE) {
+        Ok(text) => crate::Ids::from_lock(&text).unwrap_or_else(|e| {
+            diagnostics.push(Diagnostic::error(format!("{}: {e}", crate::LOCK_FILE)));
+            crate::Ids::default()
+        }),
+        Err(_) => crate::Ids::default(),
+    };
     let mut definitions: BTreeMap<OptionPath, Vec<Rc<Definition>>> = BTreeMap::new();
     for definition in walked.definitions {
         definitions
@@ -291,6 +298,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             ConfigKind::Home => HOME_SECRETS_DIR,
             ConfigKind::System | ConfigKind::Project => SECRETS_DIR,
         },
+        ids,
         diagnostics: Vec::new(),
     };
     for id in 0..modules.len() {
@@ -682,6 +690,8 @@ struct Resolver<'a> {
     declared: BTreeMap<String, Span>,
     /// Where secrets are decrypted to: the system's, or a home's own.
     secrets_dir: &'static str,
+    /// The uids and gids the lock next to the configuration keeps.
+    ids: crate::Ids,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1655,6 +1665,10 @@ impl ConfigReader for Reader<'_, '_> {
                 Site::Config(span) => Some(span),
                 Site::Default | Site::Module { .. } => None,
             })
+    }
+
+    fn locked_ids(&self) -> Value {
+        self.resolver.ids.to_value()
     }
 }
 

@@ -8,13 +8,13 @@ use std::fmt::Write;
 
 use serde::Deserialize;
 
-pub use distro_eval::{DISTRO_SOURCE, package_source};
-
-/// The lock file's name in a configuration directory.
-pub const LOCK_FILE: &str = "distro.lock";
+pub use distro_eval::{DISTRO_SOURCE, Ids, LOCK_FILE, package_source};
 
 /// The lock file format's version.
-const FORMAT: i64 = 3;
+const FORMAT: i64 = 4;
+
+/// The format before the lock kept uids and gids.
+const FORMAT_WITHOUT_IDS: i64 = 3;
 
 /// The format before distro built its own packages, which also pinned each package. Those
 /// entries are ignored.
@@ -24,6 +24,8 @@ const FORMAT_WITH_PACKAGES: i64 = 2;
 pub struct Lock {
     /// Each source by name, pinned.
     pub sources: BTreeMap<String, Source>,
+    /// The uids and gids users and groups were given, kept for those since removed too.
+    pub ids: Ids,
 }
 
 /// The lock file as written.
@@ -35,6 +37,9 @@ struct File {
     sources: BTreeMap<String, Source>,
     #[serde(default)]
     packages: Option<toml::Table>,
+    /// Read by [`Ids::from_lock`].
+    #[serde(default, rename = "ids")]
+    _ids: Option<toml::Table>,
 }
 
 /// Where packages or files come from, such as a repository at a commit.
@@ -70,8 +75,9 @@ impl Lock {
     pub fn parse(text: &str) -> Result<Self, String> {
         let file: File = toml::from_str(text).map_err(|e| e.message().to_owned())?;
         match (file.version, file.packages) {
-            (FORMAT, None) | (FORMAT_WITH_PACKAGES, _) => Ok(Self {
+            (FORMAT | FORMAT_WITHOUT_IDS, None) | (FORMAT_WITH_PACKAGES, _) => Ok(Self {
                 sources: file.sources,
+                ids: Ids::from_lock(text)?,
             }),
             (FORMAT, Some(_)) => Err("unknown field `packages`".into()),
             (other, _) => Err(format!(
@@ -97,6 +103,15 @@ impl Lock {
             let _ = writeln!(out, "hash = {}", quote(&source.hash));
             if let Some(date) = &source.date {
                 let _ = writeln!(out, "date = {}", quote(date));
+            }
+        }
+        for (table, ids) in [("users", &self.ids.users), ("groups", &self.ids.groups)] {
+            if ids.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "\n[ids.{table}]");
+            for (name, id) in ids {
+                let _ = writeln!(out, "{} = {id}", key(name));
             }
         }
         out
@@ -141,6 +156,10 @@ mod tests {
                     },
                 ),
             ]),
+            ids: Ids {
+                users: BTreeMap::from([("alice".to_owned(), 1000), ("ops.bot".to_owned(), 999)]),
+                groups: BTreeMap::from([("video".to_owned(), 400)]),
+            },
         }
     }
 
@@ -151,7 +170,7 @@ mod tests {
         insta::assert_snapshot!(text, @r#"
         # The versions of the sources this configuration uses, written by `distro lock` and
         # moved to newer ones by `distro update`.
-        version = 3
+        version = 4
 
         [sources.acme]
         url = "https://example.org/acme.tar.gz"
@@ -162,8 +181,23 @@ mod tests {
         rev = "1d06008"
         hash = "sha256-abc"
         date = "2026-10-30"
+
+        [ids.users]
+        alice = 1000
+        "ops.bot" = 999
+
+        [ids.groups]
+        video = 400
         "#);
         assert_eq!(Lock::parse(&text).unwrap(), lock());
+    }
+
+    #[test]
+    fn a_lock_from_before_ids_reads_with_none() {
+        let old = "version = 3\n\n[sources.distro]\nurl = \"github:johnae/distro\"\nhash = \"x\"\n";
+        let lock = Lock::parse(old).unwrap();
+        assert!(lock.ids.is_empty());
+        assert_eq!(lock.sources["distro"].hash, "x");
     }
 
     #[test]
@@ -177,10 +211,10 @@ mod tests {
 
     #[test]
     fn locks_of_another_format_or_shape_are_refused() {
-        let other = lock().to_toml().replace("version = 3", "version = 4");
+        let other = lock().to_toml().replace("version = 4", "version = 5");
         assert_eq!(
             Lock::parse(&other).unwrap_err(),
-            "lock format version 4 isn't supported, only 3"
+            "lock format version 5 isn't supported, only 4"
         );
         let typo = lock().to_toml().replace("hash =", "hsah =");
         assert!(Lock::parse(&typo).unwrap_err().contains("hsah"));

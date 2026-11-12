@@ -183,7 +183,16 @@ pub fn split_lock(lock: Lock, shared: &Model) -> (Lock, Lock) {
         .sources
         .into_iter()
         .partition(|(name, _)| shared.sources.contains_key(name) || name == DISTRO_SOURCE);
-    (Lock { sources }, Lock { sources: local })
+    (
+        Lock {
+            sources,
+            ids: lock.ids,
+        },
+        Lock {
+            sources: local,
+            ..Lock::default()
+        },
+    )
 }
 
 /// process-compose's configuration for the project's services in `model`, which `distro up`

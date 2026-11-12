@@ -1,0 +1,9 @@
+version = 4
+
+[ids.users]
+ann = 1000
+bo = 1001
+gone = 1002
+
+[ids.groups]
+video = 400

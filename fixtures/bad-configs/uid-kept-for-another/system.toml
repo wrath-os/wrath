@@ -1,0 +1,5 @@
+[system]
+hostname = "box"
+
+[users.carol]
+uid = 1001

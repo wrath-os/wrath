@@ -578,6 +578,11 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
         .ok();
     let after = model_of(system)?;
     let (before, activation) = against(old.as_deref().map(model_of), &after);
+    let passwd = fs::read_to_string(system.join("etc/passwd")).unwrap_or_default();
+    let moved = homes_owned_by_others(root, &passwd);
+    if !moved.is_empty() {
+        return Err(moved.join("\n"));
+    }
 
     systemctl("stop", &activation.stop)?;
     let state = State::of(&after);
@@ -881,6 +886,32 @@ fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<Vec<String
         }
     }
     Ok(left_out)
+}
+
+/// What's wrong with each user in `passwd` whose home under `root` already exists and belongs to
+/// another uid, such as after a uid changed: switching would leave them without their files.
+fn homes_owned_by_others(root: &Path, passwd: &str) -> Vec<String> {
+    use std::os::unix::fs::MetadataExt;
+    passwd
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(':').collect();
+            let (name, uid, home) = (fields.first()?, fields.get(2)?, fields.get(5)?);
+            let uid: u32 = uid.parse().ok()?;
+            if uid == 0 || matches!(*home, "/" | "/var/empty") {
+                return None;
+            }
+            let owner = fs::metadata(root.join(home.trim_start_matches('/')))
+                .ok()?
+                .uid();
+            (owner != uid).then(|| {
+                format!(
+                    "`{name}` gets uid {uid}, but {home} belongs to uid {owner}: set \
+                     `users.{name}.uid = {owner}`, or change the home's owner"
+                )
+            })
+        })
+        .collect()
 }
 
 /// Names to ids in an accounts file such as `/etc/passwd`.
@@ -1434,6 +1465,29 @@ mod tests {
             Path::new("/store/systemd/lib/systemd/system/multi-user.target")
         );
         assert!(fs::symlink_metadata(etc.join(gone)).is_err());
+    }
+
+    #[test]
+    fn a_home_owned_by_another_uid_than_its_users_stops_the_switch() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("home/ann")).unwrap();
+        let mine = fs::metadata(root.path()).unwrap().uid();
+        let passwd = |uid: u32| {
+            format!(
+                "root:x:0:0:root:/root:/bin/sh\nann:x:{uid}:100::/home/ann:/bin/sh\n\
+                 cy:x:1002:100::/home/cy:/bin/sh\nsvc:x:999:100::/var/empty:/bin/sh\n"
+            )
+        };
+        assert!(homes_owned_by_others(root.path(), &passwd(mine)).is_empty());
+        assert_eq!(
+            homes_owned_by_others(root.path(), &passwd(mine + 1)),
+            [format!(
+                "`ann` gets uid {}, but /home/ann belongs to uid {mine}: set `users.ann.uid = \
+                 {mine}`, or change the home's owner",
+                mine + 1
+            )]
+        );
     }
 
     #[test]

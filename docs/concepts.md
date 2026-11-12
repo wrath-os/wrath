@@ -88,7 +88,8 @@ Values other than the name are declared in `[machine.values]`, as `zone = { type
 ## Making it so
 
 The **lock** pins every source, distro's own among them, so the same configuration always
-means the same software. It lives next to the configuration as `distro.lock`.
+means the same software. It lives next to the configuration as `distro.lock`. It also keeps
+each user's uid and each group's gid, so they stay put as others come and go.
 
 The **model** is the configuration fully resolved: every option's value and everything modules
 produced, with nothing left to compute. Its hash identifies a system.

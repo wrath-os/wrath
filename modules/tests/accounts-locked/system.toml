@@ -1,0 +1,18 @@
+[system]
+hostname = "box"
+
+# New, so it gets the next uid the lock doesn't keep, and nobody else moves.
+[users.aaron]
+extra_groups = ["video", "input"]
+
+[users.ann]
+extra_groups = ["wheel", "video"]
+
+[users.bo]
+
+[users.dee]
+uid = 1500
+group = "staff"
+
+[users.relay]
+system = true

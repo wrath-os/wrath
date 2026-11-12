@@ -244,7 +244,9 @@ pub fn apply(
 /// `model` with its sources pinned: pins what the lock next to `config` doesn't have yet, so the
 /// lock always describes what runs.
 pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, String> {
-    if model.is_locked() {
+    let kept = crate::read_lock(config)?.unwrap_or_default().ids;
+    let ids = kept.merged(&model.ids())?;
+    if model.is_locked() && ids == kept {
         crate::fetch::record(config)?;
         return Ok(model);
     }
@@ -255,6 +257,7 @@ pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, 
     );
     let mut lock = Lock {
         sources: pins(&model)?,
+        ids,
     };
     lock.sources
         .extend(distro.map(|d| (DISTRO_SOURCE.to_owned(), d)));
@@ -614,9 +617,13 @@ pub fn lock(
         Some(names) => follow_newest(models, names)?,
         None => models.to_vec(),
     };
-    let mut lock = Lock::default();
+    let mut lock = Lock {
+        ids: crate::read_lock(config)?.unwrap_or_default().ids,
+        ..Lock::default()
+    };
     for (_, model) in &models {
         lock.sources.extend(pins(&model.clone().with_lock(&lock))?);
+        lock.ids = lock.ids.merged(&model.ids())?;
     }
     lock.sources
         .extend(distro.map(|d| (DISTRO_SOURCE.to_owned(), d)));

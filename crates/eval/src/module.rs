@@ -53,6 +53,11 @@ pub trait ConfigReader {
 
     /// Where the configuration sets the option at `path`, or the first option under it.
     fn locate(&self, path: &OptionPath) -> Option<Span>;
+
+    /// The uids and gids the lock keeps, as [`crate::Ids::to_value`] gives them.
+    fn locked_ids(&self) -> Value {
+        crate::Ids::default().to_value()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

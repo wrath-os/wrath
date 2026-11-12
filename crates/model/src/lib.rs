@@ -14,7 +14,7 @@ use distro_eval::{
     Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper, formats,
 };
 
-pub use lock::{DISTRO_SOURCE, LOCK_FILE, Lock, Source, package_source};
+pub use lock::{DISTRO_SOURCE, Ids, LOCK_FILE, Lock, Source, package_source};
 pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan, rebuilt};
 
 /// The version of the model format, part of the hash.
@@ -263,6 +263,15 @@ impl Model {
     /// fetching.
     pub fn is_locked(&self) -> bool {
         self.sources.contains_key(DISTRO_SOURCE) && self.sources.values().all(Source::is_locked)
+    }
+
+    /// The uids and gids the accounts were given, for the lock to keep, as a module recorded them
+    /// in the base setting `ids`.
+    pub fn ids(&self) -> crate::Ids {
+        self.base
+            .get("ids")
+            .and_then(crate::Ids::from_value)
+            .unwrap_or_default()
     }
 
     /// The system's and every user's packages, each once.

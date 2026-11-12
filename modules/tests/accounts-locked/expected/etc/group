@@ -1,0 +1,7 @@
+root:x:0:
+wheel:x:10:ann
+nogroup:x:65534:
+users:x:100:
+input:x:401:aaron
+staff:x:402:
+video:x:400:aaron,ann

@@ -1,0 +1,6 @@
+error: uid 1001 is kept for `bo` in the lock
+ --> fixtures/bad-configs/uid-kept-for-another/system.toml:5:7
+  |
+5 | uid = 1001
+  |       ^^^^ `users.carol.uid` is set here
+  = reported by modules/accounts.star
