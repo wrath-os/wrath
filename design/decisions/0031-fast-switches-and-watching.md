@@ -1,4 +1,4 @@
-# 0031: A switch does only what changed, and proves it
+# 0031: Switches run every step, and watching applies only settings
 
 Status: accepted, 2026-11-12.
 
@@ -9,13 +9,14 @@ takes about 40 ms on the Framework configuration; the time goes around it. On 20
 of that configuration spent about 5.5 s before building anything and 0.7 s assembling the system.
 Most of it was build styles looking for files a source lacks, such as `meson.options`, which
 unpacked the archive every time; misses are kept now. A build with nothing to do takes 0.12 s,
-and one after a settings change 0.23 s. Then every switch runs systemd-sysusers,
-systemd-tmpfiles, `daemon-reload`, the restarts and the users' service managers, whatever
-changed.
+and one after a settings change 0.23 s.
 
-Skipping steps is where speed would come from, and also where a switch could quietly go wrong: a
-skipped `daemon-reload` after a unit changed leaves systemd running the old one. Correct comes
-before fast.
+Every switch runs systemd-sysusers, systemd-tmpfiles, `daemon-reload`, the restarts and the
+users' service managers, whatever changed. A first draft of this decision skipped the steps whose
+inputs hadn't changed. Measured in the VM, a whole switch takes about 100 ms, `daemon-reload` 70
+of it, and everything but starting and restarting under 20 ms together. Skipping would save tens
+of milliseconds, and it's where a switch could quietly go wrong: a skipped `daemon-reload` after
+a unit changed leaves systemd running the old one.
 
 Running the switch again on every save has dangers of its own. Someone who forgot a watcher was
 running could change a core option and have it applied. Someone with changes they hadn't applied
@@ -23,33 +24,16 @@ yet who starts watching to try a theme would get those changes too.
 
 ## Decision
 
-### Every switch gets faster
+### Every switch runs every step
 
-- First, measure and explain the time before building and in assembly, and make assembly do only
-  the actions whose inputs changed, which the action cache already allows.
-- Each activation step declares what it reads:
-  - systemd-sysusers: `/etc/sysusers.d`, `passwd`, `group`;
-  - systemd-tmpfiles: `/etc/tmpfiles.d`;
-  - `daemon-reload`: unit files, drop-ins and generators, the system's and its packages';
-  - the users' service managers: users' units and what's enabled for them;
-  - wrappers: the model's wrappers.
-  A step's inputs include what it reads on the machine as well as in the generation:
-  systemd-sysusers reads the machine's `/etc/passwd`, and systemd-tmpfiles makes what someone
-  deleted. A step whose machine-side inputs can't be compared runs.
-- A step is skipped only when everything it reads is byte for byte the same in the old and new
-  generation, compared on disk, as restarts already are (unit fingerprints). A step that doesn't
-  declare its inputs always runs, so missing knowledge makes a switch slower, never wrong.
-- Links into the store compare by their target. Store paths are content-addressed, so the same
-  target is the same content.
-- `apply` when the model hasn't changed runs every step. That's what people reach for when
-  something is off, and it repairs what drifted.
-- `apply -v`, and the plan, show each step as run or skipped and the input that decided it.
-- A VM test switches each change twice, once skipping and once running every step, and compares
-  unit states, `/etc`, accounts and the users' managers. A difference fails the test. Skipping is
-  on by default only once that test covers the scenarios.
-- Before then, switches run in shadow: they work out what they'd skip, run everything anyway, and
-  log each skipped step that would have changed something. Running that on the Framework for a
-  while is the evidence from real use that the VM test can't give.
+- Nothing is skipped. A switch with nothing changed runs the same steps as any other, which also
+  repairs what drifted, such as a directory systemd-tmpfiles makes.
+- Each switch records how long each step took in `/run/distro/switch-steps`, and `apply -v`
+  shows it.
+- Skipping comes back only if a real machine shows a step that's slow, and then with what the
+  first draft required: each step declaring what it reads, on disk and on the machine, skipping
+  only when all of it is byte for byte the same, a VM test that switches each change with and
+  without skipping and compares the result, and a time running in shadow on a real machine first.
 
 ### Watching applies settings, and nothing lasts until you keep it
 
@@ -72,7 +56,8 @@ yet who starts watching to try a theme would get those changes too.
 
 ## Consequences
 
-- A theme change is one rendered file, one action, and an `/etc/.system` move.
+- A theme change is one rendered file, one action, and a full switch of about a tenth of a
+  second, on the VM at least. The Framework's numbers, with many more units, are still to come.
 - What counts as settings comes from the plan's changes, which the plan already computes, so
   watch and `apply` can't disagree about what a change does.
 - Programs still have to notice: each module can say how its program picks up a changed file (it
