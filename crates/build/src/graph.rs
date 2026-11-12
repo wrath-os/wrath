@@ -856,6 +856,9 @@ pub const ROOT_LABEL: &str = "distro-root";
 pub struct Kept {
     pub text: String,
     pub hash: String,
+    /// Each secret's encrypted file, by name, read from the configuration. Only the machine can
+    /// decrypt them, so they go in the generation as they are.
+    pub secrets: BTreeMap<String, Vec<u8>>,
 }
 
 #[cfg(test)]
@@ -866,13 +869,47 @@ impl Kept {
         Self {
             hash: digest(text.as_bytes()),
             text,
+            secrets: BTreeMap::new(),
         }
     }
 }
 
+/// Where a generation keeps a secret's encrypted file, by the secret's name.
+const SECRET_FILES: &str = "secrets";
+
+/// What a generation says to fill in on the machine: each file's parts, by its name there.
+const TEMPLATES_SPEC: &str = "templates.json";
+
+/// Where activation fills in files with secrets or machine values.
+const FILLED: &str = "/run/distro/templates";
+
+/// A filled-in file's name in [`FILLED`], from its path.
+fn filled_name(path: &str) -> String {
+    path.trim_start_matches('/').replace('/', "_")
+}
+
+/// Whether `model` has secrets, which need `age` on the machine.
+fn has_secrets(model: &Value) -> bool {
+    model["secrets"]
+        .as_object()
+        .is_some_and(|all| !all.is_empty())
+}
+
+/// A secret's or filled-in file's owner, as `owner` or `owner:group`, and its mode in octal.
+fn owner_and_mode(entry: &Value) -> (String, String) {
+    let owner = entry["owner"].as_str().unwrap_or("root");
+    let owner = match entry["group"].as_str() {
+        Some(group) => format!("{owner}:{group}"),
+        None => owner.to_owned(),
+    };
+    let mode = entry["mode"].as_u64().unwrap_or(0o400);
+    (owner, format!("{mode:04o}"))
+}
+
 /// What distro on the machine reads at every boot and switch: files under /etc with a mode of
 /// their own, which are copied instead of linked, the homes whose files it links, and the work it
-/// does itself, such as secrets, which come later.
+/// does itself: secrets to decrypt, with what and with which keys, files to fill in with them or
+/// with the machine's values, and whether the hostname is one of those.
 fn activation(model: &Value) -> String {
     let homes: Vec<Value> = model["homes"]
         .as_object()
@@ -896,14 +933,112 @@ fn activation(model: &Value) -> String {
             modes.insert(inside.to_owned(), json!(format!("{mode:04o}")));
         }
     }
+    let mut secrets = Map::new();
+    for (name, secret) in model["secrets"].as_object().into_iter().flatten() {
+        let (owner, mode) = owner_and_mode(secret);
+        secrets.insert(
+            name.clone(),
+            json!({
+                "source": format!("{SECRET_FILES}/{name}.age"),
+                "owner": owner,
+                "mode": mode,
+                "link": secret["link"].as_str().unwrap_or(""),
+            }),
+        );
+    }
+    let templates: Vec<Value> = model["templates"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(path, template)| {
+            let (owner, mode) = owner_and_mode(template);
+            json!({"name": filled_name(path), "owner": owner, "mode": mode})
+        })
+        .collect();
     json!({
         "etc_modes": modes,
         "bash": "@bash@/bin/bash",
-        "secrets": {},
-        "templates": [],
+        "age": if has_secrets(model) { "@age@/bin/age" } else { "" },
+        "identities": model["base"]["secrets"]["identities"].as_array().cloned().unwrap_or_default(),
+        "secrets": secrets,
+        "templates": templates,
+        "templates_spec": TEMPLATES_SPEC,
+        "hostname_filled": model["templates"].get("/etc/hostname").is_some(),
         "homes": homes,
     })
     .to_string()
+}
+
+/// The encrypted secrets, as they are, and the parts of every file the machine fills in, with each
+/// such file under /etc linked to where activation fills it in.
+fn runtime_files<'a>(
+    model: &Value,
+    secrets: BTreeMap<String, Vec<u8>>,
+    packages: &'a Packages,
+) -> Result<Action<'a>, String> {
+    let spec: Map<String, Value> = model["templates"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(path, template)| (filled_name(path), template["parts"].clone()))
+        .collect();
+    let links: Vec<(String, String)> = model["templates"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(path, _)| {
+            let inside = path.strip_prefix('/')?;
+            inside
+                .starts_with("etc/")
+                .then(|| (inside.to_owned(), format!("{FILLED}/{}", filled_name(path))))
+        })
+        .collect();
+    let hashes: Map<String, Value> = secrets
+        .iter()
+        .map(|(name, bytes)| (name.clone(), json!(digest(bytes))))
+        .collect();
+    let spec = Value::Object(spec);
+    let (unresolved, resolved) = action_records(&[], packages, |deps| {
+        json!({"kind": "runtime-files", "secrets": hashes, "templates": spec,
+            "links": links, "deps": deps})
+    })?;
+    Ok(Action {
+        origin: "secrets".to_owned(),
+        unresolved,
+        resolved,
+        run: Box::new(move |objects| {
+            let mut entries = Entries::new();
+            for (name, bytes) in &secrets {
+                let object = objects.put(bytes)?;
+                let path = format!("{SECRET_FILES}/{name}.age");
+                entries.insert(
+                    path,
+                    Entry::File {
+                        mode: 0o444,
+                        object,
+                    },
+                );
+            }
+            let text = serde_json::to_string_pretty(&spec).map_err(|e| e.to_string())?;
+            let object = objects.put(text.as_bytes())?;
+            entries.insert(
+                TEMPLATES_SPEC.to_owned(),
+                Entry::File {
+                    mode: 0o444,
+                    object,
+                },
+            );
+            for (path, target) in &links {
+                entries.insert(
+                    path.clone(),
+                    Entry::Link {
+                        target: target.clone(),
+                    },
+                );
+            }
+            Ok(entries)
+        }),
+    })
 }
 
 /// Turns a model into actions. Every package it names must have a recipe.
@@ -978,14 +1113,6 @@ fn lower<'a>(
             packages,
         )?,
         text(
-            base,
-            "etc/hostname",
-            0o644,
-            format!("{hostname}\n"),
-            &[],
-            packages,
-        )?,
-        text(
             "base.users",
             "etc/tmpfiles.d/distro-homes.conf",
             0o644,
@@ -1054,7 +1181,11 @@ fn lower<'a>(
             "activation.json",
             0o644,
             activation(model),
-            &["bash"],
+            if has_secrets(model) {
+                &["bash", "age"]
+            } else {
+                &["bash"]
+            },
             packages,
         )?,
         text(
@@ -1074,6 +1205,8 @@ fn lower<'a>(
                 // Some packages put programs for root in sbin, which is on the path all the same.
                 ("sbin", "bin"),
                 ("lib/security", "lib/security"),
+                // NSS modules, which glibc looks for there when its own search finds none.
+                ("lib/nss", "lib/nss"),
                 // Compiled locales, which LOCPATH names.
                 ("lib/locale", "lib/locale"),
             ],
@@ -1106,7 +1239,25 @@ fn lower<'a>(
             packages,
         )?,
     ];
+    // A hostname filled in from the machine's name is one of the files the machine fills in.
+    if !hostname.is_empty() {
+        actions.push(text(
+            base,
+            "etc/hostname",
+            0o644,
+            format!("{hostname}\n"),
+            &[],
+            packages,
+        )?);
+    }
     actions.extend(index_actions("packages", lab, &sharing, packages)?);
+    if has_secrets(model)
+        || model["templates"]
+            .as_object()
+            .is_some_and(|all| !all.is_empty())
+    {
+        actions.push(runtime_files(model, kept.secrets.clone(), packages)?);
+    }
 
     let disks = early::disks(&model["base"]["storage"]);
     for (path, contents) in [("etc/fstab", disks.fstab), ("etc/crypttab", disks.crypttab)] {
@@ -2629,6 +2780,80 @@ mod tests {
                 assert_eq!(record["lowering"], json!(lowering()), "{}", action.origin);
             }
         }
+    }
+
+    #[test]
+    fn a_system_carries_its_encrypted_secrets_and_what_the_machine_fills_in() {
+        let (_dir, lab, mut packages) = setup();
+        packages.insert("age".to_owned(), fake(&lab, "age", &["age"]));
+        let mut model = model(80, false);
+        model["base"]["system"]["hostname"] = json!("");
+        model["base"]["secrets"] = json!({"identities": ["/etc/ssh/ssh_host_ed25519_key"]});
+        model["secrets"] = json!({"token": {"hash": "h", "owner": "web", "mode": 0o440}});
+        model["templates"] = json!({
+            "/etc/hostname": {"parts": [{"machine": "machine.name"}, {"text": "\n"}],
+                "owner": "root", "mode": 0o644},
+            "/etc/web/env": {"parts": [{"text": "T="}, {"secret": "token"}],
+                "owner": "web", "group": "web", "mode": 0o400},
+        });
+        let mut kept = Kept::plain(&model);
+        kept.secrets
+            .insert("token".to_owned(), b"age-encrypted".to_vec());
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let lowered = lower(&lab, &model, &kept, &packages).unwrap();
+        let outcome = realise(&lab, &mut db, lowered.actions).unwrap();
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
+
+        assert_eq!(read("secrets/token.age"), "age-encrypted");
+        let spec: Value = serde_json::from_str(&read("templates.json")).unwrap();
+        assert_eq!(
+            spec["etc_web_env"],
+            json!([{"text": "T="}, {"secret": "token"}])
+        );
+        assert_eq!(
+            fs::read_link(root.join("etc/web/env")).unwrap(),
+            Path::new("/run/distro/templates/etc_web_env")
+        );
+        assert_eq!(
+            fs::read_link(root.join("etc/hostname")).unwrap(),
+            Path::new("/run/distro/templates/etc_hostname")
+        );
+        let activation: Value = serde_json::from_str(&read("activation.json")).unwrap();
+        assert_eq!(
+            activation["secrets"]["token"],
+            json!({"source": "secrets/token.age", "owner": "web", "mode": "0440", "link": ""})
+        );
+        let age = packages["age"].path.inside();
+        assert_eq!(activation["age"], json!(format!("{age}/bin/age")));
+        assert_eq!(
+            activation["identities"],
+            json!(["/etc/ssh/ssh_host_ed25519_key"])
+        );
+        assert_eq!(activation["hostname_filled"], json!(true));
+        assert_eq!(activation["templates_spec"], json!("templates.json"));
+        assert!(
+            activation["templates"]
+                .as_array()
+                .unwrap()
+                .contains(&json!({"name": "etc_web_env", "owner": "web:web", "mode": "0400"}))
+        );
+    }
+
+    #[test]
+    fn glibc_finds_the_nss_modules_packages_ship_in_the_systems_lib_nss() {
+        let (_dir, lab, packages) = setup();
+        let nss = lab.on_host(&packages["systemd"].path).join("lib/nss");
+        fs::create_dir_all(&nss).unwrap();
+        fs::write(nss.join("libnss_systemd.so.2"), "").unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let systemd = packages["systemd"].path.inside();
+        assert_eq!(
+            fs::read_link(root.join("lib/nss/libnss_systemd.so.2")).unwrap(),
+            Path::new(&format!("{systemd}/lib/nss/libnss_systemd.so.2"))
+        );
     }
 
     #[test]

@@ -50,6 +50,26 @@ fn link_places(
     }
 }
 
+/// Each secret's encrypted file, by name, read from where the configuration has it and checked
+/// against the hash the model was made with, so the system holds what was planned.
+fn encrypted_secrets(model: &Model) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    model
+        .secrets
+        .iter()
+        .map(|(name, secret)| {
+            let bytes = std::fs::read(&secret.source)
+                .map_err(|e| format!("cannot read secret `{name}` from {}: {e}", secret.source))?;
+            if blake3::hash(&bytes).to_hex().as_str() != secret.hash {
+                return Err(format!(
+                    "secret `{name}` changed in {} since the configuration was read",
+                    secret.source
+                ));
+            }
+            Ok((name.clone(), bytes))
+        })
+        .collect()
+}
+
 /// Builds `model` into a generation with distro's own builder, from the recipes in `build/` under
 /// `root`, and returns where it is. Packages without a recipe are left out, with a warning.
 pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBuf, String> {
@@ -60,6 +80,7 @@ pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBu
     let kept = distro_build::graph::Kept {
         text: model.canonical(),
         hash: model.hash(),
+        secrets: encrypted_secrets(model)?,
     };
     let mut model = serde_json::from_str(&kept.text).map_err(|e| e.to_string())?;
     if test {

@@ -11,6 +11,7 @@ name = "distro"
 path = "src/main.rs"
 
 [dependencies]
+blake3.workspace = true
 clap.workspace = true
 distro-build.workspace = true
 distro-check.workspace = true

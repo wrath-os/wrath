@@ -585,6 +585,7 @@ dependencies = [
 name = "distro-cli"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "clap",
  "distro-build",
  "distro-check",

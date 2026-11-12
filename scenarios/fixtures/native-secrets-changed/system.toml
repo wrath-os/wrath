@@ -1,0 +1,18 @@
+# A secret decrypted on the machine, and a file filled in with it. The identity is the fixture
+# key in fixtures/configs/secrets, made for tests only, which the scenario puts in place.
+
+[system]
+hostname = "native-secrets"
+secret_identities = ["/etc/distro-test/identity.txt"]
+secret_recipients = ["age1752tz55mdpnqrasdfja6pzw76jhqf532f2dhr5jpkngrfhz5ec0sax8ykl"]
+
+[users.john]
+extra_groups = ["wheel"]
+
+[secrets.api-token]
+owner = "john"
+mode = 0o440
+
+[files."/etc/app/env"]
+text = "TOKEN=${secret.api-token}\nMODE=staging\n"
+owner = "john"

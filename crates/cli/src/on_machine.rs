@@ -31,7 +31,7 @@ pub fn apply(system: &Path) -> Result<(), String> {
         .is_some_and(|all| !all.is_empty())
     {
         replace_on_ramfs(&sw, Path::new(SECRETS), |dir| {
-            decrypt(&sw, &activation, dir);
+            decrypt(system, &activation, dir);
             Ok(())
         })?;
     }
@@ -40,7 +40,9 @@ pub fn apply(system: &Path) -> Result<(), String> {
         .is_some_and(|all| !all.is_empty())
     {
         fs::create_dir_all("/run/distro").map_err(|e| format!("/run/distro: {e}"))?;
-        replace_on_ramfs(&sw, Path::new(TEMPLATES), |dir| fill(&sw, &activation, dir))?;
+        replace_on_ramfs(&sw, Path::new(TEMPLATES), |dir| {
+            fill(system, &activation, dir)
+        })?;
     }
     if activation["hostname_filled"] == Value::Bool(true) {
         set_hostname();
@@ -138,7 +140,9 @@ fn own(sw: &Path, path: &Path, owner: &str, mode: &str) {
     }
 }
 
-fn decrypt(sw: &Path, activation: &Value, dir: &Path) {
+/// Decrypts each secret `system` has into `dir`. Its encrypted file is named relative to the system.
+fn decrypt(system: &Path, activation: &Value, dir: &Path) {
+    let sw = &system.join("bin");
     let identities: Vec<&str> = items(&activation["identities"])
         .filter_map(Value::as_str)
         .filter(|identity| Path::new(identity).exists())
@@ -160,7 +164,7 @@ fn decrypt(sw: &Path, activation: &Value, dir: &Path) {
             }
             run(
                 command
-                    .arg(text(secret, "source"))
+                    .arg(system.join(text(secret, "source")))
                     .stdout(Stdio::from(output)),
                 &format!("decrypting secret {name}"),
             )
@@ -189,13 +193,15 @@ fn link_secret(name: &str, link: &Path) {
     }
 }
 
-fn fill(sw: &Path, activation: &Value, dir: &Path) -> Result<(), String> {
+fn fill(system: &Path, activation: &Value, dir: &Path) -> Result<(), String> {
+    let sw = &system.join("bin");
     let spec = activation["templates_spec"]
         .as_str()
         .ok_or("the system doesn't say what to fill in")?;
+    let spec = system.join(spec);
     let machine = templates::machine_values()?;
     // A file that can't be filled in has already said so, and the others are still there.
-    let _ = templates::fill(Path::new(spec), Path::new(SECRETS), &machine, dir);
+    let _ = templates::fill(&spec, Path::new(SECRETS), &machine, dir);
     for template in items(&activation["templates"]) {
         let file = dir.join(text(template, "name"));
         if file.exists() {
