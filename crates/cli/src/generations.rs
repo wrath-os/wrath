@@ -711,7 +711,7 @@ pub fn lock(
     }
     let sources: Vec<&str> = lock.sources.keys().map(String::as_str).collect();
     match sources.as_slice() {
-        [] => println!("there's nothing to pin: distro is a development build"),
+        [] => println!("there's nothing to pin: this distro was built from a checkout"),
         _ => println!("pinned {}", sources.join(", ")),
     }
     for (role, model) in &models {

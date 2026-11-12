@@ -790,10 +790,11 @@ fn check_config(
 fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
     let model = model_as(config, modules, role)?;
     let packages = model.all_packages().count();
-    let pinned = if model.is_locked() {
-        "sources pinned"
-    } else {
-        "sources not pinned yet"
+    let all_pinned = model.sources.values().all(|source| source.is_locked());
+    let pinned = match (model.sources.contains_key(DISTRO_SOURCE), all_pinned) {
+        (_, false) => "sources not pinned yet",
+        (true, true) => "sources pinned",
+        (false, true) => "distro unpinned, since it was built from a checkout",
     };
     println!(
         "no errors: {} options, {packages} packages, {pinned}, model {}",
