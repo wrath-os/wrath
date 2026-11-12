@@ -104,8 +104,8 @@ impl Remote {
         Ok((!text.trim().is_empty()).then_some(text))
     }
 
-    /// Copies what the machine lacks of `system`, built in `lab`, to a file on it, and returns
-    /// that file, or `None` when it has everything already.
+    /// Copies what the machine lacks of `system`, built in `lab`, into a new directory on it,
+    /// and returns that directory, or `None` when it has everything already.
     fn send(&self, lab: &Lab, system: &StorePath) -> Result<Option<String>, String> {
         let have = self.output("ls /store 2>/dev/null || true")?;
         let closure = distro_build::chain::runtime_closure(lab, system)?;
@@ -114,7 +114,6 @@ impl Remote {
             return Ok(None);
         }
         eprintln!("copying {} store paths to {}", missing.len(), self.name);
-        let file = format!("/var/tmp/distro-{}.tar", system.hash());
         let mut tar = Command::new("tar")
             .args(["--owner=0", "--group=0", "--numeric-owner", "-C"])
             .arg(lab.work.join("store"))
@@ -125,17 +124,23 @@ impl Remote {
             .spawn()
             .map_err(|e| format!("cannot run tar: {e}"))?;
         let stream = tar.stdout.take().expect("piped");
+        // A directory only this user can write to, so nobody else on the machine can swap the
+        // archive before root unpacks it.
         let sent = self
             .ssh()
-            .arg(format!("cat > {file}"))
+            .arg(
+                "sh -c 'dir=$(mktemp -d /var/tmp/distro.XXXXXX) && \
+                 cat > $dir/system.tar && echo $dir'",
+            )
             .stdin(stream)
-            .status()
+            .stderr(Stdio::inherit())
+            .output()
             .map_err(|e| format!("cannot run ssh: {e}"))?;
         let packed = tar.wait().map_err(|e| format!("tar: {e}"))?;
-        if !packed.success() || !sent.success() {
+        if !packed.success() || !sent.status.success() {
             return Err(format!("copying the system to {} failed", self.name));
         }
-        Ok(Some(file))
+        sent_dir(&String::from_utf8_lossy(&sent.stdout)).map(Some)
     }
 
     /// Puts what was sent into the machine's store and switches it to `system` as `how` says,
@@ -179,15 +184,33 @@ fn switch_script(sent: Option<&str>, system: &StorePath, how: Switch, root: bool
         Switch::Apply => format!("{path}/bin/distro apply {path}"),
         Switch::Try(seconds) => format!("{path}/bin/distro try --for {seconds}s {path}"),
     };
+    // Unpacked beside the store and renamed in one path at a time, so an interrupted copy
+    // never leaves a partial path under a name `send` would take as complete.
     let steps = match sent {
-        Some(file) => format!("tar -C /store -xf {file} && rm -f {file} && {switch}"),
+        Some(dir) => format!(
+            "staged=$(mktemp -d /store/.incoming.XXXXXX) && tar -C $staged -xf {dir}/system.tar && \
+             for path in $staged/*; do test -e /store/${{path##*/}} || mv $path /store/ || exit; \
+             done && rm -rf $staged {dir} && {switch}"
+        ),
         None => switch,
     };
     if root {
-        steps
+        format!("sh -c '{steps}'")
     } else {
         format!("sudo sh -c '{steps}'")
     }
+}
+
+/// The directory `send` made on the machine, from what it printed.
+fn sent_dir(printed: &str) -> Result<String, String> {
+    let dir = printed.trim_end();
+    let suffix = dir.strip_prefix("/var/tmp/distro.").unwrap_or_default();
+    if suffix.is_empty() || !suffix.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!(
+            "the machine made an unexpected directory for the copy: {dir:?}"
+        ));
+    }
+    Ok(dir.to_owned())
 }
 
 /// Builds `model` here and switches the machine to it, showing the plan against what the
@@ -269,13 +292,32 @@ mod tests {
     fn the_machine_switches_with_the_new_systems_distro() {
         let system = StorePath::from_hash("abc");
         assert_eq!(
-            switch_script(Some("/var/tmp/x.tar"), &system, Switch::Apply, true),
-            "tar -C /store -xf /var/tmp/x.tar && rm -f /var/tmp/x.tar && \
-             /store/abc/bin/distro apply /store/abc"
+            switch_script(Some("/var/tmp/distro.Ab12"), &system, Switch::Apply, true),
+            "sh -c 'staged=$(mktemp -d /store/.incoming.XXXXXX) && \
+             tar -C $staged -xf /var/tmp/distro.Ab12/system.tar && \
+             for path in $staged/*; do test -e /store/${path##*/} || mv $path /store/ || exit; \
+             done && rm -rf $staged /var/tmp/distro.Ab12 && /store/abc/bin/distro apply /store/abc'"
         );
         assert_eq!(
             switch_script(None, &system, Switch::Try(60), false),
             "sudo sh -c '/store/abc/bin/distro try --for 60s /store/abc'"
         );
+    }
+
+    #[test]
+    fn only_a_fresh_directory_from_mktemp_is_taken_as_what_was_sent() {
+        assert_eq!(
+            sent_dir("/var/tmp/distro.Ab12\n"),
+            Ok("/var/tmp/distro.Ab12".to_owned())
+        );
+        for printed in [
+            "",
+            "/var/tmp/distro.",
+            "/var/tmp/distro.a b",
+            "/tmp/x",
+            "/var/tmp/distro.a;rm",
+        ] {
+            assert!(sent_dir(printed).is_err(), "{printed:?}");
+        }
     }
 }
