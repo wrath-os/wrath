@@ -200,10 +200,13 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         } else {
             "distro-other"
         };
+        let release = fs::read_to_string(link.join("etc/os-release")).unwrap_or_default();
         let text = format!(
-            "title distro\nversion generation {number}\nsort-key {sort_key}\n\
+            "title {}\nversion generation {number}\nsort-key {sort_key}\n\
              linux /EFI/distro/{}\n{initrds}options {}\n",
-            names[0], params
+            distro_build::image::release_name(&release),
+            names[0],
+            params
         );
         write_replacing(&entries.join(&entry), &text, 0o644)?;
         written.insert(entry);

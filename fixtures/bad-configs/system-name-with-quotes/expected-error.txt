@@ -1,0 +1,6 @@
+error: a name can't have quotes, backslashes or line breaks in it
+ --> fixtures/bad-configs/system-name-with-quotes/system.toml:3:8
+  |
+3 | name = "Acme \"OS\""
+  |        ^^^^^^^^^^^^^ `system.name` is set here
+  = reported by modules/base-system.star

@@ -49,9 +49,12 @@ subtracts, which reads badly for a system that shares little with ours.
   module writes to, such as `networking.firewall.allowed_tcp_ports`, is an error pointing at both.
 - The source is pinned in the lock like any other (0009), so the model says exactly which module
   code ran.
-- The base that's in Rust moves into modules: `BASE_PACKAGES` becomes what `base-system` adds,
-  and os-release, boot entry titles and the ESP directory name come from options with today's
-  values as defaults.
+- The base that's in Rust moves into modules. `BASE_PACKAGES` becomes what `base-system` adds,
+  except what the mechanism itself runs: distro, bash and coreutils for its scripts, systemd,
+  util-linux and kmod, and D-Bus. `base-system` writes os-release from `system.name` and
+  `system.id`, and boot entries take their title from it. The ESP directory stays `EFI/distro`
+  for now: renaming it on a running machine means moving its kernels, which is mechanism work
+  for later.
 - What a system can't do without stays a check: a system with no init, no `/bin/sh` or no
   `PATH` fails `check` with what's missing, whichever modules its platform has.
 

@@ -8,9 +8,11 @@ JOURNAL_DIR_CONF = "/etc/tmpfiles.d/journal.conf"
 
 PACKAGES = [
     "bash",
+    "bc",
     "bubblewrap",
     "ca-certificates",
     "coreutils",
+    "diffutils",
     "findutils",
     "gawk",
     # getent, ldd, locale and iconv.
@@ -56,9 +58,26 @@ def locale_environment(ctx: Context) -> list[tuple[str, ...]]:
         environment.append(("LOCPATH", SYSTEM + "/lib/locale"))
     return environment
 
+def os_release(ctx: Context) -> None:
+    """/etc/os-release, which says what the system is called: in the boot menu, to programs that
+    check, and to people asking."""
+    name = ctx.read("system.name")
+    id = ctx.read("system.id")
+    plain = id.replace("-", "").replace("_", "").replace(".", "")
+    if not plain.isalnum() or id.lower() != id:
+        ctx.error("system.id", "an id is lowercase letters, digits, `-`, `_` and `.`")
+    if '"' in name or "\\" in name or "\n" in name:
+        ctx.error("system.name", "a name can't have quotes, backslashes or line breaks in it")
+    ctx.file("/etc/os-release", lines([
+        'NAME="%s"' % name,
+        "ID=" + id,
+        'PRETTY_NAME="%s"' % name,
+    ]))
+
 def render(ctx: Context) -> None:
     for package in PACKAGES:
         ctx.package(package)
+    os_release(ctx)
     # device-mapper's udev rules, which tools such as cryptsetup wait on.
     ctx.service_package("device-mapper")
 
@@ -186,6 +205,16 @@ module(
             types.bool,
             default = True,
             doc = "Keep the journal on disk, across boots, rather than in memory.",
+        ),
+        "system.name": option(
+            types.str,
+            default = "distro",
+            doc = "What the system calls itself, in the boot menu and `/etc/os-release`.",
+        ),
+        "system.id": option(
+            types.str,
+            default = "distro",
+            doc = "The system's id in `/etc/os-release`, lowercase, such as `acme`.",
         ),
     },
     writes = [],

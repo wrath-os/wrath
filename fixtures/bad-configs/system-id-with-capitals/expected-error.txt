@@ -1,0 +1,6 @@
+error: an id is lowercase letters, digits, `-`, `_` and `.`
+ --> fixtures/bad-configs/system-id-with-capitals/system.toml:3:6
+  |
+3 | id = "Acme"
+  |      ^^^^^^ `system.id` is set here
+  = reported by modules/base-system.star

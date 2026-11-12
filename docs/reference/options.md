@@ -18,8 +18,10 @@
 ### base-system
 
 - `journal.persistent`: a boolean, default true. Keep the journal on disk, across boots, rather than in memory.
+- `system.id`: a string, default "distro". The system's id in `/etc/os-release`, lowercase, such as `acme`.
 - `system.keymap`: a string, optional. The keyboard layout on the console, such as `sv-latin1`.
 - `system.locale`: a string, default "C.UTF-8". The machine's language and formats, such as `en_US.UTF-8`.
+- `system.name`: a string, default "distro". What the system calls itself, in the boot menu and `/etc/os-release`.
 
 ### bluetooth
 

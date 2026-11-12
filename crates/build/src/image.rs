@@ -104,13 +104,35 @@ fn boot_file(lab: &Lab, generation: &StorePath, name: &str) -> Result<(PathBuf, 
     Ok((lab.work.join("store").join(inside), on_esp))
 }
 
-/// The boot entry for `generation`, as distro on the machine would write it for generation 1.
-pub fn entry(kernel: &str, initrd: &str, params: &str, generation: &StorePath) -> String {
+/// The boot entry for `generation`, as distro on the machine would write it for generation 1,
+/// titled `title`.
+pub fn entry(
+    title: &str,
+    kernel: &str,
+    initrd: &str,
+    params: &str,
+    generation: &StorePath,
+) -> String {
     format!(
-        "title distro\nversion generation 1\nsort-key distro\nlinux /EFI/distro/{kernel}\n\
+        "title {title}\nversion generation 1\nsort-key distro\nlinux /EFI/distro/{kernel}\n\
          initrd /EFI/distro/{initrd}\noptions {params} init={}/init\n",
         generation.inside()
     )
+}
+
+/// What a system calls itself in the boot menu, from its `/etc/os-release`: its `PRETTY_NAME`, or
+/// its `NAME`, or `distro`.
+pub fn release_name(os_release: &str) -> String {
+    let field = |key: &str| {
+        os_release.lines().find_map(|line| {
+            let value = line.strip_prefix(key)?.strip_prefix('=')?;
+            let value = value.trim_matches('"');
+            (!value.is_empty()).then(|| value.to_owned())
+        })
+    };
+    field("PRETTY_NAME")
+        .or_else(|| field("NAME"))
+        .unwrap_or_else(|| "distro".to_owned())
 }
 
 /// The ESP's files: systemd-boot as the firmware's default loader, the kernel and the initrd,
@@ -140,7 +162,9 @@ pub fn esp_tree(
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    let text = entry(&names[0], &names[1], &params, generation);
+    let release = fs::read_to_string(lab.on_host(generation).join("etc/os-release"));
+    let title = release_name(&release.unwrap_or_default());
+    let text = entry(&title, &names[0], &names[1], &params, generation);
     write(&esp.join("loader/entries/distro-1.conf"), &text)?;
     write(
         &esp.join("loader/loader.conf"),

@@ -549,18 +549,16 @@ fn run_index(
     Ok(entries)
 }
 
-const BASE_PACKAGES: &[&str] = &[
+/// What every system has whatever its platform, since the mechanism needs it: distro, which
+/// switches; bash and coreutils, which its scripts run; systemd, which starts everything, and
+/// util-linux and kmod, which it mounts with and loads modules with; and D-Bus. The rest of a
+/// base system is what the platform's modules add.
+const MECHANISM_PACKAGES: &[&str] = &[
     "bash",
-    "bc",
     "coreutils",
     "dbus",
-    "diffutils",
     "distro",
-    "findutils",
-    "gawk",
-    "grep",
     "kmod",
-    "sed",
     "systemd",
     "util-linux",
 ];
@@ -1074,7 +1072,7 @@ fn lower<'a>(
         missing(name);
     }
     let everything: Vec<&'a str> = {
-        let mut all: BTreeSet<&'a str> = BASE_PACKAGES.iter().copied().collect();
+        let mut all: BTreeSet<&'a str> = MECHANISM_PACKAGES.iter().copied().collect();
         all.extend(named.iter().copied());
         all.into_iter().collect()
     };
@@ -1103,15 +1101,19 @@ fn lower<'a>(
     let (system_services, session_services) =
         (service_dirs("system-services"), service_dirs("services"));
     let hostname = str_field(&model["base"]["system"]["hostname"], "hostname")?;
-    let mut actions = vec![
-        text(
+    let mut actions = Vec::new();
+    // What a system calls itself, unless its modules say, as distro's `base-system` does.
+    if model["files"].get("/etc/os-release").is_none() {
+        actions.push(text(
             base,
             "etc/os-release",
             0o644,
             "NAME=distro\nID=distro\nPRETTY_NAME=distro\n".into(),
             &[],
             packages,
-        )?,
+        )?);
+    }
+    actions.extend([
         text(
             "base.users",
             "etc/tmpfiles.d/distro-homes.conf",
@@ -1238,7 +1240,7 @@ fn lower<'a>(
                 .unwrap_or("UTC"),
             packages,
         )?,
-    ];
+    ]);
     // A hostname filled in from the machine's name is one of the files the machine fills in.
     if !hostname.is_empty() {
         actions.push(text(
@@ -2356,7 +2358,7 @@ fn system_packages(model: &Value) -> Vec<String> {
         let items = value.as_array().into_iter().flatten();
         items.filter_map(Value::as_str).map(str::to_owned).collect()
     };
-    let mut ids: BTreeSet<String> = BASE_PACKAGES
+    let mut ids: BTreeSet<String> = MECHANISM_PACKAGES
         .iter()
         .chain(&INITRD_PACKAGES)
         .chain(&LINKED)
@@ -2503,7 +2505,7 @@ mod tests {
         let lab = Lab::new(dir.path().to_str().unwrap());
         fs::create_dir_all(dir.path().join("store")).unwrap();
         let mut packages = Packages::new();
-        for id in BASE_PACKAGES
+        for id in MECHANISM_PACKAGES
             .iter()
             .chain(INITRD_PACKAGES.iter())
             .chain(["web", "linux"].iter())
@@ -3328,6 +3330,24 @@ mod tests {
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let release = fs::read_to_string(root.join("etc/os-release")).unwrap();
         assert_eq!(release, "NAME=distro\nID=distro\nPRETTY_NAME=distro\n");
+    }
+
+    #[test]
+    fn a_system_whose_modules_name_it_keeps_their_name() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let mut model = model(80, false);
+        let named = "NAME=\"Acme\"\nID=acme\nPRETTY_NAME=\"Acme OS\"\n";
+        model["files"]["/etc/os-release"] = json!({"mode": 0o644, "text": named});
+        let outcome = realised(&lab, &mut db, &packages, &model);
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert_eq!(
+            fs::read_to_string(root.join("etc/os-release")).unwrap(),
+            named
+        );
+        assert_eq!(crate::image::release_name(named), "Acme OS");
+        assert_eq!(crate::image::release_name("NAME=Acme\n"), "Acme");
+        assert_eq!(crate::image::release_name(""), "distro");
     }
 
     #[test]
