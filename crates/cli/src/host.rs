@@ -176,7 +176,41 @@ impl Remote {
     fn switch(&self, sent: Option<&str>, system: &StorePath, how: Switch) -> Result<(), String> {
         let root = self.output("id -u")?.trim() == "0";
         let script = switch_script(sent, system, how, root);
-        // A terminal, when there is one, so sudo on the machine can ask for a password.
+        if self.run_as_root(&script)? {
+            Ok(())
+        } else {
+            Err(format!("switching {} failed", self.name))
+        }
+    }
+
+    /// Copies `built`, a system built here, to the machine and switches it as `how` says.
+    pub fn switch_built(&self, root: &Path, built: &Path, how: Switch) -> Result<(), String> {
+        let name = built
+            .file_name()
+            .ok_or("a generation has a name")?
+            .to_string_lossy()
+            .into_owned();
+        let system = StorePath::from_hash(&name);
+        let lab = Lab::new(root.join("build/work"));
+        let sent = self.send(&lab, &system)?;
+        self.switch(sent.as_deref(), &system, how)
+    }
+
+    /// Runs the running system's `distro` with `args` on the machine as root, as `keep` and
+    /// `rollback`.
+    pub fn distro_as_root(&self, args: &str) -> Result<(), String> {
+        let root = self.output("id -u")?.trim() == "0";
+        let sudo = if root { "" } else { "sudo " };
+        if self.run_as_root(&format!("{sudo}/run/system/bin/distro {args}"))? {
+            Ok(())
+        } else {
+            Err(format!("`distro {args}` on {} failed", self.name))
+        }
+    }
+
+    /// Runs `script` over SSH with a terminal, when there is one, so sudo on the machine can ask
+    /// for a password. Whether it succeeded.
+    fn run_as_root(&self, script: &str) -> Result<bool, String> {
         let terminal: &[&str] = if std::io::stdin().is_terminal() {
             &["-t"]
         } else {
@@ -187,11 +221,7 @@ impl Remote {
             .arg(script)
             .status()
             .map_err(|e| format!("cannot run ssh: {e}"))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("switching {} failed", self.name))
-        }
+        Ok(status.success())
     }
 }
 
@@ -284,15 +314,7 @@ pub fn apply(
         return Ok(ExitCode::SUCCESS);
     }
     let built = generations::build_generation(root, &model, false)?;
-    let name = built
-        .file_name()
-        .ok_or("a generation has a name")?
-        .to_string_lossy()
-        .into_owned();
-    let system = StorePath::from_hash(&name);
-    let lab = Lab::new(root.join("build/work"));
-    let sent = remote.send(&lab, &system)?;
-    remote.switch(sent.as_deref(), &system, how)?;
+    remote.switch_built(root, &built, how)?;
     if let Some(note) = running.and(plan.tier()).and_then(generations::full_effect) {
         println!("{note}");
     }

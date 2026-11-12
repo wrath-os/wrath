@@ -39,6 +39,7 @@ mod switching;
 mod system;
 mod templates;
 mod trees;
+mod watch;
 
 /// How many times `dev test --determinism` evaluates each configuration.
 const DETERMINISM_RUNS: u64 = 5;
@@ -97,6 +98,9 @@ enum Command {
         /// Switch without asking first
         #[arg(short, long)]
         yes: bool,
+        /// Keep watching: try each save, by itself when it only changes settings, until Ctrl-C
+        #[arg(long, conflicts_with_all = ["system", "yes"])]
+        watch: bool,
     },
     /// Switch to the configuration for a while, then back unless you `distro keep` it
     Try {
@@ -460,7 +464,12 @@ fn main() -> ExitCode {
             };
             machine().and_then(|config| plan(root, &config, against, &modules, json))
         }
-        Command::Apply { system, host, yes } => match host {
+        Command::Apply {
+            watch: true, host, ..
+        } => watching(root, host.as_deref(), &machine, &modules),
+        Command::Apply {
+            system, host, yes, ..
+        } => match host {
             Some(host) => on_host(root, &host, Switch::Apply, yes, &machine, &modules),
             None => switch(root, system, Switch::Apply, yes, &machine, &modules),
         },
@@ -1445,6 +1454,28 @@ fn on_host(
         return Ok(ExitCode::FAILURE);
     };
     host::apply(root, &config, model, &remote, how, yes)
+}
+
+/// Watches the configuration and tries each save on this machine, or `host`.
+fn watching(
+    root: &Path,
+    host: Option<&str>,
+    config: &impl Fn() -> Result<PathBuf, String>,
+    modules: &Path,
+) -> Result<ExitCode, String> {
+    let config = config()?;
+    match host {
+        Some(host) => {
+            let remote = host::Remote::new(host)?;
+            let role = remote_role(&config, &remote)?;
+            let evaluate = || model_as(&config, modules, role.as_deref());
+            watch::watch(root, &config, watch::Machine::Remote(&remote), evaluate)
+        }
+        None => {
+            let evaluate = || model_as(&config, modules, role(&config));
+            watch::watch(root, &config, watch::Machine::Here, evaluate)
+        }
+    }
 }
 
 /// The role to build for another machine: `--role`, the configuration's only role, or the one the

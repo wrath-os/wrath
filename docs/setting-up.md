@@ -18,6 +18,18 @@ distro apply     # shows the plan again, asks, then switches
 new into `distro.lock`. Keep `/etc/distro` in git (or jj) and you have the history of every
 change you meant to make, next to `distro history`, which has every system you actually ran.
 
+When you're tuning something, such as a theme or your niri binds, let distro follow along:
+
+```sh
+distro apply --watch
+```
+
+Each save is tried at once when it only changes programs' own settings, files a bad edit can't
+lock you out with. Anything more, a package, a service, sudoers, shows the plan and asks first.
+Nothing becomes a generation while you watch: Ctrl-C asks whether to keep what runs, and
+otherwise switches back. If the watcher dies, what it tried switches back on its own within ten
+minutes, or at the next reboot. `--host NAME` watches for another machine.
+
 ## One file or several
 
 `system.toml` is where a configuration starts. For a small machine it can hold everything. When

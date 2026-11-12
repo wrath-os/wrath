@@ -279,13 +279,13 @@ pub fn rollback(to: Option<u32>) -> Result<u32, String> {
 }
 
 /// Switches to `system` without making it a generation, so a timer switching back after
-/// `seconds`, `rollback`, or a reboot all return to the current generation. Needs root.
+/// `seconds`, `rollback`, or a reboot all return to the current generation. Trying while a
+/// system is being tried tries this one in its place, with the timer starting over, as watching
+/// does on each save. Needs root.
 pub fn try_system(system: &Path, seconds: u64) -> Result<(), String> {
     require_generations()?;
     let _held = lock(Path::new(ROOT))?;
-    if trying() {
-        return Err("a system is already being tried; keep it or roll back first".into());
-    }
+    stop_trial();
     let root = Path::new(ROOT);
     let trying_link = root.join(TRYING);
     let _ = fs::remove_file(&trying_link);

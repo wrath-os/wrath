@@ -40,6 +40,7 @@ distro apply [OPTIONS] [SYSTEM]
 - `[SYSTEM]`: A system that is already built, such as one `build` made for this machine elsewhere
 - `--host <NAME>`: Build here and switch another machine, reached with `ssh NAME`
 - `-y, --yes`: Switch without asking first
+- `--watch`: Keep watching: try each save, by itself when it only changes settings, until Ctrl-C
 
 ## `distro try`
 
