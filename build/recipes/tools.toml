@@ -82,6 +82,28 @@ rm -rf runtime/grammars/sources
 cp -r runtime $DEST$PREFIX/share/helix/
 '''
 
+# A modal editor with Helix, Vim and VS Code keys and Luau plugins, with the programs its sessions
+# run beside it for mail and chat. Its window draws through Wayland and the GPU, which it opens
+# when it starts, so their names in it keep them in its run path.
+[[package]]
+id = "greed"
+version = "0.4.2"
+scope = "runtime"
+core = true
+# wasmtime builds its C API, and aws-lc its crypto, with cmake.
+extra_deps = ["cmake", "wayland", "libxkbcommon", "mesa"]
+sources = [{ url = "https://github.com/johnae/greed/archive/v{version}/greed-{version}.tar.gz" }]
+smoke = ["bin/greed --version"]
+
+[package.cargo]
+packages = ["greed-editor", "greed-mail", "greed-matrix", "greed-mattermost"]
+programs = ["greed", "greed-mail", "greed-matrix", "greed-mattermost"]
+install = '''
+mkdir -p $DEST$PREFIX/share/greed $DEST$PREFIX/share/applications
+cp -r runtime $DEST$PREFIX/share/greed/runtime
+cp dist/greed-link.desktop $DEST$PREFIX/share/applications/
+'''
+
 [[package]]
 id = "yazi"
 version = "26.9.1"
