@@ -1,8 +1,32 @@
 # Fonts for a desktop: a face for text, one for code with icons, and emoji, which programs find
 # through fontconfig by the generic names `sans-serif`, `serif`, `monospace` and `emoji`.
 
-# Smooth edges and slight hinting, without colour fringes, which suits any screen; and each
-# user's own settings in ~/.config/fontconfig, which come after and win.
+PRESETS = "/run/system/share/fontconfig/conf.avail/"
+
+# fontconfig's presets that come before the system's choices: aliases between metric-compatible
+# faces, and the guesses that give a request for "Sans" or "DejaVu Sans Mono" its generic name.
+BEFORE = [
+    "30-metric-aliases.conf",
+    "40-nonlatin.conf",
+    "45-generic.conf",
+    "45-latin.conf",
+    "48-guessfamily.conf",
+    "48-spacing.conf",
+    "49-sansserif.conf",
+]
+
+# And those after: each user's own settings, then the faces each generic name falls back to.
+AFTER = [
+    "50-user.conf",
+    "60-generic.conf",
+    "60-latin.conf",
+    "65-nonlatin.conf",
+    "70-no-bitmaps-except-emoji.conf",
+    "90-synthetic.conf",
+]
+
+# Smooth edges and slight hinting, without colour fringes, which suits any screen. A user's own
+# settings come before this, so for these they go in a match of their own on `target="font"`.
 RENDERING = """  <match target="font">
     <edit name="antialias" mode="assign"><bool>true</bool></edit>
     <edit name="hinting" mode="assign"><bool>true</bool></edit>
@@ -10,11 +34,12 @@ RENDERING = """  <match target="font">
     <edit name="rgba" mode="assign"><const>none</const></edit>
     <edit name="lcdfilter" mode="assign"><const>lcddefault</const></edit>
   </match>
-  <include ignore_missing="yes" prefix="xdg">fontconfig/conf.d</include>
-  <include ignore_missing="yes" prefix="xdg">fontconfig/fonts.conf</include>
 """
 
 FONTS = ["dejavu-fonts", "inter", "nerd-fonts-jetbrains-mono", "noto-color-emoji"]
+
+def includes(presets: list[str]) -> list[str]:
+    return ['  <include ignore_missing="yes">%s%s</include>' % (PRESETS, p) for p in presets]
 
 def fonts_conf(families: dict[str, str]) -> str:
     lines = [
@@ -24,6 +49,7 @@ def fonts_conf(families: dict[str, str]) -> str:
         "  <dir>/run/system/share/fonts</dir>",
         '  <cachedir prefix="xdg">fontconfig</cachedir>',
     ]
+    lines += includes(BEFORE)
     for generic in ["sans-serif", "serif", "monospace", "emoji"]:
         prefer = [families[generic]]
         if generic != "emoji":
@@ -31,6 +57,7 @@ def fonts_conf(families: dict[str, str]) -> str:
         lines += ['  <alias binding="same">', "    <family>%s</family>" % generic, "    <prefer>"]
         lines += ["      <family>%s</family>" % family for family in prefer]
         lines += ["    </prefer>", "  </alias>"]
+    lines += includes(AFTER)
     return "\n".join(lines) + "\n" + RENDERING + "</fontconfig>\n"
 
 def render(ctx: Context) -> None:
