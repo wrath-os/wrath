@@ -1732,7 +1732,9 @@ fn unpack(archive: &Path, target: &Path) -> Result<(), String> {
     let names = listing(archive)?;
     fs::create_dir_all(target).map_err(with_path(target))?;
     let mut command = Command::new("tar");
-    command.arg("-xf").arg(archive).arg("-C").arg(target);
+    // Owners and modes from the archive stay out, also when building as root.
+    command.args(["--no-same-owner", "--no-same-permissions", "-xf"]);
+    command.arg(archive).arg("-C").arg(target);
     if top_directory(&names).is_some() {
         command.arg("--strip-components=1");
     }
@@ -2308,6 +2310,7 @@ pub(crate) fn build_one(
             log.display()
         ));
     }
+    settle_modes(&lab.on_host(&out)).map_err(|e| format!("`{}` installed {e}", package.id))?;
     write_runtime_deps(lab, package, &out, built)?;
     fs::create_dir_all(&done_dir).map_err(with_path(&done_dir))?;
     fs::write(&done, "").map_err(with_path(&done))?;
@@ -2324,6 +2327,36 @@ pub(crate) fn build_one(
             .map(|dep| built.paths[&dep.id].clone())
             .collect(),
     }))
+}
+
+/// Clears setuid and setgid under `dir`, which would make a program run as root wherever the
+/// store is copied as root; a system's wrappers are where privileges come from. A device, pipe
+/// or socket is an error.
+fn settle_modes(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    for entry in fs::read_dir(dir).map_err(with_path(dir))? {
+        let path = entry.map_err(with_path(dir))?.path();
+        let meta = fs::symlink_metadata(&path).map_err(with_path(&path))?;
+        let kind = meta.file_type();
+        if kind.is_symlink() {
+            continue;
+        }
+        if !kind.is_file() && !kind.is_dir() {
+            return Err(format!(
+                "{}, a device, pipe or socket, but packages hold only files, directories and links",
+                path.display()
+            ));
+        }
+        let mode = meta.permissions().mode();
+        if mode & 0o6000 != 0 {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode & !0o6000))
+                .map_err(with_path(&path))?;
+        }
+        if kind.is_dir() {
+            settle_modes(&path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Where the store paths a store path refers to are recorded, beside the store (decision 0021).
@@ -2790,6 +2823,34 @@ mod tree_tests {
 #[cfg(test)]
 mod crate_tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_built_package_loses_setuid_and_setgid_and_cant_hold_special_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (bin, shared) = (dir.path().join("bin"), dir.path().join("share/games"));
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(bin.join("sudo"), "").unwrap();
+        fs::set_permissions(bin.join("sudo"), fs::Permissions::from_mode(0o4755)).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o2775)).unwrap();
+        std::os::unix::fs::symlink("sudo", bin.join("su")).unwrap();
+        settle_modes(dir.path()).unwrap();
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode(&bin.join("sudo")), 0o755);
+        assert_eq!(mode(&shared), 0o775);
+
+        let status = Command::new("mkfifo")
+            .arg(bin.join("pipe"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let error = settle_modes(dir.path()).unwrap_err();
+        assert!(
+            error.contains("bin/pipe") && error.contains("only files"),
+            "{error}"
+        );
+    }
 
     /// A source archive with a lock in its top directory, as a release tarball has.
     fn archive(dir: &Path, files: &[(&str, &str)]) -> PathBuf {

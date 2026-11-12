@@ -23,6 +23,10 @@ but the tool that adds to it. Adding a package means unpacking one directory, wi
 and no switch. That's what makes running a package ad hoc possible, and live switches need old and
 new paths visible together.
 
+A package holds only files, directories and links, without setuid or setgid: the store is copied
+as root, so a setuid `sudo` in it would stay setuid root on every machine for as long as the path
+lives. A system's wrappers are where privileges come from.
+
 Firm. erofs, composefs and plain ext4 booted at the same speed here (step 11), though that's a weak
 test on a warm host. Plain files also work on any platform.
 
