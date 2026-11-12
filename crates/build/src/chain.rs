@@ -1933,6 +1933,9 @@ pub(crate) struct Prepared {
 /// run paths. Every package's key has it, so changing it rebuilds everything.
 const BUILD_RULES: &str = "8";
 
+/// The machines packages are built for, which every key has, so another one's never match.
+const TARGET: &str = "x86_64-linux-gnu";
+
 /// What goes into a package's key from its recipe, before any dependency.
 fn recipe_parts(
     repository: &Path,
@@ -1942,7 +1945,10 @@ fn recipe_parts(
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut parts: Vec<Vec<u8>> = vec![
         BUILD_RULES.as_bytes().to_vec(),
+        TARGET.as_bytes().to_vec(),
         arm_key(package, arm).as_bytes().to_vec(),
+        // Whether it builds under /usr or its own prefix.
+        format!("{:?}", package.scope).into_bytes(),
         package.id.as_bytes().to_vec(),
         package
             .version
@@ -2718,6 +2724,15 @@ mod requirement_tests {
         assert_eq!(found.len(), 2, "{found:?}");
         assert_eq!(pairs(&found[0].1), ["pango<gtk", "zlib<gtk"]);
         assert_eq!(pairs(&found[1].1), ["pango<gtk"], "zlib is private to gtk");
+    }
+
+    #[test]
+    fn a_packages_scope_and_the_target_are_in_its_key() {
+        let parts = |scope: &str| {
+            recipe_parts(Path::new("/nonexistent"), &consumer("", scope), Arm::C, &[]).unwrap()
+        };
+        assert_ne!(parts("runtime"), parts("tool"));
+        assert!(parts("runtime").contains(&TARGET.as_bytes().to_vec()));
     }
 
     #[test]
