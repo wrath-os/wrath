@@ -4,7 +4,7 @@
 
 # Using it
 
-- [Getting started](getting-started.md) (not written yet)
+- [Getting started](getting-started.md)
 - [Installing](installing.md) (not written yet)
 - [Setting up a machine](setting-up.md) (not written yet)
 - [Packages](packages.md) (not written yet)

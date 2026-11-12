@@ -75,4 +75,4 @@ the Buck2 folks) runs the modules. Thanks to all of them.
 ## Where to go next
 
 - [How it works](how-it-works.md), if you want to know what's going on before trying it.
-- [Getting started](getting-started.md), to boot it in a VM (not written yet).
+- [Getting started](getting-started.md), to boot it in a VM.
