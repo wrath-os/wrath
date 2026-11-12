@@ -1728,3 +1728,26 @@ fn every_function_in_the_built_in_modules_is_fully_annotated() {
     assert!(files.len() > 40, "found only {} module files", files.len());
     assert!(missing.is_empty(), "unannotated:\n{}", missing.join("\n"));
 }
+
+#[test]
+fn files_are_named_plainly_and_unit_values_stay_on_one_line() {
+    let rendering = |call: &str| {
+        run(&format!(
+            "def render(ctx):\n    {call}\n\nmodule(name = \"t\", options = {{}}, writes = [], \
+             render = render)\n"
+        ))
+    };
+    let error = rendering(r#"ctx.file("/etc//sudoers", "x")"#).unwrap_err();
+    assert!(error.contains("write it as `/etc/sudoers`"), "{error}");
+    let error = rendering(r#"ctx.file("/etc/x/../shadow", "x")"#).unwrap_err();
+    assert!(error.contains("write it as `/etc/shadow`"), "{error}");
+    let error = rendering(r#"ctx.file("etc/motd", "x")"#).unwrap_err();
+    assert!(error.contains("starts with `/`"), "{error}");
+    let error = rendering(r#"ctx.unit("a.service", {"Service": {"Description": "a\nUser=root"}})"#)
+        .unwrap_err();
+    assert!(
+        error.contains("`Service.Description` has a line break"),
+        "{error}"
+    );
+    assert!(rendering(r#"ctx.file("/etc/motd", "x")"#).is_ok());
+}

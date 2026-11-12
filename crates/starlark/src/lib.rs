@@ -724,6 +724,32 @@ fn insert_trigger(
     Ok(NoneType)
 }
 
+/// Refuses a file path written other than plainly: `/etc//sudoers` and `/etc/x/../shadow` name
+/// `/etc/sudoers` and `/etc/shadow`, and would get around one module owning each file.
+fn named_plainly(path: &str) -> Result<(), String> {
+    let (root, rest) = match (path.strip_prefix("~/"), path.strip_prefix('/')) {
+        (Some(rest), _) => ("~/", rest),
+        (None, Some(rest)) => ("/", rest),
+        (None, None) => return Err("isn't a path: it starts with `/`, or `~/` in a home".into()),
+    };
+    let mut plain: Vec<&str> = Vec::new();
+    for segment in rest.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                plain.pop();
+            }
+            name => plain.push(name),
+        }
+    }
+    let plain = format!("{root}{}", plain.join("/"));
+    if plain == path {
+        Ok(())
+    } else {
+        Err(format!("isn't written plainly: write it as `{plain}`"))
+    }
+}
+
 #[starlark_module]
 fn ctx_methods(builder: &mut MethodsBuilder) {
     /// The value of an option, or a dictionary of everything under a table of options.
@@ -876,6 +902,9 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
                 at,
                 format!("file `{path}` is in a home, so it starts with `~/`"),
             ));
+        }
+        if let Err(message) = named_plainly(path) {
+            return Err(rendering.invalid(at, format!("file `{path}` {message}")));
         }
         if let Some(runtime) = text.downcast_ref::<convert::Runtime>() {
             let template = Template {

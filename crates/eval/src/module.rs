@@ -265,6 +265,21 @@ impl Unit {
     /// `[Unit]` (or `[Match]`, in network files) comes first and `[Install]` last; other sections
     /// and all keys are sorted, so the result doesn't depend on how a module built the table.
     pub fn from_value(value: &Value) -> Result<Self, String> {
+        let unit = Self::from_table(value)?;
+        for section in &unit.sections {
+            for (key, text) in &section.entries {
+                if text.contains('\n') {
+                    return Err(format!(
+                        "`{}.{key}` has a line break, which would start a setting of its own",
+                        section.name
+                    ));
+                }
+            }
+        }
+        Ok(unit)
+    }
+
+    fn from_table(value: &Value) -> Result<Self, String> {
         let Value::Table(sections) = value else {
             return Err(format!("a unit is a table of sections, found {value}"));
         };
