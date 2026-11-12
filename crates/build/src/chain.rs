@@ -2674,7 +2674,15 @@ mod crate_tests {
         let other = fs::File::open(dir.path().join("locks").join(out.hash())).unwrap();
         assert!(other.try_lock().is_err());
         drop(held);
-        assert!(other.try_lock().is_ok());
+        // A command another test starts can hold the lock's file for a moment, between forking
+        // and running its program, so the lock frees soon after, not at once.
+        let freed = (0..200).any(|_| {
+            other.try_lock().is_ok() || {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                false
+            }
+        });
+        assert!(freed);
     }
 
     #[test]
