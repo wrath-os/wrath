@@ -55,6 +55,8 @@ pub struct Model {
     pub wrappers: BTreeMap<String, Wrapper>,
     /// Packages built differently from how their source builds them, by the name they go by.
     pub builds: BTreeMap<String, Build>,
+    /// The source of the platform the system builds on, or `None` for distro's own modules.
+    pub platform: Option<String>,
 }
 
 /// A package built with other options or patches than its source's.
@@ -154,6 +156,10 @@ impl Model {
                 .iter()
                 .map(|(name, source)| (name.clone(), Source::follow(&source.url)))
                 .collect(),
+            platform: match evaluation.platform() {
+                distro_eval::Platform::Distro => None,
+                distro_eval::Platform::Source { name, .. } => Some(name.clone()),
+            },
             ..Self::default()
         };
         for rendered in evaluation.modules() {
@@ -369,7 +375,7 @@ impl Model {
             .cloned()
             .map(Value::Str)
             .collect();
-        table([
+        let mut model = table([
             ("version", Value::Int(VERSION)),
             ("sources", Value::Table(sources)),
             ("templates", templates_value(&self.templates)),
@@ -391,7 +397,13 @@ impl Model {
                 "machine",
                 Value::List(self.machine.iter().cloned().map(Value::Str).collect()),
             ),
-        ])
+        ]);
+        // Only a platform other than distro's is written, so models built before platforms keep
+        // their hash.
+        if let (Value::Table(fields), Some(platform)) = (&mut model, &self.platform) {
+            fields.insert("platform".to_owned(), Value::Str(platform.clone()));
+        }
+        model
     }
 
     /// The secrets a unit uses: those whose decrypted path it mentions, and those in files with

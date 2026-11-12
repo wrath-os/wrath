@@ -27,6 +27,7 @@ mod machine;
 mod on_machine;
 mod options;
 mod pinned;
+mod platforms;
 mod project;
 mod reference;
 mod run;

@@ -425,8 +425,28 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
                 Tier::Live
             };
             (vec![value_change(before, after)], Some(tier))
-        }),
+        })
+        .into_iter()
+        .chain(platform(before, after))
+        .collect(),
     }
+}
+
+/// The platform the system builds on, when it changed. The modules it brings and drops show as
+/// the changes they make.
+fn platform(before: &Model, after: &Model) -> Option<Change> {
+    let name = |model: &Model| {
+        model
+            .platform
+            .clone()
+            .unwrap_or_else(|| "distro".to_owned())
+    };
+    (before.platform != after.platform).then(|| Change {
+        kind: ChangeKind::Changed,
+        name: "platform".to_owned(),
+        details: vec![format!("{} -> {}", name(before), name(after))],
+        tier: Some(Tier::Live),
+    })
 }
 
 /// Units that are the same in both models but restart because a file they read or a secret

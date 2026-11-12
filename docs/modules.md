@@ -9,8 +9,8 @@ small, deterministic Python: no imports beyond `load`, no I/O, no clocks. Module
 annotations, and distro checks them when it loads them, so a typo in a module shows up as an
 error with a line number instead of a mystery later.
 
-Of note: modules live in distro's own repository, in `modules/`, for now. A configuration can't
-bring its own yet, so writing one means working in a checkout. That's going to change.
+The built-in modules live in distro's own repository, in `modules/`. To bring your own, or to
+build something quite different, a system builds on a platform of your own (see Platforms below).
 
 ## A small one
 
@@ -150,6 +150,33 @@ PASS  motd
 Units go under `expected/etc/systemd/system/`, and a user's files under `expected/home/NAME/`.
 Bad configurations work the same way, with an `expected-error.txt` instead, and
 `distro dev test fixtures/bad-configs` checks that each still fails with the same error.
+
+## Platforms
+
+Every system builds on a platform, a set of modules. Unless it says otherwise, that's `distro`:
+the built-in modules. A platform of your own lives in a source, with a `platform.toml` that lists
+its modules:
+
+```toml
+# platform.toml, in the acme source
+modules = ["modules"]                       # acme's own, in modules/
+from-distro = ["dbus", "polkit", "users"]   # the built-in modules acme keeps
+```
+
+A system chooses it in the file it starts from, `system.toml` or a role's file:
+
+```toml
+platform = { source = "acme" }
+
+[sources.acme]
+url = "github:acme/platform"
+```
+
+A module is in the system because the platform lists it, so leaving one of ours out is leaving it
+off the list. Two modules declaring the same option is an error, and so is a module writing to an
+option nothing on the platform declares, such as `ssh` opening a firewall port on a platform
+without `firewall`. The lock pins the platform's source like any other, and the plan shows when a
+system moves to another platform.
 
 ## Reading more
 

@@ -19,6 +19,7 @@ use crate::module::{
 };
 use crate::ordered::{self, OrderError};
 use crate::path::OptionPath;
+use crate::platform::Platform;
 use crate::requires::Requirement;
 use crate::schema::{Child, EVERY, ListMerge, OptionSpec, Schema, Type};
 use crate::source::{FileId, Sources, Span};
@@ -70,6 +71,7 @@ pub struct Evaluation {
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
     patches: BTreeMap<String, String>,
+    platform: Platform,
 }
 
 /// The encrypted file of a secret as read when evaluating.
@@ -181,6 +183,11 @@ impl Evaluation {
     pub fn patches(&self) -> &BTreeMap<String, String> {
         &self.patches
     }
+
+    /// The platform the configuration builds on.
+    pub fn platform(&self) -> &Platform {
+        &self.platform
+    }
 }
 
 #[derive(Debug)]
@@ -227,11 +234,13 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             )));
         }
     }
+    diagnostics.extend(undeclared_writes(&schema, modules));
     let load::Loaded {
         files,
         diagnostics: load_diagnostics,
         role,
         sources: declared_sources,
+        platform,
     } = load::load(config, &mut sources, kind, user, role);
     diagnostics.extend(load_diagnostics);
     let walked = walk::walk(&schema, &sources, &files, kind == ConfigKind::Home);
@@ -348,7 +357,45 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             .collect(),
         secret_files,
         patches,
+        platform,
     })
+}
+
+/// Options modules say they write that no module declares, such as a firewall port when the
+/// platform leaves out the firewall. What they'd write would go nowhere, so it's an error. A path
+/// inside a freeform option is declared by it.
+fn undeclared_writes(schema: &Schema, modules: &[Box<dyn Module>]) -> Vec<Diagnostic> {
+    let declared = |path: &OptionPath| {
+        let mut prefix = OptionPath::root();
+        for segment in path.segments() {
+            prefix = prefix.child(segment.as_str());
+            match schema.lookup(&prefix).map(|spec| &spec.ty) {
+                None => return false,
+                Some(Type::Freeform) => return true,
+                Some(_) => {}
+            }
+        }
+        true
+    };
+    modules
+        .iter()
+        .flat_map(|module| {
+            module
+                .writes()
+                .into_iter()
+                .filter(|path| !declared(path))
+                .map(move |path| {
+                    Diagnostic::error(format!(
+                        "module `{}` writes `{path}`, which no module declares",
+                        module.name()
+                    ))
+                    .note(
+                        "help: the module that declares it is missing; add it to the platform, \
+                         or leave out the module that writes it",
+                    )
+                })
+        })
+        .collect()
 }
 
 /// References to secrets that no module declares.

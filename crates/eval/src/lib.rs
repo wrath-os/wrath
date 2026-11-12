@@ -14,6 +14,7 @@ mod machines;
 mod module;
 mod ordered;
 mod path;
+mod platform;
 mod requires;
 mod schema;
 mod source;
@@ -38,6 +39,7 @@ pub use module::{
     Wrapper, home_path, package_source,
 };
 pub use path::OptionPath;
+pub use platform::{Platform, platform};
 pub use requires::{Check, FACTS, Kind, Requirement};
 pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};

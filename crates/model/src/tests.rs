@@ -1042,3 +1042,25 @@ fn a_user_unit_wanted_elsewhere_takes_effect_at_the_next_login() {
     ");
     assert!(plan.activation.start.is_empty() && plan.activation.restart.is_empty());
 }
+
+#[test]
+fn a_platform_from_a_source_is_kept_and_planned_and_distros_changes_no_hash() {
+    let distro = Model::default();
+    let acme = Model {
+        platform: Some("acme".into()),
+        ..Model::default()
+    };
+    assert!(!distro.canonical().contains("platform"));
+    assert_ne!(acme.hash(), distro.hash());
+    assert_eq!(
+        Model::from_json(&acme.canonical()).unwrap().platform,
+        acme.platform
+    );
+    insta::assert_snapshot!(plan(&distro, &acme).to_string(), @"
+    base
+      ~ platform (tier: live)
+          distro -> acme
+    1 change, tier: live
+    ");
+    assert!(plan(&acme, &acme).is_empty());
+}

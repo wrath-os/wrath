@@ -10,6 +10,7 @@ use crate::diag::Diagnostic;
 use crate::load::{INCLUDE, LoadedFile, SOURCES};
 use crate::module::ModuleId;
 use crate::path::OptionPath;
+use crate::platform::PLATFORM;
 use crate::requires::{self, Requirement};
 use crate::schema::{Child, OptionSpec, Schema, Type};
 use crate::source::{FileId, Sources, Span};
@@ -112,6 +113,7 @@ pub(crate) fn walk(schema: &Schema, sources: &Sources, files: &[LoadedFile], hom
         sources,
         home,
         frame: false,
+        starting: false,
         defaults: false,
         out: Walked::default(),
     };
@@ -127,6 +129,8 @@ struct Walker<'a> {
     home: bool,
     /// Whether the file being walked is one of the configuration's own.
     frame: bool,
+    /// Whether the file being walked is the one the configuration starts from.
+    starting: bool,
     /// Whether the file being walked gives defaults.
     defaults: bool,
     out: Walked,
@@ -136,6 +140,7 @@ impl Walker<'_> {
     fn file(&mut self, schema: &Schema, loaded: &LoadedFile) {
         self.defaults = loaded.defaults;
         self.frame = loaded.frame;
+        self.starting = loaded.starting;
         // Files that don't parse were reported while loading.
         let Ok(table) = DeTable::parse(self.sources.text(loaded.file)) else {
             return;
@@ -233,6 +238,20 @@ impl Walker<'_> {
             }
             // Read while loading, with the includes.
             if top && self.frame && name == SOURCES {
+                continue;
+            }
+            // Read while loading, and before the modules load.
+            if top && self.starting && name == PLATFORM {
+                continue;
+            }
+            if top && self.frame && name == PLATFORM {
+                self.out.diagnostics.push(
+                    Diagnostic::error(
+                        "`platform` is chosen in the file the configuration starts from",
+                    )
+                    .label(Span::new(file, key.span()), "chosen here")
+                    .note("help: move it to `system.toml`, or to the role's file"),
+                );
                 continue;
             }
             let child = path.child(name);

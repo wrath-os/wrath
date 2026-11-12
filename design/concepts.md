@@ -58,6 +58,10 @@ A **source** is where packages, or files to include, come from: a name and the U
 pinned in the lock. `distro` is the default: its recipes build every package and the base
 system. A file from a source is included as `{ source = "acme", path = "rust-service.toml" }`.
 
+A **platform** is the set of modules a system builds on: `distro`'s built-in ones, or a
+source's, listed in its `platform.toml` with the built-in ones it keeps. The starting file
+chooses it with `platform = { source = "acme" }` (0030).
+
 A **file** is a file the configuration writes, on the system or in a home. It is text, or settings
 written out as JSON, TOML or systemd's format, and a system file can restart what reads it. A file
 whose text includes secrets is filled in on the machine, so the secret never reaches the build.

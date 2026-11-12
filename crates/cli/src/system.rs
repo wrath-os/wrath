@@ -47,7 +47,7 @@ fn evaluate_with(
 ) -> Result<Evaluation, String> {
     let mut sources = Sources::default();
     let kind = distro_eval::kind_of(config);
-    let mut modules = load_modules(modules, &mut sources, order)?;
+    let mut modules = crate::platforms::modules(config, role, modules, &mut sources, order)?;
     modules.retain(|module| module.configurations().contains(&kind));
     // A home belongs to whoever runs the command.
     let user = std::env::var("USER").ok();

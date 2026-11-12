@@ -665,6 +665,7 @@ mod homes;
 mod lists;
 mod machine;
 mod modules;
+mod platforms;
 mod projects;
 mod roles;
 mod sources;

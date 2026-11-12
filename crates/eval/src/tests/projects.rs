@@ -81,3 +81,14 @@ fn error_a_project_without_distro_toml() {
      = help: a project starts from `distro.toml`
     ");
 }
+
+#[test]
+fn error_a_project_choosing_a_platform() {
+    let errors = eval_project(&[("distro.toml", "platform = \"distro\"\n")]).unwrap_err();
+    assert!(
+        errors.contains("only a system chooses its platform"),
+        "{errors}"
+    );
+    let config = MemFs::new([("distro.toml", "platform = { source = \"acme\" }\n")]);
+    assert_eq!(crate::platform(&config, None), Ok(crate::Platform::Distro));
+}

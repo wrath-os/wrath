@@ -362,7 +362,14 @@ fn ollama_runs_sandboxed_with_the_package_for_its_gpus() {
     assert!(rendered_by(&evaluation, "firewall").contains("tcp dport 11434 accept"));
 }
 
-const SECRET_MODULES: [&str; 5] = ["files", "secrets", "syncthing", "system", "users"];
+const SECRET_MODULES: [&str; 6] = [
+    "files",
+    "firewall",
+    "secrets",
+    "syncthing",
+    "system",
+    "users",
+];
 
 #[test]
 fn secrets_are_declared_with_their_encrypted_files_and_paths_take_them() {

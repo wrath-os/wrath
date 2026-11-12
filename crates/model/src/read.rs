@@ -49,6 +49,11 @@ impl Model {
             enabled_user: read_enabled(field("enabled_user")?)?,
             wrappers: read_wrappers(field("wrappers")?)?,
             builds: read_builds(field("builds")?)?,
+            platform: match fields.get("platform") {
+                None => None,
+                Some(Value::Str(name)) => Some(name.clone()),
+                Some(_) => return Err("the model's `platform` isn't a name".into()),
+            },
         })
     }
 }

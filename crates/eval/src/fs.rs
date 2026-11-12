@@ -23,6 +23,11 @@ pub trait ConfigFs {
         let _ = url;
         Err(format!("source `{name}` isn't available here"))
     }
+
+    /// The directory the files are in, when they're on disk.
+    fn dir(&self) -> Option<&Path> {
+        None
+    }
 }
 
 /// A configuration directory on disk.
@@ -55,6 +60,10 @@ impl ConfigFs for DirFs {
 
     fn display(&self, path: &str) -> String {
         self.root.join(path).display().to_string()
+    }
+
+    fn dir(&self) -> Option<&Path> {
+        Some(&self.root)
     }
 }
 

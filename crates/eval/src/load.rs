@@ -15,6 +15,7 @@ use toml::de::{DeTable, DeValue};
 use crate::diag::Diagnostic;
 use crate::fs::ConfigFs;
 use crate::path::OptionPath;
+use crate::platform::{self, PLATFORM, Platform};
 use crate::source::{FileId, Sources, Span};
 use crate::suggest::did_you_mean;
 use crate::walk::only_keys;
@@ -35,6 +36,8 @@ pub(crate) struct LoadedFile {
     /// Whether the configuration starts from this file, rather than only reaching it through
     /// includes.
     pub start: bool,
+    /// Whether this is the file the configuration starts from, where `platform` is chosen.
+    pub starting: bool,
     /// Where the file is included from.
     pub inclusions: Vec<Inclusion>,
     /// Whether the file's values are defaults: it's included as defaults, or from a file that is.
@@ -58,6 +61,8 @@ pub(crate) struct Loaded {
     pub role: Option<String>,
     /// Sources by name, from `[sources]` in its local files.
     pub sources: BTreeMap<String, DeclaredSource>,
+    /// The platform the starting file chooses.
+    pub platform: Platform,
 }
 
 /// Loads the files of a configuration, starting from `role_given`, or else its only role or
@@ -84,6 +89,9 @@ pub(crate) fn load(
         pending: Vec::new(),
         trees: HashMap::new(),
         diagnostics: Vec::new(),
+        kind,
+        starting: None,
+        platform: Platform::Distro,
     };
     let start = match kind {
         ConfigKind::System => starting_file(fs, role_given),
@@ -92,6 +100,7 @@ pub(crate) fn load(
     };
     let role = match start {
         Ok(path) => {
+            loader.starting = Some(path.clone());
             loader.add(None, &path, &root, None);
             path.strip_prefix("roles/")
                 .and_then(|name| name.strip_suffix(".toml"))
@@ -120,6 +129,7 @@ pub(crate) fn load(
         diagnostics,
         role,
         sources: loader.declared,
+        platform: loader.platform,
     }
 }
 
@@ -138,6 +148,10 @@ struct Loader<'a> {
     /// The files of each source fetched so far, or `None` when it couldn't be.
     trees: HashMap<String, Option<Box<dyn ConfigFs>>>,
     diagnostics: Vec<Diagnostic>,
+    kind: ConfigKind,
+    /// The file the configuration starts from.
+    starting: Option<String>,
+    platform: Platform,
 }
 
 impl Loader<'_> {
@@ -256,11 +270,13 @@ impl Loader<'_> {
         let file = self.sources.add(display, text);
         self.seen.insert(key, Some(self.files.len()));
         let frame = *root == self.root;
+        let starting = origin.is_none() && self.starting.as_deref() == Some(path);
         self.files.push(LoadedFile {
             file,
             root: root.clone(),
             frame,
             start: inclusion.is_none(),
+            starting,
             inclusions: inclusion.into_iter().collect(),
             defaults: false,
         });
@@ -285,6 +301,19 @@ impl Loader<'_> {
                         .label(Span::new(file, sources.span()), "declared here")
                         .note("help: declare it in the configuration that includes this file"),
                 ),
+            }
+        }
+        if let Some(value) = table.get_ref().get(PLATFORM).filter(|_| starting) {
+            if self.kind == ConfigKind::System {
+                match platform::parse(value, file, &self.declared) {
+                    Ok(chosen) => self.platform = chosen,
+                    Err(diagnostic) => self.diagnostics.push(diagnostic),
+                }
+            } else {
+                self.diagnostics.push(
+                    Diagnostic::error("only a system chooses its platform")
+                        .label(Span::new(file, value.span()), "chosen here"),
+                );
             }
         }
         let (includes, diagnostics) = includes(table.get_ref(), file);
@@ -586,7 +615,7 @@ const SYSTEM: &str = "system.toml";
 
 /// The file the configuration starts from: `system.toml`, or `roles/<role>.toml` when it has
 /// roles. A configuration with one role starts from it without being given its name.
-fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagnostic> {
+pub(crate) fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagnostic> {
     let roles = roles(fs)
         .map_err(|e| Diagnostic::error(format!("cannot list `{}`: {e}", fs.display(ROLES))))?;
     let role = match (role, roles.as_slice()) {
@@ -630,7 +659,7 @@ fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagno
 }
 
 /// The URL of one source, `[sources.NAME]` with `url = "..."`, and where it's written.
-fn source_url(
+pub(crate) fn source_url(
     name: &str,
     source: &Spanned<DeValue<'_>>,
     file: FileId,
