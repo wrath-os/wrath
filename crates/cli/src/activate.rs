@@ -8,6 +8,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use distro_eval::Unit;
 use distro_model::{Activation, Model};
@@ -596,30 +597,79 @@ fn link_foreign(root: &Path, system: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the last switch recorded how long each of its steps took, under the machine's root.
+const SWITCH_STEPS: &str = "run/distro/switch-steps";
+
+/// How long each step of a switch takes, in the order they ran.
+#[derive(Default)]
+struct Steps {
+    started: Option<Instant>,
+    took: Vec<(&'static str, Duration)>,
+}
+
+impl Steps {
+    fn time<T>(&mut self, name: &'static str, step: impl FnOnce() -> T) -> T {
+        let now = Instant::now();
+        self.started.get_or_insert(now);
+        let out = step();
+        self.took.push((name, now.elapsed()));
+        out
+    }
+
+    /// Writes the steps to [`SWITCH_STEPS`], one `name N ms` a line and the total last. A switch
+    /// still works when this can't be written.
+    fn save(&self, root: &Path) {
+        let total = self.started.map(|at| at.elapsed()).unwrap_or_default();
+        let text: String = self
+            .took
+            .iter()
+            .chain([&("total", total)])
+            .map(|(name, took)| format!("{name} {} ms\n", took.as_millis()))
+            .collect();
+        let path = root.join(SWITCH_STEPS);
+        if let Some(dir) = path.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let _ = fs::write(&path, text);
+    }
+}
+
 fn switch(root: &Path, system: &Path) -> Result<(), String> {
+    let mut steps = Steps::default();
+    let switched = switch_steps(root, system, &mut steps);
+    steps.save(root);
+    switched
+}
+
+fn switch_steps(root: &Path, system: &Path, steps: &mut Steps) -> Result<(), String> {
     let current = root.join(RUNNING);
     let old = fs::read_link(&current)
         .or_else(|_| fs::read_link(root.join("run/current-system")))
         .ok();
-    let after = model_of(system)?;
-    let running = old.as_deref().map(model_of);
-    let compared = matches!(running, Some(Ok(_)));
-    let (before, mut activation) = against(running, &after);
-    if let Some(old) = old.as_deref().filter(|_| compared) {
-        activation.restart_too(&after, changed_on_disk(old, system));
-    }
+    let (before, after, activation) = steps.time("compare", || {
+        let after = model_of(system)?;
+        let running = old.as_deref().map(model_of);
+        let compared = matches!(running, Some(Ok(_)));
+        let (before, mut activation) = against(running, &after);
+        if let Some(old) = old.as_deref().filter(|_| compared) {
+            activation.restart_too(&after, changed_on_disk(old, system));
+        }
+        Ok::<_, String>((before, after, activation))
+    })?;
     let passwd = fs::read_to_string(system.join("etc/passwd")).unwrap_or_default();
     let moved = homes_owned_by_others(root, &passwd);
     if !moved.is_empty() {
         return Err(moved.join("\n"));
     }
 
-    systemctl("stop", &activation.stop)?;
+    steps.time("stop", || systemctl("stop", &activation.stop))?;
     let state = State::of(&after);
     if let Some(state) = &state {
-        state.keep_system(root, system, State::of(&before).as_ref());
+        steps.time("state", || {
+            state.keep_system(root, system, State::of(&before).as_ref());
+        });
     }
-    if let Err(e) = switch_etc(root, old.as_deref(), system) {
+    if let Err(e) = steps.time("etc", || switch_etc(root, old.as_deref(), system)) {
         // Nothing else has changed yet, so what stopped starts again and the machine runs as it
         // did.
         let restarted = systemctl("start", &activation.stop)
@@ -629,19 +679,31 @@ fn switch(root: &Path, system: &Path) -> Result<(), String> {
     // Units run programs through /run/system, so it moves before any start, and a switch that
     // fails from here on is one rollback compares against.
     point_at(root, system, &[RUNNING])?;
-    run(&mut Command::new("systemd-sysusers"))?;
+    steps.time("systemd-sysusers", || {
+        run(&mut Command::new("systemd-sysusers"))
+    })?;
     if let Some(state) = &state {
         state.save_accounts(root);
     }
-    warn(make_wrappers(root, system, &after)?);
-    crate::on_machine::apply(system)?;
-    run(Command::new("systemd-tmpfiles").arg("--create"))?;
-    run(Command::new("systemctl").arg("daemon-reload"))?;
-    systemctl("try-restart", &activation.restart)?;
-    systemctl("try-reload-or-restart", &activation.reload)?;
-    systemctl("start", &installed(&activation, &after))?;
-    switch_user_managers(root, &before, &after);
-    link_foreign(root, system)
+    warn(steps.time("wrappers", || make_wrappers(root, system, &after))?);
+    steps.time("on-machine", || crate::on_machine::apply(system))?;
+    steps.time("systemd-tmpfiles", || {
+        run(Command::new("systemd-tmpfiles").arg("--create"))
+    })?;
+    steps.time("daemon-reload", || {
+        run(Command::new("systemctl").arg("daemon-reload"))
+    })?;
+    steps.time("restart", || systemctl("try-restart", &activation.restart))?;
+    steps.time("reload", || {
+        systemctl("try-reload-or-restart", &activation.reload)
+    })?;
+    steps.time("start", || {
+        systemctl("start", &installed(&activation, &after))
+    })?;
+    steps.time("user-managers", || {
+        switch_user_managers(root, &before, &after)
+    });
+    steps.time("foreign", || link_foreign(root, system))
 }
 
 /// What switching to `after` compares against and does, from the running system's model if
@@ -1157,6 +1219,25 @@ fn run(command: &mut Command) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_step_of_a_switch_is_recorded_with_how_long_it_took() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut steps = Steps::default();
+        assert_eq!(steps.time("daemon-reload", || 7), 7);
+        steps.time("systemd-tmpfiles", || ());
+        steps.save(dir.path());
+        let recorded = fs::read_to_string(dir.path().join(SWITCH_STEPS)).unwrap();
+        let names: Vec<&str> = recorded
+            .lines()
+            .map(|line| line.split_whitespace().next().unwrap())
+            .collect();
+        assert_eq!(names, ["daemon-reload", "systemd-tmpfiles", "total"]);
+        assert!(
+            recorded.lines().all(|line| line.ends_with(" ms")),
+            "{recorded}"
+        );
+    }
 
     /// Generations each with a kernel and an initrd of 10 bytes, named as given.
     fn sized(generations: &[(u32, &str, &str)]) -> Vec<(u32, Vec<(String, u64)>)> {
