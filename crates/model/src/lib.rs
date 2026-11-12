@@ -44,6 +44,9 @@ pub struct Model {
     pub templates: BTreeMap<String, Template>,
     /// Files only read when a user logs in, by path as plans show them.
     pub next_login: BTreeSet<String>,
+    /// Programs' own settings, which a bad edit can't lock anyone out with, so watching applies
+    /// changes to them without asking, by path as plans show them.
+    pub setting_files: BTreeSet<String>,
     /// Packages whose units, users, tmpfiles, udev rules and D-Bus services join the system.
     pub service_packages: BTreeSet<String>,
     /// Units the service packages ship that the system enables, with the targets that want each,
@@ -177,6 +180,7 @@ impl Model {
             model.units.extend(output.units.clone());
             model.templates.extend(output.templates.clone());
             model.next_login.extend(output.next_login.clone());
+            model.setting_files.extend(output.setting_files.clone());
             model
                 .service_packages
                 .extend(output.service_packages.clone());
@@ -398,8 +402,14 @@ impl Model {
                 Value::List(self.machine.iter().cloned().map(Value::Str).collect()),
             ),
         ]);
-        // Only a platform other than distro's is written, so models built before platforms keep
-        // their hash.
+        // Settings, and a platform other than distro's, are only written when there are any, so
+        // models built before them keep their hash.
+        if !self.setting_files.is_empty()
+            && let Value::Table(fields) = &mut model
+        {
+            let settings = self.setting_files.iter().cloned().map(Value::Str).collect();
+            fields.insert("setting_files".to_owned(), Value::List(settings));
+        }
         if let (Value::Table(fields), Some(platform)) = (&mut model, &self.platform) {
             fields.insert("platform".to_owned(), Value::Str(platform.clone()));
         }

@@ -110,6 +110,9 @@ pub struct Output {
     /// Files read when a user logs in, so changing them takes effect at the next login, by path
     /// as plans show it: absolute, or as `~user/.profile`.
     pub next_login: BTreeSet<String>,
+    /// Programs' own settings, which a bad edit can't lock anyone out with, so watching applies
+    /// changes to them without asking, by path as plans show them.
+    pub setting_files: BTreeSet<String>,
     /// Packages whose units, users, tmpfiles, udev rules and D-Bus services join the system, such
     /// as `dbus`. Other packages only add programs.
     pub service_packages: BTreeSet<String>,

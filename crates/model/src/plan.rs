@@ -70,6 +70,9 @@ pub struct Plan {
     pub base: Vec<Change>,
     /// What switching does to the system's units, from the same comparison as `units`.
     pub activation: Activation,
+    /// Whether every file the plan changes is a setting, in the model it's in: the one before
+    /// for a removed file, the one after for an added one, and both for a changed one.
+    pub files_are_settings: bool,
 }
 
 /// The system's units a switch stops, starts, restarts or reloads, by name. Users' units are
@@ -168,6 +171,19 @@ fn is_template(unit: &str) -> bool {
 impl Plan {
     pub fn is_empty(&self) -> bool {
         self.sections().all(|(_, changes)| changes.is_empty())
+    }
+
+    /// Whether the plan only changes settings, which watching applies without asking: files
+    /// marked as settings, and no package, secret, unit, account or boot change, nor a service
+    /// started, stopped, restarted or reloaded. Options change with them, and only matter for what
+    /// they render.
+    pub fn settings_only(&self) -> bool {
+        self.files_are_settings
+            && self.packages.is_empty()
+            && self.secrets.is_empty()
+            && self.units.is_empty()
+            && self.base.is_empty()
+            && self.activation == Activation::default()
     }
 
     /// The most disruptive tier any change needs.
@@ -407,7 +423,14 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
             .filter(|unit| !shown.contains(&unit.name)),
     );
     units.sort_by(|a, b| a.name.cmp(&b.name));
+    let (was, is) = (&before.setting_files, &after.setting_files);
+    let files_are_settings = files.iter().all(|change| match change.kind {
+        ChangeKind::Added => is.contains(&change.name),
+        ChangeKind::Removed => was.contains(&change.name),
+        ChangeKind::Changed => was.contains(&change.name) && is.contains(&change.name),
+    });
     Plan {
+        files_are_settings,
         options: diff(&before.options, &after.options, |before, after| {
             (vec![value_change(before, after)], None)
         }),

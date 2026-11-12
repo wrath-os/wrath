@@ -101,10 +101,10 @@ def render(ctx: Context) -> None:
     # libX11's share/X11/locale.
     ctx.package("libX11")
     ctx.file("/etc/xdg/xdg-desktop-portal/niri-portals.conf", PORTALS)
-    ctx.file(SYSTEM_CONFIG, config(DEFAULTS, system))
+    ctx.file(SYSTEM_CONFIG, config(DEFAULTS, system), setting = True)
     for user, own in users.items():
         if own:
-            ctx.file(USER_CONFIG, config(SYSTEM_CONFIG, own), user = user)
+            ctx.file(USER_CONFIG, config(SYSTEM_CONFIG, own), user = user, setting = True)
     # The shell starts with the graphical session niri brings up.
     if desktop.get("shell") == "noctalia":
         ctx.service_package("noctalia")

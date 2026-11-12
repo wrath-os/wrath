@@ -44,6 +44,10 @@ impl Model {
             sources: read_sources(field("sources")?)?,
             templates: read_templates(field("templates")?)?,
             next_login: strings(field("next_login")?)?,
+            setting_files: match fields.get("setting_files") {
+                None => BTreeSet::new(),
+                Some(value) => strings(value)?,
+            },
             service_packages: strings(field("service_packages")?)?,
             enabled: read_enabled(field("enabled")?)?,
             enabled_user: read_enabled(field("enabled_user")?)?,

@@ -594,6 +594,38 @@ fn files_read_at_login_change_at_the_next_login() {
 }
 
 #[test]
+fn only_changes_to_setting_files_are_settings() {
+    let model = |gaps: &str, sudoers: &str| {
+        let mut model = Model::default();
+        let file = |text: &str| File {
+            mode: 0o644,
+            text: text.into(),
+        };
+        let home = model.homes.entry("john".into()).or_default();
+        home.files
+            .insert("~/.config/niri/config.kdl".into(), file(gaps));
+        model.files.insert("/etc/sudoers".into(), file(sudoers));
+        model
+            .setting_files
+            .insert("~john/.config/niri/config.kdl".into());
+        model
+    };
+    let before = model("gaps 4\n", "root ALL\n");
+
+    assert!(plan(&before, &model("gaps 8\n", "root ALL\n")).settings_only());
+    assert!(!plan(&before, &model("gaps 4\n", "%wheel ALL\n")).settings_only());
+    assert!(!plan(&before, &model("gaps 8\n", "%wheel ALL\n")).settings_only());
+
+    let mut with_package = model("gaps 8\n", "root ALL\n");
+    with_package.packages.insert("jq".into());
+    assert!(!plan(&before, &with_package).settings_only());
+
+    let mut no_longer_a_setting = model("gaps 8\n", "root ALL\n");
+    no_longer_a_setting.setting_files.clear();
+    assert!(!plan(&before, &no_longer_a_setting).settings_only());
+}
+
+#[test]
 fn plan_shows_files_with_secrets_in_homes() {
     let mut after = Model::default();
     let template = with_template("john", "password ", "h1").templates["/etc/app.env"].clone();

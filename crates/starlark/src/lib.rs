@@ -889,7 +889,9 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
     /// home. Text with secrets in it, a runtime value, makes a file the machine fills in,
     /// owned by `owner` and `group` with `mode` (0400 by default); other files are links into
     /// the store that anyone can read. `next_login` says the file is only read when a user logs
-    /// in, so changing it takes effect at the next login.
+    /// in, so changing it takes effect at the next login. `setting` says it's a program's own
+    /// settings, which a bad edit can't lock anyone out with, so watching applies a change to it
+    /// without asking.
     #[allow(clippy::too_many_arguments)]
     fn file<'v>(
         #[starlark(this)] _this: StarValue<'v>,
@@ -900,6 +902,7 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] owner: NoneOr<&str>,
         #[starlark(require = named, default = NoneOr::None)] group: NoneOr<&str>,
         #[starlark(require = named, default = false)] next_login: bool,
+        #[starlark(require = named, default = false)] setting: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         let (rendering, at) = rendering(eval)?;
@@ -916,6 +919,12 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
             return Err(rendering.invalid(at, format!("file `{path}` {message}")));
         }
         if let Some(runtime) = text.downcast_ref::<convert::Runtime>() {
+            if setting {
+                return Err(rendering.invalid(
+                    at,
+                    format!("file `{path}` has secrets in it, so it isn't a setting"),
+                ));
+            }
             let template = Template {
                 parts: runtime.0.clone(),
                 owner: owner.or(user).unwrap_or("root").to_owned(),
@@ -968,6 +977,9 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         };
         if templates.contains_key(path) || files.insert(path.to_owned(), file).is_some() {
             return Err(rendering.invalid(at, format!("file `{shown}` is rendered twice")));
+        }
+        if setting {
+            output.setting_files.insert(shown.clone());
         }
         if next_login {
             output.next_login.insert(shown);

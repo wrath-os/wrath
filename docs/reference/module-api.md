@@ -94,9 +94,9 @@ Enables a unit a service package ships, as `systemctl enable` does: by its [Inst
 
 Stops the render with `message`, pointing at where the configuration sets the option at `path`, or the first option under it, so the error shows what to fix. `path` is dotted, or a list of keys for keys with dots in them. Without such a place, the error points at the module.
 
-### `ctx.file(path, text, mode = None, *, user = ..., owner = None, group = None, next_login = False)`
+### `ctx.file(path, text, mode = None, *, user = ..., owner = None, group = None, next_login = False, setting = False)`
 
-Renders a file. With `user`, the path starts with `~/` and the file goes in that user's home. Text with secrets in it, a runtime value, makes a file the machine fills in, owned by `owner` and `group` with `mode` (0400 by default); other files are links into the store that anyone can read. `next_login` says the file is only read when a user logs in, so changing it takes effect at the next login.
+Renders a file. With `user`, the path starts with `~/` and the file goes in that user's home. Text with secrets in it, a runtime value, makes a file the machine fills in, owned by `owner` and `group` with `mode` (0400 by default); other files are links into the store that anyone can read. `next_login` says the file is only read when a user logs in, so changing it takes effect at the next login. `setting` says it's a program's own settings, which a bad edit can't lock anyone out with, so watching applies a change to it without asking.
 
 ### `ctx.locked_ids()`
 

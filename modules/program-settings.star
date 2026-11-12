@@ -35,14 +35,14 @@ def render(ctx: Context) -> None:
         system = ctx.read("programs." + program) if program in SYSTEM_WIDE else {}
         for name, f in files.items():
             if name in system:
-                ctx.file(f["system"], render_file(f["format"], system[name]))
+                ctx.file(f["system"], render_file(f["format"], system[name]), setting = True)
                 ctx.package(program)
         for user, u in ctx.read("users").items():
             own = u["programs"][program]
             for name, f in files.items():
                 if name in own:
                     ctx.file("~/.config/" + f["file"], render_file(f["format"], own[name]),
-                             user = user)
+                             user = user, setting = True)
                     ctx.package(program, user = user)
 
 module(

@@ -78,7 +78,10 @@ def render(ctx: Context) -> None:
             at = ["users", user, "files", path]
             if not path.startswith("~/"):
                 ctx.error(at, "`%s` doesn't start with `~/`" % path)
-            ctx.file(path, contents(ctx, at, f), f.get("mode"), user = user)
+            text = contents(ctx, at, f)
+            # A file in a home is its owner's settings, unless it has secrets in it.
+            setting = type(text) == "string"
+            ctx.file(path, text, f.get("mode"), user = user, setting = setting)
 
 module(
     name = "files",
