@@ -7,11 +7,14 @@ session = "niri"
 [programs.niri.settings]
 prefer-no-csd = true
 spawn-at-startup = [["mako"], ["sh", "-c", "echo hi"]]
+input.focus-follows-mouse = { max-scroll-amount = "0%" }
 layout.gaps = 12
+layout.shadow = { on = true, offset = { x = 0, y = 5 } }
 'output "eDP-1"'.scale = 2.0
 
 [[programs.niri.settings.window-rule]]
-'match app-id="firefox"' = true
-open-maximized = [true]
+match = [{ app-id = "firefox$", title = "^Picture-in-Picture$" }, { app-id = "mpv" }]
+open-floating = true
+focus-ring.off = true
 
 [users.ann]

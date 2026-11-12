@@ -18,10 +18,60 @@ SYSTEM_CONFIG = "/etc/niri/config.kdl"
 USER_CONFIG = "~/.config/niri/config.kdl"
 DEFAULTS = "/run/system/share/niri/default-config.kdl"
 
-def config(layers: list[dict[str, typing.Any]]) -> str:
-    """niri's own defaults, then each layer of settings. A later setting wins over an earlier
-    one, and a bind replaces the one for the same keys."""
-    return "".join(['include "%s"\n' % DEFAULTS] + [formats.kdl(layer) for layer in layers])
+# Nodes whose settings are properties, written on the node as `match app-id="firefox"`, where a
+# table would otherwise be the node's children.
+PROPERTY_NODES = [
+    "match", "exclude", "focus-follows-mouse", "warp-mouse-to-focus", "offset", "position",
+    "default-floating-position", "spring", "length", "scroll-factor", "variable-refresh-rate",
+    "gradient", "active-gradient", "inactive-gradient", "urgent-gradient",
+]
+
+# What a bind says about itself, as properties on its keys, beside the action it runs.
+BIND_PROPERTIES = ["allow-when-locked", "allow-inhibiting", "cooldown-ms", "repeat",
+                   "hotkey-overlay-title"]
+
+# Rules, where `true` and `false` are given, as in `open-floating true`, except for the `on` and
+# `off` flags; elsewhere `true` is a flag such as `prefer-no-csd`.
+RULES = ["window-rule", "layer-rule"]
+RULE_FLAGS = ["on", "off"]
+
+def with_properties(name: str, properties: dict[str, typing.Any]) -> str:
+    """`name` with `properties` written on it, as a node's head."""
+    return name + "".join([
+        " %s=%s" % (key, json.encode(value))
+        for key, value in sorted(properties.items())
+    ])
+
+def shaped(settings: dict[str, typing.Any], in_rule: bool = False) -> dict[str, typing.Any]:
+    """`settings` as `formats.kdl` writes them, with what niri takes as properties and given
+    booleans moved into the nodes' heads."""
+    nodes = {}
+    for name, value in settings.items():
+        if name in PROPERTY_NODES and type(value) in ["dict", "list"]:
+            for properties in (value if type(value) == "list" else [value]):
+                nodes[with_properties(name, properties)] = True
+        elif name == "binds" and type(value) == "dict":
+            binds = {}
+            for keys, bind in value.items():
+                properties = {k: v for k, v in bind.items() if k in BIND_PROPERTIES}
+                action = {k: v for k, v in bind.items() if k not in BIND_PROPERTIES}
+                binds[with_properties(keys, properties)] = action
+            nodes[name] = binds
+        elif type(value) == "dict":
+            nodes[name] = shaped(value, in_rule)
+        elif type(value) == "list" and name in RULES:
+            nodes[name] = [shaped(rule, True) for rule in value]
+        elif type(value) == "bool" and in_rule and name not in RULE_FLAGS:
+            nodes[name] = [value]
+        else:
+            nodes[name] = value
+    return nodes
+
+def config(base: str, settings: dict[str, typing.Any]) -> str:
+    """`settings` over the config at `base`, which niri reads first. niri allows a section once
+    in a file, and merges across includes: a later setting wins over an earlier one, and a bind
+    replaces the one for the same keys."""
+    return 'include "%s"\n' % base + formats.kdl(shaped(settings))
 
 def render(ctx: Context) -> None:
     desktop = ctx.read("desktop")
@@ -51,10 +101,10 @@ def render(ctx: Context) -> None:
     # libX11's share/X11/locale.
     ctx.package("libX11")
     ctx.file("/etc/xdg/xdg-desktop-portal/niri-portals.conf", PORTALS)
-    ctx.file(SYSTEM_CONFIG, config([system]))
+    ctx.file(SYSTEM_CONFIG, config(DEFAULTS, system))
     for user, own in users.items():
         if own:
-            ctx.file(USER_CONFIG, config([system, own]), user = user)
+            ctx.file(USER_CONFIG, config(SYSTEM_CONFIG, own), user = user)
     # The shell starts with the graphical session niri brings up.
     if desktop.get("shell") == "noctalia":
         ctx.service_package("noctalia")
@@ -64,10 +114,11 @@ SETTINGS = types.record(
     settings = option(
         types.freeform,
         default = {},
-        doc = "niri's settings, over its defaults, written as KDL: a table is a section, " +
-              "`true` a flag such as `prefer-no-csd`, and a key can carry arguments, such as " +
-              "`'output \"eDP-1\"'`. A list of tables or lists repeats a node, such as " +
-              "`window-rule` or `spawn-at-startup`.",
+        doc = "niri's settings, over its defaults, written as KDL: a table is a section and " +
+              "`true` a flag such as `prefer-no-csd`. `match = { app-id = \"firefox\" }` and " +
+              "a bind's `allow-when-locked` are properties, and in a rule `true` is given, as " +
+              "`open-floating true`. A key can carry arguments, such as `'output \"eDP-1\"'`, " +
+              "and a list of tables or lists repeats a node, such as `spawn-at-startup`.",
     ),
 )
 

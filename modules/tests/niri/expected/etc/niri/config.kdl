@@ -1,6 +1,13 @@
 include "/run/system/share/niri/default-config.kdl"
+input {
+    focus-follows-mouse max-scroll-amount="0%"
+}
 layout {
     gaps 12
+    shadow {
+        offset x=0 y=5
+        on
+    }
 }
 output "eDP-1" {
     scale 2.0
@@ -9,6 +16,10 @@ prefer-no-csd
 spawn-at-startup "mako"
 spawn-at-startup "sh" "-c" "echo hi"
 window-rule {
-    match app-id="firefox"
-    open-maximized true
+    focus-ring {
+        off
+    }
+    match app-id="firefox$" title="^Picture-in-Picture$"
+    match app-id="mpv"
+    open-floating true
 }

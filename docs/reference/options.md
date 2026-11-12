@@ -159,8 +159,8 @@
 
 ### niri
 
-- `programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section, `true` a flag such as `prefer-no-csd`, and a key can carry arguments, such as `'output "eDP-1"'`. A list of tables or lists repeats a node, such as `window-rule` or `spawn-at-startup`.
-- `users.<name>.programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section, `true` a flag such as `prefer-no-csd`, and a key can carry arguments, such as `'output "eDP-1"'`. A list of tables or lists repeats a node, such as `window-rule` or `spawn-at-startup`.
+- `programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section and `true` a flag such as `prefer-no-csd`. `match = { app-id = "firefox" }` and a bind's `allow-when-locked` are properties, and in a rule `true` is given, as `open-floating true`. A key can carry arguments, such as `'output "eDP-1"'`, and a list of tables or lists repeats a node, such as `spawn-at-startup`.
+- `users.<name>.programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section and `true` a flag such as `prefer-no-csd`. `match = { app-id = "firefox" }` and a bind's `allow-when-locked` are properties, and in a rule `true` is given, as `open-floating true`. A key can carry arguments, such as `'output "eDP-1"'`, and a list of tables or lists repeats a node, such as `spawn-at-startup`.
 
 ### ollama
 

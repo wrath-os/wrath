@@ -119,10 +119,12 @@ source = "wezterm/wezterm.lua"
 ```
 
 niri's settings are written as KDL over niri's own defaults, so you only write what you change. A
-table is a section, `true` is a flag, and a key can carry arguments, as `output "eDP-1"` does.
-niri applies a saved change by itself, so an apply that only changes its settings shows up within
-a second. `[programs.niri.settings]`, without a user, is what users without settings of their own
-get. A file of your own where distro would put one is left alone, and the apply says so.
+table is a section and `true` is a flag. What niri writes on a node, such as a window rule's
+`match = { app-id = "firefox$" }` or a bind's `allow-when-locked = true`, is written as a table
+too, and a key can carry arguments, as `output "eDP-1"` does. niri applies a saved change by
+itself, so an apply that only changes its settings shows up within a second.
+`[programs.niri.settings]`, without a user, is for everyone, and a user's own go over it. A file
+of your own where distro would put one is left alone, and the apply says so.
 
 ## The firewall
 
