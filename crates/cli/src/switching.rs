@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use distro_build::store::{Lab, StorePath, is_entry};
@@ -468,9 +468,18 @@ fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
     make_current(target, 1)
 }
 
-/// Runs `system`'s switch as `mode` says: `switch`, `test` or `boot`.
+/// Runs `system`'s switch in `mode`: `switch`, `test` or `boot`. What it says goes straight to stderr, as it says it, with
+/// its own notes and errors, so a failure here only says that it failed.
 fn switch(system: &Path, mode: &str) -> Result<(), String> {
-    run(Command::new(system.join("bin/switch-to-configuration")).arg(mode))
+    let status = Command::new(system.join("bin/switch-to-configuration"))
+        .arg(mode)
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|e| format!("could not switch to {}: {e}", system.display()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(format!("switching failed ({status})"))
 }
 
 fn run(command: &mut Command) -> Result<(), String> {

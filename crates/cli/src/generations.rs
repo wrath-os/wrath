@@ -295,11 +295,16 @@ fn already_there(hash: &str, running: Option<&str>, current: Option<&str>, tryin
 }
 
 /// Switches to `system`, built before, after showing the plan from the running system to it and
-/// asking, as `apply` does for a configuration.
+/// asking, as `apply` does for a configuration. With `yes` it switches without a plan: whoever
+/// built it, such as `apply --host`, showed the whole plan already, including what a newer distro
+/// rebuilt, which the machine can't tell.
 pub fn apply_built(system: &Path, how: Switch, yes: bool) -> Result<ExitCode, String> {
     let model = crate::read_model(&system.join("etc/distro/model.json"))
         .map_err(|e| format!("{} isn't a system distro built: {e}", system.display()))?;
-    let Some(tier) = planned(&model, None, yes)? else {
+    if yes {
+        return switched(system, how, None);
+    }
+    let Some(tier) = planned(&model, None, false)? else {
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     };

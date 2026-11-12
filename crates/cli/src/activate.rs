@@ -130,11 +130,11 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         .map(|(number, ..)| number.to_string())
         .collect();
     if !dropped.is_empty() {
-        eprintln!(
+        crate::style::note(&format!(
             "generations {} have no boot entry, since /boot has no room for them; they stay \
              in the store",
             dropped.join(", ")
-        );
+        ));
     }
     booting.retain(|(number, ..)| chosen.contains(number));
     let mut kept: BTreeSet<String> = booting

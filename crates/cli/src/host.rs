@@ -181,8 +181,8 @@ fn missing<'a>(have: &str, closure: impl Iterator<Item = &'a str>) -> Vec<String
 fn switch_script(sent: Option<&str>, system: &StorePath, how: Switch, root: bool) -> String {
     let path = system.inside();
     let switch = match how {
-        Switch::Apply => format!("{path}/bin/distro apply {path}"),
-        Switch::Try(seconds) => format!("{path}/bin/distro try --for {seconds}s {path}"),
+        Switch::Apply => format!("{path}/bin/distro apply --yes {path}"),
+        Switch::Try(seconds) => format!("{path}/bin/distro try --yes --for {seconds}s {path}"),
     };
     // Unpacked beside the store and renamed in one path at a time, so an interrupted copy
     // never leaves a partial path under a name `send` would take as complete.
@@ -296,11 +296,12 @@ mod tests {
             "sh -c 'staged=$(mktemp -d /store/.incoming.XXXXXX) && \
              tar -C $staged -xf /var/tmp/distro.Ab12/system.tar && \
              for path in $staged/*; do test -e /store/${path##*/} || mv $path /store/ || exit; \
-             done && rm -rf $staged /var/tmp/distro.Ab12 && /store/abc/bin/distro apply /store/abc'"
+             done && rm -rf $staged /var/tmp/distro.Ab12 && \
+             /store/abc/bin/distro apply --yes /store/abc'"
         );
         assert_eq!(
             switch_script(None, &system, Switch::Try(60), false),
-            "sudo sh -c '/store/abc/bin/distro try --for 60s /store/abc'"
+            "sudo sh -c '/store/abc/bin/distro try --yes --for 60s /store/abc'"
         );
     }
 

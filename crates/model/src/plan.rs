@@ -143,19 +143,22 @@ impl Activation {
 
 /// Whether a switch leaves `unit` running as it is when it changes: a template, which reaches its
 /// instances as they start, a mount or swap, which restarting would take away, and a unit whose
-/// `[Unit]` says `X-RestartIfChanged=false`, such as a login manager whose restart would end the
-/// sessions it started. Its changes take effect at the next boot.
+/// `[Unit]` says `X-RestartIfChanged=false`, in its file or a drop-in, such as a login manager
+/// whose restart would end the sessions it started, or the message bus, which services lose for
+/// good. Its changes take effect at the next boot.
 fn keeps_running(after: &Model, unit: &str) -> bool {
+    let drop_ins = format!("{unit}.d/");
     is_template(unit)
         || unit.ends_with(".mount")
         || unit.ends_with(".swap")
-        || after.units.get(unit).is_some_and(|unit| {
-            unit.sections
-                .iter()
-                .filter(|section| section.name == "Unit")
-                .flat_map(|section| &section.entries)
-                .any(|(key, value)| key == "X-RestartIfChanged" && value == "false")
-        })
+        || after
+            .units
+            .iter()
+            .filter(|(name, _)| *name == unit || name.starts_with(&drop_ins))
+            .flat_map(|(_, unit)| &unit.sections)
+            .filter(|section| section.name == "Unit")
+            .flat_map(|section| &section.entries)
+            .any(|(key, value)| key == "X-RestartIfChanged" && value == "false")
 }
 
 fn is_template(unit: &str) -> bool {
@@ -396,7 +399,13 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     }
     units.extend(restarts(before, after, &files, &secrets));
     let activation = Activation::from_changes(&units, after, &files);
-    units.extend(triggered(after, &files));
+    // A unit the plan has already starts, stops or restarts, which a reload adds nothing to.
+    let shown: BTreeSet<String> = units.iter().map(|unit| unit.name.clone()).collect();
+    units.extend(
+        triggered(after, &files)
+            .into_iter()
+            .filter(|unit| !shown.contains(&unit.name)),
+    );
     units.sort_by(|a, b| a.name.cmp(&b.name));
     Plan {
         options: diff(&before.options, &after.options, |before, after| {

@@ -749,6 +749,21 @@ fn the_activation_stops_starts_restarts_and_reloads_what_the_plan_shows() {
         "a unit that restarts anyway isn't reloaded too, and users' units are their homes'"
     );
     assert_eq!(names(&activation.reload), ["systemd-networkd.service"]);
+
+    after.triggers.insert(
+        ("edited.service".into(), UnitAction::Reload),
+        ["/etc/web.conf".into()].into(),
+    );
+    let units = plan(&before, &after).units;
+    let edited: Vec<_> = units
+        .iter()
+        .filter(|u| u.name == "edited.service")
+        .collect();
+    assert_eq!(
+        edited.len(),
+        1,
+        "a unit that restarts anyway shows once: {units:?}"
+    );
 }
 
 #[test]
@@ -805,6 +820,27 @@ fn templates_mounts_and_units_that_ask_not_to_are_left_running_when_they_change(
     let activation = plan(&after, &Model::default()).activation;
     assert!(!activation.stop.contains("job@.service"));
     assert!(activation.stop.contains("greetd.service"));
+}
+
+#[test]
+fn a_drop_in_can_keep_a_package_unit_running() {
+    let mut after = Model::default();
+    let keep = Unit {
+        sections: vec![Section {
+            name: "Unit".into(),
+            entries: vec![("X-RestartIfChanged".into(), "false".into())],
+        }],
+        restart_on: BTreeSet::new(),
+    };
+    after
+        .units
+        .insert("dbus.service.d/distro.conf".into(), keep);
+    let mut activation = plan(&Model::default(), &after).activation;
+    activation.restart_too(&after, ["dbus.service".into(), "sshd.service".into()]);
+    assert_eq!(
+        activation.restart,
+        BTreeSet::from(["sshd.service".to_owned()])
+    );
 }
 
 #[test]
