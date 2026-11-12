@@ -105,6 +105,8 @@ power cuts and rollback (step 9).
 A package builds at a temporary path keyed by its recipe and its dependencies' paths. Once built
 and stripped, it moves to a path named by a hash of its contents, with references to itself
 rewritten. Later packages are keyed on that path, so a rebuild with identical output stops there.
+The hash covers every file, link and directory, empty ones too, with their permissions, which
+builds make with the umask 022 whatever the host uses.
 
 A zlib comment change rebuilt only zlib, where before it changed all 23 packages above it (step
 14). A change inside glibc still changes 64 of 64, because everything holds its path. The system

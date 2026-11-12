@@ -40,10 +40,22 @@ fn relative(root: &Path, file: &Path) -> Result<String, String> {
         .map_err(|e| format!("{}: {e}", file.display()))
 }
 
-fn sorted_files(root: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = files_under(root)?;
-    files.sort();
-    Ok(files)
+/// Every file, link and directory under `root`, sorted.
+fn sorted_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut entries = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).map_err(with_path(&dir))? {
+            let entry = entry.map_err(with_path(&dir))?;
+            let path = entry.path();
+            if entry.file_type().map_err(with_path(&path))?.is_dir() {
+                pending.push(path.clone());
+            }
+            entries.push(path);
+        }
+    }
+    entries.sort();
+    Ok(entries)
 }
 
 /// The address of the tree at `root`, built at temporary path `own`.
@@ -56,7 +68,7 @@ fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
         hasher.update(bytes);
     };
     add(name.unwrap_or_default().as_bytes());
-    for file in sorted_files(root)? {
+    for file in sorted_entries(root)? {
         let mut name = relative(root, &file)?.into_bytes();
         let in_name = replace(&mut name, own.as_bytes(), &zeros);
         add(&name);
@@ -65,11 +77,14 @@ fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
         let (kind, mut bytes): (&[u8], Vec<u8>) = if meta.is_symlink() {
             let target = fs::read_link(&file).map_err(with_path(&file))?;
             (b"link", target.to_string_lossy().into_owned().into_bytes())
-        } else if meta.permissions().mode() & 0o111 != 0 {
-            (b"exec", fs::read(&file).map_err(with_path(&file))?)
+        } else if meta.is_dir() {
+            (b"dir", Vec::new())
         } else {
             (b"file", fs::read(&file).map_err(with_path(&file))?)
         };
+        if !meta.is_symlink() {
+            add(&(meta.permissions().mode() & 0o777).to_le_bytes());
+        }
         let in_file = replace(&mut bytes, own.as_bytes(), &zeros);
         add(kind);
         add(&bytes);
@@ -190,6 +205,22 @@ mod tests {
         fs::write(root.join("f"), "0".repeat(HASH_LENGTH)).unwrap();
         let with_mask = content_hash(&root, own.hash()).unwrap();
         assert_ne!(with_path, with_mask);
+    }
+
+    #[test]
+    fn an_empty_directory_and_a_files_permissions_change_the_address() {
+        let (_dir, lab) = lab();
+        let own = StorePath::derive("test", &[b"own"]);
+        let root = lab.on_host(&own);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("key"), "k").unwrap();
+        let hash = || content_hash(&root, own.hash()).unwrap();
+        let plain = hash();
+        fs::create_dir(root.join("empty")).unwrap();
+        let with_directory = hash();
+        assert_ne!(with_directory, plain);
+        fs::set_permissions(root.join("key"), fs::Permissions::from_mode(0o600)).unwrap();
+        assert_ne!(hash(), with_directory);
     }
 
     #[test]

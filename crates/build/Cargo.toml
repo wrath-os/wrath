@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 distro-starlark.workspace = true
 memchr = "2"
-rustix = { version = "1.1", features = ["termios"] }
+rustix = { version = "1.1", features = ["fs", "process", "termios"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true

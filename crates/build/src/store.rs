@@ -10,6 +10,12 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Sets the permissions files are made with to the usual 022, whatever the host's are, so a
+/// package's files, which its address covers, come out the same everywhere.
+pub(crate) fn usual_umask() {
+    rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o022));
+}
+
 /// Turns an I/O error into a message starting with the `path` it happened on.
 pub(crate) fn with_path(path: &Path) -> impl FnOnce(std::io::Error) -> String {
     move |e| format!("{}: {e}", path.display())
@@ -117,6 +123,21 @@ impl Lab {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn files_are_made_with_the_usual_permissions_whatever_the_hosts() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
+        usual_umask();
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("f"), "").unwrap();
+        let mode = fs::metadata(dir.path().join("f"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o644);
+    }
 
     #[test]
     fn an_entry_is_a_hash_and_maybe_a_name() {

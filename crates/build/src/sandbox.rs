@@ -294,6 +294,7 @@ pub fn run_shown(lab: &Lab, step: &Step, verbs: Option<(&str, &str)>) -> Result<
     let log = File::create(&step.log).map_err(with_path(&step.log))?;
     let log = Arc::new(Mutex::new(log));
 
+    crate::store::usual_umask();
     let start = Instant::now();
     let mut child = Command::new("bwrap")
         .args(bwrap_args(lab, step, &etc))

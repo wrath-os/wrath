@@ -1731,6 +1731,7 @@ fn top_directory(listing: &str) -> Option<&str> {
 fn unpack(archive: &Path, target: &Path) -> Result<(), String> {
     let names = listing(archive)?;
     fs::create_dir_all(target).map_err(with_path(target))?;
+    store::usual_umask();
     let mut command = Command::new("tar");
     // Owners and modes from the archive stay out, also when building as root.
     command.args(["--no-same-owner", "--no-same-permissions", "-xf"]);
@@ -1931,7 +1932,7 @@ pub(crate) struct Prepared {
 
 /// The version of what the builder does to every package beside its recipe, such as fixing up
 /// run paths. Every package's key has it, so changing it rebuilds everything.
-const BUILD_RULES: &str = "8";
+const BUILD_RULES: &str = "9";
 
 /// The machines packages are built for, which every key has, so another one's never match.
 const TARGET: &str = "x86_64-linux-gnu";
