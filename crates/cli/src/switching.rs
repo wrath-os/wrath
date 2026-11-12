@@ -212,21 +212,51 @@ fn previous(root: &Path) -> Result<u32, String> {
         .ok_or_else(|| format!("generation {current} is the oldest there is"))
 }
 
-/// Makes `system` the current generation and switches to it. Needs root.
-pub fn activate(system: &Path) -> Result<(), String> {
-    let _held = lock(Path::new(ROOT))?;
-    add(Path::new(ROOT), system)?;
-    switch(system, "switch")
+/// The generation a rollback goes to: `to`, which may be the current one, or else the one before.
+fn rollback_target(root: &Path, to: Option<u32>) -> Result<u32, String> {
+    let Some(to) = to else {
+        return previous(root);
+    };
+    let (listed, _) = generations(root)?;
+    if listed.iter().any(|(number, _)| *number == to) {
+        Ok(to)
+    } else {
+        Err(format!(
+            "there's no generation {to}; `distro history` lists them"
+        ))
+    }
 }
 
-/// Goes back to the generation before the current one and switches to it. Needs root.
-pub fn rollback() -> Result<u32, String> {
+/// What to say when switching to generation `number` failed after it became current and the
+/// boot default. `previous` is where a plain rollback goes, when it's worth saying.
+fn switch_failed(number: u32, previous: Option<u32>, error: String) -> String {
+    let next = match previous {
+        Some(previous) => format!("`distro rollback` goes back to {previous}"),
+        None => format!("`distro rollback {number}` tries it again"),
+    };
+    format!(
+        "{error}\ngeneration {number} is current and boots next, but switching to it failed \
+         partway; {next}"
+    )
+}
+
+/// Makes `system` the current generation and switches to it. Needs root.
+pub fn activate(system: &Path) -> Result<(), String> {
+    let root = Path::new(ROOT);
+    let _held = lock(root)?;
+    let number = add(root, system)?;
+    switch(system, "switch").map_err(|e| switch_failed(number, previous(root).ok(), e))
+}
+
+/// Goes back to generation `to`, or the one before the current one, and switches to it. Needs
+/// root.
+pub fn rollback(to: Option<u32>) -> Result<u32, String> {
     require_generations()?;
     let root = Path::new(ROOT);
     let _held = lock(root)?;
-    let number = previous(root)?;
+    let number = rollback_target(root, to)?;
     make_current(root, number)?;
-    switch(&root.join(CURRENT), "switch")?;
+    switch(&root.join(CURRENT), "switch").map_err(|e| switch_failed(number, None, e))?;
     Ok(number)
 }
 
@@ -553,6 +583,35 @@ mod tests {
         make_current(dir.path(), 1).unwrap();
         let error = previous(dir.path()).unwrap_err();
         assert!(error.contains("oldest"), "{error}");
+    }
+
+    #[test]
+    fn a_rollback_goes_to_the_generation_named_or_the_one_before() {
+        let dir = machine(&[&hash('a'), &hash('b'), &hash('c')]);
+        assert_eq!(rollback_target(dir.path(), None).unwrap(), 2);
+        assert_eq!(rollback_target(dir.path(), Some(1)).unwrap(), 1);
+        // The current one again, which is how a switch that failed is tried again.
+        assert_eq!(rollback_target(dir.path(), Some(3)).unwrap(), 3);
+        let error = rollback_target(dir.path(), Some(7)).unwrap_err();
+        assert!(error.contains("no generation 7"), "{error}");
+    }
+
+    #[test]
+    fn a_failed_switch_says_what_is_current_and_how_to_go_on() {
+        let after_apply = switch_failed(4, Some(3), "nginx.service failed".into());
+        assert!(
+            after_apply.contains("generation 4 is current"),
+            "{after_apply}"
+        );
+        assert!(
+            after_apply.contains("`distro rollback` goes back to 3"),
+            "{after_apply}"
+        );
+        let after_rollback = switch_failed(2, None, "nginx.service failed".into());
+        assert!(
+            after_rollback.contains("`distro rollback 2`"),
+            "{after_rollback}"
+        );
     }
 
     #[test]

@@ -694,13 +694,16 @@ fn generation_model(number: u32) -> Result<Model, String> {
     crate::read_model(&path)
 }
 
-pub fn rollback() -> Result<ExitCode, String> {
+pub fn rollback(to: Option<u32>) -> Result<ExitCode, String> {
     if here::trying() {
+        if to.is_some() {
+            return Err("a system is being tried; `distro rollback` stops trying first".into());
+        }
         let number = here::end_trial()?;
         println!("stopped trying; back to generation {number}");
         return Ok(ExitCode::SUCCESS);
     }
-    let number = here::rollback()?;
+    let number = here::rollback(to)?;
     println!("rolled back to generation {number}");
     Ok(ExitCode::SUCCESS)
 }

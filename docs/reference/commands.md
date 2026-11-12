@@ -100,11 +100,13 @@ distro clean [OPTIONS]
 
 ## `distro rollback`
 
-Switch back to the previous generation
+Switch back to the previous generation, or to generation N
 
 ```text
-distro rollback [OPTIONS]
+distro rollback [OPTIONS] [N]
 ```
+
+- `[N]`: The generation, as `distro history` numbers it
 
 ## `distro run`
 

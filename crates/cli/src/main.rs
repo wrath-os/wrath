@@ -152,8 +152,12 @@ enum Command {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Switch back to the previous generation
-    Rollback,
+    /// Switch back to the previous generation, or to generation N
+    Rollback {
+        /// The generation, as `distro history` numbers it
+        #[arg(value_name = "N")]
+        generation: Option<u32>,
+    },
     /// Run a package's program without installing it
     Run {
         /// The package, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
@@ -521,7 +525,7 @@ fn main() -> ExitCode {
             [from, to, ..] => generations::diff(*from, *to),
         },
         Command::Clean { keep, yes } => generations::clean(keep, yes),
-        Command::Rollback => generations::rollback(),
+        Command::Rollback { generation } => generations::rollback(generation),
         Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, _)| run::run(root, model, &package, &args)),
         Command::Up => {
@@ -717,7 +721,7 @@ fn runs_pinned(command: &Command) -> bool {
         Command::Keep
         | Command::History { .. }
         | Command::Clean { .. }
-        | Command::Rollback
+        | Command::Rollback { .. }
         | Command::Dev { .. }
         | Command::Activate { .. }
         | Command::FillTemplates { .. } => false,

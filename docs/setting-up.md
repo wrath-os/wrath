@@ -128,7 +128,12 @@ running. A reboot does the same, since the tried system was never made the defau
 distro history       # every generation, with what changed in each
 distro history 12    # the full plan for generation 12
 distro rollback      # back to the one before
+distro rollback 9    # back to generation 9
 ```
+
+If a switch fails partway, say a service won't start, the new generation is still current and
+boots next. distro says so, and `distro rollback` takes you back. When a rollback itself fails
+partway, `distro rollback N` with the generation it names tries that one again.
 
 Every generation also has an entry in the boot menu, so if a change breaks booting you can pick
 the previous one there. A generation that fails to boot three times stops being the default on
