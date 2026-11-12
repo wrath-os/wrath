@@ -1,0 +1,3 @@
+[system]
+hostname = "box"
+timezone = "../../etc/shadow"

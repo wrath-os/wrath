@@ -2,7 +2,7 @@
 source: crates/starlark/src/tests.rs
 expression: describe_outputs(&evaluation)
 ---
-packages: curl fprintd helix (for john) jq nftables nginx ripgrep (for john) syncthing
+packages: curl fprintd helix (for john) jq nftables nginx ripgrep (for john) syncthing tzdata
 
 file /etc/nftables.conf (mode 644, from firewall)
 table inet distro

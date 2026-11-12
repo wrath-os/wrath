@@ -78,6 +78,20 @@ default = ["C.UTF-8/UTF-8"]
 doc = "The locales to build, each a name and its character set, such as `en_US.UTF-8/UTF-8`."
 
 [[package]]
+id = "tzdata"
+version = "2026f"
+scope = "runtime"
+core = true
+sources = [{ url = "https://data.iana.org/time-zones/releases/tzdata{version}.tar.gz" }]
+smoke = ["test -s share/zoneinfo/Europe/Stockholm", "test -s share/zoneinfo/UTC"]
+script = '''
+# The time zones, compiled with glibc's zic, where /etc/localtime and TZ name them.
+zic -d $DEST$PREFIX/share/zoneinfo \
+    africa antarctica asia australasia europe northamerica southamerica etcetera backward
+cp zone1970.tab iso3166.tab $DEST$PREFIX/share/zoneinfo/
+'''
+
+[[package]]
 id = "zram-generator"
 version = "1.2.1"
 scope = "runtime"

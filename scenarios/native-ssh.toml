@@ -11,6 +11,8 @@ steps = [
   { run = "ssh -i /root/key -o StrictHostKeyChecking=accept-new -o BatchMode=yes john@localhost 'id -un; echo $XDG_RUNTIME_DIR'", stdout_contains = "john\n/run/user/1000" },
   { run = "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o PreferredAuthentications=password john@localhost true 2>&1; true", stdout_contains = "Permission denied" },
   { run = "systemctl is-active nftables && nft list table inet distro | grep -c 'policy drop\\|nd-neighbor-solicit\\|tcp dport 22'", stdout_contains = "active\n3" },
+  { run = "readlink /etc/localtime", stdout_contains = "/run/system/share/zoneinfo/Europe/Stockholm" },
+  { run = "date +%Z | grep -qE '^CES?T$' && echo zone ok", stdout_contains = "zone ok" },
   { run = "test -z \"$(systemctl --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },
 ]
 timeout_secs = 180

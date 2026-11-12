@@ -1,0 +1,6 @@
+error: name a time zone as tzdata does, such as `Europe/Stockholm`
+ --> fixtures/bad-configs/timezone-not-a-zone/system.toml:3:12
+  |
+3 | timezone = "../../etc/shadow"
+  |            ^^^^^^^^^^^^^^^^^^ `system.timezone` is set here
+  = reported by modules/system.star

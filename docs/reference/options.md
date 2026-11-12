@@ -230,7 +230,7 @@
 ### system
 
 - `system.hostname`: a string, optional. The machine's hostname. Without one, the machine's name.
-- `system.timezone`: a string, default "UTC".
+- `system.timezone`: a string, default "UTC". The time zone, as tzdata names it, such as `Europe/Stockholm`.
 
 ### tailscale
 

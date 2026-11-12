@@ -1,5 +1,6 @@
 [system]
 hostname = "native-ssh"
+timezone = "Europe/Stockholm"
 
 [services.ssh]
 enable = true

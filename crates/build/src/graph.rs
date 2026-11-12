@@ -1099,6 +1099,12 @@ fn lower<'a>(
             packages,
         )?,
         fixed_links(packages)?,
+        localtime(
+            model["base"]["system"]["timezone"]
+                .as_str()
+                .unwrap_or("UTC"),
+            packages,
+        )?,
     ];
     actions.extend(index_actions("packages", lab, &sharing, packages)?);
 
@@ -1799,6 +1805,46 @@ const FIXED_LINKS: [(&str, &str); 6] = [
     ),
 ];
 
+/// Where `/etc/localtime` points for the time zone `zone`, such as `Europe/Stockholm`: into the
+/// zones the running system shares from `tzdata`, where glibc, systemd and `timedatectl` read it.
+fn zone_file(zone: &str) -> Result<String, String> {
+    let plain = !zone.is_empty()
+        && zone.split('/').all(|part| {
+            !part.is_empty()
+                && part != ".."
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_+-".contains(&b))
+        });
+    if !plain {
+        return Err(format!(
+            "`{zone}` isn't a time zone: name one as tzdata does, such as `Europe/Stockholm`"
+        ));
+    }
+    Ok(format!("/run/system/share/zoneinfo/{zone}"))
+}
+
+/// `/etc/localtime`, linking to the configuration's time zone.
+fn localtime<'a>(zone: &str, packages: &'a Packages) -> Result<Action<'a>, String> {
+    let target = zone_file(zone)?;
+    let (unresolved, resolved) = action_records(
+        &[],
+        packages,
+        |deps| json!({"kind": "localtime", "zone": zone, "deps": deps}),
+    )?;
+    Ok(Action {
+        origin: "base.system".to_owned(),
+        unresolved,
+        resolved,
+        run: Box::new(move |_| {
+            let link = Entry::Link {
+                target: target.clone(),
+            };
+            Ok(Entries::from([("etc/localtime".to_owned(), link)]))
+        }),
+    })
+}
+
 fn fixed_links(packages: &Packages) -> Result<Action<'_>, String> {
     links_to("base", &FIXED_LINKS, packages)
 }
@@ -2285,6 +2331,19 @@ mod tests {
             path,
             unresolved: format!("unresolved-{name}"),
             indexes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_time_zone_is_one_tzdata_names() {
+        assert_eq!(
+            zone_file("Europe/Stockholm").unwrap(),
+            "/run/system/share/zoneinfo/Europe/Stockholm"
+        );
+        assert!(zone_file("UTC").is_ok());
+        assert!(zone_file("Etc/GMT+1").is_ok());
+        for wrong in ["", "../../etc/shadow", "/Europe/Stockholm", "Europe//Oslo"] {
+            assert!(zone_file(wrong).is_err(), "{wrong}");
         }
     }
 
