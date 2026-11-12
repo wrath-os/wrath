@@ -1640,11 +1640,17 @@ fn listing(archive: &Path) -> Result<String, String> {
 /// The directory everything in an archive is under, as a release's `project-1.0/`, when there
 /// is one. Some archives, such as font releases, hold their files with nothing around them.
 fn top_directory(listing: &str) -> Option<&str> {
-    let mut lines = listing.lines();
-    let (top, _) = lines.next()?.split_once('/')?;
-    lines
-        .all(|line| line.split_once('/').is_some_and(|(first, _)| first == top))
-        .then_some(top)
+    let top = listing.lines().next()?.split('/').next()?;
+    let mut has_files = false;
+    for line in listing.lines() {
+        // Some archives list the directory itself without its slash, as `openssh-10.0p1`.
+        match line.strip_prefix(top) {
+            Some("" | "/") => {}
+            Some(rest) if rest.starts_with('/') => has_files = true,
+            _ => return None,
+        }
+    }
+    has_files.then_some(top)
 }
 
 /// Unpacks a source archive into `target`, without the directory around its files.
@@ -2798,6 +2804,19 @@ mod crate_tests {
         let archive = flat_archive(dir.path(), &["README.md", "A.ttf"]);
         assert_eq!(top_files(&archive).unwrap(), ["A.ttf", "README.md"]);
         assert_eq!(read_in(&archive, "README.md").unwrap(), "README.md");
+    }
+
+    #[test]
+    fn the_top_directory_is_found_however_the_archive_lists_it() {
+        assert_eq!(top_directory("x-1/\nx-1/a\nx-1/b/c\n"), Some("x-1"));
+        // As OpenSSH's release lists it: the directory without its slash.
+        assert_eq!(top_directory("x-1\nx-1/a\n"), Some("x-1"));
+        assert_eq!(top_directory("x-1/a\nx-1/b\n"), Some("x-1"));
+        assert_eq!(top_directory("A.ttf\nB.ttf\n"), None);
+        assert_eq!(top_directory("only.ttf\n"), None);
+        assert_eq!(top_directory("x-1/a\nx-10/b\n"), None);
+        assert_eq!(top_directory("x-1/\nREADME\n"), None);
+        assert_eq!(top_directory(""), None);
     }
 
     #[test]
