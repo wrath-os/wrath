@@ -102,6 +102,10 @@ That builds the new system locally, copies over what the machine doesn't have ye
 switches it with the new system's own distro. `NAME` is whatever `ssh NAME` reaches, so your
 `~/.ssh/config` applies. The login needs root, or sudo, which asks for its password once.
 
+The machine keeps a copy of the configuration it boots in `/etc/distro`, replaced by each apply,
+so you can see there what it runs. Planning and building need distro's recipes, which the
+machine's own distro doesn't have, so they happen where your checkout is.
+
 ## What's missing
 
 - A proper live installer image you can download. Today you build your own.

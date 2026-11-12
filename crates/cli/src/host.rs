@@ -10,7 +10,7 @@ use std::process::{Command, ExitCode, Stdio};
 use distro_build::store::{Lab, StorePath, is_entry};
 use distro_model::Model;
 
-use crate::activate::{UNFINISHED, Unfinished};
+use crate::activate::{CURRENT, UNFINISHED, Unfinished};
 use crate::generations::{self, Switch};
 
 /// Where a system keeps its model, on the machine it runs on.
@@ -132,48 +132,72 @@ impl Remote {
         Ok((!text.trim().is_empty()).then_some(text))
     }
 
-    /// Copies what the machine lacks of `system`, built in `lab`, into a new directory on it,
-    /// and returns that directory, or `None` when it has everything already.
-    fn send(&self, lab: &Lab, system: &StorePath) -> Result<Option<String>, String> {
+    /// Copies what the machine lacks of `system`, built in `lab`, and `config`, the configuration
+    /// it's built from, into a new directory on it. `None` when there's nothing to copy.
+    fn send(
+        &self,
+        lab: &Lab,
+        system: &StorePath,
+        config: Option<&Path>,
+    ) -> Result<Option<Sent>, String> {
         let have = self.output("ls /store 2>/dev/null || true")?;
         let closure = distro_build::chain::runtime_closure(lab, system)?;
         let missing = missing(&have, closure.iter().map(StorePath::hash));
-        if missing.is_empty() {
+        if missing.is_empty() && config.is_none() {
             return Ok(None);
         }
-        eprintln!("copying {} store paths to {}", missing.len(), self.name);
-        let mut tar = Command::new("tar")
-            .args(["--owner=0", "--group=0", "--numeric-owner", "-C"])
-            .arg(lab.work.join("store"))
-            .arg("-cf")
-            .arg("-")
-            .args(&missing)
+        // A directory only this user can write to, so nobody else on the machine can swap an
+        // archive before root unpacks it.
+        let dir = sent_dir(&self.output("mktemp -d /var/tmp/distro.XXXXXX")?)?;
+        let owned_by_root = ["--owner=0", "--group=0", "--numeric-owner"];
+        if !missing.is_empty() {
+            eprintln!("copying {} store paths to {}", missing.len(), self.name);
+            let mut tar = Command::new("tar");
+            tar.args(owned_by_root)
+                .arg("-C")
+                .arg(lab.work.join("store"))
+                .args(["-cf", "-"])
+                .args(&missing);
+            self.upload(tar, &format!("{dir}/system.tar"))?;
+        }
+        if let Some(config) = config {
+            let mut tar = Command::new("tar");
+            tar.args(owned_by_root)
+                .args(["--exclude=./.git", "--exclude=./.jj", "-C"])
+                .arg(config)
+                .args(["-cf", "-", "."]);
+            self.upload(tar, &format!("{dir}/config.tar"))?;
+        }
+        Ok(Some(Sent {
+            dir,
+            system: !missing.is_empty(),
+            config: config.is_some(),
+        }))
+    }
+
+    /// Writes what `tar` prints to `path` on the machine.
+    fn upload(&self, mut tar: Command, path: &str) -> Result<(), String> {
+        let mut tar = tar
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|e| format!("cannot run tar: {e}"))?;
         let stream = tar.stdout.take().expect("piped");
-        // A directory only this user can write to, so nobody else on the machine can swap the
-        // archive before root unpacks it.
         let sent = self
             .ssh()
-            .arg(
-                "sh -c 'dir=$(mktemp -d /var/tmp/distro.XXXXXX) && \
-                 cat > $dir/system.tar && echo $dir'",
-            )
+            .arg(format!("cat > {path}"))
             .stdin(stream)
-            .stderr(Stdio::inherit())
-            .output()
+            .status()
             .map_err(|e| format!("cannot run ssh: {e}"))?;
         let packed = tar.wait().map_err(|e| format!("tar: {e}"))?;
-        if !packed.success() || !sent.status.success() {
-            return Err(format!("copying the system to {} failed", self.name));
+        if !packed.success() || !sent.success() {
+            return Err(format!("copying {path} to {} failed", self.name));
         }
-        sent_dir(&String::from_utf8_lossy(&sent.stdout)).map(Some)
+        Ok(())
     }
 
     /// Puts what was sent into the machine's store and switches it to `system` as `how` says,
     /// with the system's own distro. Asks for a password when sudo wants one.
-    fn switch(&self, sent: Option<&str>, system: &StorePath, how: Switch) -> Result<(), String> {
+    fn switch(&self, sent: Option<&Sent>, system: &StorePath, how: Switch) -> Result<(), String> {
         let root = self.output("id -u")?.trim() == "0";
         let script = switch_script(sent, system, how, root);
         // A terminal, when there is one, so sudo on the machine can ask for a password.
@@ -204,24 +228,50 @@ fn missing<'a>(have: &str, closure: impl Iterator<Item = &'a str>) -> Vec<String
         .collect()
 }
 
-/// The script that unpacks `sent` into the store and switches to `system`, through sudo unless
-/// it runs as root.
-fn switch_script(sent: Option<&str>, system: &StorePath, how: Switch, root: bool) -> String {
+/// What `send` copied to the machine, in the directory it made there.
+#[derive(Debug)]
+struct Sent {
+    dir: String,
+    /// `system.tar`, the store paths the machine lacked.
+    system: bool,
+    /// `config.tar`, the configuration applied.
+    config: bool,
+}
+
+/// The script that unpacks what was `sent` into the store and switches to `system`, through sudo
+/// unless it runs as root. The configuration sent replaces the one in /etc/distro once `system`
+/// is the current generation, even when the switch failed partway, so the machine's copy always
+/// describes what it boots.
+fn switch_script(sent: Option<&Sent>, system: &StorePath, how: Switch, root: bool) -> String {
     let path = system.inside();
     let switch = match how {
         Switch::Apply => format!("{path}/bin/distro apply --yes {path}"),
         Switch::Try(seconds) => format!("{path}/bin/distro try --yes --for {seconds}s {path}"),
     };
+    let mut steps = Vec::new();
     // Unpacked beside the store and renamed in one path at a time, so an interrupted copy
     // never leaves a partial path under a name `send` would take as complete.
-    let steps = match sent {
-        Some(dir) => format!(
+    if let Some(Sent { dir, .. }) = sent.filter(|sent| sent.system) {
+        steps.push(format!(
             "staged=$(mktemp -d /store/.incoming.XXXXXX) && tar -C $staged -xf {dir}/system.tar && \
              for path in $staged/*; do test -e /store/${{path##*/}} || mv $path /store/ || exit; \
-             done && rm -rf $staged {dir} && {switch}"
-        ),
-        None => switch,
-    };
+             done && rm -rf $staged || exit"
+        ));
+    }
+    steps.push(format!("{switch}; status=$?"));
+    if let Some(Sent { dir, .. }) = sent.filter(|sent| sent.config) {
+        // What the system put there, its model and such, are links, and stay.
+        steps.push(format!(
+            "if [ \"$(readlink -f /{CURRENT})\" = {path} ]; then mkdir -p /etc/distro && \
+             find /etc/distro -mindepth 1 -maxdepth 1 ! -type l -exec rm -rf {{}} + && \
+             tar -C /etc/distro --no-same-owner -xf {dir}/config.tar; fi"
+        ));
+    }
+    if let Some(sent) = sent {
+        steps.push(format!("rm -rf {}", sent.dir));
+    }
+    steps.push("exit $status".to_owned());
+    let steps = steps.join("; ");
     if root {
         format!("sh -c '{steps}'")
     } else {
@@ -291,8 +341,10 @@ pub fn apply(
         .into_owned();
     let system = StorePath::from_hash(&name);
     let lab = Lab::new(root.join("build/work"));
-    let sent = remote.send(&lab, &system)?;
-    remote.switch(sent.as_deref(), &system, how)?;
+    // A system only tried isn't what the machine boots, so its configuration stays here.
+    let kept = matches!(how, Switch::Apply).then_some(config);
+    let sent = remote.send(&lab, &system, kept)?;
+    remote.switch(sent.as_ref(), &system, how)?;
     if let Some(note) = running.and(plan.tier()).and_then(generations::full_effect) {
         println!("{note}");
     }
@@ -327,17 +379,40 @@ mod tests {
     #[test]
     fn the_machine_switches_with_the_new_systems_distro() {
         let system = StorePath::from_hash("abc");
-        assert_eq!(
-            switch_script(Some("/var/tmp/distro.Ab12"), &system, Switch::Apply, true),
-            "sh -c 'staged=$(mktemp -d /store/.incoming.XXXXXX) && \
-             tar -C $staged -xf /var/tmp/distro.Ab12/system.tar && \
-             for path in $staged/*; do test -e /store/${path##*/} || mv $path /store/ || exit; \
-             done && rm -rf $staged /var/tmp/distro.Ab12 && \
-             /store/abc/bin/distro apply --yes /store/abc'"
+        let sent = Sent {
+            dir: "/var/tmp/distro.Ab12".into(),
+            system: true,
+            config: true,
+        };
+        let script = switch_script(Some(&sent), &system, Switch::Apply, true);
+        let inner = script
+            .strip_prefix("sh -c '")
+            .and_then(|s| s.strip_suffix('\''))
+            .unwrap();
+        let checked = Command::new("sh")
+            .args(["-n", "-c", inner])
+            .status()
+            .unwrap();
+        assert!(checked.success(), "{inner}");
+        let at = |needle: &str| {
+            inner
+                .find(needle)
+                .unwrap_or_else(|| panic!("{needle}: {inner}"))
+        };
+        let unpack = at("tar -C $staged -xf /var/tmp/distro.Ab12/system.tar");
+        let switch = at("/store/abc/bin/distro apply --yes /store/abc; status=$?");
+        let keep = at("if [ \"$(readlink -f /store/.system/current)\" = /store/abc ]");
+        let config = at("tar -C /etc/distro --no-same-owner -xf /var/tmp/distro.Ab12/config.tar");
+        assert!(unpack < switch && switch < keep && keep < config, "{inner}");
+        assert!(
+            inner.ends_with("rm -rf /var/tmp/distro.Ab12; exit $status"),
+            "{inner}"
         );
+
         assert_eq!(
             switch_script(None, &system, Switch::Try(60), false),
-            "sudo sh -c '/store/abc/bin/distro try --yes --for 60s /store/abc'"
+            "sudo sh -c '/store/abc/bin/distro try --yes --for 60s /store/abc; status=$?; \
+             exit $status'"
         );
     }
 

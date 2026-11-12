@@ -9,7 +9,11 @@ use distro_model::{DISTRO_SOURCE, Model, package_source};
 
 /// The names packages can have: every recipe's id and every build the configuration declares.
 pub fn names(root: &Path, model: &Model) -> Result<BTreeSet<String>, String> {
-    let mut names = distro_build::graph::recipe_ids(&root.join("build"))?;
+    let repository = root.join("build");
+    if !repository.join("recipes").is_dir() {
+        return Err(NO_RECIPES.to_owned());
+    }
+    let mut names = distro_build::graph::recipe_ids(&repository)?;
     names.extend(model.builds.keys().cloned());
     Ok(names)
 }
@@ -76,4 +80,21 @@ fn written_at(evaluation: &Evaluation, reference: &str) -> Option<distro_eval::S
                 .any(|item| matches!(item, Value::Str(text) if text == reference))
                 .then_some(span)
         })
+}
+
+/// What a distro without recipes says, such as the one a machine runs, which was built elsewhere.
+const NO_RECIPES: &str = "this distro has no recipes, so it can't plan or build here; plan and \
+                          apply from a checkout of distro, such as with `distro apply --host` \
+                          from another machine";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_distro_without_recipes_says_where_to_plan_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = names(dir.path(), &Model::default()).unwrap_err();
+        assert!(error.contains("distro apply --host"), "{error}");
+    }
 }
