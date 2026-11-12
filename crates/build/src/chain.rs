@@ -1512,23 +1512,33 @@ fn fetch_all(
 }
 
 /// The text of `relative`, a path inside the source archive at `archive`, under its top directory.
-/// Archives are kept by their hash, so what was read from one is kept beside it and read from
-/// there next time, which spares a plan unpacking every lock.
+/// Archives are kept by their hash, so what was read from one, or found missing from it, is kept
+/// beside it and known from there next time, which spares a plan unpacking every lock.
 fn read_in(archive: &Path, relative: &str) -> Result<String, String> {
     let mut name = archive.as_os_str().to_owned();
     name.push(".files");
     let dir = PathBuf::from(name);
-    let kept = dir.join(relative.replace('/', "%"));
+    let flat = relative.replace('/', "%");
+    let kept = dir.join(&flat);
+    let missing = dir.join(format!("{flat}%%missing"));
+    let lacks = || format!("the source has no `{relative}`");
     if let Ok(text) = fs::read_to_string(&kept) {
         return Ok(text);
     }
-    let text = unpack_one(archive, relative)?;
-    let partial = kept.with_extension(format!("partial{}", std::process::id()));
+    if missing.exists() {
+        return Err(lacks());
+    }
+    let found = unpack_one(archive, relative)?;
+    let (path, text) = match &found {
+        Some(text) => (&kept, text.as_str()),
+        None => (&missing, ""),
+    };
+    let partial = path.with_extension(format!("partial{}", std::process::id()));
     fs::create_dir_all(&dir)
-        .and_then(|()| fs::write(&partial, &text))
-        .and_then(|()| fs::rename(&partial, &kept))
-        .map_err(with_path(&kept))?;
-    Ok(text)
+        .and_then(|()| fs::write(&partial, text))
+        .and_then(|()| fs::rename(&partial, path))
+        .map_err(with_path(path))?;
+    found.ok_or_else(lacks)
 }
 
 /// The names in an archive, one per line.
@@ -1579,7 +1589,8 @@ fn unpack(archive: &Path, target: &Path) -> Result<(), String> {
     run_host(&mut command, &format!("unpacking {}", archive.display()))
 }
 
-fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
+/// The text of `relative` in `archive`, or `None` when the archive doesn't have it.
+fn unpack_one(archive: &Path, relative: &str) -> Result<Option<String>, String> {
     let names = listing(archive)?;
     if names.is_empty() {
         return Err(format!("{} is empty", archive.display()));
@@ -1589,7 +1600,10 @@ fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
         None => relative.to_owned(),
     };
     // An archive appended to can hold a file twice, and unpacking it leaves the last one.
-    let copies = names.lines().filter(|name| *name == path).count().max(1);
+    let copies = names.lines().filter(|name| *name == path).count();
+    if copies == 0 {
+        return Ok(None);
+    }
     let output = Command::new("tar")
         .arg("-xOf")
         .arg(archive)
@@ -1599,11 +1613,13 @@ fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
         .map_err(|e| format!("tar: {e}"))?;
     if !output.status.success() {
         return Err(format!(
-            "the source has no `{relative}`: {}",
+            "unpacking `{relative}`: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    String::from_utf8(output.stdout).map_err(|_| format!("`{relative}` isn't text"))
+    String::from_utf8(output.stdout)
+        .map(Some)
+        .map_err(|_| format!("`{relative}` isn't text"))
 }
 
 /// What stands for the arm in a package's key and record: boot packages had one of their own.
@@ -2767,6 +2783,16 @@ mod crate_tests {
         assert!(read_in(&archive, "go.mod").is_err());
     }
 
+    #[test]
+    fn a_file_a_source_lacks_is_known_missing_without_unpacking_it_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive(dir.path(), &[("meson_options.txt", "")]);
+        let error = read_in(&archive, "meson.options").unwrap_err();
+        assert!(error.contains("has no `meson.options`"), "{error}");
+        fs::write(&archive, "not an archive any more").unwrap();
+        assert_eq!(read_in(&archive, "meson.options").unwrap_err(), error);
+    }
+
     /// An archive of files with no directory around them, as font releases often are.
     fn flat_archive(dir: &Path, names: &[&str]) -> PathBuf {
         let files = dir.join("flat");
@@ -2832,7 +2858,10 @@ mod crate_tests {
             .status()
             .unwrap();
         assert!(status.success());
-        assert_eq!(unpack_one(&archive, "Cargo.lock").unwrap(), "version = 4\n");
+        assert_eq!(
+            unpack_one(&archive, "Cargo.lock").unwrap().unwrap(),
+            "version = 4\n"
+        );
         let target = dir.path().join("src");
         unpack(&archive, &target).unwrap();
         assert_eq!(

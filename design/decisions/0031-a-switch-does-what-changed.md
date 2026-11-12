@@ -6,10 +6,12 @@ Status: accepted, 2026-11-12.
 
 Changing a setting, such as a theme, and seeing it should take well under a second. Evaluation
 takes about 40 ms on the Framework configuration; the time goes around it. On 2026-11-12 a build
-of that configuration spent about 5.5 s before building anything (not explained yet, possibly
-hashing the checkout for the `distro` package) and 0.7 s assembling the system. Then every switch
-runs systemd-sysusers, systemd-tmpfiles, `daemon-reload`, the restarts and the users' service
-managers, whatever changed.
+of that configuration spent about 5.5 s before building anything and 0.7 s assembling the system.
+Most of it was build styles looking for files a source lacks, such as `meson.options`, which
+unpacked the archive every time; misses are kept now. A build with nothing to do takes 0.12 s,
+and one after a settings change 0.23 s. Then every switch runs systemd-sysusers,
+systemd-tmpfiles, `daemon-reload`, the restarts and the users' service managers, whatever
+changed.
 
 Skipping steps is where speed would come from, and also where a switch could quietly go wrong: a
 skipped `daemon-reload` after a unit changed leaves systemd running the old one. Correct comes
