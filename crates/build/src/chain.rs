@@ -1245,6 +1245,11 @@ fn missing_in(log: &str) -> Option<Missing> {
         if let Some(name) = between(line, "Dependency \"", "\" not found") {
             return Some(Missing::Module(name));
         }
+        if let Some(name) =
+            line.strip_prefix("Looking for a fallback subproject for the dependency ")
+        {
+            return Some(Missing::Module(name.trim().to_owned()));
+        }
         if line.contains("no suitable Python interpreter") {
             return Some(Missing::Program("python3".to_owned()));
         }
@@ -3884,6 +3889,10 @@ mod hint_tests {
             (
                 "doc/meson.build:2:8: ERROR: Dependency \"scdoc\" not found, tried pkgconfig",
                 Missing::Module("scdoc".into()),
+            ),
+            (
+                "Looking for a fallback subproject for the dependency wayland-client",
+                Missing::Module("wayland-client".into()),
             ),
             (
                 "configure: error: no suitable Python interpreter found",
