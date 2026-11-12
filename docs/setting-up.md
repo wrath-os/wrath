@@ -28,7 +28,8 @@ Each save is tried at once when it only changes programs' own settings, files a 
 lock you out with. Anything more, a package, a service, sudoers, shows the plan and asks first.
 Nothing becomes a generation while you watch: Ctrl-C asks whether to keep what runs, and
 otherwise switches back. If the watcher dies, what it tried switches back on its own within ten
-minutes, or at the next reboot. `--host NAME` watches for another machine.
+minutes, or at the next reboot. `--host NAME` watches for another machine, where sudo asks for
+your password once, when watching starts.
 
 ## One file or several
 

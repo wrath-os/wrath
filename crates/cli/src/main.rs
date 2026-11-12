@@ -1467,6 +1467,8 @@ fn watching(
     match host {
         Some(host) => {
             let remote = host::Remote::new(host)?.quietly();
+            // sudo on the machine asks once for the whole watch.
+            remote.hold_root()?;
             let role = remote_role(&config, &remote)?;
             let evaluate = || model_as(&config, modules, role.as_deref());
             watch::watch(root, &config, watch::Machine::Remote(&remote), evaluate)

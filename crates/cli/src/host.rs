@@ -2,10 +2,11 @@
 //! The machine needs SSH and root, through `sudo` when the login isn't root's, and nothing to
 //! build with: what it lacks of the system is copied into its store first.
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
-use std::io::IsTerminal;
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitCode, Stdio};
 
 use distro_build::store::{Lab, StorePath, is_entry};
 use distro_model::Model;
@@ -26,6 +27,9 @@ pub struct Remote {
     /// Leaves out what copying and switching say as they go, as watching does, which says one
     /// line of its own.
     quiet: bool,
+    /// A root shell on the machine that root commands go through, once [`Remote::hold_root`]
+    /// opened it.
+    held: RefCell<Option<RootShell>>,
 }
 
 impl Remote {
@@ -39,6 +43,7 @@ impl Remote {
             ssh: ssh.split_whitespace().map(str::to_owned).collect(),
             shared: tempfile::tempdir().map_err(|e| format!("cannot make a directory: {e}"))?,
             quiet: false,
+            held: RefCell::new(None),
         })
     }
 
@@ -186,9 +191,7 @@ impl Remote {
     /// Puts what was sent into the machine's store and switches it to `system` as `how` says,
     /// with the system's own distro. Asks for a password when sudo wants one.
     fn switch(&self, sent: Option<&str>, system: &StorePath, how: Switch) -> Result<(), String> {
-        let root = self.output("id -u")?.trim() == "0";
-        let script = switch_script(sent, system, how, root);
-        if self.run_as_root(&script)? {
+        if self.run_as_root(&switch_steps(sent, system, how))? {
             Ok(())
         } else {
             Err(format!("switching {} failed", self.name))
@@ -211,18 +214,64 @@ impl Remote {
     /// Runs the running system's `distro` with `args` on the machine as root, as `keep` and
     /// `rollback`.
     pub fn distro_as_root(&self, args: &str) -> Result<(), String> {
-        let root = self.output("id -u")?.trim() == "0";
-        let sudo = if root { "" } else { "sudo " };
-        if self.run_as_root(&format!("{sudo}/run/system/bin/distro {args}"))? {
+        if self.run_as_root(&format!("/run/system/bin/distro {args}"))? {
             Ok(())
         } else {
             Err(format!("`distro {args}` on {} failed", self.name))
         }
     }
 
-    /// Runs `script` over SSH with a terminal, when there is one, so sudo on the machine can ask
-    /// for a password. Whether it succeeded.
-    fn run_as_root(&self, script: &str) -> Result<bool, String> {
+    /// Keeps a root shell open on the machine for what's run as root from now on, so sudo asks
+    /// for a password once, here, rather than for each command.
+    pub fn hold_root(&self) -> Result<(), String> {
+        let (shell, password) = if self.output("id -u")?.trim() == "0" {
+            ("sh", None)
+        } else if self
+            .ssh()
+            .arg("sudo -n true")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            ("sudo -n sh", None)
+        } else {
+            let password = read_password(&format!("sudo password on {}: ", self.host_name()))?;
+            // Checked first: a wrong password given to the shell's sudo would have it read the
+            // commands that follow as more tries.
+            if !self.sudo_accepts(&password)? {
+                return Err(format!("sudo on {} didn't take the password", self.name));
+            }
+            ("sudo -S -p '' sh", Some(password))
+        };
+        let ssh = self.ssh_with(&["-o", "LogLevel=ERROR"]);
+        let shell = RootShell::open(ssh, shell, password.as_deref())?;
+        *self.held.borrow_mut() = Some(shell);
+        Ok(())
+    }
+
+    /// Whether sudo on the machine takes `password`.
+    fn sudo_accepts(&self, password: &str) -> Result<bool, String> {
+        let mut child = self
+            .ssh_with(&["-o", "LogLevel=ERROR"])
+            .arg("sudo -S -p '' -k true")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("cannot run ssh: {e}"))?;
+        let mut stdin = child.stdin.take().expect("piped");
+        let _ = writeln!(stdin, "{password}");
+        drop(stdin);
+        let status = child.wait().map_err(|e| format!("ssh: {e}"))?;
+        Ok(status.success())
+    }
+
+    /// Runs `steps` as root on the machine: in the held root shell, or else over SSH with a
+    /// terminal, when there is one, so sudo can ask for a password. Whether they succeeded.
+    fn run_as_root(&self, steps: &str) -> Result<bool, String> {
+        if let Some(shell) = self.held.borrow_mut().as_mut() {
+            return shell.run(steps, self.quiet);
+        }
+        let root = self.output("id -u")?.trim() == "0";
         // Only errors from ssh itself, not that the shared connection closed.
         let options: &[&str] = if std::io::stdin().is_terminal() {
             &["-t", "-o", "LogLevel=ERROR"]
@@ -234,11 +283,98 @@ impl Remote {
             command.stdout(Stdio::null());
         }
         let status = command
-            .arg(script)
+            .arg(as_root(steps, root))
             .status()
             .map_err(|e| format!("cannot run ssh: {e}"))?;
         Ok(status.success())
     }
+}
+
+/// A root shell on the machine, held open over SSH. Each command it runs ends with a line of
+/// its own that says how it went, which is how its end is told from what it prints.
+struct RootShell {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+/// What the shell prints after each command, before its exit status.
+const DONE: &str = "\u{1e}distro-done ";
+
+impl RootShell {
+    /// Starts `shell` over `ssh`, giving `password` to sudo first when there is one.
+    fn open(mut ssh: Command, shell: &str, password: Option<&str>) -> Result<Self, String> {
+        let mut child = ssh
+            .arg(shell)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot run ssh: {e}"))?;
+        let mut stdin = child.stdin.take().expect("piped");
+        let stdout = BufReader::new(child.stdout.take().expect("piped"));
+        if let Some(password) = password {
+            writeln!(stdin, "{password}").map_err(|e| format!("ssh: {e}"))?;
+        }
+        let mut shell = Self {
+            child,
+            stdin,
+            stdout,
+        };
+        if !shell.run("true", true)? {
+            return Err("the root shell on the machine didn't start".into());
+        }
+        Ok(shell)
+    }
+
+    /// Runs `steps`, printing what they print unless `quiet`. Whether they succeeded.
+    fn run(&mut self, steps: &str, quiet: bool) -> Result<bool, String> {
+        let closed = || "the root shell on the machine closed".to_owned();
+        writeln!(self.stdin, "( {steps} ); printf '{DONE}%s\\n' $?").map_err(|_| closed())?;
+        self.stdin.flush().map_err(|_| closed())?;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if self.stdout.read_line(&mut line).map_err(|_| closed())? == 0 {
+                return Err(closed());
+            }
+            if let Some(status) = line.trim_end().strip_prefix(DONE) {
+                return Ok(status == "0");
+            }
+            if !quiet {
+                print!("{line}");
+            }
+        }
+    }
+}
+
+impl Drop for RootShell {
+    fn drop(&mut self) {
+        let _ = writeln!(self.stdin, "exit");
+        let _ = self.child.wait();
+    }
+}
+
+/// Reads a password from the terminal without showing it.
+fn read_password(prompt: &str) -> Result<String, String> {
+    use rustix::termios::{LocalModes, OptionalActions, tcgetattr, tcsetattr};
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|e| format!("a password needs a terminal: {e}"))?;
+    let shown = tcgetattr(&tty).map_err(|e| format!("terminal: {e}"))?;
+    let mut hidden = shown.clone();
+    hidden.local_modes.remove(LocalModes::ECHO);
+    let mut out = &tty;
+    let _ = write!(out, "{prompt}");
+    let _ = out.flush();
+    tcsetattr(&tty, OptionalActions::Now, &hidden).map_err(|e| format!("terminal: {e}"))?;
+    let mut password = String::new();
+    let read = BufReader::new(&tty).read_line(&mut password);
+    let _ = tcsetattr(&tty, OptionalActions::Now, &shown);
+    let _ = writeln!(out);
+    read.map_err(|e| format!("terminal: {e}"))?;
+    Ok(password.trim_end_matches(['\n', '\r']).to_owned())
 }
 
 /// The store paths of `closure` that aren't in `have`, as `ls /store` lists it.
@@ -250,9 +386,8 @@ fn missing<'a>(have: &str, closure: impl Iterator<Item = &'a str>) -> Vec<String
         .collect()
 }
 
-/// The script that unpacks `sent` into the store and switches to `system`, through sudo unless
-/// it runs as root.
-fn switch_script(sent: Option<&str>, system: &StorePath, how: Switch, root: bool) -> String {
+/// The steps, run as root, that unpack `sent` into the store and switch to `system`.
+fn switch_steps(sent: Option<&str>, system: &StorePath, how: Switch) -> String {
     let path = system.inside();
     let switch = match how {
         Switch::Apply => format!("{path}/bin/distro apply --yes {path}"),
@@ -260,14 +395,18 @@ fn switch_script(sent: Option<&str>, system: &StorePath, how: Switch, root: bool
     };
     // Unpacked beside the store and renamed in one path at a time, so an interrupted copy
     // never leaves a partial path under a name `send` would take as complete.
-    let steps = match sent {
+    match sent {
         Some(dir) => format!(
             "staged=$(mktemp -d /store/.incoming.XXXXXX) && tar -C $staged -xf {dir}/system.tar && \
              for path in $staged/*; do test -e /store/${{path##*/}} || mv $path /store/ || exit; \
              done && rm -rf $staged {dir} && {switch}"
         ),
         None => switch,
-    };
+    }
+}
+
+/// `steps` as one command that runs them as root, through sudo unless `root` already.
+fn as_root(steps: &str, root: bool) -> String {
     if root {
         format!("sh -c '{steps}'")
     } else {
@@ -366,7 +505,10 @@ mod tests {
     fn the_machine_switches_with_the_new_systems_distro() {
         let system = StorePath::from_hash("abc");
         assert_eq!(
-            switch_script(Some("/var/tmp/distro.Ab12"), &system, Switch::Apply, true),
+            as_root(
+                &switch_steps(Some("/var/tmp/distro.Ab12"), &system, Switch::Apply),
+                true
+            ),
             "sh -c 'staged=$(mktemp -d /store/.incoming.XXXXXX) && \
              tar -C $staged -xf /var/tmp/distro.Ab12/system.tar && \
              for path in $staged/*; do test -e /store/${path##*/} || mv $path /store/ || exit; \
@@ -374,9 +516,20 @@ mod tests {
              /store/abc/bin/distro apply --yes /store/abc'"
         );
         assert_eq!(
-            switch_script(None, &system, Switch::Try(60), false),
+            as_root(&switch_steps(None, &system, Switch::Try(60)), false),
             "sudo sh -c '/store/abc/bin/distro try --yes --for 60s /store/abc'"
         );
+    }
+
+    #[test]
+    fn a_held_shell_runs_one_command_after_another_and_says_how_each_went() {
+        let mut sh = Command::new("sh");
+        sh.arg("-c");
+        let mut shell = RootShell::open(sh, "sh", None).unwrap();
+        assert_eq!(shell.run("echo noise; true", true), Ok(true));
+        assert_eq!(shell.run("false", true), Ok(false));
+        assert_eq!(shell.run("exit 3", true), Ok(false));
+        assert_eq!(shell.run("printf '%s\\n' still here", true), Ok(true));
     }
 
     #[test]
