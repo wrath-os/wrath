@@ -8,7 +8,7 @@
 - [Installing](installing.md)
 - [Setting up a machine](setting-up.md)
 - [Packages](packages.md)
-- [Projects](projects.md) (not written yet)
+- [Projects](projects.md)
 
 # Extending it
 
