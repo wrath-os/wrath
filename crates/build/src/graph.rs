@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -2638,68 +2637,6 @@ pub fn closure(
         lines.push_str(&format!("path {}\n", path.hash()));
     }
     Ok(lines)
-}
-
-/// How many packages of `recipes` have an unresolved key that was never built: the most that
-/// could need building, known before anything is.
-pub fn bound(lab: &Lab, repository: &Path, recipes: &[&str], arm: Arm) -> Result<String, String> {
-    let keys = chain::unresolved_keys(lab, repository, recipes, arm)?;
-    let mut db = Db::open(&db_path(lab))?;
-    let tx = db.0.transaction().map_err(sql)?;
-    let mut missing = Vec::new();
-    for (id, key) in &keys {
-        if output_of(&tx, key)?.is_none() {
-            missing.push(id.as_str());
-        }
-    }
-    Ok(format!(
-        "{} of {} packages may need building: {}\n",
-        missing.len(),
-        keys.len(),
-        missing.join(" ")
-    ))
-}
-
-/// Has `processes` copies of this program write `records` each at once, and reports how it went.
-pub fn write_test(processes: usize, records: usize, path: &Path) -> Result<String, String> {
-    let start = Instant::now();
-    let program = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut children = Vec::new();
-    for writer in 0..processes {
-        children.push(
-            Command::new(&program)
-                .arg("graph-writer")
-                .arg(path)
-                .arg(writer.to_string())
-                .arg(records.to_string())
-                .spawn()
-                .map_err(|e| e.to_string())?,
-        );
-    }
-    let mut failed = 0;
-    for mut child in children {
-        if !child.wait().map_err(|e| e.to_string())?.success() {
-            failed += 1;
-        }
-    }
-    Ok(format!(
-        "{processes} writers, {records} records each, in batches: {failed} failed, {:.0} ms\n",
-        elapsed_ms(start)
-    ))
-}
-
-/// One writer of `write_test`: ten transactions, so that writers really interleave.
-pub fn write_records(path: &Path, writer: usize, records: usize) -> Result<(), String> {
-    let mut db = Db::open(path)?;
-    for batch in 0..10 {
-        let tx = db.0.transaction().map_err(sql)?;
-        for index in 0..records / 10 {
-            let record = json!({"writer": writer, "batch": batch, "index": index});
-            put_action(&tx, &key_of(&record), &record)?;
-        }
-        tx.commit().map_err(sql)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

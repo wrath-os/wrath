@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use distro_build::chain::{self, Arm, Views};
+use distro_build::chain::{self, Arm};
 use distro_build::graph::names_of;
 use distro_build::sandbox::Status;
 use distro_build::store::Lab;
@@ -63,38 +63,9 @@ fn toolchain(lab: &Lab, arm: &str) -> Result<(), String> {
     }
 }
 
-/// Builds the pilot for `arm` and checks step 3's gate.
-fn pilot(lab: &Lab, arm: &str) -> Result<(), String> {
-    let arm = Arm::parse(arm)?;
-    if distro_build::pilot::run(lab, Path::new("."), "pilot", &["pilot.toml"], arm)? {
-        Ok(())
-    } else {
-        Err(format!("arm {} did not pass the pilot", arm.name()))
-    }
-}
-
-/// Builds the whole set for `arm`. Its results are read from the tables, so failures are only news.
-fn full(lab: &Lab, arm: &str) -> Result<(), String> {
-    let arm = Arm::parse(arm)?;
-    distro_build::pilot::run(
-        lab,
-        Path::new("."),
-        "full",
-        &["pilot.toml", "full.toml"],
-        arm,
-    )?;
-    Ok(())
-}
-
-const SPREAD_RECIPES: [&str; 3] = ["toolchain.toml", "pilot.toml", "full.toml"];
 /// The recipe files of a system, from `recipes/` here.
 fn boot_recipes() -> Result<Vec<String>, String> {
     distro_build::graph::system_recipes(Path::new("."))
-}
-
-fn parse_counts(first: &str, second: &str) -> Result<(usize, usize), String> {
-    let parse = |text: &str| text.parse::<usize>().map_err(|e| e.to_string());
-    Ok((parse(first)?, parse(second)?))
 }
 
 fn graph(lab: &Lab, arm: &str, model: &str, inputs: Option<&Path>) -> Result<(), String> {
@@ -122,8 +93,6 @@ fn main() -> ExitCode {
             Arm::parse(arm).and_then(|arm| seed_pack::addresses(&lab, Path::new("."), arm))
         }
         ["toolchain", arm] => toolchain(&lab, arm),
-        ["pilot", arm] => pilot(&lab, arm),
-        ["full", arm] => full(&lab, arm),
         ["boot", arm] => Arm::parse(arm).and_then(|arm| {
             distro_build::pilot::run(
                 &lab,
@@ -153,91 +122,13 @@ fn main() -> ExitCode {
                 )
             })
             .map(|text| print!("{text}")),
-        ["graph-bound", arm, repository] => Arm::parse(arm)
-            .and_then(|arm| {
-                distro_build::graph::bound(&lab, Path::new(repository), &SPREAD_RECIPES, arm)
-            })
-            .map(|text| print!("{text}")),
-        ["graph-write-test", processes, records, path] => parse_counts(processes, records)
-            .and_then(|(processes, records)| {
-                distro_build::graph::write_test(processes, records, Path::new(path))
-            })
-            .map(|text| print!("{text}")),
-        ["graph-writer", path, writer, records] => {
-            parse_counts(writer, records).and_then(|(writer, records)| {
-                distro_build::graph::write_records(Path::new(path), writer, records)
-            })
-        }
-        ["recheck", arm] => Arm::parse(arm).and_then(|arm| {
-            distro_build::pilot::recheck(&lab, Path::new("."), &names_of(&boot_recipes()?), arm)
-        }),
-        ["shrink", arm] => Arm::parse(arm)
-            .and_then(|arm| {
-                distro_build::pilot::shrink(&lab, Path::new("."), &names_of(&boot_recipes()?), arm)
-            })
-            .and_then(|text| {
-                print!("{text}");
-                std::fs::write("results/shrink-b.md", text).map_err(|e| e.to_string())
-            }),
-        ["split", arm, ids @ ..] => Arm::parse(arm)
-            .and_then(|arm| {
-                distro_build::pilot::split(
-                    &lab,
-                    Path::new("."),
-                    &names_of(&boot_recipes()?),
-                    arm,
-                    ids,
-                    false,
-                )
-            })
-            .map(|text| print!("{text}")),
-        ["slots", arm, ids @ ..] => Arm::parse(arm)
-            .and_then(|arm| {
-                distro_build::pilot::split(
-                    &lab,
-                    Path::new("."),
-                    &names_of(&boot_recipes()?),
-                    arm,
-                    ids,
-                    true,
-                )
-            })
-            .map(|text| print!("{text}")),
-        ["closure", arm, ids @ ..] => Arm::parse(arm)
-            .and_then(|arm| {
-                distro_build::pilot::closure(
-                    &lab,
-                    Path::new("."),
-                    &names_of(&boot_recipes()?),
-                    arm,
-                    ids,
-                )
-            })
-            .map(|text| print!("{text}")),
         ["repro", arm, only @ ..] => Arm::parse(arm)
             .and_then(|arm| distro_build::experiments::reproduce(&lab, Path::new("."), arm, only)),
-        ["narrow", arm, views] => Arm::parse(arm).and_then(|arm| {
-            distro_build::experiments::narrow(&lab, Path::new("."), arm, Views::parse(views)?)
-        }),
-        ["layouts", arm] => Arm::parse(arm)
-            .and_then(|arm| distro_build::layouts::fetch_sizes(&lab, Path::new("."), arm)),
-        ["slots-fetch", arm] => Arm::parse(arm)
-            .and_then(|arm| distro_build::slots::fetch_sizes(&lab, Path::new("."), arm)),
-        ["resolve-bench"] => {
-            distro_build::evalbench::run(Path::new("work/resolve-bench"), &[1_000, 10_000, 100_000])
-                .and_then(|text| {
-                    print!("{text}");
-                    std::fs::write("results/resolve-bench.md", text).map_err(|e| e.to_string())
-                })
-        }
-        ["spread", arm] => Arm::parse(arm)
-            .and_then(|arm| distro_build::experiments::spread(&lab, Path::new("."), arm)),
-        ["paths", arm] => Arm::parse(arm)
-            .and_then(|arm| distro_build::pilot::paths(&lab, Path::new("."), "pilot.toml", arm))
-            .map(|text| print!("{text}")),
         _ => Err(
-            "usage: lab seed | lab <toolchain|pilot|full|paths|repro|spread> <a|b|c|d|e> | \
-             lab narrow <a|b|c> <view>"
+            "usage: lab seed | lab <seed-pack|seed-addresses|toolchain|boot> <arm> | \
+             lab repro <arm> [id...] | lab <graph|graph-closure> <arm> <model> | \
+             lab graph-apply <arm> <model> <inputs> | lab graph-rollback <apply> | \
+             lab graph-diff <apply> <apply>"
                 .to_owned(),
         ),
     };

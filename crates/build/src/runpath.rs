@@ -18,9 +18,6 @@ const DT_RPATH: u64 = 15;
 const DT_RUNPATH: u64 = 29;
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
-const PT_INTERP: u32 = 3;
-const PT_NOTE: u32 = 4;
-const NT_GNU_BUILD_ID: u32 = 3;
 
 fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
@@ -175,114 +172,10 @@ fn shrink(
     Some((out, shrunk))
 }
 
-fn headers(bytes: &[u8]) -> Option<Vec<(u32, usize, usize)>> {
-    if bytes.get(..6)? != b"\x7fELF\x02\x01" {
-        return None;
-    }
-    let table = usize::try_from(u64_at(bytes, 32)?).ok()?;
-    let size = usize::from(u16_at(bytes, 54)?);
-    let count = usize::from(u16_at(bytes, 56)?);
-    (0..count)
-        .map(|index| {
-            let header = table + index * size;
-            Some((
-                u32_at(bytes, header)?,
-                usize::try_from(u64_at(bytes, header + 8)?).ok()?,
-                usize::try_from(u64_at(bytes, header + 32)?).ok()?,
-            ))
-        })
-        .collect()
-}
-
-/// Overwrites the string at `at`, of length `old`, with `new`, which must be no longer.
-fn overwrite(bytes: &mut [u8], at: usize, old: usize, new: &str) {
-    let slot = &mut bytes[at..at + old];
-    slot.fill(0);
-    slot[..new.len()].copy_from_slice(new.as_bytes());
-}
-
-/// Renames the directories in a file's run path and its interpreter, wherever `rename` says to
-/// and the new name fits.
-pub fn rename_libraries(bytes: &mut [u8], rename: &dyn Fn(&str) -> Option<String>) {
-    if let Some(dynamic) = parse(bytes) {
-        let new = dynamic
-            .runpath
-            .split(':')
-            .map(|entry| rename(entry).unwrap_or_else(|| entry.to_owned()))
-            .collect::<Vec<_>>()
-            .join(":");
-        if new.len() <= dynamic.runpath.len() {
-            overwrite(bytes, dynamic.runpath_at, dynamic.runpath.len(), &new);
-        }
-    }
-    for (kind, offset, length) in headers(bytes).unwrap_or_default() {
-        if kind != PT_INTERP || length == 0 {
-            continue;
-        }
-        if let Some(old) = string_at(bytes, offset)
-            && let Some(new) = rename(&old).filter(|new| new.len() <= old.len())
-        {
-            overwrite(bytes, offset, old.len(), &new);
-        }
-    }
-}
-
-/// Blanks a file's build ID, which is a hash over everything linked in.
-pub fn blank_build_id(bytes: &mut [u8]) {
-    for (kind, offset, length) in headers(bytes).unwrap_or_default() {
-        if kind != PT_NOTE {
-            continue;
-        }
-        let mut at = offset;
-        while at + 12 <= offset + length {
-            let (Some(name), Some(desc), Some(note)) = (
-                u32_at(bytes, at),
-                u32_at(bytes, at + 4),
-                u32_at(bytes, at + 8),
-            ) else {
-                break;
-            };
-            let name_at = at + 12;
-            let desc_at = name_at + (name as usize).next_multiple_of(4);
-            let is_build_id =
-                note == NT_GNU_BUILD_ID && bytes.get(name_at..name_at + 4) == Some(b"GNU\0");
-            if is_build_id && let Some(id) = bytes.get_mut(desc_at..desc_at + desc as usize) {
-                id.fill(0);
-            }
-            at = desc_at + (desc as usize).next_multiple_of(4);
-        }
-    }
-}
-
-/// Where a file's run path string is, and what it says.
-pub fn location(bytes: &[u8]) -> Option<(usize, String)> {
-    let dynamic = parse(bytes)?;
-    Some((dynamic.runpath_at, dynamic.runpath))
-}
-
 /// The libraries an ELF file needs, with its run path.
 pub fn needed_and_run_path(bytes: &[u8]) -> Option<(Vec<String>, String)> {
     let dynamic = parse(bytes)?;
     Some((dynamic.needed, dynamic.runpath))
-}
-
-/// The libraries `bytes` needs that aren't in any directory of its run path, leaving out the
-/// dynamic loader itself. Files with no run path have nothing to check.
-pub fn unresolved(lab: &Lab, bytes: &[u8]) -> Vec<String> {
-    let Some(dynamic) = parse(bytes) else {
-        return Vec::new();
-    };
-    let dirs: Vec<BTreeSet<String>> = dynamic
-        .runpath
-        .split(':')
-        .map(|dir| libraries_in(lab, dir))
-        .collect();
-    dynamic
-        .needed
-        .into_iter()
-        .filter(|name| !name.starts_with("ld-linux"))
-        .filter(|name| !dirs.iter().any(|dir| dir.contains(name)))
-        .collect()
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -443,22 +336,6 @@ mod tests {
         let (bytes, at) = elf("/store/c/lib", &[], b"");
         let (new, ..) = shrink(&bytes, "/store/self/", &mut provider).unwrap();
         assert_eq!(runpath_of(&new, at), "");
-    }
-
-    #[test]
-    fn renames_run_path_entries_that_fit() {
-        let (mut bytes, at) = elf("/store/a/lib:/store/longer-name/lib", &[], b"");
-        rename_libraries(&mut bytes, &|entry| {
-            (entry == "/store/a/lib").then(|| "/s/a".to_owned())
-        });
-        assert_eq!(runpath_of(&bytes, at), "/s/a:/store/longer-name/lib");
-    }
-
-    #[test]
-    fn leaves_a_run_path_that_would_grow() {
-        let (mut bytes, at) = elf("/a", &[], b"");
-        rename_libraries(&mut bytes, &|_| Some("/much/longer".to_owned()));
-        assert_eq!(runpath_of(&bytes, at), "/a");
     }
 
     #[test]

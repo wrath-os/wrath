@@ -416,20 +416,6 @@ impl Package {
         Ok(self.all_deps()?.into_iter().map(|dep| dep.id).collect())
     }
 
-    /// The package with `shell` run first, which changes everything that depends on it.
-    pub(crate) fn perturbed(&self, shell: &str) -> Self {
-        let mut changed = self.clone();
-        changed.script = format!("{shell}\n{}", self.script);
-        changed
-    }
-
-    /// The package built from another release of its first source.
-    pub(crate) fn with_source(&self, url: &str) -> Self {
-        let mut changed = self.clone();
-        changed.sources[0].url = url.to_owned();
-        changed
-    }
-
     /// All the dependencies, the toolchain's first when the package builds on it, and last what
     /// it needs only at run time, which isn't in its view.
     fn all_deps(&self) -> Result<Vec<Dep>, String> {
@@ -2012,20 +1998,6 @@ fn package_key(
         .chain(dep_texts.iter().map(String::as_bytes))
         .collect();
     StorePath::derive(kind, &parts)
-}
-
-/// The unresolved key of every package in `recipes`, with nothing built.
-pub fn unresolved_keys(
-    lab: &Lab,
-    repository: &Path,
-    recipes: &[&str],
-    arm: Arm,
-) -> Result<BTreeMap<String, String>, String> {
-    let mut packages = Vec::new();
-    for file in recipes {
-        packages.extend(load_styled(lab, repository, file)?);
-    }
-    keys_of(lab, repository, packages, arm)
 }
 
 /// The key each of `packages` has before anything is built.

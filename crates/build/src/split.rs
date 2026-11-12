@@ -13,8 +13,6 @@ use std::process::{Command, Stdio};
 use memchr::memmem;
 
 use crate::pilot::{files_under, path_byte};
-use crate::runpath;
-use crate::slots::to_slot;
 use crate::store::{Lab, StorePath, with_path};
 
 const HASH_LENGTH: usize = 40;
@@ -162,12 +160,8 @@ impl Plan {
     }
 }
 
-/// Points every reference at the output holding what it names.
-fn rewrite(bytes: &mut [u8], plan: &Plan) {
-    rewrite_with(bytes, plan, reference_class);
-}
-
-/// [`rewrite`], with `wanted` saying which output the rest of a reference after the package means.
+/// Points every reference at the output holding what it names, with `wanted` saying which output
+/// the rest of a reference after the package means.
 fn rewrite_with(bytes: &mut [u8], plan: &Plan, wanted: impl Fn(&str) -> Class) {
     let found: Vec<usize> = memmem::find_iter(bytes, STORE).collect();
     for at in found {
@@ -199,25 +193,6 @@ fn rewrite_with(bytes: &mut [u8], plan: &Plan, wanted: impl Fn(&str) -> Class) {
     }
 }
 
-/// A run path entry naming a package's `lib` directory means its libraries.
-fn rewrite_runpath(bytes: &mut [u8], plan: &Plan) {
-    let Some((mut offset, runpath)) = runpath::location(bytes) else {
-        return;
-    };
-    for entry in runpath.split(':') {
-        if let Some(hash) = entry
-            .strip_prefix("/store/")
-            .and_then(|rest| rest.strip_suffix("/lib"))
-            && let Some(output) = plan.output(hash, Class::Lib)
-            && output.hash().len() == hash.len()
-        {
-            let start = offset + STORE.len();
-            bytes[start..start + hash.len()].copy_from_slice(output.hash().as_bytes());
-        }
-        offset += entry.len() + 1;
-    }
-}
-
 /// `target` of a relative link at `relative`, resolved within the package, or `None` if it leaves.
 fn resolve(relative: &str, target: &Path) -> Option<String> {
     let mut parts: Vec<String> = Path::new(relative)
@@ -238,26 +213,6 @@ fn resolve(relative: &str, target: &Path) -> Option<String> {
     Some(parts.join("/"))
 }
 
-/// The target a link needs once its file and what it points at may be in different outputs.
-fn retarget(plan: &Plan, package: &str, relative: &str, target: &Path) -> PathBuf {
-    if target.is_absolute() {
-        let mut bytes = target.to_string_lossy().into_owned().into_bytes();
-        rewrite(&mut bytes, plan);
-        return PathBuf::from(String::from_utf8_lossy(&bytes).into_owned());
-    }
-    let Some(resolved) = resolve(relative, target) else {
-        return target.to_path_buf();
-    };
-    let to = classify(&resolved);
-    if classify(relative) == to {
-        return target.to_path_buf();
-    }
-    match plan.output(package, to) {
-        Some(output) => PathBuf::from(format!("{}/{resolved}", output.inside())),
-        None => target.to_path_buf(),
-    }
-}
-
 fn relative_of(root: &Path, file: &Path) -> Result<String, String> {
     file.strip_prefix(root)
         .map(|path| path.to_string_lossy().into_owned())
@@ -267,61 +222,6 @@ fn relative_of(root: &Path, file: &Path) -> Result<String, String> {
 fn place(destination: &Path) -> Result<(), String> {
     let parent = destination.parent().ok_or("a path with no parent")?;
     fs::create_dir_all(parent).map_err(with_path(parent))
-}
-
-/// Bytes moved into each class, across everything split.
-pub type Sizes = BTreeMap<&'static str, u64>;
-
-/// Copies `packages` from `from` into `to`, split into outputs.
-pub fn split(from: &Lab, to: &Lab, packages: &[StorePath]) -> Result<Sizes, String> {
-    let mut plan = Plan::default();
-    let mut listings = Vec::new();
-    for package in packages {
-        let root = from.on_host(package);
-        let mut entries = Vec::new();
-        for file in files_under(&root)? {
-            let relative = relative_of(&root, &file)?;
-            let class = class_of(&relative, &file)?;
-            entries.push((file, relative, class));
-        }
-        plan.add(package, entries.iter().map(|(_, _, class)| *class));
-        listings.push((package, entries));
-    }
-    let mut sizes = Sizes::new();
-    for (package, entries) in &listings {
-        let hash = package.hash();
-        for (file, relative, class) in entries {
-            let output = plan.output(hash, *class).ok_or("a package with no plan")?;
-            let destination = to.on_host(output).join(relative);
-            place(&destination)?;
-            let meta = fs::symlink_metadata(file).map_err(with_path(file))?;
-            if meta.is_symlink() {
-                let target = fs::read_link(file).map_err(with_path(file))?;
-                symlink(retarget(&plan, hash, relative, &target), &destination)
-                    .map_err(with_path(&destination))?;
-                continue;
-            }
-            let mut bytes = fs::read(file).map_err(with_path(file))?;
-            rewrite(&mut bytes, &plan);
-            rewrite_runpath(&mut bytes, &plan);
-            *sizes.entry(class.name()).or_default() += bytes.len() as u64;
-            fs::write(&destination, &bytes).map_err(with_path(&destination))?;
-            fs::set_permissions(&destination, meta.permissions())
-                .map_err(with_path(&destination))?;
-        }
-        // Whatever looks in the package's own lib directory by name still finds its libraries.
-        let lib = plan
-            .output(hash, Class::Lib)
-            .ok_or("a package with no plan")?;
-        if lib != *package {
-            for (_, relative, _) in entries.iter().filter(|(_, _, class)| *class == Class::Lib) {
-                let link = to.on_host(package).join(relative);
-                place(&link)?;
-                symlink(format!("{}/{relative}", lib.inside()), &link).map_err(with_path(&link))?;
-            }
-        }
-    }
-    Ok(sizes)
 }
 
 /// Removes debug information from every ELF file in `packages`, which otherwise records the
@@ -357,11 +257,6 @@ pub fn strip(lab: &Lab, packages: &BTreeSet<StorePath>) -> Result<usize, String>
     Ok(stripped)
 }
 
-/// Where a package's run-time libraries go when it has any.
-pub fn lib_output(package: &StorePath) -> StorePath {
-    output_path(package, Class::Lib)
-}
-
 /// Where `package`'s `class` of files goes, with the package's name, so a reference to the
 /// package becomes one to the output by rewriting its hash alone.
 fn output_path(package: &StorePath, class: Class) -> StorePath {
@@ -373,49 +268,6 @@ fn output_path(package: &StorePath, class: Class) -> StorePath {
         Some(name) => path.named(name),
         None => path,
     }
-}
-
-/// Points every program in `paths` at library slots: `/system/libs/<id>/...` for what's in
-/// `packages`, by hash.
-pub fn use_slots(
-    lab: &Lab,
-    paths: &BTreeSet<StorePath>,
-    packages: &BTreeMap<String, String>,
-    write: impl Fn(&Path, &[u8]) -> Result<(), String>,
-) -> Result<(), String> {
-    for path in paths {
-        for file in files_under(&lab.on_host(path))? {
-            let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
-            if !meta.is_file() {
-                continue;
-            }
-            let mut bytes = fs::read(&file).map_err(with_path(&file))?;
-            let old = bytes.clone();
-            runpath::rename_libraries(&mut bytes, &|entry| to_slot(entry, packages));
-            if bytes != old {
-                write(&file, &bytes)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Needed libraries that no run path entry provides, across every ELF file in `packages`.
-pub fn unresolved(lab: &Lab, packages: &BTreeSet<StorePath>) -> Result<Vec<String>, String> {
-    let mut missing = Vec::new();
-    for package in packages {
-        for file in files_under(&lab.on_host(package))? {
-            let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
-            if !meta.is_file() {
-                continue;
-            }
-            let bytes = fs::read(&file).map_err(with_path(&file))?;
-            for name in runpath::unresolved(lab, &bytes) {
-                missing.push(format!("{}: {name}", relative_of(&lab.work, &file)?));
-            }
-        }
-    }
-    Ok(missing)
 }
 
 /// The outputs of a package split as it's built.
@@ -800,73 +652,6 @@ mod tests {
         ] {
             assert_eq!(classify(path), class, "{path}");
         }
-    }
-
-    fn plan() -> (Plan, String, String, String) {
-        let package = StorePath::derive("test", &[b"package"]);
-        let mut plan = Plan::default();
-        plan.add(&package, [Class::Out, Class::Lib, Class::Dev].into_iter());
-        let hash = package.hash().to_owned();
-        let lib = plan.output(&hash, Class::Lib).unwrap().hash().to_owned();
-        let dev = plan.output(&hash, Class::Dev).unwrap().hash().to_owned();
-        (plan, hash, lib, dev)
-    }
-
-    #[test]
-    fn sends_references_to_the_output_holding_the_file() {
-        let (plan, hash, lib, dev) = plan();
-        let text = format!(
-            "/store/{hash}/lib/libz.so.1 /store/{hash}/include/z.h /store/{hash}/lib \
-             /store/{hash}/bin/x"
-        );
-        let mut bytes = text.clone().into_bytes();
-        rewrite(&mut bytes, &plan);
-        assert_eq!(
-            String::from_utf8(bytes).unwrap(),
-            format!(
-                "/store/{lib}/lib/libz.so.1 /store/{dev}/include/z.h /store/{lib}/lib \
-                 /store/{hash}/bin/x"
-            )
-        );
-    }
-
-    #[test]
-    fn an_empty_output_keeps_references_in_the_main_one() {
-        let (plan, hash, ..) = plan();
-        let text = format!("/store/{hash}/share/man/man1/x.1");
-        let mut bytes = text.clone().into_bytes();
-        rewrite(&mut bytes, &plan);
-        assert_eq!(String::from_utf8(bytes).unwrap(), text);
-    }
-
-    #[test]
-    fn leaves_other_store_paths_alone() {
-        let (plan, ..) = plan();
-        let text = format!("/store/{}/lib/libz.so.1", "a".repeat(HASH_LENGTH));
-        let mut bytes = text.clone().into_bytes();
-        rewrite(&mut bytes, &plan);
-        assert_eq!(String::from_utf8(bytes).unwrap(), text);
-    }
-
-    #[test]
-    fn a_link_across_outputs_becomes_absolute() {
-        let (plan, hash, lib, _) = plan();
-        let target = retarget(&plan, &hash, "bin/tool", Path::new("../lib/libz.so.1"));
-        assert_eq!(target, PathBuf::from(format!("/store/{lib}/lib/libz.so.1")));
-    }
-
-    #[test]
-    fn a_link_within_an_output_stays_relative() {
-        let (plan, hash, ..) = plan();
-        let target = retarget(&plan, &hash, "lib/libz.so", Path::new("libz.so.1"));
-        assert_eq!(target, PathBuf::from("libz.so.1"));
-    }
-
-    #[test]
-    fn a_link_leaving_the_package_is_untouched() {
-        let (plan, hash, ..) = plan();
-        let target = retarget(&plan, &hash, "bin/tool", Path::new("../../../etc/x"));
-        assert_eq!(target, PathBuf::from("../../../etc/x"));
     }
 }
 

@@ -349,9 +349,9 @@ fn built(lab: &Lab, repository: &Path, arm: Arm) -> Result<(Vec<String>, Built),
             &mut built,
         )?;
         if made.is_some() {
+            let id = package.id;
             return Err(format!(
-                "{} isn't built yet: run `lab full {}`",
-                package.id,
+                "{id} isn't built yet for arm {}: `distro build {id}` builds it for arm f",
                 arm.name()
             ));
         }
