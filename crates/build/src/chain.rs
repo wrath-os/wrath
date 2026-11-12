@@ -2892,6 +2892,18 @@ mod crate_tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    fn every_recipe_in_the_repository_loads() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build");
+        let files = crate::graph::recipe_files(&repository).unwrap();
+        assert!(files.len() > 10, "{files:?}");
+        for file in files {
+            if let Err(e) = load(&repository, &file) {
+                panic!("{file}: {e}");
+            }
+        }
+    }
+
+    #[test]
     fn a_library_needed_by_a_path_outside_the_store_is_one_a_machine_lacks() {
         assert!(outside_store("/usr/lib/libsqlite3.so"));
         assert!(!outside_store("libsqlite3.so.0"));
