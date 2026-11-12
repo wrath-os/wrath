@@ -7,7 +7,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::chain::{self, Arm, Built, Sources};
+use crate::chain::{self, Built, Sources};
 use crate::experiments::all_packages;
 use crate::runpath;
 use crate::sandbox::Status;
@@ -333,27 +333,18 @@ fn tarball(lab: &Lab, stage: &Path) -> Result<String, String> {
     Ok(hash)
 }
 
-/// What `arm` has built from the pinned seed, or an error if anything is missing.
-fn built(lab: &Lab, repository: &Path, arm: Arm) -> Result<(Vec<String>, Built), String> {
+/// What has been built from the pinned seed, or an error if anything is missing.
+fn built(lab: &Lab, repository: &Path) -> Result<(Vec<String>, Built), String> {
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut built = chain::built_from_seed(&seed);
     let mut ids = Vec::new();
     for package in all_packages(lab, repository)? {
-        let made = chain::build_one(
-            lab,
-            repository,
-            &package,
-            arm,
-            &seed,
-            &mut sources,
-            &mut built,
-        )?;
+        let made = chain::build_one(lab, repository, &package, &seed, &mut sources, &mut built)?;
         if made.is_some() {
             let id = package.id;
             return Err(format!(
-                "{id} isn't built yet for arm {}: `distro build {id}` builds it for arm f",
-                arm.name()
+                "{id} isn't built yet: `distro build {id}` builds it",
             ));
         }
         ids.push(package.id);
@@ -362,8 +353,8 @@ fn built(lab: &Lab, repository: &Path, arm: Arm) -> Result<(Vec<String>, Built),
 }
 
 /// Prints where each package landed, to compare what two seeds produce.
-pub fn addresses(lab: &Lab, repository: &Path, arm: Arm) -> Result<(), String> {
-    let (ids, built) = built(lab, repository, arm)?;
+pub fn addresses(lab: &Lab, repository: &Path) -> Result<(), String> {
+    let (ids, built) = built(lab, repository)?;
     for id in ids {
         let paths = built.output_paths(&id);
         let hashes: Vec<&str> = paths.iter().map(StorePath::hash).collect();
@@ -372,9 +363,9 @@ pub fn addresses(lab: &Lab, repository: &Path, arm: Arm) -> Result<(), String> {
     Ok(())
 }
 
-/// Packs what `arm` built into a new seed in `work/seed`, and prints its hash for `seed.pin`.
-pub fn pack(lab: &Lab, repository: &Path, arm: Arm) -> Result<(), String> {
-    let (_, built) = built(lab, repository, arm)?;
+/// Packs what was built into a new seed in `work/seed`, and prints its hash for `seed.pin`.
+pub fn pack(lab: &Lab, repository: &Path) -> Result<(), String> {
+    let (_, built) = built(lab, repository)?;
     let stage = lab.work.join("seed/stage");
     chain::remove(&stage)?;
     fs::create_dir_all(&stage).map_err(with_path(&stage))?;
@@ -402,10 +393,10 @@ const BOOTSTRAP: [&str; 7] = [
 ];
 const FINAL: [&str; 4] = ["glibc", "binutils", "gcc", "hello"];
 
-/// Builds the toolchain for `arm` and checks it: the final compiler, C library and binutils
+/// Builds the toolchain and checks it: the final compiler, C library and binutils
 /// refer to nothing from the bootstrap, and a C and a C++ program run with no `/usr` at all.
-pub fn check_toolchain(lab: &Lab, repository: &Path, arm: Arm) -> Result<(), String> {
-    let built = chain::build(lab, repository, "toolchain.toml", arm)?;
+pub fn check_toolchain(lab: &Lab, repository: &Path) -> Result<(), String> {
+    let built = chain::build(lab, repository, "toolchain.toml")?;
     let mut failed = false;
 
     for name in FINAL {

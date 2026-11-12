@@ -6,17 +6,14 @@ use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
-use memchr::memmem;
-
-use crate::chain::{self, Arm, Built, Package, Prepared, Sources};
+use crate::chain::{self, Built, Package, Prepared, Sources};
 use crate::runpath;
-use crate::sandbox::{self, Limits, Mount, Status, Step, View};
+use crate::sandbox::{self, Limits, Status, Step, View};
 use crate::seed;
 use crate::store::{Lab, StorePath, with_path};
 
 #[derive(Debug, Default)]
 pub(crate) struct Leaks {
-    sentinel_directories: usize,
     unresolved_shebangs: usize,
     samples: Vec<String>,
 }
@@ -40,8 +37,6 @@ struct Check {
 pub(crate) struct Fixups {
     la_removed: usize,
     shebangs: usize,
-    pc_and_config_rewritten: usize,
-    sentinel_rewritten: usize,
 }
 
 pub(crate) fn files_under(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -79,73 +74,6 @@ fn owner_of(view: &Path, relative: &str) -> Option<String> {
     target.to_str().map(str::to_owned)
 }
 
-/// The owner of the longest leading part of `relative` that has one. A path can go on past what's
-/// in the view, into what a dependency holds.
-fn owner_of_prefix(view: &Path, relative: &str) -> Option<String> {
-    let mut prefix = relative;
-    loop {
-        if let Some(real) = owner_of(view, prefix) {
-            return Some(real);
-        }
-        prefix = prefix.rsplit_once('/')?.0;
-    }
-}
-
-/// Rewrites paths through the sentinel to where each file really is, in place.
-fn rewrite_sentinel(
-    out: &Path,
-    sentinel: &StorePath,
-    view: &Path,
-    fixups: &mut Fixups,
-    leaks: &mut Leaks,
-) -> Result<(), String> {
-    let needle = sentinel.inside();
-    let finder = memmem::Finder::new(needle.as_bytes());
-    for file in files_under(out)? {
-        let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
-        if meta.is_symlink() {
-            let link = fs::read_link(&file).map_err(with_path(&file))?;
-            let text = link.to_string_lossy().into_owned();
-            if let Some(rest) = text.strip_prefix(&format!("{needle}/"))
-                && let Some(real) = owner_of(view, rest)
-            {
-                fs::remove_file(&file).map_err(with_path(&file))?;
-                symlink(real, &file).map_err(with_path(&file))?;
-                fixups.sentinel_rewritten += 1;
-            }
-            continue;
-        }
-        let mut bytes = fs::read(&file).map_err(with_path(&file))?;
-        let positions: Vec<usize> = finder.find_iter(&bytes).collect();
-        if positions.is_empty() {
-            continue;
-        }
-        for at in positions {
-            let start = at + needle.len();
-            let end = bytes[start..]
-                .iter()
-                .position(|byte| !path_byte(*byte))
-                .map_or(bytes.len(), |count| start + count);
-            let relative = String::from_utf8_lossy(&bytes[start..end])
-                .trim_start_matches('/')
-                .to_owned();
-            match owner_of_prefix(view, &relative) {
-                Some(real) => {
-                    let hash = real.as_bytes();
-                    bytes[at..at + needle.len()].copy_from_slice(&hash[..needle.len()]);
-                    fixups.sentinel_rewritten += 1;
-                }
-                None => {
-                    leaks.sentinel_directories += 1;
-                    leaks.sample(format!("view dir: {}", file.display()));
-                }
-            }
-        }
-        replace_contents(&file, &bytes)?;
-    }
-    Ok(())
-}
-
 /// Where a script's interpreter really is, or `None` when nothing provides it.
 fn real_interpreter(
     path: &str,
@@ -167,7 +95,6 @@ fn real_interpreter(
 /// Points a script's first line at the store. Returns whether it changed.
 fn fix_shebang(
     file: &Path,
-    usr_like: &[String],
     out_host: &Path,
     out_inside: &str,
     view: &Path,
@@ -196,12 +123,10 @@ fn fix_shebang(
     } else {
         first
     };
-    let Some(prefix) = usr_like
-        .iter()
-        .find(|prefix| first.starts_with(prefix.as_str()))
-    else {
+    let prefix = "/usr";
+    if !first.starts_with(prefix) {
         return Ok(false);
-    };
+    }
     let (target, arguments): (String, Vec<&str>) = if first.ends_with("/bin/env") {
         match rest.iter().position(|word| !word.starts_with('-')) {
             Some(at) => (
@@ -229,27 +154,9 @@ fn fix_shebang(
     Ok(true)
 }
 
-/// Replaces `/usr` as a whole path component with `out`, for arm A's text files.
-fn rewrite_usr(text: &str, out: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find("/usr") {
-        result.push_str(&rest[..at]);
-        let after = rest.as_bytes().get(at + 4).copied();
-        let before = result.as_bytes().last().copied();
-        let whole = !after.is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
-            && !before.is_some_and(path_byte);
-        result.push_str(if whole { out } else { "/usr" });
-        rest = &rest[at + 4..];
-    }
-    result.push_str(rest);
-    result
-}
-
-/// What every arm does to a package once it's installed, on the host.
+/// What's done to a package once it's installed, on the host.
 pub(crate) fn fix_up(
     lab: &Lab,
-    arm: Arm,
     prepared: &Prepared,
     fixups: &mut Fixups,
     leaks: &mut Leaks,
@@ -257,45 +164,25 @@ pub(crate) fn fix_up(
     let out = lab.on_host(&prepared.out);
     let inside = prepared.out.inside();
     let view = &prepared.view.dir;
-    let mut usr_like = vec!["/usr".to_owned()];
-    if let Mount::Sentinel(sentinel) = &prepared.view.mount {
-        rewrite_sentinel(&out, sentinel, view, fixups, leaks)?;
-        usr_like.push(sentinel.inside());
-    }
     for file in files_under(&out)? {
         let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
         if meta.is_symlink() {
             continue;
         }
-        let name = file
+        if file
             .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if name.ends_with(".la") {
+            .is_some_and(|name| name.to_string_lossy().ends_with(".la"))
+        {
             fs::remove_file(&file).map_err(with_path(&file))?;
             fixups.la_removed += 1;
             continue;
         }
-        if fix_shebang(&file, &usr_like, &out, &inside, view, leaks)? {
+        if fix_shebang(&file, &out, &inside, view, leaks)? {
             fixups.shebangs += 1;
         }
-        if arm == Arm::A
-            && (name.ends_with(".pc") || name.ends_with("-config"))
-            && let Ok(text) = fs::read_to_string(&file)
-        {
-            let new = rewrite_usr(&text, &inside);
-            if new != text {
-                replace_contents(&file, new.as_bytes())?;
-                fixups.pc_and_config_rewritten += 1;
-            }
-        }
     }
-    if arm != Arm::A {
-        runpath::shrink_files(lab, &prepared.out, &files_under(&out)?, replace_contents)?;
-    }
-    if arm.moves_packages() {
-        crate::split::strip(lab, &BTreeSet::from([prepared.out.clone()]))?;
-    }
+    runpath::shrink_files(lab, &prepared.out, &files_under(&out)?, replace_contents)?;
+    crate::split::strip(lab, &BTreeSet::from([prepared.out.clone()]))?;
     Ok(())
 }
 
@@ -351,10 +238,10 @@ const SHOW_TEST_LOGS: &str = concat!(
     r#"exit $status' EXIT"#,
 );
 
-/// Runs the package's own tests, against the installed package with no `/usr` in arms B and C.
+/// Runs the package's own tests, against the installed package with no `/usr` unless they
+/// compile as they run.
 fn run_check(
     lab: &Lab,
-    arm: Arm,
     package: &Package,
     prepared: &Prepared,
     built: &Built,
@@ -378,11 +265,7 @@ fn run_check(
             format!("cd /build/src\n{command}"),
         ]
     };
-    let log = lab
-        .work
-        .join("logs")
-        .join(arm.name())
-        .join(format!("{}.check.log", package.id));
+    let log = chain::logs_dir(lab).join(format!("{}.check.log", package.id));
     if let Some(command) = &package.check_build {
         let outcome = sandbox::run(
             lab,
@@ -401,7 +284,7 @@ fn run_check(
                 log: log.clone(),
                 env: prepared.env.clone(),
                 limits: prepared.limits,
-                links: prepared.links.clone(),
+                links: Vec::new(),
             },
         )?;
         if outcome.status != Status::Passed {
@@ -415,7 +298,7 @@ fn run_check(
     let Some(command) = &package.check else {
         return Ok(None);
     };
-    let in_view = arm == Arm::A || package.check_in_view;
+    let in_view = package.check_in_view;
     if !in_view {
         // Depfiles name headers in /usr, which isn't there, and make would rebuild from them.
         let blank = "find . \\( -name '*.Po' -o -name '*.Plo' \\) -type f -exec sh -c \
@@ -432,7 +315,7 @@ fn run_check(
                 log: log.with_extension("blank.log"),
                 env: prepared.env.clone(),
                 limits: prepared.limits,
-                links: prepared.links.clone(),
+                links: Vec::new(),
             },
         )?;
         if outcome.status != Status::Passed {
@@ -446,8 +329,8 @@ fn run_check(
     {
         *path = format!("{}:{path}", extra_paths.join(":"));
     }
-    let (view, links) = if in_view {
-        (Some(prepared.view.clone()), prepared.links.clone())
+    let view = if in_view {
+        prepared.view.clone()
     } else {
         let mut bins = vec![format!("{}/bin", prepared.out.inside())];
         bins.extend(extra_paths);
@@ -458,7 +341,7 @@ fn run_check(
         }
         env.insert("PATH".to_owned(), bins.join(":"));
         env.remove("LAB_LINK_FLAGS");
-        (Some(tools_only(prepared)?), Vec::new())
+        tools_only(prepared)?
     };
     let outcome = sandbox::run(
         lab,
@@ -473,12 +356,12 @@ fn run_check(
                 .cloned()
                 .collect(),
             output: None,
-            view,
+            view: Some(view),
             build_dir: prepared.build_dir.clone(),
             log: log.clone(),
             env,
             limits: prepared.limits,
-            links,
+            links: Vec::new(),
         },
     )?;
     Ok(Some(Check {
@@ -516,10 +399,7 @@ fn tools_only(prepared: &Prepared) -> Result<View, String> {
         let target = fs::read_link(entry.path()).map_err(with_path(&entry.path()))?;
         symlink(target, dir.join("bin").join(entry.file_name())).map_err(with_path(&dir))?;
     }
-    Ok(View {
-        dir,
-        mount: prepared.view.mount.clone(),
-    })
+    Ok(View { dir })
 }
 
 /// One smoke command or test run of a package, from `distro build --check`.
@@ -550,17 +430,10 @@ pub fn check_packages(repository: &Path, ids: &[&str]) -> Result<Vec<Checked>, S
             checks.push(run_final(&lab, &seed, &built.paths[*id], &name, command)?);
         }
         if package.check.is_some()
-            && let Some(prepared) = chain::rebuild_one(
-                &lab,
-                repository,
-                package,
-                Arm::F,
-                &seed,
-                &mut sources,
-                &mut built,
-            )?
+            && let Some(prepared) =
+                chain::rebuild_one(&lab, repository, package, &seed, &mut sources, &mut built)?
         {
-            let tested = run_check(&lab, Arm::F, package, &prepared, &built);
+            let tested = run_check(&lab, package, &prepared, &built);
             chain::remove(&prepared.build_dir)?;
             chain::remove(&lab.on_host(&prepared.out))?;
             checks.extend(tested?);
@@ -588,7 +461,7 @@ pub(crate) fn build_some(
 ) -> Result<(Built, StorePath, Vec<Package>), String> {
     let files = crate::graph::system_recipes(repository)?;
     let recipes = crate::graph::names_of(&files);
-    let mut built = chain::build(lab, repository, "toolchain.toml", Arm::F)?;
+    let mut built = chain::build(lab, repository, "toolchain.toml")?;
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let loaded = match wanted {
@@ -603,15 +476,7 @@ pub(crate) fn build_some(
     };
     let loaded = chain::in_order(loaded, |id| built.paths.contains_key(id))?;
     let packages = carry_on(loaded, |package| {
-        build_and_finish(
-            lab,
-            repository,
-            package,
-            Arm::F,
-            &seed,
-            &mut sources,
-            &mut built,
-        )
+        build_and_finish(lab, repository, package, &seed, &mut sources, &mut built)
     })?;
     Ok((built, seed, packages))
 }
@@ -661,21 +526,19 @@ pub(crate) fn build_and_finish(
     lab: &Lab,
     repository: &Path,
     package: &Package,
-    arm: Arm,
     seed: &StorePath,
     sources: &mut chain::Sources,
     built: &mut Built,
 ) -> Result<(), String> {
-    if let Some(prepared) = chain::build_one(lab, repository, package, arm, seed, sources, built)? {
+    if let Some(prepared) = chain::build_one(lab, repository, package, seed, sources, built)? {
         chain::remove(&prepared.build_dir)?;
         fix_up(
             lab,
-            arm,
             &prepared,
             &mut Fixups::default(),
             &mut Leaks::default(),
         )?;
-        chain::finish(lab, package, arm, &prepared.out, built)?;
+        chain::finish(lab, package, &prepared.out, built)?;
     }
     Ok(())
 }
@@ -770,15 +633,6 @@ mod tests {
         assert_eq!(needed(&["jq"]), BTreeSet::from(["jq".into()]));
     }
 
-    #[test]
-    fn only_a_whole_usr_is_rewritten() {
-        let text = "prefix=/usr\nlib=/usr/lib\nother=/usr2 /a/usr/b fusr/x\n";
-        assert_eq!(
-            rewrite_usr(text, "/store/x"),
-            "prefix=/store/x\nlib=/store/x/lib\nother=/usr2 /a/usr/b fusr/x\n"
-        );
-    }
-
     fn view_with(dir: &Path, relative: &str, target: &str) {
         let at = dir.join(relative);
         fs::create_dir_all(at.parent().unwrap()).unwrap();
@@ -792,7 +646,6 @@ mod tests {
         view_with(&view, "bin/python3", "/store/aaa/bin/python3");
         let out = dir.path().join("out");
         fs::create_dir_all(&out).unwrap();
-        let usr_like = vec!["/usr".to_owned()];
         let mut leaks = Leaks::default();
         for (before, after) in [
             (
@@ -806,7 +659,7 @@ mod tests {
         ] {
             let file = out.join("script");
             fs::write(&file, before).unwrap();
-            assert!(fix_shebang(&file, &usr_like, &out, "/store/self", &view, &mut leaks).unwrap());
+            assert!(fix_shebang(&file, &out, "/store/self", &view, &mut leaks).unwrap());
             assert_eq!(fs::read_to_string(&file).unwrap(), after);
         }
     }
@@ -818,81 +671,9 @@ mod tests {
         fs::create_dir_all(&view).unwrap();
         let file = dir.path().join("script");
         fs::write(&file, "#!/usr/bin/nothing\n").unwrap();
-        let usr_like = vec!["/usr".to_owned()];
         let mut leaks = Leaks::default();
 
-        assert!(!fix_shebang(&file, &usr_like, dir.path(), "/store/s", &view, &mut leaks).unwrap());
+        assert!(!fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap());
         assert_eq!(leaks.unresolved_shebangs, 1);
-    }
-
-    #[test]
-    fn sentinel_paths_become_each_files_owner_at_the_same_length() {
-        let dir = tempfile::tempdir().unwrap();
-        let sentinel = StorePath::derive("sentinel", &[b"s"]);
-        let owner = StorePath::derive("dep", &[b"d"]);
-        let view = dir.path().join("view");
-        view_with(
-            &view,
-            "lib/libz.so",
-            &format!("{}/lib/libz.so", owner.inside()),
-        );
-        let out = dir.path().join("out");
-        fs::create_dir_all(&out).unwrap();
-        let text = format!("x{}/lib/libz.so\0y", sentinel.inside());
-        fs::write(out.join("binary"), &text).unwrap();
-        let (mut fixups, mut leaks) = (Fixups::default(), Leaks::default());
-
-        rewrite_sentinel(&out, &sentinel, &view, &mut fixups, &mut leaks).unwrap();
-
-        let result = fs::read(out.join("binary")).unwrap();
-        assert_eq!(
-            result,
-            format!("x{}/lib/libz.so\0y", owner.inside()).into_bytes()
-        );
-        assert_eq!(fixups.sentinel_rewritten, 1);
-    }
-
-    #[test]
-    fn a_path_going_past_the_view_keeps_what_comes_after() {
-        let dir = tempfile::tempdir().unwrap();
-        let sentinel = StorePath::derive("sentinel", &[b"s"]);
-        let owner = StorePath::derive("dep", &[b"d"]);
-        let view = dir.path().join("view");
-        view_with(
-            &view,
-            "lib/python",
-            &format!("{}/lib/python", owner.inside()),
-        );
-        let out = dir.path().join("out");
-        fs::create_dir_all(&out).unwrap();
-        fs::write(
-            out.join("f"),
-            format!("{}/lib/python/site/x.py", sentinel.inside()),
-        )
-        .unwrap();
-        let (mut fixups, mut leaks) = (Fixups::default(), Leaks::default());
-
-        rewrite_sentinel(&out, &sentinel, &view, &mut fixups, &mut leaks).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(out.join("f")).unwrap(),
-            format!("{}/lib/python/site/x.py", owner.inside())
-        );
-    }
-
-    #[test]
-    fn a_view_directory_with_no_single_owner_is_a_leak() {
-        let dir = tempfile::tempdir().unwrap();
-        let sentinel = StorePath::derive("sentinel", &[b"s"]);
-        let view = dir.path().join("view");
-        fs::create_dir_all(view.join("lib")).unwrap();
-        let out = dir.path().join("out");
-        fs::create_dir_all(&out).unwrap();
-        fs::write(out.join("f"), format!("-L{}/lib\n", sentinel.inside())).unwrap();
-        let (mut fixups, mut leaks) = (Fixups::default(), Leaks::default());
-
-        rewrite_sentinel(&out, &sentinel, &view, &mut fixups, &mut leaks).unwrap();
-
-        assert_eq!(leaks.sentinel_directories, 1);
     }
 }

@@ -1,4 +1,4 @@
-//! Building a chain of packages from recipes, under one arm of the experiment.
+//! Building a chain of packages from recipes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -13,61 +13,23 @@ use memchr::memmem;
 use serde::Deserialize;
 
 use crate::requires;
-use crate::sandbox::{self, Identity, Limits, Mount, Status, Step, View};
+use crate::sandbox::{self, Identity, Limits, Status, Step, View};
 use crate::seed::{self, run as run_host, sha256_of};
 use crate::split;
 use crate::store::{self, Lab, StorePath, with_path};
 use crate::view;
 
-/// One way of building: an arm of the experiments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Arm {
-    A,
-    B,
-    C,
-    /// B, with outputs moved to paths named by their contents, and `DT_RUNPATH`.
-    D,
-    /// D with the toolchain's own `DT_RPATH`.
-    E,
-    /// E, with each package split into outputs as it's built.
-    F,
-}
+/// The name of the experiment arm every package used to be built under. It's in non-boot
+/// packages' keys and records, the sandbox's `LAB_ARM` and the logs' directory, and is kept
+/// so existing builds stay valid and their logs stay where they are.
+pub(crate) const ARM: &str = "f";
 
-impl Arm {
-    pub fn parse(text: &str) -> Result<Self, String> {
-        match text {
-            "a" => Ok(Self::A),
-            "b" => Ok(Self::B),
-            "c" => Ok(Self::C),
-            "d" => Ok(Self::D),
-            "e" => Ok(Self::E),
-            "f" => Ok(Self::F),
-            other => Err(format!(
-                "there's no arm `{other}`, only a, b, c, d, e and f"
-            )),
-        }
-    }
+/// What boot packages have in their keys in place of an arm, kept for the same reason.
+const BOOT_ARM: &str = "boot";
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::A => "a",
-            Self::B => "b",
-            Self::C => "c",
-            Self::D => "d",
-            Self::E => "e",
-            Self::F => "f",
-        }
-    }
-
-    /// Whether this arm moves packages to paths named by their contents, and strips them.
-    pub fn moves_packages(self) -> bool {
-        matches!(self, Self::D | Self::E | Self::F)
-    }
-
-    /// Whether packages become several outputs.
-    pub fn splits_outputs(self) -> bool {
-        self == Self::F
-    }
+/// Where build logs go.
+pub(crate) fn logs_dir(lab: &Lab) -> PathBuf {
+    lab.work.join("logs").join(ARM)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -326,6 +288,8 @@ pub(crate) struct Package {
     script: String,
     #[serde(default = "yes")]
     wrap: bool,
+    /// Asked a past experiment not to patch binaries after install. It does nothing now, but
+    /// it's still in the key so packages that set it aren't rebuilt.
     #[serde(default = "yes")]
     fixup: bool,
     /// How long the build may go without printing anything, such as `3h`, for one that works
@@ -345,7 +309,7 @@ pub(crate) struct Package {
     pub(crate) check_build: Option<String>,
     #[serde(default)]
     pub(crate) check: Option<String>,
-    /// The package's tests compile as they run, so they need a whole view in every arm.
+    /// The package's tests compile as they run, so they need a whole view.
     #[serde(default)]
     pub(crate) check_in_view: bool,
     /// Tools only the tests use, which don't count towards what the package is built from.
@@ -369,7 +333,7 @@ const CORE_TOOLS: [&str; 11] = [
 ];
 
 impl Package {
-    /// Whether this package is built once for every arm from the seed.
+    /// Whether this package is built from the seed, before the toolchain.
     pub(crate) fn is_boot(&self) -> bool {
         self.scope == Scope::Boot
     }
@@ -603,7 +567,6 @@ pub struct Built {
     /// Where each package was built, which is where its record is kept.
     pub temporary: BTreeMap<String, StorePath>,
     pub closures: BTreeMap<String, BTreeSet<StorePath>>,
-    pub views: Views,
     /// What each package built here was built with and brings along, for its dependents.
     pub providers: BTreeMap<String, requires::Provider>,
     /// What each package brings into a dependent's view, once worked out.
@@ -648,101 +611,6 @@ impl Built {
             .get(id)
             .cloned()
             .unwrap_or_else(|| self.paths[id].hash().to_owned())
-    }
-}
-
-/// Which of its dependencies a package sees in its view.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Views {
-    /// What its recipe lists.
-    #[default]
-    Declared,
-    /// Everything its dependencies pulled in too.
-    Closure,
-    /// What it lists, less anything another dependency already pulled in.
-    Reduced,
-}
-
-impl Views {
-    pub fn parse(name: &str) -> Result<Self, String> {
-        match name {
-            "declared" => Ok(Self::Declared),
-            "closure" => Ok(Self::Closure),
-            "reduced" => Ok(Self::Reduced),
-            other => Err(format!("nothing is called a `{other}` view")),
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Declared => "declared",
-            Self::Closure => "closure",
-            Self::Reduced => "reduced",
-        }
-    }
-}
-
-/// Packages that exist only to bootstrap, and would clash with their final versions in a view.
-pub(crate) const BOOTSTRAP_ONLY: [&str; 5] = ["seed", "wrapper", "m4", "bison", "python"];
-
-/// `deps` as `built.views` narrows or widens them. Boot packages keep what they list.
-fn in_views(mut deps: Vec<Dep>, package: &Package, built: &Built) -> Result<Vec<Dep>, String> {
-    if package.is_boot() {
-        return Ok(deps);
-    }
-    let reaches = |from: &Dep, to: &StorePath| {
-        built
-            .closures
-            .get(&from.id)
-            .is_some_and(|closure| closure.contains(to))
-    };
-    match built.views {
-        Views::Declared => Ok(deps),
-        Views::Reduced => {
-            let mut listed = BTreeSet::new();
-            for spec in package.deps.iter().chain(&package.extra_deps) {
-                listed.insert(spec.resolve()?.id);
-            }
-            let covered: BTreeSet<String> = deps
-                .iter()
-                .filter(|dep| listed.contains(&dep.id))
-                .filter(|dep| {
-                    built.paths.get(&dep.id).is_some_and(|path| {
-                        deps.iter()
-                            .any(|other| other.id != dep.id && reaches(other, path))
-                    })
-                })
-                .map(|dep| dep.id.clone())
-                .collect();
-            for dep in &mut deps {
-                dep.view &= !covered.contains(&dep.id);
-            }
-            Ok(deps)
-        }
-        Views::Closure => {
-            let have: BTreeSet<String> = deps.iter().map(|dep| dep.id.clone()).collect();
-            let extra: Vec<Dep> = built
-                .paths
-                .iter()
-                .filter(|(id, _)| !have.contains(*id))
-                .filter(|(id, _)| {
-                    !BOOTSTRAP_ONLY.contains(&id.as_str())
-                        && !id.ends_with("-stage1")
-                        && !id.starts_with("probe-")
-                })
-                .filter(|(_, path)| deps.iter().any(|dep| reaches(dep, path)))
-                .map(|(id, _)| Dep {
-                    id: id.clone(),
-                    view: true,
-                    rpath: false,
-                    skip: Vec::new(),
-                    propagate: Propagate::All,
-                    exclude: Vec::new(),
-                })
-                .collect();
-            deps.extend(extra);
-            Ok(deps)
-        }
     }
 }
 
@@ -1713,33 +1581,9 @@ fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|_| format!("`{relative}` isn't text"))
 }
 
-/// Whether a package's arm matters: those built once for every arm share a path.
-fn arm_key(package: &Package, arm: Arm) -> &'static str {
-    if package.scope == Scope::Boot {
-        "boot"
-    } else {
-        arm.name()
-    }
-}
-
-/// What the arm does after a package is installed: only arm A patches binaries afterwards.
-fn fixup_script(package: &Package, arm: Arm, rpath: &str, interpreter: &str) -> String {
-    if arm != Arm::A || package.scope == Scope::Boot || !package.fixup {
-        return String::new();
-    }
-    format!(
-        r#"
-find "$OUT" -type f | while read -r file; do
-    case "$file" in *.o|*.a) continue ;; esac
-    [ "$(head -c 4 "$file" | od -An -c | tr -d ' ')" = '177ELF' ] || continue
-    chmod u+w "$file"
-    $LAB_SEED/bin/patchelf --set-rpath '{rpath}' "$file"
-    if $LAB_SEED/bin/readelf -l "$file" | grep -q 'program interpreter'; then
-        $LAB_SEED/bin/patchelf --set-interpreter '{interpreter}' "$file"
-    fi
-done
-"#
-    )
+/// What stands for the arm in a package's key and record: boot packages had one of their own.
+fn arm_key(package: &Package) -> &'static str {
+    if package.is_boot() { BOOT_ARM } else { ARM }
 }
 
 pub(crate) fn built_from_seed(seed: &StorePath) -> Built {
@@ -1750,41 +1594,36 @@ pub(crate) fn built_from_seed(seed: &StorePath) -> Built {
 }
 
 /// Whether `package` is moved to a path named by its contents once it's built.
-pub(crate) fn content_addressed(package: &Package, arm: Arm) -> bool {
-    arm.moves_packages() && package.scope != Scope::Boot
+pub(crate) fn content_addressed(package: &Package) -> bool {
+    !package.is_boot()
 }
 
-/// Moves a finished package to its content address, if the arm does that, so what's built next
-/// is keyed on what this one really produced.
+/// Moves a finished package to its content addresses, so what's built next is keyed on what this
+/// one really produced. Boot packages stay where they were built.
 pub(crate) fn finish(
     lab: &Lab,
     package: &Package,
-    arm: Arm,
     out: &StorePath,
     built: &mut Built,
 ) -> Result<(), String> {
-    if !content_addressed(package, arm) {
+    if !content_addressed(package) {
         return Ok(());
     }
-    let (outputs, whole) = place_outputs(lab, package, arm, out)?;
+    let (outputs, whole) = place_outputs(lab, package, out)?;
     for path in outputs.values() {
         references_of(lab, path)?;
     }
     if let Some(reason) = whole {
-        note_whole(lab, arm, package, &reason)?;
+        note_whole(lab, package, &reason)?;
     }
-    let record = if arm.splits_outputs() {
-        outputs
-            .iter()
-            .map(|(class, path)| format!("{}={}", class.name(), path.hash()))
-            .collect::<Vec<_>>()
-            .join(" ")
-    } else {
-        outputs[&split::Class::Out].hash().to_owned()
-    };
+    let record = outputs
+        .iter()
+        .map(|(class, path)| format!("{}={}", class.name(), path.hash()))
+        .collect::<Vec<_>>()
+        .join(" ");
     let done = lab.work.join("done").join(out.hash());
     fs::write(&done, &record).map_err(with_path(&done))?;
-    remember_outputs(built, package, arm, &record);
+    remember_outputs(built, package, &record);
     Ok(())
 }
 
@@ -1792,13 +1631,8 @@ pub(crate) fn finish(
 pub(crate) fn place_outputs(
     lab: &Lab,
     package: &Package,
-    arm: Arm,
     out: &StorePath,
 ) -> Result<(split::Outputs, Option<String>), String> {
-    if !arm.splits_outputs() {
-        let address = crate::content::address(lab, out)?;
-        return Ok((split::Outputs::from([(split::Class::Out, address)]), None));
-    }
     if package.whole {
         split::keep_whole(lab, out, "the recipe asks".to_owned())
     } else {
@@ -1807,13 +1641,7 @@ pub(crate) fn place_outputs(
 }
 
 /// Sets where a package is from what its record says.
-fn remember_outputs(built: &mut Built, package: &Package, arm: Arm, record: &str) {
-    if !arm.splits_outputs() {
-        built
-            .paths
-            .insert(package.id.clone(), StorePath::from_hash(record));
-        return;
-    }
+fn remember_outputs(built: &mut Built, package: &Package, record: &str) {
     let outputs: split::Outputs = record
         .split(' ')
         .filter_map(|part| part.split_once('='))
@@ -1826,8 +1654,8 @@ fn remember_outputs(built: &mut Built, package: &Package, arm: Arm, record: &str
 }
 
 /// Records that a package stayed whole, and why.
-fn note_whole(lab: &Lab, arm: Arm, package: &Package, reason: &str) -> Result<(), String> {
-    let path = lab.work.join("logs").join(arm.name()).join("whole.txt");
+fn note_whole(lab: &Lab, package: &Package, reason: &str) -> Result<(), String> {
+    let path = logs_dir(lab).join("whole.txt");
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1836,8 +1664,8 @@ fn note_whole(lab: &Lab, arm: Arm, package: &Package, reason: &str) -> Result<()
     writeln!(file, "{} {reason}", package.id).map_err(with_path(&path))
 }
 
-/// Builds every package of `recipes` for `arm`, reusing what's already built.
-pub fn build(lab: &Lab, repository: &Path, recipes: &str, arm: Arm) -> Result<Built, String> {
+/// Builds every package of `recipes`, reusing what's already built.
+pub fn build(lab: &Lab, repository: &Path, recipes: &str) -> Result<Built, String> {
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut built = built_from_seed(&seed);
@@ -1845,17 +1673,11 @@ pub fn build(lab: &Lab, repository: &Path, recipes: &str, arm: Arm) -> Result<Bu
         built.paths.contains_key(id)
     })?;
     for package in &packages {
-        if let Some(prepared) = build_one(
-            lab,
-            repository,
-            package,
-            arm,
-            &seed,
-            &mut sources,
-            &mut built,
-        )? {
+        if let Some(prepared) =
+            build_one(lab, repository, package, &seed, &mut sources, &mut built)?
+        {
             remove(&prepared.build_dir)?;
-            finish(lab, package, arm, &prepared.out, &mut built)?;
+            finish(lab, package, &prepared.out, &mut built)?;
         }
     }
     Ok(built)
@@ -1868,7 +1690,6 @@ pub(crate) struct Prepared {
     pub(crate) closure: BTreeSet<StorePath>,
     pub(crate) view: View,
     pub(crate) env: BTreeMap<String, String>,
-    pub(crate) links: Vec<(String, String)>,
     pub(crate) limits: Limits,
     pub(crate) build_dir: PathBuf,
     pub(crate) dep_paths: Vec<StorePath>,
@@ -1885,13 +1706,12 @@ const TARGET: &str = "x86_64-linux-gnu";
 fn recipe_parts(
     repository: &Path,
     package: &Package,
-    arm: Arm,
     source_hashes: &[&str],
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut parts: Vec<Vec<u8>> = vec![
         BUILD_RULES.as_bytes().to_vec(),
         TARGET.as_bytes().to_vec(),
-        arm_key(package, arm).as_bytes().to_vec(),
+        arm_key(package).as_bytes().to_vec(),
         // Whether it builds under /usr or its own prefix.
         format!("{:?}", package.scope).into_bytes(),
         package.id.as_bytes().to_vec(),
@@ -1963,7 +1783,6 @@ pub(crate) fn keys_of(
     lab: &Lab,
     repository: &Path,
     packages: Vec<Package>,
-    arm: Arm,
 ) -> Result<BTreeMap<String, String>, String> {
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
@@ -1976,7 +1795,7 @@ pub(crate) fn keys_of(
             .map(|source| sources.hash_of(lab, source))
             .collect::<Result<Vec<String>, String>>()?;
         let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
-        let recipe = recipe_parts(repository, package, arm, &hashes)?;
+        let recipe = recipe_parts(repository, package, &hashes)?;
         let deps = package.all_deps()?;
         let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
         keys.insert(package.id.clone(), key.hash().to_owned());
@@ -1990,12 +1809,11 @@ pub(crate) fn build_one(
     lab: &Lab,
     repository: &Path,
     package: &Package,
-    arm: Arm,
     seed: &StorePath,
     sources: &mut Sources,
     built: &mut Built,
 ) -> Result<Option<Prepared>, String> {
-    build_package(lab, repository, package, arm, seed, sources, built, false)
+    build_package(lab, repository, package, seed, sources, built, false)
 }
 
 /// Builds `package` again even when it's built, at its temporary path, to run what only its build
@@ -2006,29 +1824,26 @@ pub(crate) fn rebuild_one(
     lab: &Lab,
     repository: &Path,
     package: &Package,
-    arm: Arm,
     seed: &StorePath,
     sources: &mut Sources,
     built: &mut Built,
 ) -> Result<Option<Prepared>, String> {
-    if !content_addressed(package, arm) {
+    if !content_addressed(package) {
         return Ok(None);
     }
-    build_package(lab, repository, package, arm, seed, sources, built, true)
+    build_package(lab, repository, package, seed, sources, built, true)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_package(
     lab: &Lab,
     repository: &Path,
     package: &Package,
-    arm: Arm,
     seed: &StorePath,
     sources: &mut Sources,
     built: &mut Built,
     again: bool,
 ) -> Result<Option<Prepared>, String> {
-    let listed = in_views(package.all_deps()?, package, built)?;
+    let listed = package.all_deps()?;
     let deps = with_requirements(lab, package, &listed, built)?;
     let mut closure = BTreeSet::from([seed.clone()]);
     for dep in &deps {
@@ -2043,7 +1858,7 @@ fn build_package(
 
     let fetched = fetch_all(sources, lab, package)?;
     let source_hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
-    let recipe = recipe_parts(repository, package, arm, &source_hashes)?;
+    let recipe = recipe_parts(repository, package, &source_hashes)?;
     let out = package_key("build", &recipe, &deps, |dep| built.reference(&dep.id))
         .named(&package.store_name());
     let unresolved = package_key("unresolved", &recipe, &listed, |dep| {
@@ -2057,7 +1872,7 @@ fn build_package(
         text: serde_json::json!({
             "kind": "package",
             "id": package.id,
-            "arm": arm_key(package, arm),
+            "arm": arm_key(package),
             "script": package.script,
             "sources": source_hashes,
             "deps": deps
@@ -2093,13 +1908,13 @@ fn build_package(
     let done_dir = lab.work.join("done");
     let done = done_dir.join(out.hash());
     if done.exists() && !again {
-        if !content_addressed(package, arm) {
+        if !content_addressed(package) {
             return Ok(None);
         }
         let address = fs::read_to_string(&done).map_err(with_path(&done))?;
         // An empty record means the build stopped before the package was moved.
         if !address.is_empty() {
-            remember_outputs(built, package, arm, &address);
+            remember_outputs(built, package, &address);
             return Ok(None);
         }
     }
@@ -2149,23 +1964,14 @@ fn build_package(
         .collect();
     view::compose_skipping(lab, &view_dir, &in_view)?;
 
-    let usr_prefix = package.scope != Scope::Runtime || arm == Arm::A;
+    let usr_prefix = package.scope != Scope::Runtime;
     let inside = out.inside();
     let (prefix, dest) = if usr_prefix {
         ("/usr".to_owned(), inside.clone())
     } else {
         (inside.clone(), String::new())
     };
-
-    let mount = if arm == Arm::C && package.scope != Scope::Boot {
-        Mount::Sentinel(StorePath::derive("sentinel", &[out.hash().as_bytes()]))
-    } else {
-        Mount::Usr
-    };
-    let real_bin = match &mount {
-        Mount::Usr => "/usr/bin".to_owned(),
-        Mount::Sentinel(path) => format!("{}/bin", path.inside()),
-    };
+    let real_bin = "/usr/bin";
 
     let mut rpath_dirs = vec![format!("{inside}/lib")];
     let mut interpreter = format!("{}/{LOADER}", seed.inside());
@@ -2185,17 +1991,15 @@ fn build_package(
             interpreter = format!("{}/{LOADER}", path.inside());
         }
     }
-    let rpath = rpath_dirs.join(":");
 
-    let wrapped = package.wrap && (package.scope == Scope::Boot || arm != Arm::A);
     let mut env = BTreeMap::from([
         ("OUT".to_owned(), inside),
         ("PREFIX".to_owned(), prefix),
         ("DEST".to_owned(), dest),
         ("NPROC".to_owned(), Identity::current().jobs.to_string()),
-        ("LAB_ARM".to_owned(), arm.name().to_owned()),
+        ("LAB_ARM".to_owned(), ARM.to_owned()),
         ("LAB_SEED".to_owned(), seed.inside()),
-        ("LAB_REAL_BIN".to_owned(), real_bin.clone()),
+        ("LAB_REAL_BIN".to_owned(), real_bin.to_owned()),
     ]);
     for dep in &deps {
         let name = dep.id.replace('-', "_");
@@ -2205,14 +2009,14 @@ fn build_package(
             built.library_path(&dep.id).inside(),
         );
     }
-    let path_var = if wrapped {
+    let path_var = if package.wrap {
         let wrapper = built
             .paths
             .get("wrapper")
             .ok_or("nothing built the wrapper")?;
         env.insert(
             "LAB_LINK_FLAGS".to_owned(),
-            link_flags(&interpreter, arm, &rpath_dirs),
+            link_flags(&interpreter, &rpath_dirs),
         );
         if let Some(gcc) = deps.iter().find(|dep| dep.id == "gcc") {
             env.insert(
@@ -2222,22 +2026,16 @@ fn build_package(
         }
         format!("{}/bin:{real_bin}", wrapper.inside())
     } else {
-        real_bin
+        real_bin.to_owned()
     };
     env.insert("PATH".to_owned(), path_var);
 
     let script = format!(
         "cd /build/src\n{}\ncd /build\n\
-         if [ -d \"$OUT/usr\" ]; then cp -a \"$OUT/usr/.\" \"$OUT/\"; rm -rf \"$OUT/usr\"; fi\n{}",
+         if [ -d \"$OUT/usr\" ]; then cp -a \"$OUT/usr/.\" \"$OUT/\"; rm -rf \"$OUT/usr\"; fi\n",
         package.script,
-        fixup_script(package, arm, &rpath, &interpreter),
     );
 
-    let links = if arm == Arm::A && package.scope != Scope::Boot {
-        vec![("/usr/lib".to_owned(), "/lib64".to_owned())]
-    } else {
-        Vec::new()
-    };
     let limits = match &package.silent_for {
         Some(text) => Limits {
             silence: duration(text).map_err(|e| format!("`{}`: silent_for: {e}", package.id))?,
@@ -2245,15 +2043,8 @@ fn build_package(
         },
         None => Limits::DEFAULT,
     };
-    let log = lab
-        .work
-        .join("logs")
-        .join(arm.name())
-        .join(format!("{}.log", package.id));
-    let view = View {
-        dir: view_dir,
-        mount,
-    };
+    let log = logs_dir(lab).join(format!("{}.log", package.id));
+    let view = View { dir: view_dir };
     let outcome = sandbox::run_shown(
         lab,
         &Step {
@@ -2266,7 +2057,7 @@ fn build_package(
             log: log.clone(),
             env: env.clone(),
             limits,
-            links: links.clone(),
+            links: Vec::new(),
         },
         Some(("build", "built")),
     )?;
@@ -2303,7 +2094,6 @@ fn build_package(
         closure,
         view,
         env,
-        links,
         limits,
         build_dir,
         dep_paths: deps
@@ -2323,15 +2113,12 @@ fn compile_flags(gcc: &StorePath) -> String {
 /// What the compiler wrapper adds when it links: the interpreter and run paths a program needs to
 /// run from the store, and relocations made read-only once they're resolved at start (`relro`,
 /// `now`), so they can't be overwritten later.
-fn link_flags(interpreter: &str, arm: Arm, rpath_dirs: &[String]) -> String {
+fn link_flags(interpreter: &str, rpath_dirs: &[String]) -> String {
     let mut flags = vec![
         format!("-Wl,--dynamic-linker={interpreter}"),
         "-Wl,-z,relro".to_owned(),
         "-Wl,-z,now".to_owned(),
     ];
-    if arm == Arm::D {
-        flags.push("-Wl,--enable-new-dtags".to_owned());
-    }
     flags.extend(rpath_dirs.iter().map(|dir| format!("-Wl,-rpath,{dir}")));
     flags.join(" ")
 }
@@ -2550,97 +2337,6 @@ fn duration(text: &str) -> Result<std::time::Duration, String> {
 }
 
 #[cfg(test)]
-mod view_tests {
-    use super::*;
-
-    fn store(tag: u8) -> StorePath {
-        StorePath::derive("test", &[&[tag]])
-    }
-
-    fn dep(id: &str) -> Dep {
-        Dep {
-            id: id.to_owned(),
-            view: true,
-            rpath: true,
-            skip: Vec::new(),
-            propagate: Propagate::All,
-            exclude: Vec::new(),
-        }
-    }
-
-    fn package(listed: &[&str]) -> Package {
-        toml::from_str::<Recipes>(&format!(
-            "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\nextra_deps = [{}]\n",
-            listed
-                .iter()
-                .map(|id| format!("\"{id}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-        .unwrap()
-        .package
-        .remove(0)
-    }
-
-    /// `lib` depends on `base`, and `tool` on nothing.
-    fn built(views: Views) -> Built {
-        let mut built = Built {
-            views,
-            ..Built::default()
-        };
-        for (id, tag) in [("base", 1), ("lib", 2), ("tool", 3), ("m4", 4)] {
-            built.paths.insert(id.to_owned(), store(tag));
-            built.closures.insert(id.to_owned(), BTreeSet::new());
-        }
-        built
-            .closures
-            .insert("lib".to_owned(), BTreeSet::from([store(1), store(4)]));
-        built
-    }
-
-    fn shown(deps: &[Dep]) -> Vec<(String, bool)> {
-        deps.iter().map(|dep| (dep.id.clone(), dep.view)).collect()
-    }
-
-    #[test]
-    fn declared_views_are_left_alone() {
-        let deps = vec![dep("lib")];
-        let result = in_views(deps, &package(&["lib"]), &built(Views::Declared)).unwrap();
-        assert_eq!(shown(&result), [("lib".to_owned(), true)]);
-    }
-
-    #[test]
-    fn a_reduced_view_drops_what_another_dependency_pulled_in() {
-        let deps = vec![dep("lib"), dep("base"), dep("tool")];
-        let result = in_views(
-            deps,
-            &package(&["lib", "base", "tool"]),
-            &built(Views::Reduced),
-        )
-        .unwrap();
-        assert_eq!(
-            shown(&result),
-            [
-                ("lib".to_owned(), true),
-                ("base".to_owned(), false),
-                ("tool".to_owned(), true)
-            ]
-        );
-    }
-
-    #[test]
-    fn a_closure_view_adds_what_dependencies_pulled_in_but_no_bootstrap_tools() {
-        let result =
-            in_views(vec![dep("lib")], &package(&["lib"]), &built(Views::Closure)).unwrap();
-        assert_eq!(
-            shown(&result),
-            [("lib".to_owned(), true), ("base".to_owned(), true)]
-        );
-        assert!(!result[1].rpath);
-    }
-}
-
-#[cfg(test)]
 mod requirement_tests {
     use super::*;
 
@@ -2770,7 +2466,7 @@ mod requirement_tests {
 
     #[test]
     fn links_are_hardened_and_run_from_the_store() {
-        let flags = link_flags("/store/s/ld.so", Arm::C, &["/store/a/lib".to_owned()]);
+        let flags = link_flags("/store/s/ld.so", &["/store/a/lib".to_owned()]);
         assert_eq!(
             flags,
             "-Wl,--dynamic-linker=/store/s/ld.so -Wl,-z,relro -Wl,-z,now -Wl,-rpath,/store/a/lib"
@@ -2780,10 +2476,27 @@ mod requirement_tests {
     #[test]
     fn a_packages_scope_and_the_target_are_in_its_key() {
         let parts = |scope: &str| {
-            recipe_parts(Path::new("/nonexistent"), &consumer("", scope), Arm::C, &[]).unwrap()
+            recipe_parts(Path::new("/nonexistent"), &consumer("", scope), &[]).unwrap()
         };
         assert_ne!(parts("runtime"), parts("tool"));
         assert!(parts("runtime").contains(&TARGET.as_bytes().to_vec()));
+    }
+
+    /// Pinned so a change to what goes into a key can't slip through and rebuild everything.
+    #[test]
+    fn keys_stay_what_they_were() {
+        let key = |scope: &str| {
+            let mut package = consumer(r#""gtk", { id = "zlib", rpath = false }"#, scope);
+            package.version = Some("1.2.3".to_owned());
+            package.script = "make install\n".to_owned();
+            let recipe = recipe_parts(Path::new("/nonexistent"), &package, &["abc123"]).unwrap();
+            let deps = package.all_deps().unwrap();
+            package_key("build", &recipe, &deps, |dep| format!("ref-{}", dep.id))
+                .hash()
+                .to_owned()
+        };
+        assert_eq!(key("runtime"), "2ee582f30af5f62cdc843eb24a4f9f96de5d2ef0");
+        assert_eq!(key("boot"), "e7a577f1ef88b11d0975cfd85320eda65388bce9");
     }
 
     #[test]

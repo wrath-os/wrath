@@ -4,7 +4,6 @@ use std::process::ExitCode;
 use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
-use distro_build::chain::Arm;
 use distro_build::seed_pack;
 use distro_build::store::Lab;
 use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
@@ -611,15 +610,15 @@ fn main() -> ExitCode {
             DevCommand::Repro { packages } => {
                 let only: Vec<&str> = packages.iter().map(String::as_str).collect();
                 let (lab, repository) = builder(root);
-                distro_build::experiments::reproduce(&lab, &repository, Arm::F, &only)
+                distro_build::experiments::reproduce(&lab, &repository, &only)
                     .map(|()| ExitCode::SUCCESS)
             }
             DevCommand::Seed { command } => {
                 let (lab, repository) = builder(root);
                 match command {
-                    SeedCommand::Check => seed_pack::check_toolchain(&lab, &repository, Arm::F),
-                    SeedCommand::Pack => seed_pack::pack(&lab, &repository, Arm::F),
-                    SeedCommand::Addresses => seed_pack::addresses(&lab, &repository, Arm::F),
+                    SeedCommand::Check => seed_pack::check_toolchain(&lab, &repository),
+                    SeedCommand::Pack => seed_pack::pack(&lab, &repository),
+                    SeedCommand::Addresses => seed_pack::addresses(&lab, &repository),
                 }
                 .map(|()| ExitCode::SUCCESS)
             }

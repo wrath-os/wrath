@@ -3,12 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use memchr::memmem;
 use sha2::{Digest, Sha256};
 
-use crate::chain::{self, Arm, Built, Package, Prepared, Sources};
+use crate::chain::{self, Built, Package, Prepared, Sources};
 use crate::pilot::{self, Fixups, Leaks};
 use crate::sandbox::Identity;
 use crate::seed;
@@ -34,8 +34,8 @@ pub fn mask_references(bytes: &[u8]) -> Vec<u8> {
     masked
 }
 
-/// Each file of a tree with what identifies its contents, raw and with references masked.
-fn tree(dir: &Path) -> Result<BTreeMap<String, (String, String)>, String> {
+/// Each file of a tree with what identifies its contents, with references masked.
+fn tree(dir: &Path) -> Result<BTreeMap<String, String>, String> {
     let digest = |bytes: &[u8]| hex(&Sha256::digest(bytes));
     let mut found = BTreeMap::new();
     for file in pilot::files_under(dir)? {
@@ -53,11 +53,10 @@ fn tree(dir: &Path) -> Result<BTreeMap<String, (String, String)>, String> {
             let executable = meta.permissions().mode() & 0o111 != 0;
             (if executable { "exec" } else { "file" }, bytes)
         };
-        let raw = format!("{kind}:{}", digest(&bytes));
         let masked = format!("{kind}:{}", digest(&mask_references(&bytes)));
         // A path can be in a file's name too, as glib's gdb scripts are.
         let name = String::from_utf8_lossy(&mask_references(relative.as_bytes())).into_owned();
-        found.insert(name, (raw, masked));
+        found.insert(name, masked);
     }
     Ok(found)
 }
@@ -72,15 +71,10 @@ pub(crate) fn all_packages(lab: &Lab, repository: &Path) -> Result<Vec<Package>,
     chain::in_order(packages, |id| id == "seed")
 }
 
-fn fix_up_if_needed(
-    lab: &Lab,
-    arm: Arm,
-    package: &Package,
-    prepared: &Prepared,
-) -> Result<(), String> {
+fn fix_up_if_needed(lab: &Lab, package: &Package, prepared: &Prepared) -> Result<(), String> {
     if package.fixed_up() {
         let (mut fixups, mut leaks) = (Fixups::default(), Leaks::default());
-        pilot::fix_up(lab, arm, prepared, &mut fixups, &mut leaks)?;
+        pilot::fix_up(lab, prepared, &mut fixups, &mut leaks)?;
     }
     Ok(())
 }
@@ -112,62 +106,6 @@ impl Reproduction {
     }
 }
 
-/// Rebuilds one package as someone else, on a different number of cores, and compares.
-fn compare_rebuild(
-    lab: &Lab,
-    repository: &Path,
-    package: &Package,
-    arm: Arm,
-    seed: &StorePath,
-    sources: &mut Sources,
-    built: &mut Built,
-) -> Result<Reproduction, String> {
-    chain::build_one(lab, repository, package, arm, seed, sources, built)
-        .map_err(|e| format!("{}: not built: {e}", package.id))?;
-    if chain::content_addressed(package, arm) {
-        return compare_moved(lab, repository, package, arm, seed, sources, built);
-    }
-    let mut result = Reproduction::new(package);
-    let out = built.paths[&package.id].clone();
-    let dir = lab.on_host(&out);
-    let first = tree(&dir)?;
-    let done = lab.work.join("done").join(out.hash());
-    let keep = PathBuf::from(format!("{}.keep", dir.display()));
-    chain::remove(&keep)?;
-    fs::rename(&dir, &keep).map_err(with_path(&dir))?;
-    fs::remove_file(&done).map_err(with_path(&done))?;
-
-    let rebuilt =
-        elsewhere(|| chain::build_one(lab, repository, package, arm, seed, sources, built));
-    let outcome = match rebuilt {
-        Ok(Some(prepared)) => {
-            fix_up_if_needed(lab, arm, package, &prepared)?;
-            let second = tree(&dir)?;
-            let names: BTreeSet<&String> = first.keys().chain(second.keys()).collect();
-            for name in names {
-                if first.get(name) != second.get(name) {
-                    result.note_difference(lab, name, &keep, &dir);
-                }
-            }
-            if result.differing_files > 0 {
-                result.status = "differs".to_owned();
-            }
-            chain::remove(&prepared.build_dir)
-        }
-        Ok(None) => Err(format!("{}: unexpectedly already built", package.id)),
-        Err(message) => {
-            result.status = format!("rebuild failed: {message}");
-            Ok(())
-        }
-    };
-    // The first build goes back, so what depends on it sees what it was built with.
-    chain::remove(&dir)?;
-    fs::rename(&keep, &dir).map_err(with_path(&keep))?;
-    fs::write(&done, "").map_err(with_path(&done))?;
-    outcome?;
-    Ok(result)
-}
-
 /// Runs `build` with another uid, hostname and number of jobs.
 fn elsewhere<T>(build: impl FnOnce() -> T) -> T {
     Identity::set(Identity {
@@ -180,18 +118,19 @@ fn elsewhere<T>(build: impl FnOnce() -> T) -> T {
     result
 }
 
-/// Builds a package again that was moved to its content addresses. It reproduces if the second
-/// build lands on the same addresses. The first copy never moves, so what depends on it is
-/// undisturbed.
-fn compare_moved(
+/// Rebuilds one package as someone else, on a different number of cores, and compares. It
+/// reproduces if the second build lands on the same content addresses. The first copy never
+/// moves, so what depends on it is undisturbed.
+fn compare_rebuild(
     lab: &Lab,
     repository: &Path,
     package: &Package,
-    arm: Arm,
     seed: &StorePath,
     sources: &mut Sources,
     built: &mut Built,
 ) -> Result<Reproduction, String> {
+    chain::build_one(lab, repository, package, seed, sources, built)
+        .map_err(|e| format!("{}: not built: {e}", package.id))?;
     let mut result = Reproduction::new(package);
     let path = built.paths[&package.id].clone();
     let first = built
@@ -205,11 +144,10 @@ fn compare_moved(
         .join(built.temporary[&package.id].hash());
     let record = fs::read_to_string(&done).map_err(with_path(&done))?;
     fs::remove_file(&done).map_err(with_path(&done))?;
-    let rebuilt =
-        elsewhere(|| chain::build_one(lab, repository, package, arm, seed, sources, built));
+    let rebuilt = elsewhere(|| chain::build_one(lab, repository, package, seed, sources, built));
     let outcome = match rebuilt {
-        Ok(Some(prepared)) => fix_up_if_needed(lab, arm, package, &prepared)
-            .and_then(|()| chain::place_outputs(lab, package, arm, &prepared.out))
+        Ok(Some(prepared)) => fix_up_if_needed(lab, package, &prepared)
+            .and_then(|()| chain::place_outputs(lab, package, &prepared.out))
             .and_then(|(second, _)| {
                 record_differences(lab, &mut result, &first, &second)?;
                 chain::remove(&prepared.build_dir)
@@ -263,7 +201,7 @@ fn compare_files(
 ) -> Result<(), String> {
     let (one, two) = (tree(first)?, tree(second)?);
     for name in one.keys().chain(two.keys()).collect::<BTreeSet<_>>() {
-        if one.get(name).map(|(_, masked)| masked) != two.get(name).map(|(_, masked)| masked) {
+        if one.get(name) != two.get(name) {
             result.note_difference(lab, name, first, second);
         }
     }
@@ -283,8 +221,9 @@ fn keep_difference(lab: &Lab, id: &str, name: &str, first: &Path, second: &Path)
     }
 }
 
-/// Step 5: rebuilds every package and writes what differs to `results/reproduce-<arm>.md`.
-pub fn reproduce(lab: &Lab, repository: &Path, arm: Arm, only: &[&str]) -> Result<(), String> {
+/// Step 5: rebuilds every package and writes what differs to `results/reproduce-f.md`, named
+/// after the experiment arm it was first run under.
+pub fn reproduce(lab: &Lab, repository: &Path, only: &[&str]) -> Result<(), String> {
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut built = chain::built_from_seed(&seed);
@@ -296,22 +235,13 @@ pub fn reproduce(lab: &Lab, repository: &Path, arm: Arm, only: &[&str]) -> Resul
                 lab,
                 repository,
                 &package,
-                arm,
                 &seed,
                 &mut sources,
                 &mut built,
             )?;
             continue;
         }
-        let result = compare_rebuild(
-            lab,
-            repository,
-            &package,
-            arm,
-            &seed,
-            &mut sources,
-            &mut built,
-        );
+        let result = compare_rebuild(lab, repository, &package, &seed, &mut sources, &mut built);
         match result {
             Ok(result) => {
                 println!(
@@ -328,10 +258,9 @@ pub fn reproduce(lab: &Lab, repository: &Path, arm: Arm, only: &[&str]) -> Resul
     }
     let same = results.iter().filter(|r| r.status == "reproduced").count();
     let mut text = format!(
-        "# Reproduction, arm {}\n\nBuilt a second time with another uid, hostname and 5 jobs \
+        "# Reproduction\n\nBuilt a second time with another uid, hostname and 5 jobs \
          instead of 32.\n{same} of {} reproduced bit for bit.\n\n| Package | Result | Files | \
          Examples |\n|---|---|---|---|\n",
-        arm.name(),
         results.len()
     );
     for result in &results {
@@ -343,7 +272,7 @@ pub fn reproduce(lab: &Lab, repository: &Path, arm: Arm, only: &[&str]) -> Resul
             result.samples.join(" ")
         ));
     }
-    let path = repository.join(format!("results/reproduce-{}.md", arm.name()));
+    let path = repository.join(format!("results/reproduce-{}.md", chain::ARM));
     fs::write(&path, text).map_err(with_path(&path))
 }
 

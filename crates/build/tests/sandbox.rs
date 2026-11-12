@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use distro_build::sandbox::{self, Limits, Mount, Outcome, Status, Step, View};
+use distro_build::sandbox::{self, Limits, Outcome, Status, Step, View};
 use distro_build::seed;
 use distro_build::store::{Lab, StorePath};
 use distro_build::view;
@@ -30,12 +30,12 @@ impl Fixture {
         Self { lab, seed, dir }
     }
 
-    fn view(&self, mount: Mount) -> View {
+    fn view(&self) -> View {
         let dir = self.dir.path().join("view");
         if !dir.exists() {
             view::compose(&self.lab, &dir, &[("seed", &self.seed)]).unwrap();
         }
-        View { dir, mount }
+        View { dir }
     }
 
     fn build_dir(&self) -> PathBuf {
@@ -48,7 +48,7 @@ impl Fixture {
             argv: vec!["/bin/sh".to_owned(), "-euc".to_owned(), script.to_owned()],
             inputs: vec![self.seed.clone()],
             output: None,
-            view: Some(self.view(Mount::Usr)),
+            view: Some(self.view()),
             build_dir: self.build_dir(),
             log: self.dir.path().join("log"),
             env: BTreeMap::new(),
@@ -193,26 +193,6 @@ fn a_step_writes_only_its_output_and_build_directory() {
         fs::read_to_string(fixture.build_dir().join("here")).unwrap(),
         "here\n"
     );
-}
-
-#[test]
-fn a_sentinel_view_is_at_a_store_length_path_and_usr_links_to_it() {
-    let fixture = Fixture::new();
-    let sentinel = StorePath::derive("sentinel", &[b"view"]);
-    let mut step = fixture.step(&format!(
-        "readlink /usr; {}/bin/gcc --version",
-        sentinel.inside()
-    ));
-    step.view = Some(fixture.view(Mount::Sentinel(sentinel.clone())));
-
-    let (outcome, log) = fixture.run(&step);
-
-    assert_eq!(outcome.status, Status::Passed, "{log}");
-    assert!(
-        log.starts_with(&format!("{}\n", sentinel.inside())),
-        "{log}"
-    );
-    assert_eq!(sentinel.inside().len(), fixture.seed.inside().len());
 }
 
 #[test]

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::chain::{self, Arm, Built};
+use crate::chain::{self, Built};
 use crate::early;
 use crate::initrd;
 use crate::pilot;
@@ -2125,7 +2125,7 @@ pub fn package_keys(repository: &Path, model: &Value) -> Result<BTreeMap<String,
     )?);
     let builds = variants(&lab, repository, &packages, model)?;
     packages.extend(builds);
-    chain::keys_of(&lab, repository, packages, Arm::F)
+    chain::keys_of(&lab, repository, packages)
 }
 
 /// Builds what the model's `builds` ask for: each a recipe built under the build's name with the
@@ -2140,7 +2140,7 @@ fn build_variants(
 ) -> Result<(), String> {
     let mut sources = chain::Sources::load(repository)?;
     for variant in variants(lab, repository, recipes, model)? {
-        pilot::build_and_finish(lab, repository, &variant, Arm::F, seed, &mut sources, built)?;
+        pilot::build_and_finish(lab, repository, &variant, seed, &mut sources, built)?;
     }
     Ok(())
 }

@@ -15,19 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::progress::{self, Mode, Tail};
 use crate::store::{Lab, StorePath, with_path};
 
-/// Where a view appears in the sandbox.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Mount {
-    /// At `/usr`.
-    Usr,
-    /// At a store-length path of its own, with `/usr` linking to it.
-    Sentinel(StorePath),
-}
-
+/// A composed view, mounted at `/usr` in the sandbox.
 #[derive(Debug, Clone)]
 pub struct View {
     pub dir: PathBuf,
-    pub mount: Mount,
 }
 
 /// How long a step may take, when there's a limit at all, and how long it may go without
@@ -198,13 +189,7 @@ fn bwrap_args(lab: &Lab, step: &Step, etc: &Path) -> Vec<String> {
         );
     }
     if let Some(view) = &step.view {
-        match &view.mount {
-            Mount::Usr => arg(&mut args, &["--ro-bind", &host(&view.dir), "/usr"]),
-            Mount::Sentinel(path) => {
-                arg(&mut args, &["--ro-bind", &host(&view.dir), &path.inside()]);
-                arg(&mut args, &["--symlink", &path.inside(), "/usr"]);
-            }
-        }
+        arg(&mut args, &["--ro-bind", &host(&view.dir), "/usr"]);
         arg(
             &mut args,
             &[
