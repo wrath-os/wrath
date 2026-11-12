@@ -128,14 +128,25 @@ mod tests {
     fn files_are_made_with_the_usual_permissions_whatever_the_hosts() {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
+        // The umask is the whole process's, and other tests make files whose modes their
+        // addresses cover, so this runs again in a process of its own.
+        const ALONE: &str = "DISTRO_TEST_UMASK_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "--quiet"])
+                .arg("store::tests::files_are_made_with_the_usual_permissions_whatever_the_hosts")
+                .env(ALONE, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
         rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
         usual_umask();
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("f"), "").unwrap();
-        let mode = fs::metadata(dir.path().join("f"))
-            .unwrap()
-            .permissions()
-            .mode();
+        let file = dir.path().join("f");
+        fs::write(&file, "").unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o644);
     }
 
