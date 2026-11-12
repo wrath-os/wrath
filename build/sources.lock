@@ -2,6 +2,8 @@ aaa80c6ffd095e3c73616f6c2d41af4d367aef12ae4b08a728aea54842356ae6  git+https://co
 a6c8a4a2ffc74208e961b7f3cc6427e770c5e6203e2b12851c3f737a30bfc036  git+https://github.com/Smithay/smithay.git#ff5fa7df392cecfba049ffed55cdaa4e98a8e7ef
 751aa74a17c819d070a7148e1b5386b75b42426398910530719fc2f29426c821  git+https://github.com/danielrainer/fluent-rs#cf712bced280b217b6307edabc2089b3e57204ab
 246d71ee0e7355ab75e263ad08deb1e4c790ba4645516fcd8b10f395e1669695  git+https://github.com/fish-shell/rust-pcre2#85b7afba1a9d9bd445779800e5bcafeb732e4421
+10f1c5579edc798ecc5da8df94515f13db4afc9272f548ab0e734db854ca278c  git+https://github.com/wez/finl_unicode.git#a1892f26245529f2ef3877a9ebd610c96cec07a6
+f948fe303117d9c25bc6771ba8cb5a3755585b1f04bf8410887ee7edcb91542f  git+https://github.com/wezterm/xcb-imdkit-rs.git#212330f7c6c37794d78061a773e8f4f9e4785bbb
 ce3934556700105b0d5860ad329a55181ac0eab4caf31c305d919c5b41b0c858  git+https://github.com/yazi-rs/ratatui.git#dde5e05eccfe5b7cb7712b4bdf76edd0c2cd1f25
 a107adad2101fecac54ac7f9f0e0a0dd155d954193da55c2340c97f2ff1d814e  http://bitmath.org/code/mtdev/mtdev-1.1.7.tar.bz2
 c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9  http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz
@@ -156,15 +158,18 @@ eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3  https://github
 47a3743d2419a8601e691db37e85bb5fac5ae4b26842177065cd5f22ada23b37  https://github.com/flatpak/xdg-desktop-portal-gtk/releases/download/1.15.3/xdg-desktop-portal-gtk-1.15.3.tar.xz
 d4879ddb3d65ff1a8f19187497e6f13dc5d267bcac404a5d501218be355753d3  https://github.com/flatpak/xdg-desktop-portal/releases/download/1.22.1/xdg-desktop-portal-1.22.1.tar.xz
 449374d74f31b67796dece454d59b93e6f1538efcce0e9ac78000c98142c139e  https://github.com/fmtlib/fmt/archive/12.2.1/fmt-12.2.1.tar.gz
+68ce87bb59ea209eb7350f41a94a27519ce16b37011b475a1e62d4abee154b66  https://github.com/freetype/freetype2/archive/42608f77f20749dd6ddc9e0536788eaad70ea4b5.tar.gz
 1de5e8073d035388b71d0b2d452b1da1f8caeea8a7702997b401fe1b6250727f  https://github.com/fribidi/fribidi/releases/download/v1.0.18/fribidi-1.0.18.tar.xz
 d8862955c6d74e5846b3f580b1605d2428b11d97a410d86e2fb13e857cd3a744  https://github.com/gabime/spdlog/archive/v1.17.0/spdlog-1.17.0.tar.gz
 91eb74caed0ee6655b669711a4f350c25579778694df248e28363318e03c7fc4  https://github.com/gavinhoward/bc/releases/download/7.0.3/bc-7.0.3.tar.xz
 49811c5ed80f6b4d4e98cef98e3f7378406aa692fd773dfb72ad1b4dfb940448  https://github.com/getsops/sops/archive/v3.13.3/sops-3.13.3.tar.gz
 e90fb266d75837e75894c778bf594ab8e2787f12dce5a62651f21b893eaf9abb  https://github.com/gitleaks/gitleaks/archive/v8.30.1/gitleaks-8.30.1.tar.gz
 0400cbf59605490b5fb8779f9af41fa4d7a1bb748093ca0e13156a5dff31c7aa  https://github.com/gitui-org/gitui/archive/v0.28.1/gitui-0.28.1.tar.gz
+3689d30176661b821ce02c92baf801050bc3849d3428ff99c8afeb1ef4390c8c  https://github.com/glennrp/libpng/archive/f5e92d76973a7a53f517579bc95d61483bf108c0.tar.gz
 98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f  https://github.com/google/brotli/archive/v1.2.1/brotli-1.2.1.tar.gz
 e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c  https://github.com/google/highway/archive/1.4.0/highway-1.4.0.tar.gz
 f9e62d3774a9c4cfd198ec3abaa88294aaade2e31c04d5ab02bcf4abc98b1df5  https://github.com/haasn/libplacebo/archive/v7.387.0/libplacebo-7.387.0.tar.gz
+326e6c3e0fdab4e9a3df8c6daeb6251a6a8997711a58bf4f8da421195d279bf9  https://github.com/harfbuzz/harfbuzz/archive/33a3f8de60dcad7535f14f07d6710144548853ac.tar.gz
 0fc7c565443a5f4be7da65ac5ee5bd737d9b158dc908708b7689a0a5796b0c8d  https://github.com/harfbuzz/harfbuzz/releases/download/15.1.0/harfbuzz-15.1.0.tar.xz
 27c8bc3eba46bc7bab1e3629c6b28ff94882eeff17366b3ea69cd8ceffba7541  https://github.com/helix-editor/helix/archive/25.07.1/helix-25.07.1.tar.gz
 e7b803b6a248c18aea067dbccacaf651c29946db75d05fb23f318ff2f15961c6  https://github.com/helm/helm/archive/v4.3.1/helm-4.3.1.tar.gz
@@ -191,6 +196,7 @@ fb50b1eac93ddeb3aa8dab4cfe324dff74f4a9c2bdee6160c9e36188f8d06a6e  https://github
 4a10391aab0b8ce1f539e82a1966693b2a6cf225972a6504ebb7ec4fa71675de  https://github.com/lsof-org/lsof/releases/download/4.99.7/lsof-4.99.7.tar.gz
 57700786539a322a50f1848332e3465bf15efa5af2fd8b6113f36cbfce46c830  https://github.com/lu-zero/cargo-c/archive/v0.10.26/cargo-c-0.10.26.tar.gz
 537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b  https://github.com/lz4/lz4/releases/download/v1.10.0/lz4-1.10.0.tar.gz
+d9e270d46252734aa49770fbc544125391617956266f220bd63216c834f3a522  https://github.com/madler/zlib/archive/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf.tar.gz
 8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155  https://github.com/marzer/tomlplusplus/archive/v3.4.0/tomlplusplus-3.4.0.tar.gz
 f118aa910fc0a137cc2dd0122232dbf82153d9a12fb5b0f5bb64896f6a157abf  https://github.com/mesonbuild/meson/releases/download/1.8.3/meson-1.8.3.tar.gz
 93143d49b2a3bd6cb723477f585366b29f70c636af4653191d61b49b0c47de7f  https://github.com/mikefarah/yq/archive/v4.54.3/yq-4.54.3.tar.gz
@@ -250,6 +256,7 @@ a1d5b63d2d38ec9bd03acf643caa51fa22edd1e89c5a109c4807717216bbec07  https://github
 3cd253ad44a42be755579174e4554e20bc7863abf82fb2de5a6914f3e8a2f617  https://github.com/vim/vim/archive/v9.2.1332/vim-9.2.1332.tar.gz
 861496cd1e7d8546f770551893077e9b898fef1a6623d5e2207cf28c932e7738  https://github.com/watchexec/watchexec/archive/v2.8.0/watchexec-2.8.0.tar.gz
 e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
+8ee1d1e0c2560d20c43032aca05c399d4e9b7b304c14c67e7e61ff5f2f984bba  https://github.com/wezterm/wezterm/archive/ce8e6b140c2a52c8be1cc31c1274104b01422fdc.tar.gz
 88c3a3e0a5300532f3d368d5df64838a87f1fb85273f22d41df0a6b8d0ec59c6  https://github.com/wmww/gtk-layer-shell/archive/v0.10.1/gtk-layer-shell-0.10.1.tar.gz
 acc4d5f7c3cbba5f9f8d08d8bdbeede84ecede46792f47929aa9321873385528  https://github.com/xkbcommon/libxkbcommon/archive/xkbcommon-1.13.2/libxkbcommon-xkbcommon-1.13.2.tar.gz
 2dfa237fea447f3cc98954e81b0097b9d25841010036720e11f67880fe7861f0  https://github.com/zellij-org/zellij/archive/v0.46.0/zellij-0.46.0.tar.gz

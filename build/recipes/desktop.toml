@@ -71,6 +71,32 @@ args = [
   "-D enable-tools=false",
 ]
 
+# Keymaps from an X server, for the few programs that always link X11, such as wezterm. Only its
+# own library: the rest is libxkbcommon's, which it finds by name.
+[[package]]
+id = "libxkbcommon-x11"
+version = "1.13.2"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "bison-final", "m4-final", "xkeyboard-config", "libxml2",
+  "libxcb", "libxkbcommon",
+]
+sources = [{ url = "https://github.com/xkbcommon/libxkbcommon/archive/xkbcommon-{version}/libxkbcommon-xkbcommon-{version}.tar.gz" }]
+probes = ["xkbcommon-x11"]
+
+[package.meson]
+args = [
+  "-D xkb-config-root=$LAB_DEP_xkeyboard_config/share/xkeyboard-config-2",
+  "-D x-locale-root=/run/system/share/X11/locale",
+  "-D enable-x11=true", "-D enable-wayland=false", "-D enable-docs=false",
+  "-D enable-tools=false",
+]
+install = '''
+find $DEST$PREFIX ! -type d ! -name 'libxkbcommon-x11*' ! -name 'xkbcommon-x11.*' -delete
+find $DEST$PREFIX -type d -empty -delete
+'''
+
 [[package]]
 id = "pixman"
 version = "0.46.4"
@@ -1166,6 +1192,35 @@ features = ["wayland"]
 install = '''
 mkdir -p $DEST$PREFIX/share/applications
 cp extra/linux/Alacritty.desktop $DEST$PREFIX/share/applications/
+'''
+
+# A terminal configured in Lua, with tabs, panes and its own multiplexer. Its last release is from
+# 2024, so a commit from its main branch, with the C libraries it builds its own copies of, which
+# its archives leave out as submodules.
+[[package]]
+id = "wezterm"
+version = "2026.11.12"
+scope = "runtime"
+core = true
+extra_deps = [
+  "rust-bin", "pkgconf", "fontconfig", "libxkbcommon", "wayland", "mesa", "openssl", "zlib",
+  "libX11", "libxcb", "xcb-util", "xcb-util-image", "libxkbcommon-x11",
+]
+sources = [
+  { url = "https://github.com/wezterm/wezterm/archive/ce8e6b140c2a52c8be1cc31c1274104b01422fdc.tar.gz" },
+  { url = "https://github.com/harfbuzz/harfbuzz/archive/33a3f8de60dcad7535f14f07d6710144548853ac.tar.gz", into = "deps/harfbuzz/harfbuzz" },
+  { url = "https://github.com/freetype/freetype2/archive/42608f77f20749dd6ddc9e0536788eaad70ea4b5.tar.gz", into = "deps/freetype/freetype2" },
+  { url = "https://github.com/glennrp/libpng/archive/f5e92d76973a7a53f517579bc95d61483bf108c0.tar.gz", into = "deps/freetype/libpng" },
+  { url = "https://github.com/madler/zlib/archive/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf.tar.gz", into = "deps/freetype/zlib" },
+]
+smoke = ["bin/wezterm --version", "bin/wezterm-gui --version"]
+
+[package.cargo]
+packages = ["wezterm", "wezterm-gui", "wezterm-mux-server"]
+programs = ["wezterm", "wezterm-gui", "wezterm-mux-server"]
+install = '''
+mkdir -p $DEST$PREFIX/share/applications
+cp assets/wezterm.desktop $DEST$PREFIX/share/applications/org.wezfurlong.wezterm.desktop
 '''
 
 [[package]]
