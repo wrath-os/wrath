@@ -1674,9 +1674,12 @@ fn unpack_one(archive: &Path, relative: &str) -> Result<String, String> {
         Some(top) => format!("{top}/{relative}"),
         None => relative.to_owned(),
     };
+    // An archive appended to can hold a file twice, and unpacking it leaves the last one.
+    let copies = names.lines().filter(|name| *name == path).count().max(1);
     let output = Command::new("tar")
         .arg("-xOf")
         .arg(archive)
+        .arg(format!("--occurrence={copies}"))
         .arg(path)
         .output()
         .map_err(|e| format!("tar: {e}"))?;
@@ -2804,6 +2807,27 @@ mod crate_tests {
         let archive = flat_archive(dir.path(), &["README.md", "A.ttf"]);
         assert_eq!(top_files(&archive).unwrap(), ["A.ttf", "README.md"]);
         assert_eq!(read_in(&archive, "README.md").unwrap(), "README.md");
+    }
+
+    #[test]
+    fn a_file_an_archive_holds_twice_is_read_as_unpacking_leaves_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive(dir.path(), &[("Cargo.lock", "version = 3\n")]);
+        // As fish's release has it: a newer lock appended to the archive.
+        fs::write(dir.path().join("project-1.0/Cargo.lock"), "version = 4\n").unwrap();
+        let status = Command::new("tar")
+            .arg("-rf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(dir.path())
+            .arg("project-1.0/Cargo.lock")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(unpack_one(&archive, "Cargo.lock").unwrap(), "version = 4\n");
+        let target = dir.path().join("src");
+        unpack(&archive, &target).unwrap();
+        assert_eq!(fs::read_to_string(target.join("Cargo.lock")).unwrap(), "version = 4\n");
     }
 
     #[test]
