@@ -90,7 +90,7 @@ fn tarball(lab: &Lab, sha256: &str, url: Option<&str>) -> Result<PathBuf, String
         let partial = dir.join("download");
         run(
             Command::new("curl")
-                .args(["--fail", "--location", "--silent", "--show-error"])
+                .args(["-q", "--fail", "--location", "--silent", "--show-error"])
                 .args(["--max-time", "600", "--output"])
                 .arg(&partial)
                 .arg(url),

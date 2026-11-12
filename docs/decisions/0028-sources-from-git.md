@@ -31,7 +31,9 @@ hand with every update, or else fetched git while evaluating, which made evaluat
 ## Decision
 
 - A source can be a git commit, `git+https://...#<commit>`. The fetcher clones only that commit,
-  with its submodules, from any host.
+  with its submodules, from any host. The commit is its full hash. A repository can't start
+  with `-`, a submodule can't be on this host (`file://`), and the host's git settings aren't
+  read, since a lock from upstream names what's fetched.
 - What's pinned is the hash of the checked-out tree, not of an archive, so it doesn't change with
   how a host compresses. `sources.lock` pins it on the first fetch, as it does now for
   sources without a hash. No recipe carries one.

@@ -131,6 +131,7 @@ fn cache() -> PathBuf {
 fn curl(url: &str, output: &Path) -> Result<(), String> {
     let status = Command::new("curl")
         .args([
+            "-q",
             "--fail",
             "--location",
             "--silent",

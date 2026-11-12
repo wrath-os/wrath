@@ -110,7 +110,7 @@ pub type Fetch<'a> = &'a (dyn Fn(&[&str]) -> Result<String, String> + Sync);
 pub fn releases(check: &Check, fetch: Fetch<'_>) -> Result<Vec<String>, String> {
     let versions = match check {
         Check::Git { repository, prefix } => {
-            let text = fetch(&["git", "ls-remote", "--tags", "--refs", repository])?;
+            let text = fetch(&["git", "ls-remote", "--tags", "--refs", "--", repository])?;
             text.lines()
                 .filter_map(|line| line.split_once("refs/tags/"))
                 .filter_map(|(_, tag)| tag.strip_prefix(prefix.as_str()))
@@ -143,6 +143,7 @@ pub fn releases(check: &Check, fetch: Fetch<'_>) -> Result<Vec<String>, String> 
 fn download(url: &str, fetch: Fetch<'_>) -> Result<String, String> {
     fetch(&[
         "curl",
+        "-q",
         "-fsSL",
         "--retry",
         "3",

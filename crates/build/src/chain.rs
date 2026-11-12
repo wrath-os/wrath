@@ -1063,6 +1063,19 @@ impl Sources {
             .strip_prefix("git+")
             .and_then(|rest| rest.split_once('#'))
             .ok_or_else(|| format!("{url} names no commit after `#`"))?;
+        // git would read either as an option, such as `--upload-pack=COMMAND`.
+        if repository.starts_with('-') {
+            return Err(format!("{url}: a repository can't start with `-`"));
+        }
+        let is_hash = matches!(commit.len(), 40 | 64)
+            && commit
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if !is_hash {
+            return Err(format!(
+                "{url} names no commit after `#`, only its full hash is one"
+            ));
+        }
         eprintln!(
             "  fetch  {repository} at {}",
             &commit[..commit.len().min(12)]
@@ -1074,21 +1087,19 @@ impl Sources {
                 Command::new("git")
                     .arg("-C")
                     .arg(&checkout)
-                    .args([
-                        "-c",
-                        "advice.detachedHead=false",
-                        "-c",
-                        "protocol.file.allow=always",
-                    ])
+                    .args(["-c", "advice.detachedHead=false"])
                     .args(args)
+                    // The host's own settings, such as `insteadOf` or filters, change nothing.
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
                     .env("GIT_TERMINAL_PROMPT", "0"),
                 &format!("fetching {commit} of {repository}"),
             )
         };
         git(&["init", "--quiet"])?;
         // Most hosts hand out one commit by its hash; for those that don't, everything.
-        git(&["fetch", "--quiet", "--depth", "1", repository, commit])
-            .or_else(|_| git(&["fetch", "--quiet", "--tags", repository]))
+        git(&["fetch", "--quiet", "--depth", "1", "--", repository, commit])
+            .or_else(|_| git(&["fetch", "--quiet", "--tags", "--", repository]))
             .and_then(|()| git(&["checkout", "--quiet", commit]))
             .and_then(|()| {
                 git(&[
@@ -1142,7 +1153,7 @@ impl Sources {
         let partial = dir.join(format!("partial.{}", std::process::id()));
         run_host(
             Command::new("curl")
-                .args(["--fail", "--location", "--silent", "--show-error"])
+                .args(["-q", "--fail", "--location", "--silent", "--show-error"])
                 .args(["--max-time", "1800", "--retry", "3", "--output"])
                 .arg(&partial)
                 .arg(url),
@@ -2971,7 +2982,7 @@ mod crate_tests {
     }
 
     #[test]
-    fn a_git_commit_is_fetched_with_its_submodules_and_pinned_by_its_tree() {
+    fn a_git_commit_is_fetched_and_pinned_by_its_tree_but_not_with_local_submodules() {
         let dir = tempfile::tempdir().unwrap();
         let git = |repo: &Path, args: &[&str]| {
             let out = Command::new("git")
@@ -3010,24 +3021,48 @@ mod crate_tests {
         );
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-qm", "one"]);
-        let commit = git(&repo, &["rev-parse", "HEAD"]);
         let lab = Lab::new(dir.path().join("work"));
         let mut sources = Sources::load(dir.path()).unwrap();
-        let url = format!("git+file://{}#{commit}", repo.display());
+        // A submodule on this host could pack the host's own repositories into a source.
+        let commit = git(&repo, &["rev-parse", "HEAD"]);
+        let local = format!("git+file://{}#{commit}", repo.display());
+        assert!(sources.fetch_source(&lab, &source(local)).is_err());
+        let commit = git(&inner, &["rev-parse", "HEAD"]);
+        let url = format!("git+file://{}#{commit}", inner.display());
         let (path, hash) = sources.fetch_source(&lab, &source(url.clone())).unwrap();
         let listing = Command::new("tar").arg("-tf").arg(&path).output().unwrap();
         let listing = String::from_utf8_lossy(&listing.stdout);
-        assert!(listing.contains("tree/Cargo.toml"), "{listing}");
-        assert!(listing.contains("tree/inner/lib.rs"), "{listing}");
+        assert!(listing.contains("tree/lib.rs"), "{listing}");
         assert!(!listing.contains(".git/"), "{listing}");
         let lock = fs::read_to_string(dir.path().join("sources.lock")).unwrap();
         assert!(lock.contains(&format!("{hash}  {url}")), "{lock}");
         // Pinned and kept, it needs the repository no more.
-        fs::remove_dir_all(&repo).unwrap();
+        fs::remove_dir_all(&inner).unwrap();
         assert_eq!(sources.fetch_source(&lab, &source(url)).unwrap().1, hash);
-        let missing = format!("git+file://{}#{}", inner.display(), "0".repeat(40));
+        let missing = format!("git+file://{}#{}", repo.display(), "0".repeat(40));
         let error = sources.fetch_source(&lab, &source(missing)).unwrap_err();
         assert!(error.contains(&"0".repeat(40)), "{error}");
+    }
+
+    #[test]
+    fn a_git_url_read_as_an_option_or_without_a_commit_hash_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let mut sources = Sources::load(dir.path()).unwrap();
+        let ran = dir.path().join("ran");
+        let option = format!(
+            "git+--upload-pack=touch {}#{}",
+            ran.display(),
+            "a".repeat(40)
+        );
+        let error = sources.fetch_source(&lab, &source(option)).unwrap_err();
+        assert!(error.contains("can't start with `-`"), "{error}");
+        assert!(!ran.exists());
+        for commit in ["main", "--tags", "abc123"] {
+            let url = format!("git+https://example.org/repo#{commit}");
+            let error = sources.fetch_source(&lab, &source(url)).unwrap_err();
+            assert!(error.contains("names no commit"), "{error}");
+        }
     }
 
     fn source(url: String) -> Source {
