@@ -263,7 +263,7 @@
 - `users.<name>.group`: a string, default "users".
 - `users.<name>.home`: an absolute path or one starting with `~/`, optional.
 - `users.<name>.initial_hashed_password`: a string, optional. The password hash a new account starts with. `passwd` on the machine replaces it.
-- `users.<name>.linger`: a boolean, default false. Start the user's services at boot instead of at their first login.
+- `users.<name>.linger`: a boolean, default false. Start the user's services at boot instead of at their first login. Without it, lingering turned on with `loginctl` is turned off again.
 - `users.<name>.packages`: a list of items that are each a string, default [].
 - `users.<name>.shell`: a string, optional. The backend's default shell when unset.
 - `users.<name>.system`: a boolean, default false.

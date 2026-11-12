@@ -138,6 +138,19 @@ BusName=net.reactivated.Fprint
 ExecStart=fprintd
 Type=dbus
 
+unit linger.service (from users)
+[Unit]
+After=systemd-logind.service systemd-user-sessions.service
+Description=Users whose services start at boot
+
+[Service]
+ExecStart=/run/system/systemd/bin/loginctl disable-linger john
+RemainAfterExit=yes
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target
+
 unit nftables.service (from firewall)
 [Unit]
 Before=network-pre.target

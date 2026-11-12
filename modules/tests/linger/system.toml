@@ -1,0 +1,10 @@
+[system]
+hostname = "box"
+
+[users.ann]
+linger = true
+
+[users.bob]
+
+[users.syncthing]
+system = true

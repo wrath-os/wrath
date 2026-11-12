@@ -385,6 +385,15 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     let secrets = diff(&before.secrets, &after.secrets, |before, after| {
         (secret_details(before, after), Some(Tier::Live))
     });
+    for change in &mut units {
+        // A switch starts and stops users' units, but restarting one could end their session.
+        if change.kind == ChangeKind::Changed && change.name.contains(" (for ") {
+            change.tier = Some(Tier::NextLogin);
+            change
+                .details
+                .push("running sessions keep the old one until the next login".to_owned());
+        }
+    }
     units.extend(restarts(before, after, &files, &secrets));
     let activation = Activation::from_changes(&units, after, &files);
     units.extend(triggered(after, &files));

@@ -324,10 +324,11 @@ fn plan_shows_files_packages_and_units_in_users_homes() {
     files
       ~ ~john/.config/git/config (tier: live)
     units
-      ~ sync.service (for john) (tier: live)
+      ~ sync.service (for john) (tier: next-login)
           - Service.ExecStart=sync a
           + Service.ExecStart=sync b
-    2 changes, tier: live
+          running sessions keep the old one until the next login
+    2 changes, tier: next-login
     ");
 }
 
@@ -1016,4 +1017,28 @@ fn a_rendered_unit_can_reload_when_a_file_changes_instead_of_restarting() {
         BTreeSet::from(["nftables.service".to_owned()])
     );
     assert!(activation.restart.is_empty() && activation.stop.is_empty());
+}
+
+#[test]
+fn a_user_unit_wanted_elsewhere_takes_effect_at_the_next_login() {
+    let wanted_by = |target: &str| {
+        let mut model = Model::default();
+        model.enabled_user.insert(
+            "pipewire.service".into(),
+            BTreeSet::from([target.to_owned()]),
+        );
+        model
+    };
+    let plan = plan(
+        &wanted_by("default.target"),
+        &wanted_by("graphical-session.target"),
+    );
+    insta::assert_snapshot!(plan.to_string(), @"
+    units
+      ~ pipewire.service (for every user) (tier: next-login)
+          wanted by graphical-session.target
+          running sessions keep the old one until the next login
+    1 change, tier: next-login
+    ");
+    assert!(plan.activation.start.is_empty() && plan.activation.restart.is_empty());
 }

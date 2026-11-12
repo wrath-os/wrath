@@ -27,7 +27,8 @@ user = types.record(
         types.bool,
         default = False,
         account = True,
-        doc = "Start the user's services at boot instead of at their first login.",
+        doc = "Start the user's services at boot instead of at their first login. Without it, " +
+              "lingering turned on with `loginctl` is turned off again.",
     ),
 )
 
@@ -49,6 +50,26 @@ def render(ctx: Context) -> None:
         for package in u["packages"]:
             ctx.package(package, user = name)
     ctx.base("users", users)
+    linger(ctx, users)
+
+def linger(ctx: Context, users: dict[str, typing.Any]) -> None:
+    """Tells logind which users' service managers run from boot. The unit changes, and so runs
+    again on a switch, whenever someone's `linger` does."""
+    lingering = sorted([name for name, u in users.items() if u["linger"]])
+    others = sorted([name for name, u in users.items() if not u["linger"] and not u["system"]])
+    loginctl = "/run/system/systemd/bin/loginctl"
+    commands = [loginctl + " enable-linger " + name for name in lingering]
+    commands += [loginctl + " disable-linger " + name for name in others]
+    if not commands:
+        return
+    ctx.unit("linger.service", {
+        "Unit": {
+            "Description": "Users whose services start at boot",
+            "After": "systemd-logind.service systemd-user-sessions.service",
+        },
+        "Service": {"Type": "oneshot", "RemainAfterExit": "yes", "ExecStart": commands},
+        "Install": {"WantedBy": "multi-user.target"},
+    })
 
 module(
     name = "users",

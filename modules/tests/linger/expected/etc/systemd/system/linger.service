@@ -1,0 +1,12 @@
+[Unit]
+After=systemd-logind.service systemd-user-sessions.service
+Description=Users whose services start at boot
+
+[Service]
+ExecStart=/run/system/systemd/bin/loginctl enable-linger ann
+ExecStart=/run/system/systemd/bin/loginctl disable-linger bob
+RemainAfterExit=yes
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target
