@@ -171,7 +171,7 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Seen in:** libsecret, libical, noctalia.
 - **What happened:** each time, the options had to be read by hand from the source archive in the
   store.
-- **What would prevent it:** `lab options <package>`, which lists a project's options from
+- **What would prevent it:** `distro info <package>`, which would list a project's options from
   `meson.options`, `configure --help` or the CMake cache, for whoever writes or updates a recipe.
 - **Belongs in:** the builder's tools.
 - **Status:** open.

@@ -293,6 +293,11 @@ enum DevCommand {
         #[arg(long)]
         milestone: Option<String>,
     },
+    /// Point out what recipes list that they don't need to, such as a dependency another one brings
+    Lint {
+        /// Only these recipes [default: every recipe, which builds what isn't built yet]
+        packages: Vec<String>,
+    },
     /// Compare each recipe's version with upstream's newest release
     Outdated {
         /// List every recipe, including those that are current or couldn't be checked
@@ -550,6 +555,7 @@ fn main() -> ExitCode {
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
+            DevCommand::Lint { packages } => lint(root, &packages),
             DevCommand::Outdated { all } => outdated(root, all),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::ApplyRecord => {
@@ -833,6 +839,18 @@ fn context(root: &Path, image_override: Option<PathBuf>) -> Result<RunContext, S
 }
 
 /// Prints the recipes upstream has released something newer of, and those it couldn't check.
+/// Prints each recipe's needless dependencies, and fails when there are any.
+fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
+    let only: Vec<&str> = packages.iter().map(String::as_str).collect();
+    let found = distro_build::graph::redundant(&root.join("build"), &only)?;
+    if found.is_empty() {
+        println!("nothing to point out");
+        return Ok(ExitCode::SUCCESS);
+    }
+    print!("{found}");
+    Ok(ExitCode::FAILURE)
+}
+
 fn outdated(root: &Path, all: bool) -> Result<ExitCode, String> {
     let reports =
         distro_build::upstream::outdated(&root.join("build"), &distro_build::upstream::run)?;

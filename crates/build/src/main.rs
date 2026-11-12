@@ -122,9 +122,6 @@ fn main() -> ExitCode {
             Arm::parse(arm).and_then(|arm| seed_pack::addresses(&lab, Path::new("."), arm))
         }
         ["toolchain", arm] => toolchain(&lab, arm),
-        ["redundant"] => {
-            distro_build::graph::redundant(Path::new(".")).map(|text| print!("{text}"))
-        }
         ["pilot", arm] => pilot(&lab, arm),
         ["full", arm] => full(&lab, arm),
         ["boot", arm] => Arm::parse(arm).and_then(|arm| {

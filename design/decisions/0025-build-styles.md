@@ -63,7 +63,7 @@ What a style is:
   style's options can be listed with their docs.
 - A style produces a package record: the same record a recipe with a plain `script` has, with its
   script, dependencies, environment, sources and outputs. A plain recipe is one that fills the
-  record in directly, and `lab show <package>` prints the record whichever way it was made.
+  record in directly, and `distro info <package>` would print the record whichever way it was made.
 - Styles are checked like modules, with every function annotated.
 - Styles run at plan time in a hermetic evaluator: no clock, no network, and no reads beyond what
   the recipe declares.

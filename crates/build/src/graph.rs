@@ -2179,11 +2179,15 @@ pub fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
 
 /// Each system recipe's listed dependencies that another dependency it lists already brings,
 /// one line per recipe, after building what isn't built yet.
-pub fn redundant(repository: &Path) -> Result<String, String> {
+pub fn redundant(repository: &Path, only: &[&str]) -> Result<String, String> {
     let lab = Lab::new(repository.join("work"));
     let files = system_recipes(repository)?;
-    let (mut built, _, packages) =
-        pilot::build_recipes(&lab, repository, &names_of(&files), Arm::F)?;
+    let wanted = (!only.is_empty()).then_some(only);
+    let (mut built, _, mut packages) =
+        pilot::build_some(&lab, repository, &names_of(&files), Arm::F, wanted)?;
+    if let Some(wanted) = wanted {
+        packages.retain(|package| wanted.contains(&package.id.as_str()));
+    }
     let mut lines = String::new();
     for (id, deps) in chain::redundant_deps(&lab, &mut built, &packages)? {
         let listed: Vec<String> = deps
