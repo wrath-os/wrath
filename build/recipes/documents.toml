@@ -1,0 +1,83 @@
+# Reading documents: PDFs with zathura and Poppler.
+
+[[package]]
+id = "xxhash"
+version = "0.8.4"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/Cyan4973/xxHash/archive/v{version}/xxHash-{version}.tar.gz" }]
+probes = ["libxxhash"]
+smoke = ["bin/xxhsum -V"]
+script = '''
+# Fast hashes, which zathura names the files it remembers by.
+make -j$NPROC PREFIX=$PREFIX
+make install PREFIX=$PREFIX DESTDIR=$DEST
+rm $DEST$PREFIX/lib/libxxhash.a
+'''
+
+[[package]]
+id = "poppler"
+version = "26.11.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "python3", "cairo", "glib", "fontconfig", "freetype", "harfbuzz", "libjpeg-turbo", "libpng",
+  "libtiff", "lcms2", "zlib",
+]
+sources = [{ url = "https://poppler.freedesktop.org/poppler-{version}.tar.xz" }]
+probes = ["poppler", "poppler-glib"]
+smoke = ["bin/pdfinfo -v"]
+
+# PDFs, drawn with cairo for GLib programs, and the pdfinfo and pdftotext tools.
+[package.cmake]
+args = [
+  "-D ENABLE_GLIB=ON", "-D ENABLE_CPP=OFF", "-D ENABLE_QT5=OFF", "-D ENABLE_QT6=OFF",
+  "-D ENABLE_BOOST=OFF", "-D ENABLE_NSS3=OFF", "-D ENABLE_GPGME=OFF",
+  "-D ENABLE_LIBOPENJPEG=OFF", "-D ENABLE_LIBCURL=OFF", "-D ENABLE_GOBJECT_INTROSPECTION=OFF",
+  "-D ENABLE_GTK_DOC=OFF", "-D ENABLE_BROTLI=OFF", "-D BUILD_GTK_TESTS=OFF",
+  "-D BUILD_CPP_TESTS=OFF", "-D BUILD_MANUAL_TESTS=OFF", "-D ENABLE_UNSTABLE_API_ABI_HEADERS=OFF",
+  "-D CMAKE_INSTALL_LIBDIR=lib",
+]
+
+[[package]]
+id = "girara"
+version = "2026.07.18"
+scope = "runtime"
+core = true
+extra_deps = ["glib"]
+sources = [{ url = "https://github.com/pwmt/girara/archive/{version}/girara-{version}.tar.gz" }]
+probes = ["girara"]
+
+# Settings, commands and key bindings for zathura.
+[package.meson]
+args = ["-D docs=disabled"]
+
+[[package]]
+id = "zathura"
+version = "2026.10.23"
+scope = "runtime"
+core = true
+extra_deps = ["girara", "gtk4", "json-glib", "file", "sqlite", "xxhash", "poppler", "gettext"]
+sources = [
+  { url = "https://github.com/pwmt/zathura/archive/{version}/zathura-{version}.tar.gz" },
+  { url = "https://github.com/pwmt/zathura-pdf-poppler/archive/2026.07.18/zathura-pdf-poppler-2026.07.18.tar.gz", into = "pdf-poppler" },
+]
+smoke = ["bin/zathura --version"]
+
+# The document viewer, with its PDF plugin built into its own plugin directory, where it looks:
+# a system shares only packages' `share`.
+[package.meson]
+# gettext's split leaves the rules for translating metainfo files away from the library that
+# reads them.
+env = { GETTEXTDATADIRS = "$LAB_DEP_gettext/share/gettext-0.26" }
+args = [
+  "-D manpages=disabled", "-D synctex=disabled", "-D seccomp=disabled", "-D landlock=enabled",
+  "-D tests-x11=disabled", "-D tests-wayland=disabled", "-D convert-icon=disabled",
+]
+install = '''
+export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+meson setup /build/pdf pdf-poppler --prefix=$PREFIX --libdir=lib --buildtype=release \
+  -D plugindir=$PREFIX/lib/zathura
+ninja -C /build/pdf -j$NPROC
+ninja -C /build/pdf install
+'''

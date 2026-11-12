@@ -10,6 +10,26 @@ style (Starlark), the builder (Rust), or the recipe.
 
 ## Open
 
+### gettext's rules for XML files are split from the library that reads them
+
+- **Seen in:** zathura, whose metainfo file `msgfmt` translates.
+- **What happened:** `msgfmt` said "cannot locate ITS rules". The rules in
+  `share/gettext-0.26/its` went to gettext's programs output, and `libgettextsrc`, in the library
+  output, looks for them beside itself; its path to them is put together at run time, so the split
+  didn't see the reference.
+- **What we did:** zathura sets `GETTEXTDATADIRS` to the programs output's copy.
+- **What would prevent it:** keeping `share/gettext-*` with gettext's library. That rebuilds
+  everything that uses gettext.
+
+### A package's copy of a system-wide cache
+
+- **Seen in:** GTK 4, which runs `update-mime-database` when shared-mime-info is there, and GTK 3
+  with compiled GSettings schemas.
+- **What happened:** the system failed on `share/mime/XMLnamespaces` coming from two packages.
+- **What we did:** GTK 4's install removes everything in `share/mime` but `packages`.
+- **What would prevent it:** the system leaving out a package's copy of what an index makes, or
+  the build saying which package made one, and that the system makes it.
+
 ### Unit directories from systemd's pkg-config file
 
 - **Seen in:** Waybar, polkit, and any project that asks `systemd.pc` where units go.
@@ -249,6 +269,19 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What happened:** Meson failed with "Unhandled python OSError" and nothing else to go on.
 - **What we did:** a failed build that last installed outside `/store`, or wrote to a read-only
   place, says so and to point that directory's option under the prefix.
+
+### `.pc` lines that go on over several
+
+- **Seen in:** Poppler, whose `Requires.private` ends its lines in backslashes.
+- **What happened:** the check of what a `.pc` file requires read `\` as a module.
+- **What we did:** a line ending in a backslash is joined to the next, as pkg-config reads it.
+
+### Meson looking for a fallback subproject
+
+- **Seen in:** GTK 4 without `wayland` listed, where Meson tried to fetch it as a subproject.
+- **What happened:** the failure said git wasn't found, which doesn't say what's missing.
+- **What we did:** the hint reads the dependency from the fallback line and names the recipe that
+  has it.
 
 ### A sign-in page pinned as a source
 
