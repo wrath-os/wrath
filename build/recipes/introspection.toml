@@ -84,8 +84,114 @@ args = [
   "-D build_introspection_data=true", "-D cairo=enabled", "-D doctool=disabled", "-D tests=false",
 ]
 keep = ["share/gir-1.0", "lib/girepository-1.0"]
+# The schema for `.gir` files is gobject-introspection's own.
+install = "rm $DEST$PREFIX/share/gir-1.0/gir-1.2.rnc\n"
 # Its own scanner, from the source, asks the loader too, as the one above does.
 prepare = '''
 sed -i "s|args.extend(\['ldd', binary.args\[0\]\])|args.extend(['$LAB_LIB_glibc/lib/ld-linux-x86-64.so.2', '--list', binary.args[0]])|" giscanner/shlibs.py
 grep -q -- --list giscanner/shlibs.py
 '''
+
+# HarfBuzz, with the GObject library its description names, which harfbuzz itself leaves out.
+# Tools that read types, as blueprint-compiler does, never load it.
+[[package]]
+id = "harfbuzz-gir"
+version = "15.1.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "freetype", "glib", "gobject-introspection",
+  "setuptools", "glib-gir", "gobject-introspection-gir",
+]
+sources = [{ url = "https://github.com/harfbuzz/harfbuzz/releases/download/{version}/harfbuzz-{version}.tar.xz" }]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = [
+  "-D freetype=enabled", "-D glib=enabled", "-D gobject=enabled", "-D cairo=disabled",
+  "-D icu=disabled", "-D chafa=disabled", "-D introspection=enabled", "-D tests=disabled",
+  "-D docs=disabled", "-D utilities=disabled",
+]
+keep = ["share/gir-1.0", "lib/girepository-1.0"]
+
+[[package]]
+id = "gdk-pixbuf-gir"
+version = "2.44.8"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "glib", "libpng", "gobject-introspection",
+  "setuptools", "glib-gir",
+]
+sources = [{ url = "https://download.gnome.org/sources/gdk-pixbuf/{series}/gdk-pixbuf-{version}.tar.xz" }]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = [
+  "-D png=enabled", "-D jpeg=disabled", "-D tiff=disabled", "-D gif=disabled",
+  "-D others=disabled", "-D glycin=disabled", "-D builtin_loaders=png",
+  "-D introspection=enabled", "-D documentation=false", "-D man=false", "-D tests=false",
+  "-D installed_tests=false", "-D thumbnailer=disabled", "-D gio_sniffing=false",
+]
+keep = ["share/gir-1.0", "lib/girepository-1.0"]
+
+[[package]]
+id = "graphene-gir"
+version = "1.10.8"
+scope = "runtime"
+core = true
+extra_deps = ["python3", "glib", "gobject-introspection", "setuptools", "glib-gir"]
+sources = [{ url = "https://download.gnome.org/sources/graphene/{series}/graphene-{version}.tar.xz" }]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = ["-D tests=false", "-D installed_tests=false", "-D introspection=enabled"]
+keep = ["share/gir-1.0", "lib/girepository-1.0"]
+
+[[package]]
+id = "pango-gir"
+version = "1.56.4"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "harfbuzz", "fribidi", "cairo",
+  "gobject-introspection", "setuptools", "glib-gir", "gobject-introspection-gir",
+  "harfbuzz-gir",
+]
+sources = [{ url = "https://download.gnome.org/sources/pango/{series}/pango-{version}.tar.xz" }]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = [
+  "-D introspection=enabled", "-D documentation=false", "-D build-testsuite=false",
+  "-D build-examples=false", "-D libthai=disabled", "-D xft=disabled", "-D cairo=enabled",
+  "-D fontconfig=enabled", "-D freetype=enabled",
+]
+keep = ["share/gir-1.0", "lib/girepository-1.0"]
+
+# Gtk, Gdk and Gsk.
+[[package]]
+id = "gtk4-gir"
+version = "4.22.5"
+scope = "runtime"
+core = true
+extra_deps = [
+  "python3", "pango", "gdk-pixbuf", "libepoxy", "graphene", "libpng", "libjpeg-turbo",
+  "shared-mime-info", "libtiff", "wayland", "wayland-protocols", "libxkbcommon", "libdrm",
+  "mesa", "gettext", "gobject-introspection", "setuptools", "glib-gir",
+  "gobject-introspection-gir", "harfbuzz-gir", "pango-gir", "gdk-pixbuf-gir", "graphene-gir",
+]
+sources = [{ url = "https://download.gnome.org/sources/gtk/{series}/gtk-{version}.tar.xz" }]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = [
+  "-D x11-backend=false", "-D wayland-backend=true", "-D broadway-backend=false",
+  "-D media-gstreamer=disabled", "-D print-cups=disabled", "-D print-cpdb=disabled",
+  "-D vulkan=disabled", "-D cloudproviders=disabled", "-D sysprof=disabled",
+  "-D tracker=disabled", "-D colord=disabled", "-D accesskit=disabled",
+  "-D introspection=enabled", "-D documentation=false", "-D man-pages=false",
+  "-D build-demos=false", "-D build-testsuite=false", "-D build-examples=false",
+  "-D build-tests=false",
+]
+keep = ["share/gir-1.0", "lib/girepository-1.0"]
