@@ -134,8 +134,10 @@ Every generation also has an entry in the boot menu, so if a change breaks booti
 the previous one there. A generation that fails to boot three times stops being the default on
 its own.
 
-`distro clean` removes old generations and what only they used. It keeps the last three by
-default and asks first.
+`distro clean` removes old generations and what only they used. It keeps the current one, the
+one running and the one that booted (after a boot fell back, those differ), plus the three before
+the current one by default, and asks first. Anything copied into the store in the last hour stays
+too, in case a switch is about to use it.
 
 ## Several machines from one configuration
 

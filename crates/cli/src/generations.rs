@@ -595,11 +595,12 @@ pub fn clean(keep: usize, yes: bool) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The generations to remove: all but the current one and the `keep` newest others.
+/// The generations to remove: all but the current one, the running and booted ones, and the `keep`
+/// newest others.
 fn to_remove(generations: &[Generation], keep: usize) -> Vec<u32> {
     let mut others: Vec<u32> = generations
         .iter()
-        .filter(|generation| !generation.current)
+        .filter(|generation| !generation.current && !generation.in_use)
         .map(|generation| generation.number)
         .collect();
     others.sort_unstable();
@@ -1026,22 +1027,31 @@ mod tests {
     }
 
     #[test]
-    fn clean_keeps_the_current_generation_and_the_newest_before_it() {
-        let generation = |number, current| Generation {
+    fn clean_keeps_the_current_running_and_booted_generations_and_the_newest_before_them() {
+        let generation = |number, current, in_use| Generation {
             number,
             created: String::new(),
             current,
+            in_use,
             model_hash: None,
         };
         let generations = [
-            generation(1, false),
-            generation(2, false),
-            generation(3, true),
-            generation(4, false),
+            generation(1, false, false),
+            generation(2, false, false),
+            generation(3, true, false),
+            generation(4, false, false),
         ];
         assert_eq!(to_remove(&generations, 1), [1, 2]);
         assert_eq!(to_remove(&generations, 0), [1, 2, 4]);
         assert_eq!(to_remove(&generations, 5), Vec::<u32>::new());
+        // After a boot fell back to 1, or while 4 is being tried, neither goes.
+        let generations = [
+            generation(1, false, true),
+            generation(2, false, false),
+            generation(3, true, false),
+            generation(4, false, true),
+        ];
+        assert_eq!(to_remove(&generations, 0), [2]);
     }
 
     #[test]

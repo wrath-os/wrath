@@ -7,10 +7,10 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use distro_build::store::{Lab, StorePath, is_entry};
 
@@ -39,8 +39,37 @@ fn require_generations() -> Result<(), String> {
 /// A system being tried, kept from collection while no generation has it.
 const TRYING: &str = "store/.system/trying";
 
+/// Held while the generations change, so two changes never take the same number and a clean never
+/// runs in the middle of a switch.
+const LOCK: &str = "store/.system/lock";
+
+/// How long a store path is kept after it arrives though nothing uses it yet, such as a system
+/// copied in for a switch that hasn't made it a generation.
+const GRACE: Duration = Duration::from_secs(3600);
+
 /// The timer that switches back from a system being tried.
 const TRY_TIMER: &str = "distro-try";
+
+/// Waits for any other change to the generations of the machine at `root`, then holds them until
+/// the returned file is dropped.
+fn lock(root: &Path) -> Result<fs::File, String> {
+    let path = root.join(LOCK);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if file.try_lock().is_err() {
+        eprintln!("waiting for another change to this machine's generations to finish");
+        file.lock()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(file)
+}
 
 /// One of the machine's generations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +78,9 @@ pub struct Generation {
     /// When it was made, as `2026-11-10 14:03:22` in UTC.
     pub created: String,
     pub current: bool,
+    /// Whether it's the system running or the one that booted, which can differ from the current
+    /// one after a boot fell back to an older generation.
+    pub in_use: bool,
     /// The hash of the model it was built from.
     pub model_hash: Option<String>,
 }
@@ -109,10 +141,15 @@ fn history_at(root: &Path) -> Result<Vec<Generation>, String> {
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |since| since.as_secs());
             let system = system_of(root, &link)?;
+            let target = fs::read_link(&link).ok();
+            let in_use = [RUNNING, BOOTED]
+                .iter()
+                .any(|name| fs::read_link(root.join(name)).ok() == target);
             Ok(Generation {
                 number,
                 created: utc(seconds),
                 current: number == current,
+                in_use,
                 model_hash: fs::read_to_string(system.join(MODEL_HASH)).ok(),
             })
         })
@@ -177,6 +214,7 @@ fn previous(root: &Path) -> Result<u32, String> {
 
 /// Makes `system` the current generation and switches to it. Needs root.
 pub fn activate(system: &Path) -> Result<(), String> {
+    let _held = lock(Path::new(ROOT))?;
     add(Path::new(ROOT), system)?;
     switch(system, "switch")
 }
@@ -185,6 +223,7 @@ pub fn activate(system: &Path) -> Result<(), String> {
 pub fn rollback() -> Result<u32, String> {
     require_generations()?;
     let root = Path::new(ROOT);
+    let _held = lock(root)?;
     let number = previous(root)?;
     make_current(root, number)?;
     switch(&root.join(CURRENT), "switch")?;
@@ -195,6 +234,7 @@ pub fn rollback() -> Result<u32, String> {
 /// `seconds`, `rollback`, or a reboot all return to the current generation. Needs root.
 pub fn try_system(system: &Path, seconds: u64) -> Result<(), String> {
     require_generations()?;
+    let _held = lock(Path::new(ROOT))?;
     if trying() {
         return Err("a system is already being tried; keep it or roll back first".into());
     }
@@ -232,6 +272,7 @@ pub fn keep_trial() -> Result<u32, String> {
     if !trying() {
         return Err("no system is being tried".into());
     }
+    let _held = lock(Path::new(ROOT))?;
     stop_trial();
     let root = Path::new(ROOT);
     let tried = fs::read_link(root.join(TRYING)).map_err(|e| format!("{TRYING}: {e}"))?;
@@ -244,6 +285,7 @@ pub fn keep_trial() -> Result<u32, String> {
 /// Switches back from the system being tried to the current generation. Returns its number.
 pub fn end_trial() -> Result<u32, String> {
     require_generations()?;
+    let _held = lock(Path::new(ROOT))?;
     stop_trial();
     let root = Path::new(ROOT);
     switch(&root.join(CURRENT), "switch")?;
@@ -260,7 +302,7 @@ fn stop_trial() {
 /// Removes generations `numbers` from the machine at `root`, and every path in its store that no
 /// generation left, the running system or one being tried uses. Returns how many paths went.
 /// The current generation can't be removed.
-pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
+pub fn remove(root: &Path, numbers: &[u32], grace: Duration) -> Result<usize, String> {
     let (_, current) = generations(root)?;
     if numbers.contains(&current) {
         return Err(format!("generation {current} is the current one"));
@@ -294,6 +336,9 @@ pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
             continue;
         }
         let path = entry.path();
+        if arrived_within(&path, grace) {
+            continue;
+        }
         make_writable(&path);
         fs::remove_dir_all(&path)
             .or_else(|_| fs::remove_file(&path))
@@ -301,6 +346,18 @@ pub fn remove(root: &Path, numbers: &[u32]) -> Result<usize, String> {
         removed += 1;
     }
     Ok(removed)
+}
+
+/// Whether `path` came into the store less than `grace` ago. Its status-change time says when: a
+/// copy keeps the time a file was last modified, but never this one.
+fn arrived_within(path: &Path, grace: Duration) -> bool {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    let arrived = UNIX_EPOCH + Duration::from_secs(u64::try_from(meta.ctime()).unwrap_or(0));
+    SystemTime::now()
+        .duration_since(arrived)
+        .is_ok_and(|age| age < grace)
 }
 
 /// The store path a link's target is in, such as `/store/<hash>/sw`.
@@ -329,7 +386,8 @@ fn make_writable(path: &Path) {
 pub fn clean(numbers: &[u32]) -> Result<String, String> {
     require_generations()?;
     let root = Path::new(ROOT);
-    let removed = remove(root, numbers)?;
+    let _held = lock(root)?;
+    let removed = remove(root, numbers, GRACE)?;
     if !numbers.is_empty() {
         switch(&root.join(CURRENT), "boot")?;
     }
@@ -507,7 +565,7 @@ mod tests {
         for name in [hash('c'), hash('d'), hash('e')] {
             fs::create_dir_all(root.join("store").join(name)).unwrap();
         }
-        assert_eq!(remove(root, &[1]).unwrap(), 3);
+        assert_eq!(remove(root, &[1], Duration::ZERO).unwrap(), 3);
         let left: BTreeSet<String> = fs::read_dir(root.join("store"))
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -516,7 +574,41 @@ mod tests {
             left,
             BTreeSet::from([hash('b'), hash('c'), ".system".to_owned()])
         );
-        assert!(remove(root, &[2]).unwrap_err().contains("current"));
+        assert!(
+            remove(root, &[2], Duration::ZERO)
+                .unwrap_err()
+                .contains("current")
+        );
+    }
+
+    #[test]
+    fn a_store_path_that_just_arrived_survives_a_clean() {
+        let dir = machine(&[&hash('a')]);
+        let root = dir.path();
+        // Copied in for a switch that hasn't made it a generation yet.
+        fs::create_dir_all(root.join("store").join(hash('f'))).unwrap();
+        assert_eq!(remove(root, &[], Duration::from_secs(3600)).unwrap(), 0);
+        assert!(root.join("store").join(hash('f')).exists());
+        assert_eq!(remove(root, &[], Duration::ZERO).unwrap(), 1);
+    }
+
+    #[test]
+    fn changes_to_the_generations_wait_for_each_other() {
+        let dir = machine(&[&hash('a')]);
+        let held = lock(dir.path()).unwrap();
+        assert!(
+            fs::File::open(dir.path().join(LOCK))
+                .unwrap()
+                .try_lock()
+                .is_err()
+        );
+        drop(held);
+        assert!(
+            fs::File::open(dir.path().join(LOCK))
+                .unwrap()
+                .try_lock()
+                .is_ok()
+        );
     }
 
     #[test]
