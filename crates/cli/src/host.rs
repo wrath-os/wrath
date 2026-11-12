@@ -7,9 +7,10 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
 
-use distro_build::store::{Lab, StorePath};
+use distro_build::store::{Lab, StorePath, is_entry};
 use distro_model::Model;
 
+use crate::activate::{UNFINISHED, Unfinished};
 use crate::generations::{self, Switch};
 
 /// Where a system keeps its model, on the machine it runs on.
@@ -95,6 +96,33 @@ impl Remote {
         Model::from_json(&text)
             .map(Some)
             .map_err(|e| format!("{}: {RUNNING_MODEL}: {e}", self.name))
+    }
+
+    /// The switch to what the machine runs that failed partway, with the model it started from,
+    /// when there is one.
+    fn unfinished(&self) -> Result<Option<(Unfinished, Option<Model>)>, String> {
+        let text = self.output(&format!("cat /{UNFINISHED} 2>/dev/null || true"))?;
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        let running = self.output("readlink -f /run/system")?;
+        let Some(unfinished) = Unfinished::parse(&text, Path::new(running.trim())) else {
+            return Ok(None);
+        };
+        // Only a store path goes into the command.
+        let entry = unfinished
+            .from
+            .as_deref()
+            .and_then(|from| from.strip_prefix("/store").ok());
+        let from = match entry.and_then(Path::to_str).filter(|name| is_entry(name)) {
+            Some(from) => {
+                let path = format!("/store/{from}/etc/distro/model.json");
+                let text = self.output(&format!("cat {path} 2>/dev/null || true"))?;
+                Model::from_json(&text).ok()
+            }
+            None => None,
+        };
+        Ok(Some((unfinished, from)))
     }
 
     /// What the system the machine runs says it was built from, when it says.
@@ -225,10 +253,18 @@ pub fn apply(
     yes: bool,
 ) -> Result<ExitCode, String> {
     let model = generations::locked(root, config, model)?;
-    let running = remote.running_model()?;
+    // After a switch that failed partway, the plan is from where it started, so switching again
+    // does all it didn't.
+    let (running, unfinished) = match remote.unfinished()? {
+        Some((unfinished, from)) => {
+            println!("{}", generations::unfinished_note(&unfinished.error));
+            (from, true)
+        }
+        None => (remote.running_model()?, false),
+    };
     let rebuilt = generations::rebuilt(root, &model, remote.running_built_from()?.as_deref());
     let same = running.as_ref().is_some_and(|r| r.hash() == model.hash());
-    if same && rebuilt.as_ref().is_some_and(Vec::is_empty) {
+    if same && !unfinished && rebuilt.as_ref().is_some_and(Vec::is_empty) {
         println!("{} runs model {} already", remote.name, &model.hash()[..16]);
         return Ok(ExitCode::SUCCESS);
     }

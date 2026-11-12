@@ -1,4 +1,4 @@
-title = "a system switches as the plan said, rolls back, and tries another"
+title = "a system switches as the plan said, finishes a failed switch, rolls back and tries another"
 
 [vm]
 config = "fixtures/configs/native"
@@ -8,8 +8,12 @@ steps = [
   { apply_config = "fixtures/configs/native-web", expect_plan = ["+ nginx-main.service", "+ /etc/nginx/main.conf"] },
   { run = "systemctl is-active nginx-main; grep -c 'listen 8080' /etc/nginx/main.conf; cat /srv/blog/index.html", stdout_contains = "active\n1\n<h1>blog</h1>" },
   { run = "systemctl show -p MainPID --value nginx-main > /tmp/pid" },
-  { apply_config = "fixtures/configs/native-web-changed", expect_plan = ["~ nginx-main.service"] },
-  { run = "grep -c 'listen 8081' /etc/nginx/main.conf; test \"$(systemctl show -p MainPID --value nginx-main)\" != \"$(cat /tmp/pid)\" && echo restarted", stdout_contains = "1\nrestarted" },
+  { run = "mkdir -p /run/systemd/system/nginx-main.service.d && printf '[Service]\nExecStartPre=/run/system/bin/false\n' > /run/systemd/system/nginx-main.service.d/fail.conf" },
+  { apply_config = "fixtures/configs/native-web-changed", expect_plan = ["~ nginx-main.service"], exit = 1 },
+  { run = "cat /run/distro/switch-unfinished", stdout_contains = "nginx-main.service" },
+  { run = "rm -r /run/systemd/system/nginx-main.service.d" },
+  { apply_config = "fixtures/configs/native-web-changed" },
+  { run = "grep -c 'listen 8081' /etc/nginx/main.conf; test \"$(systemctl show -p MainPID --value nginx-main)\" != \"$(cat /tmp/pid)\" && echo restarted; test -e /run/distro/switch-unfinished || echo finished", stdout_contains = "1\nrestarted\nfinished" },
   { apply_config = "fixtures/configs/native", expect_plan = ["- nginx-main.service"] },
   { run = "systemctl is-active nginx-main; test -e /etc/nginx/main.conf || echo gone", stdout_contains = "inactive\ngone" },
   { run = "distro rollback", stdout_contains = "generation 3" },

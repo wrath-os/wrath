@@ -132,8 +132,11 @@ distro rollback 9    # back to generation 9
 ```
 
 If a switch fails partway, say a service won't start, the new generation is still current and
-boots next. distro says so, and `distro rollback` takes you back. When a rollback itself fails
-partway, `distro rollback N` with the generation it names tries that one again.
+boots next. distro says so, and `distro rollback` takes you back. Or fix what failed and run
+`distro apply` again: until the switch goes through or the machine restarts, `distro status` says
+it's unfinished, and the next apply plans from where it started, so it does all of it again.
+When a rollback itself fails partway, `distro rollback N` with the generation it names tries that
+one again.
 
 Every generation also has an entry in the boot menu, so if a change breaks booting you can pick
 the previous one there. A generation that fails to boot three times stops being the default on

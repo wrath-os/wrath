@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use distro_build::store::{Lab, StorePath, is_entry};
 
-use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, generations};
+use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, Unfinished, generations};
 
 /// The root of the machine distro runs on.
 const ROOT: &str = "/";
@@ -108,6 +108,24 @@ pub fn running_model_hash() -> Option<String> {
 pub fn running_model() -> Option<PathBuf> {
     let path = Path::new(ROOT).join(RUNNING).join(MODEL);
     path.exists().then_some(path)
+}
+
+/// The switch to the running system that failed partway, until a switch succeeds or the machine
+/// boots.
+pub fn unfinished() -> Option<Unfinished> {
+    Unfinished::of_running(Path::new(ROOT))
+}
+
+/// The model a switch compares against: the one an unfinished switch to the running system
+/// started from, so the plan shows what that switch didn't finish, or else the running one.
+pub fn switching_from_model() -> Option<PathBuf> {
+    match unfinished() {
+        Some(unfinished) => unfinished
+            .from
+            .map(|from| from.join(MODEL))
+            .filter(|path| path.exists()),
+        None => running_model(),
+    }
 }
 
 /// What the running system says it was built from, when it says.

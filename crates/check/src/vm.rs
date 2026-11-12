@@ -44,11 +44,13 @@ pub struct VmSpec {
 pub enum Step {
     /// Builds the configuration on the host, copies the system into the VM and switches to it.
     /// The plan from the configuration before must contain each of `expect_plan`.
-    /// With `try_for`, it tries the system for that long instead, as `distro try --for`.
+    /// With `try_for`, it tries the system for that long instead, as `distro try --for`. With a
+    /// nonzero `exit`, the switch must fail with it.
     ApplyConfig {
         config: String,
         expect_plan: Vec<String>,
         try_for: Option<String>,
+        exit: i32,
     },
     /// Applies a user's own configuration in the VM as `user`, without root. Distro's own store
     /// can't do this yet, so the step fails with a reason.
@@ -204,10 +206,11 @@ impl TryFrom<RawStep> for Step {
         let run_fields = raw.exit != 0 || raw.stdout_contains.is_some();
         let apply_fields = !raw.expect_plan.is_empty() || raw.try_for.is_some();
         match (raw.apply_config, raw.run, raw.expect_no_reboot) {
-            (Some(config), None, None) if !run_fields => Ok(Self::ApplyConfig {
+            (Some(config), None, None) if raw.stdout_contains.is_none() => Ok(Self::ApplyConfig {
                 config,
                 expect_plan: raw.expect_plan,
                 try_for: raw.try_for,
+                exit: raw.exit,
             }),
             (None, Some(run), None) if !apply_fields => Ok(Self::Run(Expect {
                 run: match raw.run_as {
@@ -220,8 +223,8 @@ impl TryFrom<RawStep> for Step {
             })),
             (None, None, Some(true)) if !run_fields && !apply_fields => Ok(Self::ExpectNoReboot),
             _ => Err(
-                "a step is one of `apply_config` (with `expect_plan` and `try_for`), `run` (with \
-                 `run_as`, `exit` and `stdout_contains`) or `expect_no_reboot = true`"
+                "a step is one of `apply_config` (with `expect_plan`, `try_for` and `exit`), `run` \
+                 (with `run_as`, `exit` and `stdout_contains`) or `expect_no_reboot = true`"
                     .into(),
             ),
         }
@@ -230,6 +233,14 @@ impl TryFrom<RawStep> for Step {
 
 fn default_timeout_secs() -> u64 {
     300
+}
+
+/// An [`Step::ApplyConfig`] as it runs.
+struct Switching<'a> {
+    config: &'a str,
+    expect_plan: &'a [String],
+    try_for: Option<&'a str>,
+    exit: i32,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -711,9 +722,15 @@ impl VmRun<'_> {
                     config,
                     expect_plan,
                     try_for,
+                    exit,
                 } => {
-                    let try_for = try_for.as_deref();
-                    self.apply_config(agent, current, config, expect_plan, try_for, deadline)?;
+                    let switch = Switching {
+                        config,
+                        expect_plan,
+                        try_for: try_for.as_deref(),
+                        exit: *exit,
+                    };
+                    self.apply_config(agent, current, switch, deadline)?;
                     current = config;
                 }
                 Step::ApplyHome { .. } => {
@@ -753,9 +770,12 @@ impl VmRun<'_> {
         &self,
         agent: &mut Client<VsockStream>,
         current: &str,
-        config: &str,
-        expect_plan: &[String],
-        try_for: Option<&str>,
+        Switching {
+            config,
+            expect_plan,
+            try_for,
+            exit,
+        }: Switching,
         deadline: Instant,
     ) -> Result<(), String> {
         let plan = self
@@ -777,10 +797,14 @@ impl VmRun<'_> {
             None => argv(&["distro", "apply", "-y", system]),
         };
         let (code, _, stderr) = run_shell(agent, switch, deadline)?;
-        if code != Some(0) {
-            return Err(format!("switching to `{config}` failed: {}", stderr.trim()));
+        match code {
+            Some(code) if code == exit => Ok(()),
+            _ if exit == 0 => Err(format!("switching to `{config}` failed: {}", stderr.trim())),
+            _ => Err(format!(
+                "switching to `{config}` was to exit with {exit}, but exited with {code:?}: {}",
+                stderr.trim()
+            )),
         }
-        Ok(())
     }
 
     /// Stops the VM and boots its blank disks, onto which `distro install` put a system, typing
@@ -1449,11 +1473,13 @@ mod tests {
                     config: "fixtures/configs/basic-changed".into(),
                     expect_plan: vec!["8081".into()],
                     try_for: None,
+                    exit: 0,
                 },
                 Step::ApplyConfig {
                     config: "fixtures/configs/basic".into(),
                     expect_plan: Vec::new(),
                     try_for: Some("20s".into()),
+                    exit: 0,
                 },
                 Step::Run(Expect {
                     run: "curl localhost".into(),

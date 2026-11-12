@@ -637,24 +637,96 @@ impl Steps {
     }
 }
 
+/// Where a switch that failed partway says what it switched from, until a switch succeeds or the
+/// machine boots, under the machine's root.
+pub(crate) const UNFINISHED: &str = "run/distro/switch-unfinished";
+
+/// A switch to the running system that failed partway: what it switched from, when something
+/// ran before it, and why it failed.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Unfinished {
+    pub from: Option<PathBuf>,
+    pub error: String,
+}
+
+impl Unfinished {
+    /// What `text`, as [`record`] writes it, says, when it's about a switch to `running`.
+    pub(crate) fn parse(text: &str, running: &Path) -> Option<Self> {
+        let (mut from, mut to, mut error) = (None, None, String::new());
+        for line in text.lines() {
+            match line.split_once(' ') {
+                Some(("from", path)) => from = Some(PathBuf::from(path)),
+                Some(("to", path)) => to = Some(PathBuf::from(path)),
+                Some(("error", text)) => error = text.to_owned(),
+                _ => {}
+            }
+        }
+        (to.as_deref() == Some(running)).then_some(Self { from, error })
+    }
+
+    /// The unfinished switch to what runs on the machine at `root`, if there is one.
+    pub(crate) fn of_running(root: &Path) -> Option<Self> {
+        let text = fs::read_to_string(root.join(UNFINISHED)).ok()?;
+        Self::parse(&text, &root.join(RUNNING).canonicalize().ok()?)
+    }
+}
+
+/// What a switch to `system` compares against: where an unfinished switch to it started, so it
+/// does all that one didn't, or else what runs.
+fn switching_from(root: &Path, system: &Path) -> Option<PathBuf> {
+    let unfinished = Unfinished::of_running(root)
+        .filter(|_| system.canonicalize().ok() == root.join(RUNNING).canonicalize().ok());
+    match unfinished {
+        Some(unfinished) => unfinished.from,
+        None => fs::read_link(root.join(RUNNING))
+            .or_else(|_| fs::read_link(root.join("run/current-system")))
+            .ok(),
+    }
+}
+
+/// Records how the switch from `from` to `system` went: a failure, with its first line, for the
+/// next switch to finish, or that nothing is left to finish.
+fn record(root: &Path, system: &Path, from: Option<PathBuf>, switched: &Result<(), String>) {
+    let path = root.join(UNFINISHED);
+    let Err(error) = switched else {
+        let _ = fs::remove_file(path);
+        return;
+    };
+    let to = system.canonicalize().unwrap_or_else(|_| system.to_owned());
+    let from = from.map(|from| format!("from {}\n", from.display()));
+    let text = format!(
+        "{}to {}\nerror {}\n",
+        from.unwrap_or_default(),
+        to.display(),
+        error.lines().next().unwrap_or_default()
+    );
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(path, text);
+}
+
 fn switch(root: &Path, system: &Path) -> Result<(), String> {
+    let from = switching_from(root, system);
     let mut steps = Steps::default();
-    let switched = switch_steps(root, system, &mut steps);
+    let switched = switch_steps(root, system, from.as_deref(), &mut steps);
     steps.save(root);
+    record(root, system, from, &switched);
     switched
 }
 
-fn switch_steps(root: &Path, system: &Path, steps: &mut Steps) -> Result<(), String> {
-    let current = root.join(RUNNING);
-    let old = fs::read_link(&current)
-        .or_else(|_| fs::read_link(root.join("run/current-system")))
-        .ok();
+fn switch_steps(
+    root: &Path,
+    system: &Path,
+    old: Option<&Path>,
+    steps: &mut Steps,
+) -> Result<(), String> {
     let (before, after, activation) = steps.time("compare", || {
         let after = model_of(system)?;
-        let running = old.as_deref().map(model_of);
+        let running = old.map(model_of);
         let compared = matches!(running, Some(Ok(_)));
         let (before, mut activation) = against(running, &after);
-        if let Some(old) = old.as_deref().filter(|_| compared) {
+        if let Some(old) = old.filter(|_| compared) {
             activation.restart_too(&after, changed_on_disk(old, system));
         }
         Ok::<_, String>((before, after, activation))
@@ -672,7 +744,7 @@ fn switch_steps(root: &Path, system: &Path, steps: &mut Steps) -> Result<(), Str
             state.keep_system(root, system, State::of(&before).as_ref());
         });
     }
-    if let Err(e) = steps.time("etc", || switch_etc(root, old.as_deref(), system)) {
+    if let Err(e) = steps.time("etc", || switch_etc(root, old, system)) {
         // Nothing else has changed yet, so what stopped starts again and the machine runs as it
         // did.
         let restarted = systemctl("start", &activation.stop)
@@ -1240,6 +1312,52 @@ mod tests {
             recorded.lines().all(|line| line.ends_with(" ms")),
             "{recorded}"
         );
+    }
+
+    #[test]
+    fn a_switch_that_failed_partway_is_finished_from_where_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let [old, new, other] = ["old", "new", "other"].map(|name| {
+            let path = root.join("store").join(name);
+            fs::create_dir_all(&path).unwrap();
+            path
+        });
+        fs::create_dir_all(root.join("run")).unwrap();
+        symlink(&old, root.join(RUNNING)).unwrap();
+        assert_eq!(switching_from(root, &new), Some(old.clone()));
+
+        // It failed after /run/system moved, as a unit failing to start does.
+        fs::remove_file(root.join(RUNNING)).unwrap();
+        symlink(&new, root.join(RUNNING)).unwrap();
+        let failed = Err("systemctl failed: Job for linger.service failed.\nmore".to_owned());
+        record(root, &new, Some(old.clone()), &failed);
+        let unfinished = Unfinished::of_running(root).unwrap();
+        assert_eq!(
+            unfinished.error,
+            "systemctl failed: Job for linger.service failed."
+        );
+        assert_eq!(unfinished.from, Some(old.clone()));
+        assert_eq!(switching_from(root, &new), Some(old.clone()));
+        assert_eq!(switching_from(root, &other), Some(new.clone()));
+
+        // Failing again keeps where it started.
+        record(root, &new, switching_from(root, &new), &failed);
+        assert_eq!(switching_from(root, &new), Some(old.clone()));
+
+        record(root, &new, Some(old), &Ok(()));
+        assert!(Unfinished::of_running(root).is_none());
+        assert_eq!(switching_from(root, &new), Some(new));
+    }
+
+    #[test]
+    fn a_failed_switch_only_counts_for_the_system_it_switched_to() {
+        let text = "from /store/old\nto /store/new\nerror it failed\n";
+        assert!(Unfinished::parse(text, Path::new("/store/old")).is_none());
+        let unfinished = Unfinished::parse(text, Path::new("/store/new")).unwrap();
+        assert_eq!(unfinished.from.as_deref(), Some(Path::new("/store/old")));
+        let first = Unfinished::parse("to /store/new\nerror it failed\n", Path::new("/store/new"));
+        assert_eq!(first.unwrap().from, None);
     }
 
     /// Generations each with a kernel and an initrd of 10 bytes, named as given.

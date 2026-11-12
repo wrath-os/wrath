@@ -269,7 +269,15 @@ pub fn apply(
         current.as_deref(),
         here::trying(),
     );
-    if record.is_none() && same && rebuilt.as_ref().is_some_and(Vec::is_empty) {
+    let unfinished = here::unfinished();
+    if let Some(unfinished) = &unfinished {
+        println!("{}", unfinished_note(&unfinished.error));
+    }
+    if record.is_none()
+        && same
+        && unfinished.is_none()
+        && rebuilt.as_ref().is_some_and(Vec::is_empty)
+    {
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
     }
@@ -285,6 +293,11 @@ pub fn apply(
         record.write()?;
     }
     switched(&system, how, tier)
+}
+
+/// What to say about a switch to the running system that failed partway with `error`.
+pub(crate) fn unfinished_note(error: &str) -> String {
+    format!("switching to what runs failed partway ({error}); switching again finishes it")
 }
 
 /// Whether a machine already has model `hash`: running it, as the generation it boots, and not in
@@ -318,7 +331,7 @@ fn planned(
     rebuilt: Option<Vec<distro_model::Change>>,
     yes: bool,
 ) -> Result<Option<Option<Tier>>, String> {
-    let running = here::running_model().and_then(|path| crate::read_model(&path).ok());
+    let running = here::switching_from_model().and_then(|path| crate::read_model(&path).ok());
     let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), model);
     let plan = with_rebuilt(plan, rebuilt);
     match &running {
@@ -507,6 +520,9 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
         );
     }
     println!("{}", matching(here::running_model_hash().as_deref(), model));
+    if let Some(unfinished) = here::unfinished() {
+        println!("{}", unfinished_note(&unfinished.error));
+    }
     if !model.is_locked() {
         println!("the lock doesn't pin every source yet; `distro apply` pins them first");
     }
