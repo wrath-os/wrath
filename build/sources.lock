@@ -37,6 +37,7 @@ bad10f3c553a0e1854649ab59c5b2434da22ca1a54ae6138f1f53961567e1ab7  https://downlo
 8a9ea10943c36fc117e253f80c91e477b673525ae45762942858aef57631bb90  https://download.gnome.org/sources/glib/2.84/glib-2.84.4.tar.xz
 2b61780203aed98e701d3ea57c8f353e7c8ada9706a79be782f6c5153dd035c0  https://download.gnome.org/sources/glibmm/2.66/glibmm-2.66.10.tar.xz
 dfe7adc5876ef0670e7eba2907799bdbb8875ce58bb4208e1a52169bd16a47ca  https://download.gnome.org/sources/gnome-keyring/51/gnome-keyring-51.1.tar.xz
+945b57da7ec262e5c266b89e091d14be800cc424277d82a02872b7d794a84779  https://download.gnome.org/sources/gobject-introspection/1.84/gobject-introspection-1.84.0.tar.xz
 a37bb0e78a419dcbeaa9c7027bcff52f5ec2367c25ec859da31dfde2928f279a  https://download.gnome.org/sources/graphene/1.10/graphene-1.10.8.tar.xz
 1e2419a5f21d26c324b28ae1c00e29e9175e8b596fff385a04c2172b36652226  https://download.gnome.org/sources/gsettings-desktop-schemas/51/gsettings-desktop-schemas-51.0.tar.xz
 80931fa472a77b9a164f6740e3c0b444fac6770054632d35a7ff9d679e5e7b9f  https://download.gnome.org/sources/gtk/3.24/gtk-3.24.52.tar.xz
@@ -72,6 +73,7 @@ ee55d3edf80167e48ea11a923c7386f4669df67d7994554387f84e7d8b0a2bf0  https://files.
 d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f  https://files.pythonhosted.org/packages/source/p/packaging/packaging-25.0.tar.gz
 6de90ee7b8263e740c8715a925382d4099b354f29ac48ea40d840cf7aa14ace5  https://files.pythonhosted.org/packages/source/p/pyelftools/pyelftools-0.32.tar.gz
 d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f  https://files.pythonhosted.org/packages/source/p/pyyaml/pyyaml-6.0.3.tar.gz
+3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc  https://files.pythonhosted.org/packages/source/s/setuptools/setuptools-84.2.1.tar.gz
 ba885c1319578d6c94d46e9b0dceb4014caafe2490e437a0dbca3f270a223f5a  https://ftp.gnu.org/gnu/autoconf/autoconf-2.72.tar.xz
 168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887  https://ftp.gnu.org/gnu/automake/automake-1.18.1.tar.xz
 0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba  https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
@@ -5779,4 +5781,5 @@ ccad8ee5dadb1271fd4727ad14d9bd77a64e505608766c4e98267d9aede40d3d  https://www.x.
 7311b4bcda22cfc19cb99680eb1c35cfc1ea885981310639f0429fe2948c122e  https://www.x.org/archive/individual/xserver/xwayland-24.1.15.tar.xz
 b77041324f0109f77161ee43743fe04baa485866af8460d31e476ad3f7648fd5  https://www.x.org/releases/individual/data/xkeyboard-config/xkeyboard-config-2.48.tar.xz
 36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81  https://www.zsh.org/pub/zsh-5.9.2.tar.xz
+3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a  https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz
 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23  https://zlib.net/fossils/zlib-1.3.1.tar.gz

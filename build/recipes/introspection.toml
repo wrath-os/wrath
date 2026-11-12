@@ -1,0 +1,91 @@
+# GObject introspection: descriptions of libraries' APIs (`.gir`), compiled to typelibs that
+# bindings and tools such as blueprint-compiler read. The libraries themselves are built without
+# it; each package here builds one again with it and keeps only its descriptions, so nothing that
+# uses the libraries rebuilds.
+
+# What Python programs such as the scanner load to build and find C code, now that the standard
+# library has no distutils.
+[[package]]
+id = "setuptools"
+version = "84.2.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://files.pythonhosted.org/packages/source/s/setuptools/setuptools-{version}.tar.gz" }]
+script = '''
+mkdir -p $DEST$PREFIX/site
+cp -r setuptools _distutils_hack $DEST$PREFIX/site/
+# Python reads setuptools' `.pth`, which brings back `distutils`, only from site-packages, but a
+# `sitecustomize` from PYTHONPATH too.
+printf 'import _distutils_hack\n_distutils_hack.add_shim()\n' > $DEST$PREFIX/site/sitecustomize.py
+'''
+
+# The scanner and compiler, without descriptions of their own, which need glib's first.
+[[package]]
+id = "gobject-introspection"
+version = "1.84.0"
+scope = "runtime"
+# Whole: the scanner names its prefix's `lib` and finds its Python module under it, which a split
+# would point at the part with the libraries alone.
+whole = true
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "setuptools", "bison-final", "m4-final", "flex", "glib",
+  "libffi",
+]
+sources = [{ url = "https://download.gnome.org/sources/gobject-introspection/{series}/gobject-introspection-{version}.tar.xz" }]
+smoke = ["bin/g-ir-compiler --version"]
+probes = ["gobject-introspection-1.0"]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = ["-D build_introspection_data=false", "-D doctool=disabled", "-D tests=false"]
+# The scanner asks ldd which libraries its dump program loads; the loader answers the same, and
+# glibc's ldd looks for the loader in `lib64`, where it isn't.
+prepare = '''
+sed -i "s|args.extend(\['ldd', binary.args\[0\]\])|args.extend(['$LAB_LIB_glibc/lib/ld-linux-x86-64.so.2', '--list', binary.args[0]])|" giscanner/shlibs.py
+grep -q -- --list giscanner/shlibs.py
+'''
+
+# GLib, GObject, Gio and GModule.
+[[package]]
+id = "glib-gir"
+version = "2.84.4"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "python3", "pkgconf", "zlib", "pcre2", "libffi", "util-linux", "gettext",
+  "gobject-introspection", "setuptools",
+]
+sources = [{ url = "https://download.gnome.org/sources/glib/{series}/glib-{version}.tar.xz" }]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = [
+  "-D tests=false", "-D introspection=enabled", "-D man-pages=disabled", "-D selinux=disabled",
+  "-D xattr=false",
+]
+keep = ["share/gir-1.0", "lib/girepository-1.0"]
+
+# cairo, freetype2, fontconfig and the rest gobject-introspection describes itself.
+[[package]]
+id = "gobject-introspection-gir"
+version = "1.84.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "meson", "ninja", "pkgconf", "python3", "setuptools", "bison-final", "m4-final", "flex", "glib",
+  "libffi", "cairo", "glib-gir",
+]
+sources = [{ url = "https://download.gnome.org/sources/gobject-introspection/{series}/gobject-introspection-{version}.tar.xz" }]
+
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
+args = [
+  "-D build_introspection_data=true", "-D cairo=enabled", "-D doctool=disabled", "-D tests=false",
+]
+keep = ["share/gir-1.0", "lib/girepository-1.0"]
+# Its own scanner, from the source, asks the loader too, as the one above does.
+prepare = '''
+sed -i "s|args.extend(\['ldd', binary.args\[0\]\])|args.extend(['$LAB_LIB_glibc/lib/ld-linux-x86-64.so.2', '--list', binary.args[0]])|" giscanner/shlibs.py
+grep -q -- --list giscanner/shlibs.py
+'''

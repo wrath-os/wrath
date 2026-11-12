@@ -57,6 +57,12 @@ def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.An
         "ninja -C /build/b -j$NPROC",
         "DESTDIR=$DEST ninja -C /build/b install",
     ]
+    if options["keep"]:
+        kept = " ".join(["-e '^./%s/'" % path for path in options["keep"]])
+        lines += [
+            "(cd $DEST$PREFIX && find . ! -type d | grep -v %s | xargs -r rm -f)" % kept,
+            "find $DEST$PREFIX -depth -type d -empty -delete",
+        ]
     return {
         "script": options["prepare"] + "".join([line + "\n" for line in lines]) +
                   options["install"],
@@ -74,6 +80,11 @@ style(
         "source": option(types.str, default = ".", doc = "The directory with `meson.build`."),
         "env": option(types.map(types.str), doc = "Variables the build has."),
         "prepare": option(types.str, default = "", doc = "Shell lines run before the setup."),
+        "keep": option(
+            types.list(types.str),
+            doc = "The directories of the install that stay, such as `share/gir-1.0`, for a " +
+                  "package that builds part of another again; empty keeps everything.",
+        ),
         "install": option(
             types.str,
             default = "",

@@ -393,6 +393,42 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What happened:** only the experiments ran smoke commands, so these were never tried.
 - **What we did:** `distro build PKG --check` runs them, and they were fixed.
 
+### A reference to a bare `lib` follows the libraries
+
+- **Seen in:** gobject-introspection, whose `g-ir-scanner` falls back on its prefix's `lib`, joined
+  with `gobject-introspection` at run time, for its Python module.
+- **What happened:** splitting pointed `<prefix>/lib` at the part with the shared libraries, but
+  the Python module stayed in the main part, so the scanner couldn't import itself.
+- **What we did:** `whole = true` for the recipe.
+- **What would prevent it:** a reference that names a directory both parts have, with nothing
+  after it, could point at the main part, or keep the package whole with a note.
+- **Belongs in:** splitting.
+- **Status:** worked around.
+
+### glibc's ldd looks for the loader in lib64
+
+- **Seen in:** gobject-introspection's scanner, which runs `ldd` on a program it builds; and `ldd`
+  on every machine, which says "not a dynamic executable" for everything.
+- **What happened:** glibc's `ldd` script lists `<prefix>/lib64/ld-linux-x86-64.so.2` in
+  `RTLDLIST`, but our glibc installs the loader in `<prefix>/lib`.
+- **What we did:** the scanner runs the loader with `--list`, which prints the same.
+- **What would prevent it:** fixing `RTLDLIST` in the glibc recipe, with the next change that
+  rebuilds everything anyway; and a smoke command such as `bin/ldd bin/ldconfig`.
+- **Belongs in:** the glibc recipe.
+- **Status:** known; worked around in gobject-introspection.
+
+### Python packages a build uses are put on its path by hand
+
+- **Seen in:** gobject-introspection and glib's typelibs needing setuptools, as mesa needs mako
+  and systemd jinja2.
+- **What happened:** a dependency's `site` isn't on `PYTHONPATH` unless the recipe says so, so
+  meson didn't find setuptools though the recipe listed it.
+- **What we did:** `env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }`, as the others do.
+- **What would prevent it:** the builder adding every dependency's `site` to `PYTHONPATH`, as it
+  does for `bin` on `PATH`.
+- **Belongs in:** the builder.
+- **Status:** known.
+
 ## Working on recipes
 
 - Don't edit `build/` while a build is running from it. Styles load once per process, so a build
