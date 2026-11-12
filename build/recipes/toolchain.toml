@@ -118,7 +118,10 @@ deps = [
   { id = "linux-headers", view = false },
 ]
 sources = [{ url = "https://ftp.gnu.org/gnu/glibc/glibc-{version}.tar.xz" }]
+files = ["glibc-nss-in-system.patch"]
 script = '''
+# NSS modules from other packages, such as systemd's, are found in the running system's lib/nss.
+patch -p1 < glibc-nss-in-system.patch
 mkdir ../b && cd ../b
 cat > configparms <<EOP
 slibdir=$PREFIX/lib
@@ -133,6 +136,12 @@ CC=$LAB_REAL_BIN/gcc CXX=$LAB_REAL_BIN/g++ BUILD_CC=gcc MAKEINFO=true CFLAGS=-O2
     --sysconfdir=/etc
 make -j$NPROC MAKEINFO=true
 make install DESTDIR=$DEST install_root=$DEST MAKEINFO=true
+# ldd, tzselect and the like are bash scripts; a system finds bash on its PATH.
+for script in $DEST$PREFIX/bin/*; do
+    if head -c 32 "$script" | grep -q '^#! */bin/bash'; then
+        sed -i '1s|^#! */bin/bash|#!/usr/bin/env bash|' "$script"
+    fi
+done
 '''
 
 [[package]]

@@ -199,6 +199,11 @@ sed -i "s#/sbin/agetty#$LAB_DEP_util_linux/bin/agetty#" $DEST$PREFIX/lib/systemd
 # kmod is modprobe by the name it's called; `@` gives a program the name to run as.
 sed -i "s#^ExecStart=-/sbin/modprobe #ExecStart=-@$LAB_DEP_kmod/bin/kmod modprobe #" \
     $DEST$PREFIX/lib/systemd/system/modprobe@.service
+# glibc finds NSS modules from other packages in the system's lib/nss.
+mkdir -p $DEST$PREFIX/lib/nss
+for module in $DEST$PREFIX/lib/libnss_*.so.2; do
+    ln -s ../${module##*/} $DEST$PREFIX/lib/nss/
+done
 '''
 
 [[package]]

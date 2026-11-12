@@ -13,6 +13,8 @@ PACKAGES = [
     "coreutils",
     "findutils",
     "gawk",
+    # getent, ldd, locale and iconv.
+    "glibc",
     "grep",
     "gzip",
     "hostname",

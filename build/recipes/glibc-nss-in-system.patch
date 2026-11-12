@@ -1,0 +1,21 @@
+--- a/nss/nss_module.c
++++ b/nss/nss_module.c
+@@ -185,6 +185,18 @@
+       return false;
+ 
+     handle = __libc_dlopen (shlib_name);
++    /* distro: a module from another package, such as systemd's, is
++       linked into the running system's lib/nss, which no library search
++       path reaches.  */
++    if (handle == NULL)
++      {
++        char *path;
++        if (__asprintf (&path, "/run/system/lib/nss/%s", shlib_name) >= 0)
++          {
++            handle = __libc_dlopen (path);
++            free (path);
++          }
++      }
+     free (shlib_name);
+   }
+ 
