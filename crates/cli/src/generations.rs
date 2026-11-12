@@ -646,7 +646,14 @@ fn to_remove(generations: &[Generation], keep: usize) -> Vec<u32> {
 }
 
 pub fn activate(system: &Path) -> Result<ExitCode, String> {
-    here::activate(system)?;
+    let switched = here::activate(system);
+    if distro_build::progress::verbose() {
+        let steps = Path::new("/").join(crate::activate::SWITCH_STEPS);
+        for line in std::fs::read_to_string(steps).unwrap_or_default().lines() {
+            eprintln!("  {line}");
+        }
+    }
+    switched?;
     println!("switched to {}", system.display());
     Ok(ExitCode::SUCCESS)
 }

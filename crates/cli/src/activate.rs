@@ -598,7 +598,7 @@ fn link_foreign(root: &Path, system: &Path) -> Result<(), String> {
 }
 
 /// Where the last switch recorded how long each of its steps took, under the machine's root.
-const SWITCH_STEPS: &str = "run/distro/switch-steps";
+pub(crate) const SWITCH_STEPS: &str = "run/distro/switch-steps";
 
 /// How long each step of a switch takes, in the order they ran.
 #[derive(Default)]

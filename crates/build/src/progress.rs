@@ -25,6 +25,11 @@ pub(crate) fn mode() -> Mode {
     MODE.get().copied().unwrap_or(Mode::Lines)
 }
 
+/// Whether `--verbose` was given.
+pub fn verbose() -> bool {
+    mode() == Mode::Verbose
+}
+
 /// The mode for `--verbose` and for whether stderr is a terminal.
 pub fn chosen(verbose: bool, terminal: bool) -> Mode {
     match (verbose, terminal) {
