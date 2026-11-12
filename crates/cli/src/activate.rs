@@ -37,10 +37,10 @@ const ACCOUNTS: [&str; 3] = ["passwd", "group", "shadow"];
 /// Switches the machine at `root`, normally `/`, to `system`. Needs root.
 pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
     match mode {
-        Mode::Boot => boot_entries(root),
+        Mode::Boot => boot_entries(root, false),
         // The entries come first, so a switch that fails partway, such as on a unit that needs the
         // new kernel, still boots into the new generation next time.
-        Mode::Switch => boot_entries(root).and_then(|()| switch(root, system)),
+        Mode::Switch => boot_entries(root, true).and_then(|()| switch(root, system)),
         Mode::Test => switch(root, system),
         Mode::Init => init(system),
         Mode::Install => {
@@ -48,7 +48,7 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
             run(Command::new("bootctl")
                 .arg(format!("--esp-path={}", esp.display()))
                 .args(["--graceful", "install"]))?;
-            boot_entries(root)
+            boot_entries(root, false)
         }
     }
 }
@@ -66,8 +66,10 @@ pub(crate) const CURRENT: &str = "store/.system/current";
 /// current generation and the running one always get entries, and older ones as long as their
 /// files fit; the rest stay in the store, without an entry. Kernels and entries no generation
 /// with an entry has are removed first, so their space is there for what's copied. A machine
-/// without an ESP, such as a test VM booted directly, has nothing to write.
-fn boot_entries(root: &Path) -> Result<(), String> {
+/// without an ESP, such as a test VM booted directly, has nothing to write. An older generation that
+/// can't boot, such as one whose kernel is gone, loses its entry with a warning. With `renew`, the
+/// current generation gets fresh tries if it had run out: switching to it says to try it again.
+fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     let esp = root.join("boot");
     if !esp.join("loader").is_dir() {
         return Ok(());
@@ -80,7 +82,14 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     }
     let mut booting = Vec::new();
     for (number, link) in generations {
-        let boot = Boot::of(&inside(root, &link))?;
+        let boot = match Boot::of(&inside(root, &link)) {
+            Ok(boot) => boot,
+            Err(e) if number != current => {
+                eprintln!("distro: generation {number} can't boot, so it has no entry: {e}");
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         let files = [&boot.kernel, &boot.initrd]
             .into_iter()
             .map(|path| {
@@ -138,7 +147,11 @@ fn boot_entries(root: &Path) -> Result<(), String> {
     for (number, link, boot, files) in booting {
         for (name, from) in &files {
             let copy = kernels.join(name);
-            if !copy.exists() {
+            // Named by the store path, so one of the right size is the same file. One cut short,
+            // such as by a power cut, is copied again.
+            let size = |path: &Path| fs::metadata(path).map(|meta| meta.len()).ok();
+            let have = size(&copy);
+            if have.is_none() || have != size(from) {
                 copy_replacing(from, &copy)?;
             }
         }
@@ -169,8 +182,12 @@ fn boot_entries(root: &Path) -> Result<(), String> {
         // An entry the boot loader is counting tries for keeps its name, which holds the count.
         // A new one gets its tries; a boot that comes up marks it good, and one that runs out of
         // tries is booted only when nothing else is left.
-        let entry = counted_entry(&entries, number)?
-            .unwrap_or_else(|| format!("distro-{number}+{BOOT_TRIES}.conf"));
+        let fresh = format!("distro-{number}+{BOOT_TRIES}.conf");
+        let entry = match counted_entry(&entries, number)? {
+            Some(name) if renew && number == current && out_of_tries(&name) => fresh,
+            Some(name) => name,
+            None => fresh,
+        };
         let initrds: String = names[1..]
             .iter()
             .map(|file| format!("initrd /EFI/distro/{file}\n"))
@@ -276,6 +293,12 @@ fn fitting(
 
 /// How many times the boot loader tries a new generation before it falls back to another.
 const BOOT_TRIES: u32 = 3;
+
+/// Whether an entry's name says the boot loader has no tries left for it, as `distro-4+0-3.conf`.
+fn out_of_tries(name: &str) -> bool {
+    name.split_once('+')
+        .is_some_and(|(_, count)| count.starts_with("0-") || count == "0.conf")
+}
 
 /// The file in `entries` that holds generation `number`'s entry, with or without the boot
 /// loader's count of tries in its name: `distro-4.conf`, `distro-4+3.conf`, `distro-4+1-2.conf`.
@@ -437,7 +460,9 @@ fn inside(root: &Path, link: &Path) -> PathBuf {
 fn copy_replacing(from: &Path, to: &Path) -> Result<(), String> {
     let temporary = to.with_extension("distro-new");
     // A copy that fails, such as on a full ESP, leaves nothing behind to fill it.
-    if let Err(e) = fs::copy(from, &temporary) {
+    // It's on disk before it takes the name, so a power cut never leaves a short file there.
+    let copied = fs::copy(from, &temporary).and_then(|_| fs::File::open(&temporary)?.sync_all());
+    if let Err(e) = copied {
         let _ = fs::remove_file(&temporary);
         return Err(format!("{}: {e}", from.display()));
     }
@@ -781,14 +806,41 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
         fs::read_link(system_etc.join(path))
             .unwrap_or_else(|_| Path::new("/").join(ETC_LINK).join(path))
     };
+    // What the old system had goes first, so a path that changes between file and directory has
+    // room: its old links, and directories they leave empty.
+    for path in old_files.difference(&new_files) {
+        let link = etc.join(path);
+        let old_target = old.map(|old| target_in(&old.join("etc"), path));
+        if old_modes.contains_key(path)
+            || fs::read_link(&link).is_ok_and(|current| Some(current) == old_target)
+        {
+            fs::remove_file(&link).map_err(|e| format!("{}: {e}", link.display()))?;
+            for dir in link.ancestors().skip(1).take_while(|dir| *dir != etc) {
+                if fs::remove_dir(dir).is_err() {
+                    break;
+                }
+            }
+        }
+    }
     for path in &new_files {
         if ACCOUNTS.iter().any(|name| path == Path::new(name)) {
             continue;
         }
         let target = target_in(&new_etc, path);
         let link = etc.join(path);
-        if let Some(parent) = link.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        make_dirs(&etc, path)?;
+        if fs::symlink_metadata(&link).is_ok_and(|meta| meta.is_dir()) {
+            let left: Vec<String> = fs::read_dir(&link)
+                .map_err(|e| format!("{}: {e}", link.display()))?
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            return Err(format!(
+                "{} is a file in the new system, and it's a directory here with {} in it, which \
+                 distro didn't put there: move them, and switch again",
+                link.display(),
+                left.join(", ")
+            ));
         }
         // A file with its own mode is a copy, since a link into the store can't have one.
         if let Some(mode) = new_modes.get(path) {
@@ -802,15 +854,6 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
         }
         replace_link(&target, &link)?;
     }
-    for path in old_files.difference(&new_files) {
-        let link = etc.join(path);
-        let old_target = old.map(|old| target_in(&old.join("etc"), path));
-        if old_modes.contains_key(path)
-            || fs::read_link(&link).is_ok_and(|current| Some(current) == old_target)
-        {
-            fs::remove_file(&link).map_err(|e| format!("{}: {e}", link.display()))?;
-        }
-    }
     for name in ACCOUNTS {
         let read = |dir: &Path| fs::read_to_string(dir.join(name)).unwrap_or_default();
         let merged = merge_accounts(
@@ -823,6 +866,30 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
         let mode = if name == "shadow" { 0o600 } else { 0o644 };
         write_replacing(&path, &merged, mode)?;
     }
+    Ok(())
+}
+
+/// Makes the directories above `path` under `etc`. A link of distro's where a directory now goes,
+/// such as one to a file the old system had there, is removed first, so nothing is made through
+/// it; one someone else made is an error.
+fn make_dirs(etc: &Path, path: &Path) -> Result<(), String> {
+    let mut dir = etc.to_path_buf();
+    for part in path.parent().into_iter().flat_map(Path::components) {
+        dir.push(part);
+        let Ok(target) = fs::read_link(&dir) else {
+            continue;
+        };
+        let ours =
+            target.starts_with(Path::new("/").join(ETC_LINK)) || target.starts_with("/store");
+        if !ours {
+            return Err(format!(
+                "{} is a link distro didn't make, where the new system has a directory",
+                dir.display()
+            ));
+        }
+        fs::remove_file(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     Ok(())
 }
 
@@ -1167,6 +1234,68 @@ mod tests {
     }
 
     #[test]
+    fn an_old_generation_that_cant_boot_loses_its_entry_and_stops_nothing() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        store_machine(root, &[(1, "aaa"), (2, "bbb")], 2);
+        fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
+        // Generation 1's kernel is gone, such as after a half-finished clean.
+        fs::remove_file(root.join("store/aaa/kernel")).unwrap();
+        boot_entries(root, false).unwrap();
+        let names = entry_names(root);
+        assert_eq!(names, ["distro-2+3.conf"]);
+        // The current one can't be left out.
+        fs::remove_file(root.join("store/bbb/kernel")).unwrap();
+        assert!(boot_entries(root, false).is_err());
+    }
+
+    #[test]
+    fn switching_to_a_generation_that_ran_out_of_tries_gives_it_fresh_ones() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        store_machine(root, &[(1, "aaa"), (2, "bbb")], 2);
+        let entries = root.join("boot/loader/entries");
+        fs::create_dir_all(&entries).unwrap();
+        fs::write(entries.join("distro-2+0-3.conf"), "old").unwrap();
+        fs::write(entries.join("distro-1+0-3.conf"), "old").unwrap();
+        // Rewriting the entries, as a clean does, keeps the count.
+        boot_entries(root, false).unwrap();
+        assert_eq!(
+            entry_names(root),
+            ["distro-1+0-3.conf", "distro-2+0-3.conf"]
+        );
+        // Switching to it says to try again, and only it.
+        boot_entries(root, true).unwrap();
+        assert_eq!(entry_names(root), ["distro-1+0-3.conf", "distro-2+3.conf"]);
+    }
+
+    #[test]
+    fn a_kernel_copy_cut_short_on_the_esp_is_copied_again() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        store_machine(root, &[(1, "aaa")], 1);
+        let kernels = root.join("boot/EFI/distro");
+        fs::create_dir_all(&kernels).unwrap();
+        fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
+        // A power cut left the copy short.
+        fs::write(kernels.join("k1-bzImage"), "k").unwrap();
+        boot_entries(root, false).unwrap();
+        assert_eq!(
+            fs::read_to_string(kernels.join("k1-bzImage")).unwrap(),
+            "k1"
+        );
+    }
+
+    fn entry_names(root: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(root.join("boot/loader/entries"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
     fn a_switch_that_fails_partway_still_leaves_the_generation_bootable() {
         let work = tempfile::tempdir().unwrap();
         let root = work.path();
@@ -1228,7 +1357,7 @@ mod tests {
         store_machine(root, &[(1, "aaa"), (2, "bbb"), (10, "ccc")], 2);
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
 
-        boot_entries(root).unwrap();
+        boot_entries(root, false).unwrap();
 
         let esp = root.join("boot");
         assert_eq!(
@@ -1305,7 +1434,7 @@ mod tests {
         fs::write(root.join("boot/loader/entries/distro-2+1-2.conf"), "old").unwrap();
         fs::write(root.join("boot/loader/entries/distro-1.conf"), "old").unwrap();
 
-        boot_entries(root).unwrap();
+        boot_entries(root, false).unwrap();
 
         let esp = root.join("boot");
         assert_eq!(
@@ -1720,6 +1849,53 @@ mod tests {
         let file = tempfile::NamedTempFile::new().unwrap();
         let metadata = fs::metadata(file.path()).unwrap();
         (metadata.uid(), metadata.gid())
+    }
+
+    #[test]
+    fn a_path_in_etc_can_go_from_file_to_directory_and_back() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path().join("root");
+        let system = |name: &str, files: &[&str]| {
+            let dir = work.path().join(name);
+            for file in files {
+                let path = dir.join("etc").join(file);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, *file).unwrap();
+            }
+            fs::write(dir.join("etc/passwd"), "root:x:0:0::/root:/bin/sh\n").unwrap();
+            dir
+        };
+        let file = system("file", &["app"]);
+        let dir = system("dir", &["app/one.conf", "app/two.conf"]);
+        let etc = root.join("etc");
+        fs::create_dir_all(&etc).unwrap();
+        switch_etc(&root, None, &file).unwrap();
+
+        switch_etc(&root, Some(&file), &dir).unwrap();
+        assert!(fs::symlink_metadata(etc.join("app")).unwrap().is_dir());
+        assert_eq!(
+            fs::read_link(etc.join("app/one.conf")).unwrap(),
+            Path::new("/etc/.system/app/one.conf")
+        );
+
+        switch_etc(&root, Some(&dir), &file).unwrap();
+        assert_eq!(
+            fs::read_link(etc.join("app")).unwrap(),
+            Path::new("/etc/.system/app")
+        );
+
+        // Files distro didn't put there stay, and say why the switch can't go on.
+        switch_etc(&root, Some(&file), &dir).unwrap();
+        fs::write(etc.join("app/mine.conf"), "local\n").unwrap();
+        let error = switch_etc(&root, Some(&dir), &file).unwrap_err();
+        assert!(
+            error.contains("app") && error.contains("mine.conf"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(etc.join("app/mine.conf")).unwrap(),
+            "local\n"
+        );
     }
 
     #[test]

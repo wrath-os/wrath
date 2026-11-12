@@ -273,10 +273,12 @@ pub fn keep_trial() -> Result<u32, String> {
         return Err("no system is being tried".into());
     }
     let _held = lock(Path::new(ROOT))?;
-    stop_trial();
     let root = Path::new(ROOT);
+    // The timer stops only once the tried system is a generation: anything failing before that
+    // leaves it running, and it switches back as it would have.
     let tried = fs::read_link(root.join(TRYING)).map_err(|e| format!("{TRYING}: {e}"))?;
     let number = add(root, &tried)?;
+    stop_trial();
     switch(&tried, "boot")?;
     let _ = fs::remove_file(root.join(TRYING));
     Ok(number)

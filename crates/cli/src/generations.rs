@@ -259,7 +259,16 @@ pub fn apply(
     let model = locked(root, config, model)?;
     let hash = model.hash();
     let rebuilt = rebuilt(root, &model, here::running_built_from().as_deref());
-    let same = here::running_model_hash().as_deref() == Some(hash.as_str());
+    let current = here::history()
+        .ok()
+        .and_then(|all| all.into_iter().find(|generation| generation.current))
+        .and_then(|generation| generation.model_hash);
+    let same = already_there(
+        &hash,
+        here::running_model_hash().as_deref(),
+        current.as_deref(),
+        here::trying(),
+    );
     if record.is_none() && same && rebuilt.as_ref().is_some_and(Vec::is_empty) {
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
@@ -276,6 +285,13 @@ pub fn apply(
         record.write()?;
     }
     switched(&system, how, tier)
+}
+
+/// Whether a machine already has model `hash`: running it, as the generation it boots, and not in
+/// the middle of trying another. After trying or a boot that fell back, the running system can
+/// have it while the generation the machine boots doesn't, or the other way round.
+fn already_there(hash: &str, running: Option<&str>, current: Option<&str>, trying: bool) -> bool {
+    !trying && running == Some(hash) && current.is_none_or(|current| current == hash)
 }
 
 /// Switches to `system`, built before, after showing the plan from the running system to it and
@@ -885,6 +901,23 @@ fn days_since_epoch(date: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_machine_has_a_model_only_when_it_runs_and_boots_it_and_isnt_trying_another() {
+        assert!(already_there("m", Some("m"), Some("m"), false));
+        // A machine that was never installed by distro has no generations to compare.
+        assert!(already_there("m", Some("m"), None, false));
+        assert!(!already_there("m", Some("m"), Some("m"), true), "trying it");
+        assert!(
+            !already_there("m", Some("m"), Some("old"), false),
+            "it booted another"
+        );
+        assert!(
+            !already_there("m", Some("old"), Some("m"), false),
+            "it fell back"
+        );
+        assert!(!already_there("m", None, None, false));
+    }
 
     #[test]
     fn a_build_is_linked_where_asked_or_by_name_in_a_directory() {
