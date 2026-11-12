@@ -123,6 +123,9 @@ enum Command {
         /// Link what was built at this path, or in this directory under its own name
         #[arg(short = 'o', long = "link", value_name = "PATH")]
         link: Option<PathBuf>,
+        /// Then run each package's smoke commands, and its own tests in a build of it thrown away
+        #[arg(long, requires = "packages")]
+        check: bool,
         /// The variant the VM tests drive
         #[arg(long, hide = true)]
         test: bool,
@@ -459,15 +462,26 @@ fn main() -> ExitCode {
             }
         }),
         Command::Keep => generations::keep(),
-        Command::Build { packages, link, .. } if !packages.is_empty() => {
-            package_context(cli.config.as_deref(), &modules)
-                .and_then(|(model, _)| run::built(root, &model, &packages))
-                .and_then(|built| {
-                    let paths = built.paths.iter().map(|path| built.store.join(path.hash()));
-                    let named: Vec<_> = built.packages.into_iter().zip(paths).collect();
-                    generations::show_built(&named, link.as_deref())
-                })
-        }
+        Command::Build {
+            packages,
+            link,
+            check,
+            ..
+        } if !packages.is_empty() => package_context(cli.config.as_deref(), &modules)
+            .and_then(|(model, _)| run::built(root, &model, &packages))
+            .and_then(|built| {
+                let paths = built.paths.iter().map(|path| built.store.join(path.hash()));
+                let named: Vec<_> = built.packages.iter().cloned().zip(paths).collect();
+                let code = generations::show_built(&named, link.as_deref())?;
+                if !check {
+                    return Ok(code);
+                }
+                let ids: Vec<&str> = built.packages.iter().map(String::as_str).collect();
+                show_checked(&distro_build::pilot::check_packages(
+                    &root.join("build"),
+                    &ids,
+                )?)
+            }),
         Command::Build {
             image,
             link,
@@ -876,6 +890,27 @@ fn context(root: &Path, image_override: Option<PathBuf>) -> Result<RunContext, S
         signoff_dir: root.join("acceptance").join(SIGNOFF_DIR),
         run_root: root.join("target/distro-check/runs"),
         image_override,
+    })
+}
+
+/// Prints each check `build --check` ran, and fails when any did.
+fn show_checked(checked: &[distro_build::pilot::Checked]) -> Result<ExitCode, String> {
+    if checked.is_empty() {
+        println!("nothing to check: these recipes have no smoke commands or tests");
+    }
+    let mut failed = false;
+    for check in checked {
+        if check.passed {
+            println!("  ok      {}  {}", check.id, check.what);
+        } else {
+            failed = true;
+            println!("  FAILED  {}  {}, see {}", check.id, check.what, check.log);
+        }
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     })
 }
 

@@ -34,7 +34,7 @@ What the fields mean:
   `build/sources.lock` the first time it's fetched, so recipes never carry hashes. A second source
   goes somewhere else in the tree with `into = "subdir"`.
 - `smoke` lists quick commands that should work once it's built, run from the package's
-  directory.
+  directory. `check`, when there is one, runs the project's own tests in its build tree.
 
 A table named after a style, `[package.autotools]` here, picks the style and gives it options.
 Without one, the files in the source pick it (a `meson.build` means meson, a `Cargo.toml` cargo,
@@ -98,6 +98,7 @@ error: `grim` Failed after 4 s, see build/work/logs/f/grim.log
 Once it builds:
 
 ```sh
+distro build grim --check  # its smoke commands, and its own tests in a build thrown away
 distro dev lint grim       # dependencies it lists that another one already brings
 distro dev repro grim      # build it again as someone else and compare
 distro dev outdated        # every recipe against upstream's newest release
@@ -109,8 +110,6 @@ hints above started out there.
 
 ## What's not there yet
 
-- `smoke` commands aren't run by anything right now. `distro build grim --check` will run them
-  and the project's own tests, but it isn't built yet.
 - Python, Node, Ruby and the other language ecosystems don't have styles yet.
 - `distro info <id>` for a project's build options, so you don't have to read `meson.options` by
   hand.

@@ -100,7 +100,7 @@ The machine:
 | `distro try` | Like `apply`, but rolls back after five minutes unless you run `distro keep` |
 | `distro history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
 | `distro rollback [N]` | Back one generation, or to generation N |
-| `distro build [PKG...]` | Builds the configuration's system without switching, or the packages named, and prints where each is. `--role` builds another of its roles, `--image` a disk image, and `-o PATH` links the result there |
+| `distro build [PKG...]` | Builds the configuration's system without switching, or the packages named, and prints where each is. `--role` builds another of its roles, `--image` a disk image, and `-o PATH` links the result there, and `--check` runs packages' smoke commands and their own tests |
 | `distro clean` | Removes old generations and what only they used, after showing how much it frees |
 
 Packages:

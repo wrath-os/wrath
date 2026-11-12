@@ -2037,6 +2037,39 @@ pub(crate) fn build_one(
     sources: &mut Sources,
     built: &mut Built,
 ) -> Result<Option<Prepared>, String> {
+    build_package(lab, repository, package, arm, seed, sources, built, false)
+}
+
+/// Builds `package` again even when it's built, at its temporary path, to run what only its build
+/// tree has, such as its tests. What was built before stays as it was, record and all, so the
+/// caller removes the build when done with it. A package that isn't moved to its content
+/// address is never built again, since its temporary path is where it lives.
+pub(crate) fn rebuild_one(
+    lab: &Lab,
+    repository: &Path,
+    package: &Package,
+    arm: Arm,
+    seed: &StorePath,
+    sources: &mut Sources,
+    built: &mut Built,
+) -> Result<Option<Prepared>, String> {
+    if !content_addressed(package, arm) {
+        return Ok(None);
+    }
+    build_package(lab, repository, package, arm, seed, sources, built, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_package(
+    lab: &Lab,
+    repository: &Path,
+    package: &Package,
+    arm: Arm,
+    seed: &StorePath,
+    sources: &mut Sources,
+    built: &mut Built,
+    again: bool,
+) -> Result<Option<Prepared>, String> {
     let listed = in_views(package.all_deps()?, package, built)?;
     let deps = with_requirements(lab, package, &listed, built)?;
     let mut closure = BTreeSet::from([seed.clone()]);
@@ -2101,7 +2134,7 @@ pub(crate) fn build_one(
 
     let done_dir = lab.work.join("done");
     let done = done_dir.join(out.hash());
-    if done.exists() {
+    if done.exists() && !again {
         if !content_addressed(package, arm) {
             return Ok(None);
         }
@@ -2295,8 +2328,10 @@ pub(crate) fn build_one(
     }
     settle_modes(&lab.on_host(&out)).map_err(|e| format!("`{}` installed {e}", package.id))?;
     write_runtime_deps(lab, package, &out, built)?;
-    fs::create_dir_all(&done_dir).map_err(with_path(&done_dir))?;
-    fs::write(&done, "").map_err(with_path(&done))?;
+    if !again {
+        fs::create_dir_all(&done_dir).map_err(with_path(&done_dir))?;
+        fs::write(&done, "").map_err(with_path(&done))?;
+    }
     Ok(Some(Prepared {
         out,
         closure,

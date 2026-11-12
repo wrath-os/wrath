@@ -417,7 +417,8 @@ fn run_final(
                 "-euc".to_owned(),
                 match command.strip_prefix("sh: ") {
                     Some(script) => script.to_owned(),
-                    None => format!("{}/{command}", out.inside()),
+                    // From the package, so `bin/jq --version` and a pipeline into it both work.
+                    None => format!("cd {} && {command}", out.inside()),
                 },
             ],
             inputs: inputs.into_iter().collect(),
@@ -629,6 +630,61 @@ fn write_record(repository: &Path, record: &Record) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(with_path(dir))?;
     let json = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
     fs::write(&path, json + "\n").map_err(with_path(&path))
+}
+
+/// One smoke command or test run of a package, from `distro build --check`.
+pub struct Checked {
+    pub id: String,
+    /// The command, or what was being built.
+    pub what: String,
+    pub passed: bool,
+    /// Where its output is.
+    pub log: String,
+}
+
+/// Builds the packages `ids` and checks each: its smoke commands run on what was built, and its
+/// own tests, when its recipe has them, run in a build of it made again and thrown away.
+pub fn check_packages(repository: &Path, ids: &[&str]) -> Result<Vec<Checked>, String> {
+    let lab = Lab::new(repository.join("work"));
+    let files = crate::graph::system_recipes(repository)?;
+    let names = crate::graph::names_of(&files);
+    let (mut built, seed, packages) = build_some(&lab, repository, &names, Arm::F, Some(ids))?;
+    let mut sources = Sources::load(repository)?;
+    let mut checked = Vec::new();
+    for id in ids {
+        let package = packages
+            .iter()
+            .find(|package| package.id == *id)
+            .ok_or_else(|| format!("there's no recipe for `{id}`"))?;
+        let mut checks = Vec::new();
+        for (index, command) in package.smoke.iter().enumerate() {
+            let name = format!("{id}-smoke-{index}");
+            checks.push(run_final(&lab, &seed, &built.paths[*id], &name, command)?);
+        }
+        if package.check.is_some()
+            && let Some(prepared) = chain::rebuild_one(
+                &lab,
+                repository,
+                package,
+                Arm::F,
+                &seed,
+                &mut sources,
+                &mut built,
+            )?
+        {
+            let tested = run_check(&lab, Arm::F, package, &prepared, &built);
+            chain::remove(&prepared.build_dir)?;
+            chain::remove(&lab.on_host(&prepared.out))?;
+            checks.extend(tested?);
+        }
+        checked.extend(checks.into_iter().map(|check| Checked {
+            id: (*id).to_owned(),
+            passed: passed(&check),
+            what: check.what,
+            log: check.log,
+        }));
+    }
+    Ok(checked)
 }
 
 fn passed(check: &Check) -> bool {
