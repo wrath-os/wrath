@@ -1,0 +1,459 @@
+# Tools for looking after a machine and its network, and the shells and editors people pick, as
+# other systems install them most: in C and C++, with the libraries they need.
+
+# Libraries.
+
+[[package]]
+id = "libevent"
+version = "2.1.13"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/libevent/libevent/releases/download/release-{version}-stable/libevent-{version}-stable.tar.gz" }]
+probes = ["libevent"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-samples", "--disable-libevent-regress", "--disable-openssl"]
+
+[[package]]
+id = "libpcap"
+version = "1.11.0"
+scope = "runtime"
+core = true
+extra_deps = ["flex", "bison-final", "m4-final"]
+sources = [{ url = "https://www.tcpdump.org/release/libpcap-{version}.tar.xz" }]
+probes = ["libpcap"]
+
+[package.autotools]
+args = ["--disable-dbus", "--disable-rdma", "--disable-bluetooth"]
+
+[[package]]
+id = "libnl"
+version = "3.12.0"
+scope = "runtime"
+core = true
+extra_deps = ["flex", "bison-final", "m4-final", "pkgconf"]
+sources = [{ url = "https://github.com/thom311/libnl/releases/download/libnl3_12_0/libnl-{version}.tar.gz" }]
+probes = ["libnl-3.0", "libnl-genl-3.0"]
+
+[package.autotools]
+args = ["--disable-static", "--disable-cli", "--sysconfdir=/etc"]
+
+[[package]]
+id = "libusb"
+version = "1.0.30"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "systemd"]
+sources = [{ url = "https://github.com/libusb/libusb/releases/download/v{version}/libusb-{version}.tar.bz2" }]
+probes = ["libusb-1.0"]
+
+[package.autotools]
+args = ["--disable-static"]
+
+[[package]]
+id = "npth"
+version = "1.8"
+scope = "runtime"
+core = true
+sources = [{ url = "https://gnupg.org/ftp/gcrypt/npth/npth-{version}.tar.bz2" }]
+
+[package.autotools]
+args = ["--disable-static"]
+
+[[package]]
+id = "libassuan"
+version = "3.0.2"
+scope = "runtime"
+core = true
+deps = ["libgpg-error"]
+sources = [{ url = "https://gnupg.org/ftp/gcrypt/libassuan/libassuan-{version}.tar.bz2" }]
+probes = ["libassuan"]
+
+[package.autotools]
+args = ["--disable-static"]
+
+[[package]]
+id = "libksba"
+version = "1.8.1"
+scope = "runtime"
+core = true
+deps = ["libgpg-error"]
+sources = [{ url = "https://gnupg.org/ftp/gcrypt/libksba/libksba-{version}.tar.bz2" }]
+probes = ["ksba"]
+
+[package.autotools]
+args = ["--disable-static"]
+
+# Looking at processes and the machine.
+
+[[package]]
+id = "htop"
+version = "3.5.3"
+scope = "runtime"
+core = true
+extra_deps = ["ncurses", "pkgconf"]
+sources = [{ url = "https://github.com/htop-dev/htop/releases/download/{version}/htop-{version}.tar.xz" }]
+smoke = ["bin/htop --version"]
+
+[package.autotools]
+args = ["--enable-unicode"]
+
+[[package]]
+id = "btop"
+version = "1.4.8"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/aristocratos/btop/archive/v{version}/btop-{version}.tar.gz" }]
+script = '''
+make -j$NPROC
+make install PREFIX=$PREFIX DESTDIR=$DEST
+'''
+smoke = ["bin/btop --version"]
+
+[[package]]
+id = "strace"
+version = "7.3"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/strace/strace/releases/download/v{version}/strace-{version}.tar.xz" }]
+smoke = ["bin/strace -V"]
+
+[package.autotools]
+args = ["--enable-mpers=no"]
+
+[[package]]
+id = "lsof"
+version = "4.99.7"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/lsof-org/lsof/releases/download/{version}/lsof-{version}.tar.gz" }]
+# Only the program: its manual needs groff's soelim.
+script = '''
+./configure --prefix=$PREFIX
+make -j$NPROC lsof
+install -Dm755 lsof $DEST$PREFIX/bin/lsof
+'''
+smoke = ["bin/lsof -v"]
+
+[[package]]
+id = "smartmontools"
+version = "7.5"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/smartmontools/smartmontools/releases/download/RELEASE_7_5/smartmontools-{version}.tar.gz" }]
+smoke = ["sbin/smartctl --version"]
+
+[package.autotools]
+args = ["--with-systemdsystemunitdir=no", "--without-libcap-ng", "--sysconfdir=/etc"]
+
+[[package]]
+id = "hdparm"
+version = "9.65"
+scope = "runtime"
+core = true
+sources = [{ url = "https://downloads.sourceforge.net/project/hdparm/hdparm/hdparm-{version}.tar.gz" }]
+script = '''
+make -j$NPROC
+install -Dm755 hdparm $DEST$PREFIX/bin/hdparm
+'''
+smoke = ["bin/hdparm -V"]
+
+[[package]]
+id = "pciutils"
+version = "3.15.0"
+scope = "runtime"
+core = true
+sources = [{ url = "https://mj.ucw.cz/download/linux/pci/pciutils-{version}.tar.gz" }]
+script = '''
+# With the PCI ID list the release carries, so devices have names.
+make -j$NPROC PREFIX=$PREFIX SBINDIR=$PREFIX/bin SHARED=yes ZLIB=no DNS=no
+make install install-lib PREFIX=$PREFIX SBINDIR=$PREFIX/bin SHARED=yes ZLIB=no DNS=no \
+    DESTDIR=$DEST
+'''
+smoke = ["bin/lspci --version"]
+
+[[package]]
+id = "usbutils"
+version = "020"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "libusb", "systemd"]
+sources = [{ url = "https://www.kernel.org/pub/linux/utils/usb/usbutils/usbutils-{version}.tar.xz" }]
+smoke = ["bin/lsusb --version"]
+
+[package.meson]
+
+# Disks.
+
+[[package]]
+id = "parted"
+version = "3.8"
+scope = "runtime"
+core = true
+extra_deps = ["util-linux", "readline", "ncurses", "pkgconf"]
+sources = [{ url = "https://ftp.gnu.org/gnu/parted/parted-{version}.tar.xz" }]
+smoke = ["sbin/parted --version"]
+
+[package.autotools]
+args = ["--disable-device-mapper", "--disable-nls", "--disable-static"]
+
+[[package]]
+id = "gptfdisk"
+version = "1.0.10"
+scope = "runtime"
+core = true
+extra_deps = ["popt", "util-linux", "ncurses"]
+sources = [{ url = "https://downloads.sourceforge.net/project/gptfdisk/gptfdisk/{version}/gptfdisk-{version}.tar.gz" }]
+script = '''
+# Our ncurses keeps its headers at the top, without an ncursesw directory.
+sed -i "s|ncursesw/ncurses.h|ncurses.h|" gptcurses.cc
+make -j$NPROC
+install -Dm755 -t $DEST$PREFIX/bin gdisk sgdisk cgdisk fixparts
+'''
+smoke = ["bin/sgdisk --version"]
+
+# The network.
+
+[[package]]
+id = "rsync"
+version = "3.5.2"
+scope = "runtime"
+core = true
+extra_deps = ["openssl", "zstd", "lz4", "popt", "acl"]
+sources = [{ url = "https://download.samba.org/pub/rsync/src/rsync-{version}.tar.gz" }]
+smoke = ["bin/rsync --version"]
+
+[package.autotools]
+args = [
+  "--disable-xxhash", "--without-included-popt", "--disable-md2man", "--disable-idn",
+]
+
+[[package]]
+id = "socat"
+version = "1.8.1.3"
+scope = "runtime"
+core = true
+extra_deps = ["openssl", "readline"]
+sources = [{ url = "http://www.dest-unreach.org/socat/download/socat-{version}.tar.gz" }]
+smoke = ["bin/socat -V"]
+
+[package.autotools]
+
+[[package]]
+id = "iperf3"
+version = "3.22"
+scope = "runtime"
+core = true
+extra_deps = ["openssl"]
+sources = [{ url = "https://downloads.es.net/pub/iperf/iperf-{version}.tar.gz" }]
+smoke = ["bin/iperf3 --version"]
+
+[package.autotools]
+args = ["--disable-static"]
+
+[[package]]
+id = "tcpdump"
+version = "4.99.7"
+scope = "runtime"
+core = true
+extra_deps = ["libpcap", "openssl"]
+sources = [{ url = "https://www.tcpdump.org/release/tcpdump-{version}.tar.xz" }]
+smoke = ["bin/tcpdump --version"]
+
+[package.autotools]
+
+[[package]]
+id = "iw"
+version = "6.17"
+scope = "runtime"
+core = true
+extra_deps = ["libnl", "pkgconf"]
+sources = [{ url = "https://www.kernel.org/pub/software/network/iw/iw-{version}.tar.xz" }]
+script = '''
+make -j$NPROC
+make install PREFIX=$PREFIX SBINDIR=$PREFIX/bin DESTDIR=$DEST
+'''
+smoke = ["bin/iw --version"]
+
+[[package]]
+id = "ethtool"
+version = "7.2"
+scope = "runtime"
+core = true
+extra_deps = ["libmnl", "pkgconf"]
+sources = [{ url = "https://www.kernel.org/pub/software/network/ethtool/ethtool-{version}.tar.xz" }]
+smoke = ["sbin/ethtool --version"]
+
+[package.autotools]
+
+[[package]]
+id = "wireguard-tools"
+version = "1.0.20260223"
+scope = "runtime"
+core = true
+sources = [{ url = "https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-{version}.tar.xz" }]
+script = '''
+make -C src -j$NPROC
+make -C src install PREFIX=$PREFIX DESTDIR=$DEST WITH_BASHCOMPLETION=no WITH_WGQUICK=no \
+    WITH_SYSTEMDUNITS=no
+'''
+smoke = ["bin/wg --version"]
+
+[[package]]
+id = "mtr"
+version = "0.96"
+scope = "runtime"
+core = true
+extra_deps = ["ncurses", "autoconf", "automake", "m4-final", "pkgconf"]
+sources = [{ url = "https://github.com/traviscross/mtr/archive/v{version}/mtr-{version}.tar.gz" }]
+smoke = ["sbin/mtr --version"]
+
+# The archive has no configure; its own script makes it, with pkg-config's macros from the
+# build's /usr.
+[package.autotools]
+args = ["--without-gtk"]
+prepare = '''
+export ACLOCAL_OPTS="-I /usr/share/aclocal"
+./bootstrap.sh
+'''
+
+[[package]]
+id = "whois"
+version = "5.6.6"
+scope = "runtime"
+core = true
+extra_deps = ["perl"]
+sources = [{ url = "https://deb.debian.org/debian/pool/main/w/whois/whois_{version}.tar.xz" }]
+script = '''
+make -j$NPROC whois HAVE_ICONV=1
+install -Dm755 whois $DEST$PREFIX/bin/whois
+'''
+smoke = ["bin/whois --version"]
+
+# Keys and archives.
+
+[[package]]
+id = "pinentry"
+version = "1.3.3"
+scope = "runtime"
+core = true
+extra_deps = ["libassuan", "libgpg-error", "ncurses"]
+sources = [{ url = "https://gnupg.org/ftp/gcrypt/pinentry/pinentry-{version}.tar.bz2" }]
+smoke = ["bin/pinentry --version"]
+
+# The terminal's pinentry; desktop ones wait for their toolkits.
+[package.autotools]
+args = [
+  "--enable-pinentry-tty", "--enable-pinentry-curses", "--disable-pinentry-gtk2",
+  "--disable-pinentry-gnome3", "--disable-pinentry-qt", "--disable-pinentry-qt5",
+  "--disable-pinentry-emacs", "--disable-libsecret", "--disable-fallback-curses",
+]
+
+[[package]]
+id = "gnupg"
+version = "2.5.24"
+scope = "runtime"
+core = true
+extra_deps = [
+  "libgcrypt", "libgpg-error", "libassuan", "libksba", "npth", "zlib", "bzip2", "readline",
+  "sqlite", "pkgconf",
+]
+sources = [{ url = "https://gnupg.org/ftp/gcrypt/gnupg/gnupg-{version}.tar.bz2" }]
+smoke = ["bin/gpg --version"]
+
+[package.autotools]
+args = ["--disable-ldap", "--disable-gnutls", "--disable-doc", "--disable-nls", "--sysconfdir=/etc"]
+
+[[package]]
+id = "sqlite"
+version = "3.54.1"
+scope = "runtime"
+core = true
+extra_deps = ["readline", "zlib"]
+sources = [{ url = "https://sqlite.org/2026/sqlite-autoconf-3540100.tar.gz" }]
+probes = ["sqlite3"]
+smoke = ["bin/sqlite3 --version"]
+
+[package.autotools]
+args = ["--disable-static"]
+
+[[package]]
+id = "7zip"
+version = "26.06"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/ip7z/7zip/releases/download/{version}/7z2606-src.tar.xz" }]
+script = '''
+make -C CPP/7zip/Bundles/Alone2 -f ../../cmpl_gcc.mak -j$NPROC
+install -Dm755 CPP/7zip/Bundles/Alone2/b/g/7zz $DEST$PREFIX/bin/7zz
+ln -s 7zz $DEST$PREFIX/bin/7z
+'''
+smoke = ["bin/7zz i"]
+
+[[package]]
+id = "tree"
+version = "2.3.2"
+scope = "runtime"
+core = true
+sources = [{ url = "https://gitlab.com/OldManProgrammer/unix-tree/-/archive/{version}/unix-tree-{version}.tar.gz" }]
+script = '''
+make -j$NPROC
+install -Dm755 tree $DEST$PREFIX/bin/tree
+'''
+smoke = ["bin/tree --version"]
+
+# Shells and editors.
+
+[[package]]
+id = "tmux"
+version = "3.8"
+scope = "runtime"
+core = true
+extra_deps = ["ncurses", "libevent", "pkgconf", "bison-final", "m4-final"]
+sources = [{ url = "https://github.com/tmux/tmux/releases/download/{version}/tmux-{version}.tar.gz" }]
+smoke = ["bin/tmux -V"]
+
+[package.autotools]
+
+[[package]]
+id = "zsh"
+version = "5.9.2"
+scope = "runtime"
+core = true
+extra_deps = ["ncurses", "pcre2"]
+sources = [{ url = "https://www.zsh.org/pub/zsh-{version}.tar.xz" }]
+smoke = ["bin/zsh --version", "bin/zsh -c 'echo ok'"]
+
+[package.autotools]
+args = [
+  "--enable-multibyte", "--enable-pcre", "--with-tcsetpgrp", "--enable-etcdir=/etc",
+  "--disable-gdbm",
+]
+
+[[package]]
+id = "fish"
+version = "4.9.3"
+scope = "runtime"
+core = true
+extra_deps = ["pcre2", "pkgconf"]
+sources = [{ url = "https://github.com/fish-shell/fish-shell/releases/download/{version}/fish-{version}.tar.xz" }]
+smoke = ["bin/fish --version", "bin/fish -c 'echo ok'"]
+
+# Its functions and completions go in the program itself.
+[package.cargo]
+programs = ["fish", "fish_indent", "fish_key_reader"]
+
+[[package]]
+id = "vim"
+version = "9.2.1332"
+scope = "runtime"
+core = true
+extra_deps = ["ncurses"]
+sources = [{ url = "https://github.com/vim/vim/archive/v{version}/vim-{version}.tar.gz" }]
+smoke = ["bin/vim --version"]
+
+[package.autotools]
+args = [
+  "--with-features=huge", "--enable-multibyte", "--disable-gui", "--without-x",
+  "--with-tlib=ncursesw", "--disable-nls",
+]

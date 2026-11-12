@@ -148,6 +148,31 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What we did:** added softpipe, which draws without a GPU.
 - **Status:** done.
 
+### A build tool that runs another doesn't bring it
+
+- **Seen in:** libnl, libpcap and tmux (bison and flex), mtr (autoconf's autom4te), which all run
+  m4 as they work.
+- **What happened:** each failed with m4 missing, or with a misleading "flex not found", though
+  the tool itself was there.
+- **What we did:** listed `m4-final` in each recipe.
+- **What would prevent it:** bison, flex and autoconf propagate m4, so whatever uses them has it.
+  That rebuilds everything built with them, so it waits for the next rebuild of everything.
+- **Belongs in:** those recipes.
+- **Status:** open.
+
+### aclocal doesn't look in the build's /usr
+
+- **Seen in:** mtr, whose release has no configure, so the build makes it.
+- **What happened:** aclocal searched only automake's own directory, so pkg-config's macros in
+  pkgconf's dev output weren't found, and configure failed on `PKG_PROG_PKG_CONFIG`, which the
+  hint then called a missing program.
+- **What we did:** `ACLOCAL_OPTS="-I /usr/share/aclocal"`, where the build's view has every
+  dependency's macros. The hint now says when a name is an unexpanded macro.
+- **What would prevent it:** builds have `ACLOCAL_PATH=/usr/share/aclocal`, with the next rebuild
+  of everything.
+- **Belongs in:** the builder's environment for builds.
+- **Status:** open.
+
 ### A program fetches more sources as it builds
 
 - **Seen in:** helix, which clones each language's tree-sitter grammar from git while it builds.
@@ -176,6 +201,20 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Seen in:** Nerd Fonts, whose release archives hold the font files at the top.
 - **What happened:** unpacking stripped the first path component, so every file was dropped.
 - **What we did:** the top directory is stripped only when everything in the archive is under one.
+
+### Archives that list their directory without a slash
+
+- **Seen in:** OpenSSH, whose release lists `openssh-10.0p1` before `openssh-10.0p1/...`.
+- **What happened:** the check for a top directory wanted a slash on every line, so the source
+  was unpacked with its directory around it and `./configure` wasn't found.
+- **What we did:** the directory's own entry counts, with or without its slash.
+
+### An archive that holds a file twice
+
+- **Seen in:** fish, whose release has a newer `Cargo.lock` appended after the first.
+- **What happened:** reading the lock out of the archive gave both copies one after the other,
+  which isn't TOML, while unpacking leaves only the last.
+- **What we did:** the lock is read from the last copy, as unpacking leaves it.
 
 ### A project's own `vendor` directory
 
