@@ -1,6 +1,6 @@
 # Setting up a machine
 
-Once distro runs a machine (see [Installing](installing.md), not written yet), everything about
+Once distro runs a machine (see [Installing](installing.md)), everything about
 it lives in `/etc/distro`. This page is about what goes in there and the day-to-day loop of
 changing it.
 
