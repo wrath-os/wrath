@@ -3,8 +3,9 @@ Before=network-pre.target
 Description=nftables firewall
 
 [Service]
+ExecReload=nft -f /etc/nftables.conf
 ExecStart=nft -f /etc/nftables.conf
-ExecStop=nft flush ruleset
+ExecStop=nft delete table inet distro
 RemainAfterExit=yes
 Type=oneshot
 

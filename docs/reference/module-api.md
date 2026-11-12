@@ -108,7 +108,7 @@ The value of an option, or a dictionary of everything under a table of options.
 
 ### `ctx.reload(unit, *, on)`
 
-Reloads a service the system provides, such as `systemd-networkd.service`, when one of the files in `on` changes.
+Reloads a service when one of the files in `on` changes: one the system provides, such as `systemd-networkd.service`, or one a module renders that can take a new configuration without stopping.
 
 ### `ctx.remove(path, items)`
 

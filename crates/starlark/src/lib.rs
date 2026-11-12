@@ -828,8 +828,9 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         Ok(NoneType)
     }
 
-    /// Reloads a service the system provides, such as `systemd-networkd.service`, when one of
-    /// the files in `on` changes.
+    /// Reloads a service when one of the files in `on` changes: one the system provides, such as
+    /// `systemd-networkd.service`, or one a module renders that can take a new configuration
+    /// without stopping.
     fn reload<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] unit: &str,

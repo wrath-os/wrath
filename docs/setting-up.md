@@ -92,6 +92,22 @@ Service = { Type = "oneshot", ExecStart = "/run/system/bin/restic backup /home" 
 Timer.OnCalendar = "daily"
 ```
 
+## The firewall
+
+A firewall is on by default. It drops what comes in unless it's a reply, a ping, the bits IPv6
+needs to work, or a port you opened. Modules open what their services need (the ssh module opens
+its port), and you open the rest:
+
+```toml
+[networking.firewall]
+allowed_tcp_ports = [8080]
+trusted_interfaces = ["tailscale0"]
+```
+
+It lives in its own nftables table, `inet distro`, so tables other programs make (tailscale has
+its own) are left alone. A change replaces the table in one step, with no moment in between
+where nothing is filtered.
+
 ## Trying something risky
 
 Changing the network or SSH on a machine you're not sitting at is how you lock yourself out.

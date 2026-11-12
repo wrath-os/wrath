@@ -5,11 +5,17 @@ expression: describe_outputs(&evaluation)
 packages: curl fprintd helix (for john) jq nftables nginx ripgrep (for john) syncthing
 
 file /etc/nftables.conf (mode 644, from firewall)
-table inet filter {
+table inet distro
+flush table inet distro
+table inet distro {
   chain input {
     type filter hook input priority 0; policy drop;
     ct state established,related accept
+    ct state invalid drop
     iif lo accept
+    icmp type { destination-unreachable, time-exceeded, parameter-problem, echo-request } accept
+    icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, echo-request } accept
+    ip6 daddr fe80::/64 udp sport 547 udp dport 546 accept
     tcp dport 80 accept
     tcp dport 22000 accept
     udp dport 21027 accept
@@ -138,8 +144,9 @@ Before=network-pre.target
 Description=nftables firewall
 
 [Service]
+ExecReload=nft -f /etc/nftables.conf
 ExecStart=nft -f /etc/nftables.conf
-ExecStop=nft flush ruleset
+ExecStop=nft delete table inet distro
 RemainAfterExit=yes
 Type=oneshot
 
@@ -210,6 +217,8 @@ User=syncthing
 
 [Install]
 WantedBy=multi-user.target
+
+reload nftables.service (from firewall) on /etc/nftables.conf
 
 base system (from system): { hostname = "box", timezone = "UTC" }
 

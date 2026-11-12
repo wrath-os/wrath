@@ -983,3 +983,37 @@ fn a_newer_distro_rebuilds_what_its_recipes_changed_with_the_tier_each_takes() {
     );
     assert_eq!(changes[0].details, ["rebuilt"]);
 }
+
+#[test]
+fn a_rendered_unit_can_reload_when_a_file_changes_instead_of_restarting() {
+    let unit = Unit {
+        sections: vec![Section {
+            name: "Service".into(),
+            entries: vec![("ExecReload".into(), "nft -f /etc/nftables.conf".into())],
+        }],
+        restart_on: BTreeSet::new(),
+    };
+    let file = |text: &str| File {
+        mode: 0o644,
+        text: text.into(),
+    };
+    let mut before = Model::default();
+    before.units.insert("nftables.service".into(), unit);
+    before
+        .files
+        .insert("/etc/nftables.conf".into(), file("old\n"));
+    before.triggers.insert(
+        ("nftables.service".into(), UnitAction::Reload),
+        ["/etc/nftables.conf".into()].into(),
+    );
+    let mut after = before.clone();
+    after
+        .files
+        .insert("/etc/nftables.conf".into(), file("new\n"));
+    let activation = plan(&before, &after).activation;
+    assert_eq!(
+        activation.reload,
+        BTreeSet::from(["nftables.service".to_owned()])
+    );
+    assert!(activation.restart.is_empty() && activation.stop.is_empty());
+}

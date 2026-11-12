@@ -76,6 +76,7 @@
 
 ### firewall
 
+- `networking.firewall.allow_ping`: a boolean, default true. Answer pings, over IPv4 and IPv6.
 - `networking.firewall.allowed_tcp_ports`: a list of items that are each an integer from 1 to 65535, default [].
 - `networking.firewall.allowed_udp_ports`: a list of items that are each an integer from 1 to 65535, default [].
 - `networking.firewall.enable`: a boolean, default true. Whether it's on.
