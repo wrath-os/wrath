@@ -137,6 +137,35 @@ fn exec(command: &mut Command) -> String {
     format!("cannot run {program}: {}", command.exec())
 }
 
+/// Packages built from distro's recipes, as named, with where each is.
+pub struct Built {
+    /// Each package's name, in the order asked for.
+    pub packages: Vec<String>,
+    /// Each package's main output, in the same order.
+    pub paths: Vec<distro_build::store::StorePath>,
+    /// The store they were built into, on this machine.
+    pub store: PathBuf,
+}
+
+/// Builds `references`, such as `jq`, from the recipes of the distro under `root`.
+pub fn built(root: &Path, model: &Model, references: &[String]) -> Result<Built, String> {
+    let packages = references
+        .iter()
+        .map(|reference| package_name(model, reference))
+        .collect::<Result<Vec<_>, _>>()?;
+    let repository = root
+        .join("build")
+        .canonicalize()
+        .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
+    let names: Vec<&str> = packages.iter().map(String::as_str).collect();
+    let paths = distro_build::graph::packages(&repository, &names)?;
+    Ok(Built {
+        packages,
+        paths,
+        store: repository.join("work/store"),
+    })
+}
+
 /// Where packages are when programs run: their links point into it.
 const STORE: &str = "/store";
 
@@ -153,17 +182,12 @@ impl Environment {
     /// Builds `references` from distro's recipes and links their programs into a directory under
     /// the user's cache, one for each set of packages.
     fn build(root: &Path, model: &Model, references: &[String]) -> Result<Self, String> {
-        let packages = references
-            .iter()
-            .map(|reference| package_name(model, reference))
-            .collect::<Result<Vec<_>, _>>()?;
-        let repository = root
-            .join("build")
-            .canonicalize()
-            .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
+        let Built {
+            packages,
+            paths,
+            store,
+        } = built(root, model, references)?;
         let names: Vec<&str> = packages.iter().map(String::as_str).collect();
-        let paths = distro_build::graph::packages(&repository, &names)?;
-        let store = repository.join("work/store");
         let path = environment_dir(&packages)?;
         let bin = path.join("bin");
         if path.exists() {

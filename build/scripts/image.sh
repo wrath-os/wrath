@@ -12,7 +12,7 @@ options=()
 for option in distro.rescue ${3:-console=ttyS0,115200 console=tty0}; do
     options+=(--kernel-option "$option")
 done
-built=$(cd .. && target/release/distro -C "$1" build --target image --with-configuration \
+built=$(cd .. && target/release/distro -C "$1" build --image --with-configuration \
     "${options[@]}")
 mv -f -- "$built" "$2"
 echo "image $2 $(du -h --apparent-size "$2" | cut -f1)"

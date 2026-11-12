@@ -109,16 +109,25 @@ enum Command {
     },
     /// Keep the system being tried as the current generation
     Keep,
-    /// Build the configuration's system without switching to it, and print where it is;
-    /// `--role` builds another of its roles
+    /// Build the configuration's system, or the packages you name, and print where each is;
+    /// `--role` builds another of the configuration's roles
     Build {
-        #[arg(long, value_enum, default_value = "generation")]
-        target: generations::BuildTarget,
+        /// Packages to build instead of the system, such as `jq`
+        packages: Vec<String>,
+        /// A disk image of the system, to write to a USB stick or boot in a VM
+        #[arg(long, conflicts_with = "packages")]
+        image: bool,
+        /// Link what was built at this path, or in this directory under its own name
+        #[arg(short = 'o', long = "link", value_name = "PATH")]
+        link: Option<PathBuf>,
+        /// The variant the VM tests drive
+        #[arg(long, hide = true)]
+        test: bool,
         /// A kernel option for an image's boot entry, instead of the screen and serial consoles
-        #[arg(long = "kernel-option")]
+        #[arg(long = "kernel-option", requires = "image")]
         kernel_options: Vec<String>,
         /// Put the configuration in the image's /etc/distro, so distro on it can plan
-        #[arg(long)]
+        #[arg(long, requires = "image")]
         with_configuration: bool,
     },
     /// Show the system's generations; with one, what changed in it, and with two, between them
@@ -420,26 +429,34 @@ fn main() -> ExitCode {
             }
         }),
         Command::Keep => generations::keep(),
+        Command::Build { packages, link, .. } if !packages.is_empty() => {
+            package_context(cli.config.as_deref(), &modules)
+                .and_then(|(model, _)| run::built(root, &model, &packages))
+                .and_then(|built| {
+                    let paths = built.paths.iter().map(|path| built.store.join(path.hash()));
+                    let named: Vec<_> = built.packages.into_iter().zip(paths).collect();
+                    generations::show_built(&named, link.as_deref())
+                })
+        }
         Command::Build {
-            target,
+            image,
+            link,
+            test,
             kernel_options,
             with_configuration,
+            ..
         } => machine().and_then(|config| match model(&config, &modules) {
             Some(model) => {
-                use generations::BuildTarget as T;
-                let path = match target {
-                    T::Generation | T::TestGeneration => {
-                        let test = matches!(target, T::TestGeneration);
-                        generations::build_generation(root, &model, test)?
-                    }
-                    T::Image | T::TestImage => {
-                        let test = matches!(target, T::TestImage);
-                        let keep = with_configuration.then_some(config.as_path());
-                        generations::build_image(root, keep, &model, &kernel_options, test)?
-                    }
+                let name = role(&config).unwrap_or("system");
+                let built = if image {
+                    let keep = with_configuration.then_some(config.as_path());
+                    let path = generations::build_image(root, keep, &model, &kernel_options, test)?;
+                    (format!("{name}.img"), path)
+                } else {
+                    let path = generations::build_generation(root, &model, test)?;
+                    (name.to_owned(), path)
                 };
-                println!("{}", path.display());
-                Ok(ExitCode::SUCCESS)
+                generations::show_built(&[built], link.as_deref())
             }
             None => Ok(ExitCode::FAILURE),
         }),

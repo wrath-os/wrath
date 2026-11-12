@@ -96,11 +96,11 @@ The machine:
 |---|---|
 | `distro status` | What's running, whether it matches the configuration, and anything waiting for a login or reboot |
 | `distro plan` | What would change |
-| `distro apply` | Shows the plan, asks, switches, and says when the change takes full effect. `-y` skips asking. Also takes a system built elsewhere: `distro apply ./result` |
+| `distro apply` | Shows the plan, asks, switches, and says when the change takes full effect. `-y` skips asking. Also takes a system built before: `distro apply PATH` |
 | `distro try` | Like `apply`, but rolls back after five minutes unless you run `distro keep` |
 | `distro history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
 | `distro rollback [N]` | Back one generation, or to generation N |
-| `distro build` | Builds the configuration's system without switching; `--role` builds another of its roles, to test it or for another machine |
+| `distro build [PKG...]` | Builds the configuration's system without switching, or the packages named, and prints where each is. `--role` builds another of its roles, `--image` a disk image, and `-o PATH` links the result there |
 | `distro clean` | Removes old generations and what only they used, after showing how much it frees |
 
 Packages:

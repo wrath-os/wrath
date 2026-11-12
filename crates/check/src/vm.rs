@@ -62,7 +62,7 @@ pub enum Step {
     /// for a step that installs it.
     PrepareBuild {
         config: String,
-        /// What to build, as `distro build --target` takes it.
+        /// What to build: `test-generation`, the default, `generation`, `image` or `test-image`.
         target: Option<String>,
     },
     /// Stops the VM and boots what was installed on its blank disks, with UEFI, typing
@@ -247,11 +247,17 @@ enum Store {
     Distro,
 }
 
-/// The build target for the disk image a configuration boots.
-const IMAGE_TARGET: &str = "test-image";
-
-/// The build target for a system the VM switches to or installs.
-const GENERATION_TARGET: &str = "test-generation";
+/// What `distro build` is given for `target`: a test generation, which the VM switches to or
+/// installs, unless it names another of `generation`, `image` or `test-image`.
+fn build_flags(target: Option<&str>) -> Result<&'static [&'static str], String> {
+    match target.unwrap_or("test-generation") {
+        "test-generation" => Ok(&["--test"]),
+        "generation" => Ok(&[]),
+        "test-image" => Ok(&["--image", "--test"]),
+        "image" => Ok(&["--image"]),
+        other => Err(format!("unknown build target `{other}`")),
+    }
+}
 
 /// How the VM boots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,7 +358,7 @@ pub struct Host<'a> {
 /// Builds the disk image that boots a configuration, with `distro build`.
 pub fn build_config_image(host: Host<'_>, config: &str) -> Result<PathBuf, String> {
     let out = PathBuf::from(
-        host.distro(&["build", "--config", config, "--target", IMAGE_TARGET])?
+        host.distro(&["build", "--config", config, "--image", "--test"])?
             .trim(),
     );
     check_image(&out)?;
@@ -763,7 +769,7 @@ impl VmRun<'_> {
                 "the plan for `{config}` does not contain {missing:?}:\n{plan}"
             ));
         }
-        let name = self.copy_generation(agent, config, GENERATION_TARGET, deadline)?;
+        let name = self.copy_generation(agent, config, None, deadline)?;
         let system = format!("/store/{name}");
         let system = system.as_str();
         let switch = match try_for {
@@ -906,7 +912,6 @@ impl VmRun<'_> {
         target: Option<&str>,
         deadline: Instant,
     ) -> Result<(), String> {
-        let target = target.unwrap_or(GENERATION_TARGET);
         let name = self.copy_generation(agent, config, target, deadline)?;
         let share = self.dir.join(SHARE);
         fs::write(share.join("system"), format!("/store/{name}\n"))
@@ -926,12 +931,12 @@ impl VmRun<'_> {
         &self,
         agent: &mut Client<VsockStream>,
         config: &str,
-        target: &str,
+        target: Option<&str>,
         deadline: Instant,
     ) -> Result<String, String> {
-        let built = self
-            .host
-            .distro(&["build", "--config", config, "--target", target])?;
+        let mut args = vec!["build", "--config", config];
+        args.extend(build_flags(target)?);
+        let built = self.host.distro(&args)?;
         let name = Path::new(built.trim())
             .file_name()
             .ok_or("a generation has a name")?

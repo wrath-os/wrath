@@ -387,7 +387,7 @@ mod tests {
         };
         assert!(
             failure.reason.starts_with(
-                "could not run `/nonexistent/distro build --config configs/x --target test-image`"
+                "could not run `/nonexistent/distro build --config configs/x --image --test`"
             ),
             "{}",
             failure.reason

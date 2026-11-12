@@ -8,16 +8,46 @@ use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
 
 use crate::switching::{self as here, Generation};
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum BuildTarget {
-    /// The system as a generation, to switch to
-    Generation,
-    /// A disk image that boots the generation, to write to a USB stick or boot in a VM
-    Image,
-    /// The generation with what the VM tests drive it through
-    TestGeneration,
-    /// A disk image of the test generation, for the VM tests
-    TestImage,
+/// Prints where each of `built`, by name, is, and links it at `link` when given: a directory gets
+/// one link per name in it, any other path one link, which replaces a link already there.
+pub fn show_built(built: &[(String, PathBuf)], link: Option<&Path>) -> Result<ExitCode, String> {
+    for (_, path) in built {
+        println!("{}", path.display());
+    }
+    if let Some(link) = link {
+        for (at, target) in link_places(built, link)? {
+            if at.symlink_metadata().is_ok_and(|meta| !meta.is_symlink()) {
+                return Err(format!(
+                    "{} is there already and isn't a link",
+                    at.display()
+                ));
+            }
+            let _ = std::fs::remove_file(&at);
+            std::os::unix::fs::symlink(&target, &at)
+                .map_err(|e| format!("{}: {e}", at.display()))?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Where each link to `built` goes for `link`, with what it points at.
+fn link_places(
+    built: &[(String, PathBuf)],
+    link: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    if link.is_dir() {
+        return Ok(built
+            .iter()
+            .map(|(name, path)| (link.join(name), path.clone()))
+            .collect());
+    }
+    match built {
+        [(_, path)] => Ok(vec![(link.to_path_buf(), path.clone())]),
+        _ => Err(format!(
+            "{} isn't a directory, so it can only link one of what was built",
+            link.display()
+        )),
+    }
 }
 
 /// Builds `model` into a generation with distro's own builder, from the recipes in `build/` under
@@ -833,6 +863,48 @@ fn days_since_epoch(date: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_is_linked_where_asked_or_by_name_in_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let built = |names: &[&str]| -> Vec<(String, PathBuf)> {
+            names
+                .iter()
+                .map(|name| {
+                    (
+                        (*name).to_owned(),
+                        PathBuf::from(format!("/store/x-{name}")),
+                    )
+                })
+                .collect()
+        };
+        let at = dir.path().join("jq-link");
+        assert_eq!(
+            link_places(&built(&["jq"]), &at).unwrap(),
+            [(at.clone(), PathBuf::from("/store/x-jq"))]
+        );
+        assert_eq!(
+            link_places(&built(&["jq", "ripgrep"]), dir.path()).unwrap(),
+            [
+                (dir.path().join("jq"), PathBuf::from("/store/x-jq")),
+                (
+                    dir.path().join("ripgrep"),
+                    PathBuf::from("/store/x-ripgrep")
+                ),
+            ]
+        );
+        assert!(link_places(&built(&["jq", "ripgrep"]), &at).is_err());
+
+        show_built(&built(&["jq"]), Some(&at)).unwrap();
+        show_built(&built(&["ripgrep"]), Some(&at)).unwrap();
+        assert_eq!(
+            std::fs::read_link(&at).unwrap(),
+            PathBuf::from("/store/x-ripgrep")
+        );
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        assert!(show_built(&built(&["jq"]), Some(&file)).is_err());
+    }
 
     #[test]
     fn a_system_missing_a_package_or_a_unit_isnt_built() {
