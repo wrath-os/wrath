@@ -13,7 +13,7 @@
 # Extending it
 
 - [Writing modules](modules.md)
-- [Recipes and styles](recipes.md) (not written yet)
+- [Recipes and styles](recipes.md)
 
 # Understanding it
 
