@@ -67,7 +67,7 @@ fn merge<'n>(
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         let path = relative.join(entry.file_name());
-        if dep.skip.iter().any(|skipped| path.starts_with(skipped)) {
+        if path == Path::new(OWN) || dep.skip.iter().any(|skipped| path.starts_with(skipped)) {
             continue;
         }
         let target = dir.join(&path);
@@ -97,6 +97,10 @@ fn merge<'n>(
     }
     Ok(())
 }
+
+/// What a package keeps for distro itself, such as the store paths of its runtime dependencies,
+/// which builds have no use for and every package names the same.
+const OWN: &str = "lib/distro";
 
 fn conflict(path: &Path, first: &str, second: &str) -> String {
     format!(
@@ -150,6 +154,20 @@ mod tests {
         let error = compose(&lab, &dir.path().join("view"), &[("a", &a), ("b", &b)]).unwrap_err();
 
         assert_eq!(error, "`bin/tool` is provided by both `a` and `b`");
+    }
+
+    #[test]
+    fn what_packages_keep_for_distro_itself_stays_out_of_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path());
+        let a = dependency(&lab, "a", &["bin/a", "lib/distro/runtime-deps"]);
+        let b = dependency(&lab, "b", &["lib/distro/runtime-deps"]);
+        let view = dir.path().join("view");
+
+        compose(&lab, &view, &[("a", &a), ("b", &b)]).unwrap();
+
+        assert!(fs::read_link(view.join("bin/a")).is_ok());
+        assert!(!view.join("lib/distro").exists());
     }
 
     #[test]
