@@ -216,6 +216,13 @@ style (Starlark), the builder (Rust), or the recipe.
   which isn't TOML, while unpacking leaves only the last.
 - **What we did:** the lock is read from the last copy, as unpacking leaves it.
 
+### A sign-in page pinned as a source
+
+- **Seen in:** slurp, whose GitLab archive URL names a project that isn't there.
+- **What happened:** GitLab answered with its sign-in page and a success status, so the page was
+  pinned in `sources.lock` and the meson style read it as a project with no options.
+- **What we did:** a download that starts as an HTML page is refused and not pinned.
+
 ### A project's own `vendor` directory
 
 - **Seen in:** atuin, which keeps a patched crate in `vendor/axoasset`.

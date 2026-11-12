@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -1148,6 +1148,12 @@ impl Sources {
                 .arg(url),
             &format!("downloading {url}"),
         )?;
+        if is_web_page(&partial)? {
+            fs::remove_file(&partial).map_err(with_path(&partial))?;
+            return Err(format!(
+                "{url} gave a web page, such as a sign-in or missing-release page"
+            ));
+        }
         let hash = sha256_of(&partial)?;
         if let Some(known) = known
             && hash != known
@@ -1168,6 +1174,18 @@ impl Sources {
         }
         Ok((path, hash))
     }
+}
+
+/// Whether the file at `path` starts as an HTML page does, which a forge hands out with a
+/// success status for a release it doesn't have or one that needs signing in.
+fn is_web_page(path: &Path) -> Result<bool, String> {
+    let mut start = [0; 512];
+    let read = fs::File::open(path)
+        .and_then(|mut file| file.read(&mut start))
+        .map_err(with_path(path))?;
+    let text = String::from_utf8_lossy(&start[..read]);
+    let text = text.trim_start().to_ascii_lowercase();
+    Ok(text.starts_with("<!doctype html") || text.starts_with("<html"))
 }
 
 pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, String> {
@@ -3030,6 +3048,30 @@ mod crate_tests {
             (again, fs::read_to_string(kept).unwrap()),
             (hash, "x\n".to_owned())
         );
+    }
+
+    #[test]
+    fn a_web_page_where_a_source_should_be_is_refused_and_not_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("v1.0.tar.gz");
+        fs::write(
+            &file,
+            "\n<!DOCTYPE html>\n<html><title>Sign in</title></html>\n",
+        )
+        .unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let mut sources = Sources::load(dir.path()).unwrap();
+        let url = format!("file://{}", file.display());
+        let error = sources
+            .fetch_source(&lab, &source(url.clone()))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            format!("{url} gave a web page, such as a sign-in or missing-release page")
+        );
+        assert!(!sources.pins.contains_key(&url));
+        let kept = fs::read_dir(lab.work.join("sources")).unwrap().count();
+        assert_eq!(kept, 0);
     }
 }
 
