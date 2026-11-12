@@ -191,7 +191,8 @@ The commands that only make sense in this repository move under `distro dev`: `d
 (running scenarios), `dev acceptance`, `dev bench`. `fill-templates` stays hidden;
 activation runs it, and people don't.
 
-`dev lint [PKG...]` points out needless dependencies in recipes, `dev outdated` compares recipes
+`dev docs` writes the reference pages in `docs/reference` from the code, and `--check` fails
+when they're out of date. `dev lint [PKG...]` points out needless dependencies in recipes, `dev outdated` compares recipes
 with upstream releases, `dev repro [PKG...]` builds packages a second time and says which
 differ, and `dev seed check|pack|addresses` works on the seed.
 

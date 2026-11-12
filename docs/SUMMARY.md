@@ -21,7 +21,7 @@
 
 # Reference
 
-- [Commands](reference/commands.md) (not written yet)
-- [Options](reference/options.md) (not written yet)
-- [The module API](reference/module-api.md) (not written yet)
+- [Commands](reference/commands.md)
+- [Options](reference/options.md)
+- [The module API](reference/module-api.md)
 - [Recipes](reference/recipes.md) (not written yet)

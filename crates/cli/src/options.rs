@@ -71,6 +71,17 @@ struct Entry {
     spec: OptionSpec,
 }
 
+impl Entry {
+    fn shown_path(&self) -> String {
+        let path: Vec<&str> = self
+            .path
+            .iter()
+            .map(|segment| if segment == EVERY { "<name>" } else { segment })
+            .collect();
+        path.join(".")
+    }
+}
+
 /// The options under `path`: records and maps of records are tables of further options; the rest
 /// hold values. A map's entries are named by the user, shown as `<name>`.
 fn leaves(path: Vec<String>, spec: &OptionSpec, out: &mut Vec<Entry>) {
@@ -109,26 +120,62 @@ fn matches(prefix: &OptionPath, path: &[String]) -> bool {
 fn render(entries: &[Entry]) -> String {
     let mut out = String::new();
     for entry in entries {
-        let path: Vec<&str> = entry
-            .path
-            .iter()
-            .map(|segment| if segment == EVERY { "<name>" } else { segment })
-            .collect();
-        let spec = &entry.spec;
-        let mut about = describe(&spec.ty);
-        match &spec.default {
-            Some(default) => {
-                let _ = write!(about, ", default {default}");
-            }
-            None if spec.optional => about.push_str(", optional"),
-            None => about.push_str(", required"),
-        }
-        let _ = writeln!(out, "{}\n    {about}", path.join("."));
-        if !spec.doc.is_empty() {
-            let _ = writeln!(out, "    {}", spec.doc);
+        let _ = writeln!(out, "{}\n    {}", entry.shown_path(), about(&entry.spec));
+        if !entry.spec.doc.is_empty() {
+            let _ = writeln!(out, "    {}", entry.spec.doc);
         }
     }
     out
+}
+
+/// An option's type, with its default or whether it's optional or required.
+fn about(spec: &OptionSpec) -> String {
+    let mut about = describe(&spec.ty);
+    match &spec.default {
+        Some(default) => {
+            let _ = write!(about, ", default {default}");
+        }
+        None if spec.optional => about.push_str(", optional"),
+        None => about.push_str(", required"),
+    }
+    about
+}
+
+/// Every option of system and project configurations as Markdown, by module, for the reference.
+pub fn markdown(modules: &Path) -> Result<String, String> {
+    let mut sources = Sources::default();
+    let mut modules = system::load_modules(modules, &mut sources, ModuleOrder::Sorted)?;
+    modules.sort_by(|a, b| a.name().cmp(b.name()));
+    let mut out = String::new();
+    for (kind, heading) in [
+        (ConfigKind::System, "A machine's configuration"),
+        (ConfigKind::Project, "A project's `distro.toml`"),
+    ] {
+        let _ = writeln!(out, "## {heading}\n");
+        for module in modules
+            .iter()
+            .filter(|m| m.configurations().contains(&kind))
+        {
+            let mut entries = Vec::new();
+            for (path, spec) in module.options() {
+                leaves(path.segments().to_vec(), &spec, &mut entries);
+            }
+            if entries.is_empty() {
+                continue;
+            }
+            entries.sort_by(|a, b| a.path.cmp(&b.path));
+            let _ = writeln!(out, "### {}\n", module.name());
+            for entry in &entries {
+                let _ = write!(out, "- `{}`: {}.", entry.shown_path(), about(&entry.spec));
+                if !entry.spec.doc.is_empty() {
+                    let _ = write!(out, " {}", entry.spec.doc);
+                }
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+    }
+    Ok(out)
 }
 
 /// A type in words. Tables of values say what each value is.

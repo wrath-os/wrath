@@ -17,7 +17,10 @@
 #![allow(unsafe_code)]
 
 mod convert;
+mod reference;
 pub mod style;
+
+pub use reference::module_api;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -308,22 +311,31 @@ fn base_globals() -> GlobalsBuilder {
         LibraryExtension::Typing,
     ])
     .with(std_globals)
-    .with_namespace("types", |builder| {
-        types_functions(builder);
-        for (name, ty) in [
-            ("bool", Type::Bool),
-            ("int", Type::int()),
-            ("float", Type::Float),
-            ("str", Type::Str),
-            ("path", Type::Path),
-            ("port", Type::port()),
-            ("freeform", Type::Freeform),
-        ] {
-            builder.set(name, StarType(ty));
-        }
-    })
+    .with_namespace("types", types_namespace)
     .with_namespace("formats", formats_functions)
 }
+
+/// The types options are declared with: the functions that make them, and the plain ones.
+fn types_namespace(builder: &mut GlobalsBuilder) {
+    types_functions(builder);
+    for (name, ty) in PLAIN_TYPES {
+        builder.set(name, StarType(ty()));
+    }
+}
+
+/// A type that takes nothing, such as `types.str`, by name.
+type PlainType = (&'static str, fn() -> Type);
+
+/// The types that take nothing.
+const PLAIN_TYPES: [PlainType; 7] = [
+    ("bool", || Type::Bool),
+    ("int", Type::int),
+    ("float", || Type::Float),
+    ("str", || Type::Str),
+    ("path", || Type::Path),
+    ("port", Type::port),
+    ("freeform", || Type::Freeform),
+];
 
 #[starlark_module]
 #[starlark_types(Ctx as Context, StarOption as Option)]

@@ -154,5 +154,5 @@ Bad configurations work the same way, with an `expected-error.txt` instead, and
 ## Reading more
 
 The built-in modules are the best examples. `ssh.star`, `greetd.star` and `syncthing.star` are
-short and cover most of the above. [The module API](reference/module-api.md) (not written yet)
-will list every call.
+short and cover most of the above. [The module API](reference/module-api.md) lists every call
+and [Options](reference/options.md) every option the built-in modules declare.

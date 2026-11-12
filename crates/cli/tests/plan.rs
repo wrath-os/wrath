@@ -590,3 +590,13 @@ fn check_pins_whats_new_and_with_locked_refuses_to() {
     );
     stdout(&distro(&["-C", config, "check", "--locked"]));
 }
+
+#[test]
+fn the_reference_pages_say_what_the_code_does() {
+    let output = distro(&["dev", "docs", "--check"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

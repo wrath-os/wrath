@@ -28,6 +28,7 @@ mod on_machine;
 mod options;
 mod pinned;
 mod project;
+mod reference;
 mod run;
 mod schema;
 mod secret;
@@ -298,6 +299,12 @@ enum DevCommand {
         /// Only run the scenarios of this milestone, for example `m2`
         #[arg(long)]
         milestone: Option<String>,
+    },
+    /// Write the reference pages in docs/reference from the code: commands, options, module API
+    Docs {
+        /// Fail when a page differs from what the code says, instead of writing it
+        #[arg(long)]
+        check: bool,
     },
     /// Point out what recipes list that they don't need to, such as a dependency another one brings
     Lint {
@@ -595,6 +602,12 @@ fn main() -> ExitCode {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
             DevCommand::Lint { packages } => lint(root, &packages),
+            DevCommand::Docs { check } => reference::write(
+                root,
+                &modules,
+                &<Cli as clap::CommandFactory>::command(),
+                check,
+            ),
             DevCommand::Repro { packages } => {
                 let only: Vec<&str> = packages.iter().map(String::as_str).collect();
                 let (lab, repository) = builder(root);
