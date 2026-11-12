@@ -1263,7 +1263,13 @@ fn installed_into(unit: &str) -> Vec<String> {
         } else if section == "[Install]"
             && let Some(names) = line.strip_prefix("WantedBy=")
         {
-            targets.extend(names.split_whitespace().map(str::to_owned));
+            // Only plain names: `/` or `..` would link from outside the target's directory.
+            targets.extend(
+                names
+                    .split_whitespace()
+                    .filter(|name| !name.contains('/') && !name.starts_with('.'))
+                    .map(str::to_owned),
+            );
         }
     }
     targets
@@ -2408,7 +2414,8 @@ mod tests {
             .on_host(&packages["systemd"].path)
             .join("lib/systemd/system");
         fs::create_dir_all(&units).unwrap();
-        let install = "[Unit]\nWantedBy=nothing.target\n[Install]\nWantedBy=a.target b.target\n";
+        let install =
+            "[Unit]\nWantedBy=nothing.target\n[Install]\nWantedBy=a.target ../../x b.target\n";
         fs::write(units.join("x.service"), install).unwrap();
         fs::write(units.join("y.target"), "[Unit]\n").unwrap();
         let mut model = model(80, false);

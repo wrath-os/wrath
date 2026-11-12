@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
@@ -356,6 +356,28 @@ impl Package {
             Some(version) => format!("{}-{version}", self.id),
             None => self.id.clone(),
         }
+    }
+
+    /// Refuses a source put somewhere other than inside the source tree: an absolute `into`, or one
+    /// with `..` in it.
+    fn check_sources(&self) -> Result<(), String> {
+        for into in self
+            .sources
+            .iter()
+            .filter_map(|source| source.into.as_deref())
+        {
+            let inside = Path::new(into)
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)));
+            if !inside {
+                return Err(format!(
+                    "`{}` puts a source at `{into}`, outside its source tree: name a directory \
+                     inside it",
+                    self.id
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Refuses an id or version that can't go in a store path's name.
@@ -1025,6 +1047,9 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
                 .map_err(|e| format!("{}: {e}", path.display()))?;
             package
                 .check_style(&styles)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            package
+                .check_sources()
                 .map_err(|e| format!("{}: {e}", path.display()))?;
             if let Some(version) = &package.version {
                 for source in &mut package.sources {
@@ -2603,6 +2628,22 @@ mod tree_tests {
 mod crate_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_source_goes_inside_the_source_tree() {
+        let with_into = |into: &str| {
+            let text = format!(
+                "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\n\
+                 sources = [{{ url = \"x\", into = \"{into}\" }}]\n"
+            );
+            toml::from_str::<Recipes>(&text).unwrap().package.remove(0)
+        };
+        assert!(with_into("pdf-poppler").check_sources().is_ok());
+        assert!(with_into("3rdparty/glad").check_sources().is_ok());
+        let error = with_into("../elsewhere").check_sources().unwrap_err();
+        assert!(error.contains("outside its source tree"), "{error}");
+        assert!(with_into("/etc").check_sources().is_err());
+    }
 
     #[test]
     fn every_recipe_in_the_repository_loads() {
