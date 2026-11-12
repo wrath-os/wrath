@@ -92,6 +92,30 @@ Service = { Type = "oneshot", ExecStart = "/run/system/bin/restic backup /home" 
 Timer.OnCalendar = "daily"
 ```
 
+## Programs' settings
+
+A program's settings go in its own format into the file it reads, for a user under `~/.config`:
+
+```toml
+[users.john.programs.alacritty.settings]
+font.size = 12
+
+[users.john.programs.noctalia.settings.bar]
+position = "top"
+
+[users.john.programs.niri.settings]
+prefer-no-csd = true
+layout.gaps = 12
+binds."Mod+Return".spawn = "alacritty"
+'output "eDP-1"'.scale = 2.0
+```
+
+niri's settings are written as KDL over niri's own defaults, so you only write what you change. A
+table is a section, `true` is a flag, and a key can carry arguments, as `output "eDP-1"` does.
+niri applies a saved change by itself, so an apply that only changes its settings shows up within
+a second. `[programs.niri.settings]`, without a user, is what users without settings of their own
+get. A file of your own where distro would put one is left alone, and the apply says so.
+
 ## The firewall
 
 A firewall is on by default. It drops what comes in unless it's a reply, a ping, the bits IPv6

@@ -26,6 +26,10 @@ Declares an option: a type with a default, documentation and flags. A list or ta
 
 Pretty-printed JSON with sorted keys.
 
+### `formats.kdl(value)`
+
+A KDL document, as niri reads, from a dictionary of nodes. Each key is written as it is, arguments and properties included, such as `output "eDP-1"`. A string, number or list of them gives the node's arguments, `True` makes it a flag and `False` leaves it out, a dictionary gives its children, and a list of dictionaries or lists repeats it.
+
 ### `formats.systemd(sections)`
 
 A systemd-style file, such as a `.network` file, from a dictionary of sections. A list value repeats its key.

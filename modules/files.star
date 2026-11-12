@@ -4,7 +4,12 @@
 # TOML. A system file with a secret in it, as `${secret.api-token}`, is filled in on the machine
 # and readable only by its owner.
 
-FORMATS = {"json": formats.json, "systemd": formats.systemd, "toml": formats.toml}
+FORMATS = {
+    "json": formats.json,
+    "kdl": formats.kdl,
+    "systemd": formats.systemd,
+    "toml": formats.toml,
+}
 
 fields = {
     "text": option(types.str, optional = True, runtime = True),

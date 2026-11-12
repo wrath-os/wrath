@@ -1,0 +1,6 @@
+error: niri is the desktop only with session = "niri"
+ --> fixtures/bad-configs/niri-settings-without-niri/system.toml:5:17
+  |
+5 | prefer-no-csd = true
+  |                 ^^^^ `programs.niri.settings` is set here
+  = reported by modules/niri.star

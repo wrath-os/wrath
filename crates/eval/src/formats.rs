@@ -30,6 +30,104 @@ pub fn toml(value: &Value) -> Result<String, String> {
     ::toml::to_string(&table).map_err(|e| e.to_string())
 }
 
+/// A KDL document, as niri reads, from a table of nodes. Each key is written as it is, so it can
+/// carry arguments and properties too, such as `output "eDP-1"`. A string, number or list of them
+/// is the node's arguments, `true` makes it a flag and `false` leaves it out, a table is its
+/// children, and a list of tables or lists repeats the node, once for each.
+pub fn kdl(value: &Value) -> Result<String, String> {
+    let Value::Table(nodes) = value else {
+        return Err(format!("a KDL document is a table, found {value}"));
+    };
+    let mut out = String::new();
+    for (head, value) in nodes {
+        write_kdl(&mut out, head, value, 0)?;
+    }
+    Ok(out)
+}
+
+fn write_kdl(out: &mut String, head: &str, value: &Value, depth: usize) -> Result<(), String> {
+    let indent = "    ".repeat(depth);
+    match value {
+        Value::Bool(false) => {}
+        Value::Bool(true) => out.push_str(&format!("{indent}{head}\n")),
+        Value::Table(children) => {
+            out.push_str(&format!("{indent}{head} {{\n"));
+            for (child, value) in children {
+                write_kdl(out, child, value, depth + 1)?;
+            }
+            out.push_str(&format!("{indent}}}\n"));
+        }
+        Value::List(items)
+            if items
+                .iter()
+                .any(|i| matches!(i, Value::Table(_) | Value::List(_))) =>
+        {
+            for item in items {
+                match item {
+                    Value::Table(_) => write_kdl(out, head, item, depth)?,
+                    Value::List(arguments) => write_kdl_arguments(out, &indent, head, arguments)?,
+                    _ => {
+                        return Err(format!(
+                            "`{head}`: a list either repeats the node, with a table or list for \
+                             each, or gives its arguments, not both"
+                        ));
+                    }
+                }
+            }
+        }
+        Value::List(arguments) => write_kdl_arguments(out, &indent, head, arguments)?,
+        _ => write_kdl_arguments(out, &indent, head, std::slice::from_ref(value))?,
+    }
+    Ok(())
+}
+
+fn write_kdl_arguments(
+    out: &mut String,
+    indent: &str,
+    head: &str,
+    arguments: &[Value],
+) -> Result<(), String> {
+    out.push_str(indent);
+    out.push_str(head);
+    for argument in arguments {
+        out.push(' ');
+        match argument {
+            Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Value::Int(i) => out.push_str(&i.to_string()),
+            Value::Float(x) if x.is_finite() => out.push_str(&format!("{x:?}")),
+            Value::Str(s) => write_kdl_string(out, s),
+            Value::Runtime(_) => return Err(RUNTIME.into()),
+            _ => {
+                return Err(format!(
+                    "`{head}`: an argument is a string, number or boolean, found {argument}"
+                ));
+            }
+        }
+    }
+    out.push('\n');
+    Ok(())
+}
+
+/// A KDL string, whose escapes are JSON's but for `\u{..}`.
+fn write_kdl_string(out: &mut String, s: &str) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                // Writing to a String cannot fail.
+                let _ = write!(out, "\\u{{{:x}}}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
 fn to_toml(value: &Value) -> Result<TomlValue, String> {
     Ok(match value {
         Value::Bool(b) => TomlValue::Boolean(*b),
@@ -63,6 +161,11 @@ pub fn toml_parts(value: &Value) -> Result<Vec<RuntimePart>, String> {
 /// [`systemd`] for a value that may contain secrets, like [`json_parts`].
 pub fn systemd_parts(value: &Value) -> Result<Vec<RuntimePart>, String> {
     with_secrets(value, systemd)
+}
+
+/// [`kdl`] for a value that may contain secrets, like [`json_parts`].
+pub fn kdl_parts(value: &Value) -> Result<Vec<RuntimePart>, String> {
+    with_secrets(value, kdl)
 }
 
 /// Marks a secret in rendered text: the secret's index between two private-use characters,
@@ -217,6 +320,79 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    fn table(entries: &[(&str, Value)]) -> Value {
+        Value::Table(
+            entries
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.clone()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn kdl_nodes_take_their_arguments_children_and_flags_from_the_values() {
+        let settings = table(&[
+            ("prefer-no-csd", Value::Bool(true)),
+            (
+                "hotkey-overlay",
+                table(&[("skip-at-startup", Value::Bool(false))]),
+            ),
+            (
+                "layout",
+                table(&[
+                    ("gaps", Value::Int(16)),
+                    ("center-focused-column", Value::Str("never".into())),
+                ]),
+            ),
+            ("output \"eDP-1\"", table(&[("scale", Value::Float(2.0))])),
+            (
+                "binds",
+                table(&[(
+                    "Mod+T hotkey-overlay-title=\"Terminal\"",
+                    table(&[("spawn", Value::List(vec![Value::Str("alacritty".into())]))]),
+                )]),
+            ),
+            (
+                "spawn-at-startup",
+                Value::List(vec![
+                    Value::List(vec![Value::Str("mako".into())]),
+                    Value::List(vec![Value::Str("sh".into()), Value::Str("-c".into())]),
+                ]),
+            ),
+            (
+                "window-rule",
+                Value::List(vec![
+                    table(&[
+                        ("match app-id=\"firefox\"", Value::Bool(true)),
+                        ("open-maximized", Value::List(vec![Value::Bool(true)])),
+                    ]),
+                    table(&[("geometry-corner-radius", Value::Int(8))]),
+                ]),
+            ),
+        ]);
+        assert_eq!(
+            kdl(&settings).unwrap(),
+            "binds {\n    Mod+T hotkey-overlay-title=\"Terminal\" {\n        spawn \"alacritty\"\n    \
+             }\n}\nhotkey-overlay {\n}\nlayout {\n    center-focused-column \"never\"\n    \
+             gaps 16\n}\noutput \"eDP-1\" {\n    scale 2.0\n}\nprefer-no-csd\n\
+             spawn-at-startup \"mako\"\nspawn-at-startup \"sh\" \"-c\"\nwindow-rule {\n    \
+             match app-id=\"firefox\"\n    open-maximized true\n}\nwindow-rule {\n    \
+             geometry-corner-radius 8\n}\n"
+        );
+    }
+
+    #[test]
+    fn kdl_strings_are_quoted_and_mixed_lists_refused() {
+        let quoted = table(&[("title", Value::Str("say \"hi\"\n\u{1}".into()))]);
+        assert_eq!(kdl(&quoted).unwrap(), "title \"say \\\"hi\\\"\\n\\u{1}\"\n");
+        let mixed = table(&[(
+            "spawn-at-startup",
+            Value::List(vec![Value::Str("a".into()), Value::List(vec![])]),
+        )]);
+        assert!(kdl(&mixed).unwrap_err().contains("spawn-at-startup"));
+        assert!(kdl(&Value::Int(1)).is_err());
+    }
 
     #[test]
     fn renders_pretty_json_with_sorted_keys() {

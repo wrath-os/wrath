@@ -62,14 +62,14 @@
 
 ### files
 
-- `files.<name>.format`: one of "json", "systemd", "toml", optional. What to write `settings` as: `systemd` is `[Section]` and `key=value` lines.
+- `files.<name>.format`: one of "json", "kdl", "systemd", "toml", optional. What to write `settings` as: `systemd` is `[Section]` and `key=value` lines.
 - `files.<name>.group`: a string, optional.
 - `files.<name>.mode`: an integer, optional. 0644, or 0400 with secrets in the text.
 - `files.<name>.owner`: a string, optional. Only for text with secrets; root.
 - `files.<name>.restart`: a list of items that are each a string, default []. Services that read this file, restarted when it changes.
 - `files.<name>.settings`: any value, optional. The file's contents as TOML, written out in `format`.
 - `files.<name>.text`: a string, optional.
-- `users.<name>.files.<name>.format`: one of "json", "systemd", "toml", optional. What to write `settings` as: `systemd` is `[Section]` and `key=value` lines.
+- `users.<name>.files.<name>.format`: one of "json", "kdl", "systemd", "toml", optional. What to write `settings` as: `systemd` is `[Section]` and `key=value` lines.
 - `users.<name>.files.<name>.group`: a string, optional.
 - `users.<name>.files.<name>.mode`: an integer, optional. 0644, or 0400 with secrets in the text.
 - `users.<name>.files.<name>.owner`: a string, optional. Only for text with secrets; root.
@@ -154,6 +154,11 @@
 - `services.nginx.<name>.sites.<name>.domains`: a list of items that are each a string, default [].
 - `services.nginx.<name>.sites.<name>.proxy`: a string, optional.
 - `services.nginx.<name>.sites.<name>.root`: an absolute path or one starting with `~/`, optional.
+
+### niri
+
+- `programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section, `true` a flag such as `prefer-no-csd`, and a key can carry arguments, such as `'output "eDP-1"'`. A list of tables or lists repeats a node, such as `window-rule` or `spawn-at-startup`.
+- `users.<name>.programs.niri.settings`: any value, default {}. niri's settings, over its defaults, written as KDL: a table is a section, `true` a flag such as `prefer-no-csd`, and a key can carry arguments, such as `'output "eDP-1"'`. A list of tables or lists repeats a node, such as `window-rule` or `spawn-at-startup`.
 
 ### ollama
 

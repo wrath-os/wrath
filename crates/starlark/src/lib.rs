@@ -569,6 +569,14 @@ fn formats_functions(builder: &mut GlobalsBuilder) {
     fn toml<'v>(value: StarValue<'v>, heap: Heap<'v>) -> anyhow::Result<StarValue<'v>> {
         render(value, heap, formats::toml_parts)
     }
+
+    /// A KDL document, as niri reads, from a dictionary of nodes. Each key is written as it is,
+    /// arguments and properties included, such as `output "eDP-1"`. A string, number or list of
+    /// them gives the node's arguments, `True` makes it a flag and `False` leaves it out, a
+    /// dictionary gives its children, and a list of dictionaries or lists repeats it.
+    fn kdl<'v>(value: StarValue<'v>, heap: Heap<'v>) -> anyhow::Result<StarValue<'v>> {
+        render(value, heap, formats::kdl_parts)
+    }
 }
 
 /// `value` rendered by `format`: a string, or a runtime value when it has secrets.

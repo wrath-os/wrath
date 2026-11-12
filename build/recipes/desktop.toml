@@ -378,11 +378,15 @@ default_features = false
 features = ["systemd"]
 install = '''
 mkdir -p $DEST$PREFIX/lib/systemd/user $DEST$PREFIX/share/wayland-sessions \
-    $DEST$PREFIX/share/xdg-desktop-portal
+    $DEST$PREFIX/share/xdg-desktop-portal $DEST$PREFIX/share/niri
 cp resources/niri-session $DEST$PREFIX/bin/
 cp resources/niri.service resources/niri-shutdown.target $DEST$PREFIX/lib/systemd/user/
 cp resources/niri.desktop $DEST$PREFIX/share/wayland-sessions/
 cp resources/niri-portals.conf $DEST$PREFIX/share/xdg-desktop-portal/
+# The defaults a system's config includes before its settings, without starting waybar, which
+# settings can't take back, and which a shell such as noctalia replaces.
+grep -v '^spawn-at-startup "waybar"$' resources/default-config.kdl \
+    > $DEST$PREFIX/share/niri/default-config.kdl
 '''
 
 # Logging in and sound.

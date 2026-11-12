@@ -1,0 +1,14 @@
+include "/run/system/share/niri/default-config.kdl"
+layout {
+    gaps 12
+}
+output "eDP-1" {
+    scale 2.0
+}
+prefer-no-csd
+spawn-at-startup "mako"
+spawn-at-startup "sh" "-c" "echo hi"
+window-rule {
+    match app-id="firefox"
+    open-maximized true
+}
