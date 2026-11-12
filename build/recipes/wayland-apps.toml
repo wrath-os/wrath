@@ -80,7 +80,7 @@ scope = "runtime"
 core = true
 extra_deps = ["cairo", "libxkbcommon", "wayland", "wayland-protocols"]
 sources = [{ url = "https://github.com/emersion/slurp/releases/download/v{version}/slurp-{version}.tar.gz" }]
-smoke = ["bin/slurp -v"]
+smoke = ["bin/slurp -h"]
 
 [package.meson]
 args = ["-D man-pages=disabled"]
@@ -103,7 +103,7 @@ version = "0.7.0"
 scope = "runtime"
 core = true
 sources = [{ url = "https://github.com/sentriz/cliphist/archive/v{version}/cliphist-{version}.tar.gz" }]
-smoke = ["bin/cliphist -version"]
+smoke = ["bin/cliphist version"]
 
 # The clipboard's history, kept from what wl-paste hands it.
 [package.go]
@@ -128,7 +128,8 @@ scope = "runtime"
 core = true
 extra_deps = ["wayland", "wayland-protocols", "systemd"]
 sources = [{ url = "https://github.com/swaywm/swayidle/releases/download/v{version}/swayidle-{version}.tar.gz" }]
-smoke = ["bin/swayidle -h"]
+# It prints its help and exits with 1.
+smoke = ["bin/swayidle -h 2>&1 | grep -q Usage"]
 
 # Runs a command when the seat has been idle a while, and before it sleeps.
 [package.meson]

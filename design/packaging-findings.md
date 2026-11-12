@@ -375,6 +375,22 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What we did:** the compiler wrapper maps gcc's `include` to `/usr/include` in every compile
   (`-fmacro-prefix-map`).
 
+### A library without a SONAME
+
+- **Seen in:** sqlite 3.54, whose new build system leaves the SONAME out unless given
+  `--soname=legacy`, and zathura, which linked it.
+- **What happened:** zathura recorded `/usr/lib/libsqlite3.so`, the build's path, as a library it
+  needs, and couldn't start anywhere else. Nothing noticed until its smoke command ran.
+- **What we did:** sqlite builds with `--soname=legacy`, and a build whose programs need a library
+  by a path outside the store fails, naming the file and the path.
+
+### Smoke commands nobody ran
+
+- **Seen in:** cliphist, slurp, swayidle, tmux and GTK 4, whose smoke commands used flags the
+  programs don't have or needed a display or a locale.
+- **What happened:** only the experiments ran smoke commands, so these were never tried.
+- **What we did:** `distro build PKG --check` runs them, and they were fixed.
+
 ## Working on recipes
 
 - Don't edit `build/` while a build is running from it. Styles load once per process, so a build

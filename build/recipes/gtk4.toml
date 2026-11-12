@@ -44,7 +44,8 @@ extra_deps = [
 ]
 sources = [{ url = "https://download.gnome.org/sources/gtk/{series}/gtk-{version}.tar.xz" }]
 probes = ["gtk4"]
-smoke = ["bin/gtk4-query-settings --help"]
+# Its programs all want a display, so the library loading is what gets checked.
+smoke = ["bin/gtk4-builder-tool --help"]
 
 # Wayland only, drawn with OpenGL, printing to files only.
 [package.meson]

@@ -375,7 +375,9 @@ probes = ["sqlite3"]
 smoke = ["bin/sqlite3 --version"]
 
 [package.autotools]
-args = ["--disable-static"]
+# Without `--soname=legacy` the library has no SONAME, and what links it records the build's
+# `/usr/lib/libsqlite3.so` instead of its name.
+args = ["--disable-static", "--soname=legacy"]
 
 [[package]]
 id = "7zip"
@@ -411,7 +413,9 @@ scope = "runtime"
 core = true
 extra_deps = ["ncurses", "libevent", "pkgconf", "bison-final", "m4-final"]
 sources = [{ url = "https://github.com/tmux/tmux/releases/download/{version}/tmux-{version}.tar.gz" }]
-smoke = ["bin/tmux -V"]
+# It wants a UTF-8 locale, which a machine has from `locales` and the check doesn't, so this
+# only checks that it loads and runs.
+smoke = ["bin/tmux -V 2>&1 | grep -q tmux"]
 
 [package.autotools]
 

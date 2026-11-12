@@ -2327,6 +2327,14 @@ fn build_package(
         ));
     }
     settle_modes(&lab.on_host(&out)).map_err(|e| format!("`{}` installed {e}", package.id))?;
+    if let Some((file, library)) = linked_by_path(&lab.on_host(&out))? {
+        return Err(format!(
+            "`{}`'s {} needs `{library}` by its path, which only the build has: the library has \
+             no SONAME, so its recipe should give it one",
+            package.id,
+            file.display()
+        ));
+    }
     write_runtime_deps(lab, package, &out, built)?;
     if !again {
         fs::create_dir_all(&done_dir).map_err(with_path(&done_dir))?;
@@ -2368,6 +2376,38 @@ fn link_flags(interpreter: &str, arm: Arm, rpath_dirs: &[String]) -> String {
     }
     flags.extend(rpath_dirs.iter().map(|dir| format!("-Wl,-rpath,{dir}")));
     flags.join(" ")
+}
+
+/// The first ELF file under `dir` that needs a library by a path outside the store, such as the
+/// build's `/usr/lib/libsqlite3.so`, with that path. A linker records a path when the library has
+/// no SONAME, and the program then can't start anywhere else.
+fn linked_by_path(dir: &Path) -> Result<Option<(PathBuf, String)>, String> {
+    for file in crate::pilot::files_under(dir)? {
+        if file.is_symlink() {
+            continue;
+        }
+        let mut magic = [0u8; 4];
+        let is_elf = fs::File::open(&file)
+            .and_then(|mut opened| opened.read_exact(&mut magic))
+            .is_ok_and(|()| &magic == b"\x7fELF");
+        if !is_elf {
+            continue;
+        }
+        let bytes = fs::read(&file).map_err(with_path(&file))?;
+        let Some((needed, _)) = crate::runpath::needed_and_run_path(&bytes) else {
+            continue;
+        };
+        if let Some(library) = needed.into_iter().find(|name| outside_store(name)) {
+            let relative = file.strip_prefix(dir).unwrap_or(&file).to_path_buf();
+            return Ok(Some((relative, library)));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether a needed library is named by a path outside the store.
+fn outside_store(needed: &str) -> bool {
+    needed.starts_with('/') && !needed.starts_with("/store/")
 }
 
 /// Clears setuid and setgid under `dir`, which would make a program run as root wherever the
@@ -2892,6 +2932,16 @@ mod tree_tests {
 mod crate_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_library_needed_by_a_path_outside_the_store_is_one_a_machine_lacks() {
+        assert!(outside_store("/usr/lib/libsqlite3.so"));
+        assert!(!outside_store("libsqlite3.so.0"));
+        assert!(!outside_store("/store/abc-sqlite/lib/libsqlite3.so.0"));
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("script"), "#!/bin/sh\n").unwrap();
+        assert_eq!(linked_by_path(dir.path()).unwrap(), None);
+    }
 
     #[test]
     fn a_built_package_loses_setuid_and_setgid_and_cant_hold_special_files() {
