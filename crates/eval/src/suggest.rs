@@ -9,10 +9,8 @@ pub(crate) fn did_you_mean<'a>(
         .map(|candidate| format!("help: did you mean `{candidate}`?"))
 }
 
-pub(crate) fn closest<'a>(
-    name: &str,
-    candidates: impl IntoIterator<Item = &'a str>,
-) -> Option<&'a str> {
+/// The candidate closest to `name`, when it's close enough to be a likely typo.
+pub fn closest<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
     let limit = (name.chars().count() / 3).max(1);
     candidates
         .into_iter()

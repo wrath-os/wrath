@@ -2200,6 +2200,20 @@ pub fn system(repository: &Path, model: &Value, kept: &Kept) -> Result<System, S
     system_from(&lab, &mut db, &known_packages(&built), model, kept)
 }
 
+/// The id of every recipe in `repository`, the names packages can have, read without building
+/// anything.
+pub fn recipe_ids(repository: &Path) -> Result<BTreeSet<String>, String> {
+    let mut ids = BTreeSet::new();
+    for file in recipe_files(repository)? {
+        ids.extend(
+            chain::load(repository, &file)?
+                .into_iter()
+                .map(|package| package.id),
+        );
+    }
+    Ok(ids)
+}
+
 /// Builds the packages `names` from the recipes in `repository`, as [`system`] would, and returns
 /// where each one is in the store.
 pub fn packages(repository: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {

@@ -22,6 +22,7 @@ mod generations;
 mod homes;
 mod host;
 mod install;
+mod known;
 mod machine;
 mod on_machine;
 mod options;
@@ -426,6 +427,9 @@ fn main() -> ExitCode {
     }
     let modules = modules_dir(&root, cli.modules);
     let root = root.as_path();
+    REPOSITORY
+        .set(root.to_path_buf())
+        .expect("the repository is set once");
     let config = || config_dir(cli.config.as_deref());
     // Commands that switch the machine, which a project has nothing to do with.
     let machine = || config().and_then(|config| refuse_project(&config).map(|()| config));
@@ -656,6 +660,8 @@ fn main() -> ExitCode {
 
 /// The role given with `--role`, set once when the command line is read.
 static ROLE: OnceLock<Option<String>> = OnceLock::new();
+/// The repository distro runs from, whose recipes name the packages there are.
+static REPOSITORY: OnceLock<PathBuf> = OnceLock::new();
 /// The role this machine runs, looked up the first time a command needs it.
 static MACHINE_ROLE: OnceLock<Option<String>> = OnceLock::new();
 
@@ -1147,10 +1153,30 @@ fn model(config: &Path, modules: &Path) -> Option<Model> {
 }
 
 fn model_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
-    with_lock(
-        config,
-        Model::from_evaluation(&evaluate_as(config, modules, role)?),
-    )
+    let evaluation = evaluate_as(config, modules, role)?;
+    let model = with_lock(config, Model::from_evaluation(&evaluation))?;
+    packages_known(&evaluation, &model).then_some(model)
+}
+
+/// Whether every package `model` installs has a recipe or a build, printing an error for each one
+/// that doesn't, at where the configuration names it.
+fn packages_known(evaluation: &Evaluation, model: &Model) -> bool {
+    let Some(root) = REPOSITORY.get() else {
+        return true;
+    };
+    let names = match known::names(root, model) {
+        Ok(names) => names,
+        Err(message) => {
+            style::error(&message);
+            return false;
+        }
+    };
+    let unknown = known::unknown(evaluation, model, &names);
+    if !unknown.is_empty() {
+        let text = distro_eval::render(&unknown, evaluation.sources());
+        style::print_report(&ending_a_line(&text));
+    }
+    unknown.is_empty()
 }
 
 /// `model` with the lock next to `config`, when it has one, or prints why it can't be read and
@@ -1380,6 +1406,9 @@ fn switch(
     let Some(model) = with_lock(&config, Model::from_evaluation(&evaluation)) else {
         return Ok(ExitCode::FAILURE);
     };
+    if !packages_known(&evaluation, &model) {
+        return Ok(ExitCode::FAILURE);
+    }
     let record = machine::prepare(
         &config,
         Path::new(machine::MACHINE_FILE),

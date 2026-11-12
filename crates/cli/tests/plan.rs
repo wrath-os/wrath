@@ -600,3 +600,33 @@ fn the_reference_pages_say_what_the_code_does() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn a_misspelled_package_fails_check_at_its_line_with_the_name_it_was_probably() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "packages = [\"jq\", \"ripgrpe\"]\n\n[system]\nhostname = \"box\"\n";
+    std::fs::write(dir.path().join("system.toml"), text).unwrap();
+    let output = distro(&["-C", dir.path().to_str().unwrap(), "check"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("there's no package `ripgrpe`"), "{stderr}");
+    assert!(stderr.contains("system.toml:1:12"), "{stderr}");
+    assert!(stderr.contains("did you mean `ripgrep`?"), "{stderr}");
+    assert!(!stderr.contains("`jq`"), "{stderr}");
+}
+
+#[test]
+fn adding_a_misspelled_package_leaves_the_configuration_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "[system]\nhostname = \"box\"\n";
+    std::fs::write(dir.path().join("system.toml"), text).unwrap();
+    let output = distro(&["-C", dir.path().to_str().unwrap(), "add", "ripgrpe"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("did you mean `ripgrep`?"), "{stderr}");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("added"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("system.toml")).unwrap(),
+        text
+    );
+}

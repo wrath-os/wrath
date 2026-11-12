@@ -21,8 +21,11 @@ $ distro apply
 ```
 
 `add` writes the name into the configuration's starting file, exactly as you typed it, and pins
-anything new. `distro add --home john lazygit` adds it to john's packages instead, which only end
-up on his `PATH`. `distro remove jq` takes it out again.
+anything new. A name no recipe has is refused before anything's written, with the closest one
+there is, and `check` and `plan` catch one written by hand the same way.
+
+`distro add --home john lazygit` adds it to john's packages instead, which only end up on their
+`PATH`. `distro remove jq` takes it out again.
 
 ## Trying one without installing it
 

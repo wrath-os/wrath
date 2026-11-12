@@ -41,6 +41,7 @@ pub use path::OptionPath;
 pub use requires::{Check, FACTS, Kind, Requirement};
 pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};
+pub use suggest::closest;
 pub use template::Part;
 pub use value::{RuntimePart, Value};
 pub use walk::{Action, Definition, Level, Raw, Site};

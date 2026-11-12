@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use distro_eval::{Evaluation, OptionPath, Site, Value};
-use distro_model::package_source;
+use distro_model::{Model, package_source};
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table};
 
 use crate::{evaluate, run};
@@ -38,6 +38,16 @@ pub fn add(
     }
     if names.is_empty() {
         return Ok(ExitCode::SUCCESS);
+    }
+    // Refused before the configuration is touched, so a typo never ends up in it.
+    let known = crate::known::names(root, &Model::from_evaluation(&evaluation))?;
+    for name in &names {
+        if let Some((package, near)) = crate::known::missing(name, &known) {
+            let near = near
+                .map(|near| format!("; did you mean `{near}`?"))
+                .unwrap_or_default();
+            return Err(format!("there's no package `{package}`{near}"));
+        }
     }
     let (file, change) = match config_sites(&evaluation, &option).find(|listed| !listed.shared) {
         Some(listed) => (listed.file, Change::Extend(listed.span)),
