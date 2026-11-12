@@ -1,0 +1,9 @@
+[system]
+hostname = "box"
+
+[users.bo.programs.git]
+enable = true
+name = "Bo"
+settings.alias.st = "status; echo done"
+settings.alias.lg = "log --format=%h # short"
+settings.core.pager = "  less "

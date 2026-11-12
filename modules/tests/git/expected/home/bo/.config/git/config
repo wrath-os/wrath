@@ -1,0 +1,7 @@
+[alias]
+	lg = "log --format=%h # short"
+	st = "status; echo done"
+[core]
+	pager = "  less "
+[user]
+	name = Bo

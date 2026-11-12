@@ -1,0 +1,6 @@
+error: a `:` or line break would end the field in /etc/passwd
+ --> fixtures/bad-configs/colon-in-description/system.toml:5:15
+  |
+5 | description = "Bo: the admin"
+  |               ^^^^^^^^^^^^^^^ `users.bo.description` is set here
+  = reported by modules/accounts.star

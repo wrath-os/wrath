@@ -79,6 +79,12 @@ def account_files(
     shadow = ["root:*:1::::::", "nobody:*:1::::::"]
     for name in sorted(users):
         u = users[name]
+        for field in ["description", "home", "shell"]:
+            if any([c in str(u.get(field, "")) for c in [":", "\n"]]):
+                ctx.error(
+                    ["users", name, field],
+                    "a `:` or line break would end the field in /etc/passwd",
+                )
         passwd.append("%s:x:%d:%d:%s:%s:%s" % (
             name,
             uids[name],

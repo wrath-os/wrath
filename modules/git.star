@@ -4,9 +4,15 @@
 load("lib/merge.star", "merge")
 
 def value(v: typing.Any) -> str:
+    """A value as git reads it: quoted when it has what git would otherwise cut it at or strip, a
+    comment's `;` or `#`, a quote, a backslash, a line break or space at either end."""
     if type(v) == "bool":
         return "true" if v else "false"
-    return str(v)
+    text = str(v)
+    if text == text.strip() and not any([c in text for c in [";", "#", "\"", "\\", "\n"]]):
+        return text
+    escaped = text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+    return "\"%s\"" % escaped
 
 def section_lines(name: str, keys: dict[str, typing.Any]) -> list[str]:
     """`[name]` and its keys. A list repeats its key."""

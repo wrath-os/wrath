@@ -59,6 +59,7 @@ pub fn disks(storage: &Value) -> Disks {
             if tpm {
                 options.push("tpm2-device=auto");
             }
+            let label = field(label);
             format!(
                 "{label} /dev/disk/by-partlabel/{label} none {}\n",
                 options.join(",")
@@ -90,7 +91,11 @@ pub fn disks(storage: &Value) -> Disks {
             ("/", prefix) => prefix.to_owned(),
             (path, prefix) => format!("{prefix}{path}"),
         };
-        format!("{} {at} {format} {options} 0 0\n", text(mount, "device"))
+        format!(
+            "{} {} {format} {options} 0 0\n",
+            field(text(mount, "device")),
+            field(&at)
+        )
     };
     let (swaps, filesystems): (Vec<&Value>, Vec<&Value>) = mounts
         .iter()
@@ -107,7 +112,7 @@ pub fn disks(storage: &Value) -> Disks {
     for swap in swaps {
         fstab.push_str(&format!(
             "{} none swap defaults 0 0\n",
-            text(swap, "device")
+            field(text(swap, "device"))
         ));
     }
 
@@ -180,10 +185,25 @@ pub fn disks(storage: &Value) -> Disks {
     }
 }
 
+/// A field of fstab or crypttab, which separate fields with spaces and tabs, with those and the
+/// backslash written as their octal escapes, as both files expect.
+fn field(text: &str) -> String {
+    text.replace('\\', "\\134")
+        .replace(' ', "\\040")
+        .replace('\t', "\\011")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_field_with_spaces_keeps_its_place_in_fstab() {
+        assert_eq!(field("/mnt/my disk"), "/mnt/my\\040disk");
+        assert_eq!(field("a\tb\\c"), "a\\011b\\134c");
+        assert_eq!(field("/store"), "/store");
+    }
 
     /// A root erased at every boot on one encrypted disk, as in the install scenario.
     fn storage() -> Value {
