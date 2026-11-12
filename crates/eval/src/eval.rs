@@ -308,6 +308,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             ConfigKind::System | ConfigKind::Project => SECRETS_DIR,
         },
         ids,
+        config,
         diagnostics: Vec::new(),
     };
     for id in 0..modules.len() {
@@ -730,6 +731,8 @@ struct Resolver<'a> {
     secrets_dir: &'static str,
     /// The uids and gids the lock next to the configuration keeps.
     ids: crate::Ids,
+    /// The configuration's files, which file options name.
+    config: &'a dyn ConfigFs,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -916,6 +919,7 @@ impl<'a> Resolver<'a> {
                 | Type::Float
                 | Type::Str
                 | Type::Path
+                | Type::File
                 | Type::Enum(_)
                 | Type::List { .. }
                 | Type::Freeform,
@@ -996,6 +1000,7 @@ impl<'a> Resolver<'a> {
             | Type::Float
             | Type::Str
             | Type::Path
+            | Type::File
             | Type::Enum(_)
             | Type::List { .. } => out.push((path, spec.clone())),
         }
@@ -1042,6 +1047,32 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The value of the option at `path` as a module reads it: a secret in a path is where it's
+    /// decrypted to, and a file is its text, which an error points at where the configuration
+    /// names it when it can't be read.
+    fn read_as(&mut self, path: &OptionPath, ty: &Type, value: Value) -> Result<Value, Failed> {
+        let value = secret_paths(self.secrets_dir, ty, value);
+        let (Type::File, Value::Str(file)) = (ty, &value) else {
+            return Ok(value);
+        };
+        let e = match self.config.read(file) {
+            Ok(text) => return Ok(Value::Str(text)),
+            Err(e) => e,
+        };
+        let reason = match e.kind() {
+            std::io::ErrorKind::NotFound => "there's no such file in the configuration".into(),
+            _ => e.to_string(),
+        };
+        let site = self.options[path]
+            .set_by
+            .first()
+            .map_or(Site::Default, |c| c.site);
+        let diagnostic = Diagnostic::error(format!("cannot read `{file}`"));
+        let diagnostic = self.locate(diagnostic, site, reason);
+        self.diagnostics.push(diagnostic);
+        Err(Failed)
+    }
+
     /// Reads an option or a table of options for a module.
     fn module_read(
         &mut self,
@@ -1063,20 +1094,25 @@ impl<'a> Resolver<'a> {
         self.run_writers(path).map_err(|Failed| ReadError::Failed)?;
         reads.insert(path.clone());
         match self.known(path) {
-            Known::Leaf(spec) => self
-                .resolve(path, &spec, at)
-                .map(|value| value.map(|value| secret_paths(self.secrets_dir, &spec.ty, value)))
-                .map_err(|Failed| ReadError::Failed),
+            Known::Leaf(spec) => match self.resolve(path, &spec, at) {
+                Ok(Some(value)) => self
+                    .read_as(path, &spec.ty, value)
+                    .map(Some)
+                    .map_err(|Failed| ReadError::Failed),
+                Ok(None) => Ok(None),
+                Err(Failed) => Err(ReadError::Failed),
+            },
             Known::Table(spec) => {
                 let mut table = self.skeleton(&spec, path);
                 let mut failed = false;
                 for (leaf, spec) in self.leaves_under(&spec, path.clone()) {
                     match self.resolve(&leaf, &spec, at) {
-                        Ok(Some(value)) => insert_nested(
-                            &mut table,
-                            &leaf.segments()[path.len()..],
-                            secret_paths(self.secrets_dir, &spec.ty, value),
-                        ),
+                        Ok(Some(value)) => match self.read_as(&leaf, &spec.ty, value) {
+                            Ok(value) => {
+                                insert_nested(&mut table, &leaf.segments()[path.len()..], value)
+                            }
+                            Err(Failed) => failed = true,
+                        },
                         Ok(None) => {}
                         Err(Failed) => failed = true,
                     }
@@ -1116,6 +1152,7 @@ impl<'a> Resolver<'a> {
             | Type::Float
             | Type::Str
             | Type::Path
+            | Type::File
             | Type::Enum(_)
             | Type::List { .. }
             | Type::Freeform => Vec::new(),

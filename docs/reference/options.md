@@ -68,12 +68,14 @@
 - `files.<name>.owner`: a string, optional. Only for text with secrets; root.
 - `files.<name>.restart`: a list of items that are each a string, default []. Services that read this file, restarted when it changes.
 - `files.<name>.settings`: any value, optional. The file's contents as TOML, written out in `format`.
+- `files.<name>.source`: a file in the configuration, such as `wezterm/wezterm.lua`, optional. The file whose text this is.
 - `files.<name>.text`: a string, optional.
 - `users.<name>.files.<name>.format`: one of "json", "kdl", "systemd", "toml", optional. What to write `settings` as: `systemd` is `[Section]` and `key=value` lines.
 - `users.<name>.files.<name>.group`: a string, optional.
 - `users.<name>.files.<name>.mode`: an integer, optional. 0644, or 0400 with secrets in the text.
 - `users.<name>.files.<name>.owner`: a string, optional. Only for text with secrets; root.
 - `users.<name>.files.<name>.settings`: any value, optional. The file's contents as TOML, written out in `format`.
+- `users.<name>.files.<name>.source`: a file in the configuration, such as `wezterm/wezterm.lua`, optional. The file whose text this is.
 - `users.<name>.files.<name>.text`: a string, optional.
 
 ### firewall

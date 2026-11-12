@@ -110,6 +110,14 @@ binds."Mod+Return".spawn = "alacritty"
 'output "eDP-1"'.scale = 2.0
 ```
 
+A config that's easier kept as a file of its own, such as a Lua one, goes in the configuration's
+directory and is named with `source`, from the configuration's root:
+
+```toml
+[users.john.files."~/.config/wezterm/wezterm.lua"]
+source = "wezterm/wezterm.lua"
+```
+
 niri's settings are written as KDL over niri's own defaults, so you only write what you change. A
 table is a section, `true` is a flag, and a key can carry arguments, as `output "eDP-1"` does.
 niri applies a saved change by itself, so an apply that only changes its settings shows up within

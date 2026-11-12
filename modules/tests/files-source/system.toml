@@ -1,0 +1,8 @@
+[system]
+hostname = "box"
+
+[files."/etc/motd"]
+source = "motd"
+
+[users.ann.files."~/.config/wezterm/wezterm.lua"]
+source = "wezterm/wezterm.lua"

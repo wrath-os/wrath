@@ -113,6 +113,7 @@ fn plain(ty: &Type) -> Json {
         Type::Float => json!({"type": "number"}),
         Type::Str => json!({"type": "string"}),
         Type::Path => json!({"type": "string", "pattern": "^(/|~/)"}),
+        Type::File => json!({"type": "string"}),
         Type::Enum(names) => json!({"enum": names}),
         Type::List { item, merge } => {
             let mut items = plain(item);

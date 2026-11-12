@@ -40,7 +40,7 @@ A TOML document from a dictionary, with keys sorted.
 
 ## `types`
 
-Types that take nothing: `types.bool`, `types.int`, `types.float`, `types.str`, `types.path`, `types.port`, `types.freeform`.
+Types that take nothing: `types.bool`, `types.int`, `types.float`, `types.str`, `types.path`, `types.file`, `types.port`, `types.freeform`.
 
 ### `types.one_of(choices)`
 

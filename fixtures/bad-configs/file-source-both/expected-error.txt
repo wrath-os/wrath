@@ -1,0 +1,6 @@
+error: a file has one of `text`, `source` and `settings`, not `text` and `source`
+ --> fixtures/bad-configs/file-source-both/system.toml:5:10
+  |
+5 | source = "motd"
+  |          ^^^^^^ `files."/etc/motd"` is set here
+  = reported by modules/files.star

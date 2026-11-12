@@ -327,12 +327,13 @@ fn types_namespace(builder: &mut GlobalsBuilder) {
 type PlainType = (&'static str, fn() -> Type);
 
 /// The types that take nothing.
-const PLAIN_TYPES: [PlainType; 7] = [
+const PLAIN_TYPES: [PlainType; 8] = [
     ("bool", || Type::Bool),
     ("int", Type::int),
     ("float", || Type::Float),
     ("str", || Type::Str),
     ("path", || Type::Path),
+    ("file", || Type::File),
     ("port", Type::port),
     ("freeform", || Type::Freeform),
 ];

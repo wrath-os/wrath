@@ -1,0 +1,5 @@
+error: invalid value for `files."/etc/motd".source`
+ --> fixtures/bad-configs/file-source-outside/system.toml:5:10
+  |
+5 | source = "../motd"
+  |          ^^^^^^^^^ expected a file in the configuration, such as `wezterm/wezterm.lua`, found "../motd"

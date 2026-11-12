@@ -1,8 +1,8 @@
 # Files declared directly in the configuration, for anything no module renders: system files
 # under `files`, and files in a user's home under `files` in `users/<name>.toml`. A file is its
-# `text`, or `settings` written in a `format`, so a program's configuration can be written as
-# TOML. A system file with a secret in it, as `${secret.api-token}`, is filled in on the machine
-# and readable only by its owner.
+# `text`, a `source` file kept beside the configuration, or `settings` written in a `format`,
+# so a program's configuration can be written as TOML. A system file with a secret in it, as
+# `${secret.api-token}`, is filled in on the machine and readable only by its owner.
 
 FORMATS = {
     "json": formats.json,
@@ -13,6 +13,11 @@ FORMATS = {
 
 fields = {
     "text": option(types.str, optional = True, runtime = True),
+    "source": option(
+        types.file,
+        optional = True,
+        doc = "The file whose text this is.",
+    ),
     "format": option(
         types.one_of(sorted(FORMATS.keys())),
         optional = True,
@@ -39,12 +44,17 @@ file = types.record(
 
 def contents(ctx: Context, at: list[str], f: dict[str, typing.Any]) -> typing.Any:
     """What the file described by `f`, at the option path `at`, holds."""
-    if "text" in f and "settings" in f:
-        ctx.error(at, "a file has `text` or `settings`, not both")
+    given = [field for field in ["text", "source", "settings"] if field in f]
+    if len(given) > 1:
+        ctx.error(at, "a file has one of `text`, `source` and `settings`, not %s" % " and ".join(
+            ["`%s`" % field for field in given],
+        ))
     if "text" in f:
         return f["text"]
+    if "source" in f:
+        return f["source"]
     if "settings" not in f:
-        ctx.error(at, "a file needs `text`, or `settings` and a `format`")
+        ctx.error(at, "a file needs `text`, `source`, or `settings` and a `format`")
     if "format" not in f:
         ctx.error(at + ["settings"], "`settings` need a `format` to be written in")
     return FORMATS[f["format"]](f["settings"])

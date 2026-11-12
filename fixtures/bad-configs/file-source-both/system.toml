@@ -1,0 +1,6 @@
+[system]
+hostname = "box"
+
+[files."/etc/motd"]
+source = "motd"
+text = "hi\n"

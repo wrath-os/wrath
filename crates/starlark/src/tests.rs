@@ -1411,7 +1411,7 @@ fn a_file_is_text_or_settings_and_settings_have_a_format() {
     };
 
     let both = error_of("text = \"a\"\nformat = \"toml\"\nsettings.a = 1");
-    assert!(both.contains("`text` or `settings`, not both"), "{both}");
+    assert!(both.contains("not `text` and `settings`"), "{both}");
     let neither = error_of("mode = 420");
     assert!(neither.contains("needs `text`"), "{neither}");
     let no_format = error_of("settings.a = 1");

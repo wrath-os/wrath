@@ -1,0 +1,5 @@
+error: cannot read `motd`
+ --> fixtures/bad-configs/file-source-missing/system.toml:5:10
+  |
+5 | source = "motd"
+  |          ^^^^^^ there's no such file in the configuration

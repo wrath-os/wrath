@@ -278,6 +278,7 @@ impl Walker<'_> {
                 | Type::Float
                 | Type::Str
                 | Type::Path
+                | Type::File
                 | Type::Enum(_)
                 | Type::List { .. } => unreachable!("only tables of options are walked"),
             };

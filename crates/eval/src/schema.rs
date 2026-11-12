@@ -20,6 +20,9 @@ pub enum Type {
     Str,
     /// An absolute path, or one starting with `~/` in user scope.
     Path,
+    /// A file in the configuration, by its path from the configuration's root. A module reads its
+    /// text.
+    File,
     Enum(Vec<String>),
     List {
         item: Box<Type>,
@@ -181,6 +184,7 @@ impl Type {
             | Self::Float
             | Self::Str
             | Self::Path
+            | Self::File
             | Self::Enum(_)
             | Self::List { .. } => Child::None,
         }
@@ -208,6 +212,7 @@ impl Type {
             Self::Float => "a number".into(),
             Self::Str => "a string".into(),
             Self::Path => "an absolute path or one starting with `~/`".into(),
+            Self::File => "a file in the configuration, such as `wezterm/wezterm.lua`".into(),
             Self::Enum(choices) => {
                 let choices: Vec<String> = choices.iter().map(|c| format!("\"{c}\"")).collect();
                 format!("one of {}", choices.join(", "))
@@ -268,6 +273,7 @@ impl Type {
                 min.is_none_or(|min| *i >= min) && max.is_none_or(|max| *i <= max)
             }
             (Self::Path, Value::Str(s)) => s.starts_with('/') || s.starts_with("~/"),
+            (Self::File, Value::Str(s)) => is_inside(s),
             // The file a secret is decrypted to.
             (Self::Path, Value::Runtime(parts)) => {
                 matches!(parts.as_slice(), [RuntimePart::Secret(_)])
@@ -305,6 +311,7 @@ impl Type {
                 | Self::Float
                 | Self::Str
                 | Self::Path
+                | Self::File
                 | Self::Enum(_)
                 | Self::List { .. }
                 | Self::Map(_)
@@ -318,6 +325,13 @@ impl Type {
             Err(format!("expected {}, found {value}", self.describe()))
         }
     }
+}
+
+/// Whether `path` names a file inside the configuration: relative, and never going up out of it.
+fn is_inside(path: &str) -> bool {
+    !path.starts_with('/')
+        && !path.starts_with('~')
+        && path.split('/').all(|part| !part.is_empty() && part != "..")
 }
 
 impl Record {
@@ -410,6 +424,7 @@ impl Schema {
                 | Type::Float
                 | Type::Str
                 | Type::Path
+                | Type::File
                 | Type::Enum(_)
                 | Type::List { .. }
                 | Type::Freeform => None,
@@ -433,6 +448,23 @@ mod tests {
             Err("expected an absolute path or one starting with `~/`, found \"srv\"".into())
         );
         assert_eq!(Type::Path.check(&Value::Str("~/notes".into())), Ok(()));
+        assert_eq!(
+            Type::File.check(&Value::Str("wezterm/wezterm.lua".into())),
+            Ok(())
+        );
+        for outside in [
+            "/etc/passwd",
+            "../secrets/key",
+            "a/../../b",
+            "~/x",
+            "a//b",
+            "",
+        ] {
+            assert!(
+                Type::File.check(&Value::Str(outside.into())).is_err(),
+                "{outside}"
+            );
+        }
         assert_eq!(
             Type::list(Type::Str, ListMerge::Set).check(&Value::List(vec![Value::Int(1)])),
             Err("expected a string, found 1".into())
