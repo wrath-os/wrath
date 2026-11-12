@@ -30,7 +30,9 @@ pub fn modules(text: &str) -> (Vec<String>, Vec<String>) {
     let mut variables = BTreeMap::new();
     let mut public = Vec::new();
     let mut private = Vec::new();
-    for line in text.lines() {
+    // A line ending in a backslash goes on on the next, as pkg-config reads it.
+    let joined = text.replace("\\\r\n", " ").replace("\\\n", " ");
+    for line in joined.lines() {
         let line = line.trim();
         // A field is `Name: value`, a variable `name=value`, whichever separator comes first.
         let Some(at) = line.find([':', '=']) else {
@@ -208,6 +210,16 @@ mod tests {
         assert_eq!(public, ["glib-2.0"]);
         assert!(private.is_empty());
         assert_eq!(modules("Name: none\n"), (Vec::new(), Vec::new()));
+    }
+
+    #[test]
+    fn a_line_ending_in_a_backslash_goes_on_on_the_next() {
+        let (public, private) = modules(
+            "Requires: glib-2.0\nRequires.private: gio-2.0 >= 2.80 \\\n    freetype2 >= 2.13 \\\n\
+             \x20   poppler = 26.11.0\n\nLibs: -lpoppler-glib\n",
+        );
+        assert_eq!(public, ["glib-2.0"]);
+        assert_eq!(private, ["gio-2.0", "freetype2", "poppler"]);
     }
 
     struct Fixture {
