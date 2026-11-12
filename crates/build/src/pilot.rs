@@ -906,20 +906,57 @@ pub(crate) fn build_some(
         }
     };
     let loaded = chain::in_order(loaded, |id| built.paths.contains_key(id))?;
-    let mut packages = Vec::new();
-    for package in loaded {
+    let packages = carry_on(loaded, |package| {
         build_and_finish(
             lab,
             repository,
-            &package,
+            package,
             arm,
             &seed,
             &mut sources,
             &mut built,
-        )?;
-        packages.push(package);
-    }
+        )
+    })?;
     Ok((built, seed, packages))
+}
+
+/// Builds each of `packages`, in order, with `build`. One that fails doesn't stop the others:
+/// what doesn't need it is still built, so a run shows every failure at once, and what needs it
+/// is skipped. The error lists the failures and how many packages waited on them.
+fn carry_on(
+    packages: Vec<Package>,
+    mut build: impl FnMut(&Package) -> Result<(), String>,
+) -> Result<Vec<Package>, String> {
+    let mut done = Vec::with_capacity(packages.len());
+    let mut broken = BTreeSet::new();
+    let mut failures = Vec::new();
+    let mut skipped = 0;
+    for package in packages {
+        if package.dep_ids()?.iter().any(|dep| broken.contains(dep)) {
+            broken.insert(package.id.clone());
+            skipped += 1;
+            continue;
+        }
+        match build(&package) {
+            Ok(()) => done.push(package),
+            Err(error) => {
+                broken.insert(package.id.clone());
+                failures.push(error);
+            }
+        }
+    }
+    match failures.len() {
+        0 => Ok(done),
+        1 if skipped == 0 => Err(failures.remove(0)),
+        count => {
+            let waited = if skipped == 0 {
+                String::new()
+            } else {
+                format!(", and {skipped} that need them weren't built")
+            };
+            Err(format!("{count} failed{waited}:\n{}", failures.join("\n")))
+        }
+    }
 }
 
 /// Builds `package` when it hasn't been, fixes it up, and moves it to where its contents put it,
@@ -1217,6 +1254,62 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Packages `zlib`, `curl` (needing zlib), `jq` and `git` (needing curl), in that order.
+    fn chain_of_four(dir: &Path) -> Vec<Package> {
+        fs::create_dir_all(dir.join("recipes")).unwrap();
+        let recipe = |id: &str, deps: &str| {
+            format!(
+                "[[package]]\nid = \"{id}\"\nscope = \"runtime\"\nscript = \"true\"\n\
+                 deps = [{deps}]\n"
+            )
+        };
+        let text = [
+            recipe("zlib", ""),
+            recipe("curl", "\"zlib\""),
+            recipe("jq", ""),
+            recipe("git", "\"curl\""),
+        ]
+        .concat();
+        fs::write(dir.join("recipes/r.toml"), text).unwrap();
+        chain::load(dir, "r.toml").unwrap()
+    }
+
+    #[test]
+    fn a_failed_package_stops_only_what_needs_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tried = Vec::new();
+        let error = carry_on(chain_of_four(dir.path()), |package| {
+            tried.push(package.id.clone());
+            match package.id.as_str() {
+                "zlib" => Err("`zlib` failed".to_owned()),
+                _ => Ok(()),
+            }
+        })
+        .unwrap_err();
+        assert_eq!(tried, ["zlib", "jq"]);
+        assert_eq!(
+            error,
+            "1 failed, and 2 that need them weren't built:\n`zlib` failed"
+        );
+    }
+
+    #[test]
+    fn every_failure_is_reported_and_one_alone_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let failing = |ids: &'static [&'static str]| {
+            move |package: &Package| match ids.contains(&package.id.as_str()) {
+                true => Err(format!("`{}` failed", package.id)),
+                false => Ok(()),
+            }
+        };
+        let error = carry_on(chain_of_four(dir.path()), failing(&["jq", "git"])).unwrap_err();
+        assert_eq!(error, "2 failed:\n`jq` failed\n`git` failed");
+        let error = carry_on(chain_of_four(dir.path()), failing(&["git"])).unwrap_err();
+        assert_eq!(error, "`git` failed");
+        let built = carry_on(chain_of_four(dir.path()), failing(&[])).unwrap();
+        assert_eq!(built.len(), 4);
+    }
 
     #[test]
     fn only_what_is_wanted_and_its_dependencies_are_needed() {
