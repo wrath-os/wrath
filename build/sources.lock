@@ -16,6 +16,7 @@ b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f  https://cdn.ke
 021a2e709a0edf4250b1256bd5a9e500411a90dddabea830ed59cef90eb9d85c  https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.0p1.tar.gz
 81ee8170028865581a8e10eaf055afb620fa4baa0beb6387241241a975033508  https://cmake.org/files/v4.1/cmake-4.1.0.tar.gz
 9949fbce0826669369c3b9361ac04b0459fdc51037e2ccf2e2483794909903f4  https://codeberg.org/dnkl/fcft/archive/3.3.1.tar.gz
+4296be402b5684d049534598e69db92b918f92beac9dab76b585207045f0b037  https://codeberg.org/dnkl/foot/archive/1.28.0.tar.gz
 963a9c15aecf3b3234be9daa5cb40c340a0e75425d2630ba2d75c94231f393f2  https://codeberg.org/dnkl/fuzzel/archive/1.12.0.tar.gz
 0e7b7094a02550dd80b7243bcffc3671550b0f1d8ba625e4dff52517827d5d23  https://codeberg.org/dnkl/tllist/archive/1.1.0.tar.gz
 427c064216761a1e72a8b30f0d954d08cb6e4435a82091fb865afd20c8497285  https://curl.se/ca/cacert-2026-11-05.pem
@@ -32,6 +33,7 @@ dfe7adc5876ef0670e7eba2907799bdbb8875ce58bb4208e1a52169bd16a47ca  https://downlo
 1e2419a5f21d26c324b28ae1c00e29e9175e8b596fff385a04c2172b36652226  https://download.gnome.org/sources/gsettings-desktop-schemas/51/gsettings-desktop-schemas-51.0.tar.xz
 80931fa472a77b9a164f6740e3c0b444fac6770054632d35a7ff9d679e5e7b9f  https://download.gnome.org/sources/gtk/3.24/gtk-3.24.52.tar.xz
 55c5c141a564245b8f8fbe7698663c87a45a7333c2a2c56f06f811ab73b212dd  https://download.gnome.org/sources/json-glib/1.10/json-glib-1.10.8.tar.xz
+c906bb084027ea512f94a60fbfc0cc8d4f17e4b4d525bed370d07a6d8714c923  https://download.gnome.org/sources/libnotify/0.8/libnotify-0.8.9.tar.xz
 c982b8157a054b803493bf994d31e50105eb948dd8da6b4ab9734e8d392712a3  https://download.gnome.org/sources/librsvg/2.62/librsvg-2.62.4.tar.xz
 70e7279ccc7e8cce1bb0e1c57a3785e2c79aea6d1dd9a538abda3886f11cdf72  https://download.gnome.org/sources/libsecret/0.21/libsecret-0.21.8.tar.xz
 03d006f3537616833c16c53addcdc32a0eb20e55443cba4038307e3fa7d8d44b  https://download.gnome.org/sources/libxml2/2.14/libxml2-2.14.5.tar.xz
@@ -87,14 +89,18 @@ fe5383204467828cd495ee8d1d3c037a7eba1389c22bc6a041f627976f9061cc  https://ftp.gn
 4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16  https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz
 0329d7788fbef113fa82cb80889ca197a344ce0df7646fe000974c5d714363a6  https://ftp.gnu.org/gnu/texinfo/texinfo-7.2.tar.xz
 766e48423e79359ea31e41db9e5c289675947a7fcf2efdcedb726ac9d0da3784  https://ftp.gnu.org/gnu/wget/wget-1.25.0.tar.gz
+d35b2a0b41a36cc55066320ae7ae5b176450546a4ed67ee09e7241ecd36bfc73  https://git.sr.ht/~emersion/kanshi/archive/v1.7.0.tar.gz
+621a91bf233176e0052e9444f0a42696ad1bfda24b25c027c99cb6e693f273d7  https://git.sr.ht/~emersion/libscfg/archive/v0.1.1.tar.gz
 ee5cb70e0add4ca9c9fe57e47581ab0002d44c07743fb5492469f3b570db640b  https://git.sr.ht/~kennylevinsen/greetd/archive/0.10.3.tar.gz
 819979c922a0be258aed133d93920bce6a3d3565a60588d6d372ce9db2712cd3  https://git.sr.ht/~kennylevinsen/seatd/archive/0.9.1.tar.gz
+a86ffb1793fe622802ec25795b69df864715986ecc175f7734e739c9e264ed72  https://git.sr.ht/~kennylevinsen/wlsunset/archive/0.4.0.tar.gz
 4c5c6136540384e5455b250f768e7ca11b03fdba1a8efc2341ee0f1111e57612  https://git.sr.ht/~sircmpwn/scdoc/archive/1.11.3.tar.gz
 af459827b80bfd31b83b08077f4b5843acb7d18ad9a33a2ef532d3090f291fbf  https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-1.0.20260223.tar.xz
 4dad02a2f9c8c3c8d89434e47337aa654cb0e2aa50e806589132f186bf5c2b66  https://github.com/BurntSushi/ripgrep/archive/14.1.1/ripgrep-14.1.1.tar.gz
 d1f380bc2ebc931aaf663b8bb84fc06269a4d75b9c8c9b9ed8ad4b5417499437  https://github.com/F1bonacc1/process-compose/archive/v1.75.1/process-compose-1.75.1.tar.gz
 93bd89a16c74949ee7c69ef580d8e4cf5ce03e7d9c461b68cf1ace3e4017eef5  https://github.com/FiloSottile/age/archive/v1.2.1/age-1.2.1.tar.gz
 82c301594a566277ba3cf41e037fc03ae101727d3e5d682d09e322a53937b5ed  https://github.com/FortAwesome/Font-Awesome/archive/5.15.4/Font-Awesome-5.15.4.tar.gz
+a68869e23f56ac4f2e28f1783002810ddbf10f95e1af9b48b2912fb169f46994  https://github.com/Hummer12007/brightnessctl/archive/0.5.1/brightnessctl-0.5.1.tar.gz
 9c09b901149c729df745057dafa815278aaa101b84d2b6e14f16a42de52f97f2  https://github.com/KhronosGroup/glslang/archive/16.6.0/glslang-16.6.0.tar.gz
 3a289eded586c26d06c1387de72c7bf7c809527a70d51ba6401fe61059b19626  https://github.com/Kistler-Group/sdbus-cpp/archive/v2.3.1/sdbus-cpp-2.3.1.tar.gz
 1952b2a782ba576279c211ee942e341748fdb44997f704dd53def46cd055470b  https://github.com/NixOS/patchelf/releases/download/0.18.0/patchelf-0.18.0.tar.bz2
@@ -104,6 +110,7 @@ d1f380bc2ebc931aaf663b8bb84fc06269a4d75b9c8c9b9ed8ad4b5417499437  https://github
 966da7b9a81ac6cb777b9f159f4c02e5b83a8b8bd30ebf5991007839926b600c  https://github.com/XAMPPRocky/tokei/archive/v15.0.0/tokei-15.0.0.tar.gz
 4fcd4272b013a10b637dbcc299c58a9924b94470a9042677ca1a204cc2e9150e  https://github.com/ajeetdsouza/zoxide/archive/v0.10.0/zoxide-0.10.0.tar.gz
 b814e30c6271ae23158c66e0e2377c3600bb24041fa382a36e81be564eeb2e36  https://github.com/alacritty/alacritty/archive/v0.15.1/alacritty-0.15.1.tar.gz
+75957ad5071956f563542c7557af16a57e40b4a7f66bc9b6373d022ec5eef548  https://github.com/altdesktop/playerctl/archive/v2.4.1/playerctl-2.4.1.tar.gz
 a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15  https://github.com/anholt/libepoxy/archive/1.5.10/libepoxy-1.5.10.tar.gz
 67e07c21b770a6d884c5e50ba1d2cfc90732ea57459367d8732ec7ecbeb3be5f  https://github.com/aristocratos/btop/archive/v1.4.8/btop-1.4.8.tar.gz
 757f89f99b2559af7314b460c8397fda0221ad6b958cf6439358b83ef0364ada  https://github.com/ast-grep/ast-grep/archive/0.51.2/ast-grep-0.51.2.tar.gz
@@ -113,6 +120,7 @@ fdfcaab891ecc33561372d6763b8c279112a0d10c7ddb3a3b464abe039045423  https://github
 9c15fa751bb8093d042dae1b9f125eb45198c32c6704cd5481ccde460d4f8151  https://github.com/benhoyt/inih/archive/refs/tags/r62.tar.gz
 80304b9c306ea799327f01d9a7549bdb28317789182631f1b54f4511b4206dd6  https://github.com/besser82/libxcrypt/releases/download/v4.4.38/libxcrypt-4.4.38.tar.xz
 923a2eed637d2ea5f4ad5f820b6f87cc6e0081cfa4bc5ed1fe09278dd74db963  https://github.com/bootandy/dust/archive/v1.2.7/dust-1.2.7.tar.gz
+b4dc560973f0cd74e02f817ffa2fd44ba645a4f1ea94b7b9614dacc9f895f402  https://github.com/bugaevc/wl-clipboard/archive/v2.3.0/wl-clipboard-2.3.0.tar.gz
 20f876880851f1cc67fc7eb7589c7f7ccaa7612d827feac75797cf4a6ed729aa  https://github.com/casey/just/archive/1.59.0/just-1.59.0.tar.gz
 18df6f3c09157021366b8c702b5badba405d37dbb42f132353eb50c1b0d3f464  https://github.com/charmbracelet/glow/archive/v3.0.0/glow-3.0.0.tar.gz
 defdce484f8c92f265e1282490572575028967c2c55d356111d1e49a3ea9a88e  https://github.com/chmln/sd/archive/v1.1.0/sd-1.1.0.tar.gz
@@ -123,6 +131,7 @@ fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7  https://github
 e2c3851c909b87f9cfafa262e426f4a89023ca4e745cba5cab6d0153f76e7dcd  https://github.com/derailed/k9s/archive/v0.51.0/k9s-0.51.0.tar.gz
 02c5e873e9ebcf2798513f7dd3775e5b8aace99bfa1e0c1b93091b6d4cbcaffb  https://github.com/direnv/direnv/archive/v2.38.2/direnv-2.38.2.tar.gz
 64926eebf90092dca21b14259a5301b7b98e7b1943e8a201c7d726084809b527  https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz
+eeb282b2adc8db5614b852596340b69da6f3954cf6cfbdc4392da509c934208a  https://github.com/emersion/slurp/releases/download/v1.5.0/slurp-1.5.0.tar.gz
 3122966d46ab108f505525bcb2498f9121b446ee8438fbfceb73a7a1fa1ad400  https://github.com/emersion/xdg-desktop-portal-wlr/archive/refs/tags/v0.8.4.tar.gz
 bbf179f2611c904014431740b559e8055276c12fcf978a7e31c271663548337f  https://github.com/eza-community/eza/archive/v0.23.5/eza-0.23.5.tar.gz
 eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3  https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
@@ -152,6 +161,7 @@ f7e9383b8c0baa81b687e5b5eecc01beefaf1b19b64151d95ed61647fe7a315c  https://github
 f3a3082a23b37c293a4fcd1053147b371f2ff91fa7ea1b2a52e335676bac82dc  https://github.com/libffi/libffi/releases/download/v3.5.2/libffi-3.5.2.tar.gz
 bcd19582c5e30f7fe45dd86a5540e998590aa01903afc7ebcbeea6c8ac5421ee  https://github.com/libfuse/libfuse/releases/download/fuse-3.18.3/fuse-3.18.3.tar.gz
 47c05bc96e41416578cf1803bb2ba3f8d292cb17d5ac2fca539dee922bae8a94  https://github.com/libical/libical/archive/v4.0.7/libical-4.0.7.tar.gz
+c27ad72a68da151177929aa969ae773a2da5ac2af9ce946079314fdac8cece7f  https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.1/libjpeg-turbo-3.2.1.tar.gz
 24d18c9af2d1f5a17730b3f8d3f70a5c16e5ac303f5d9d5fe9dc00cf7ca82af2  https://github.com/libjxl/libjxl/archive/v0.13.0/libjxl-0.13.0.tar.gz
 3799ca9924d3125038880367bf1468e53a1b7e3686a934f098b7e1d286cdb80e  https://github.com/libsndfile/libsndfile/releases/download/1.2.2/libsndfile-1.2.2.tar.xz
 fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf  https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2
@@ -185,6 +195,7 @@ bb9b1a19040744d26d8a79be029d4e6b189c45ccc9d8831d7fe367d3c33df725  https://github
 054a4a369cdcc5d57e9bc91ea56dfefd66c71c253dcb0c0d7b72c0810373da26  https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/IosevkaTerm.tar.xz
 04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf  https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/JetBrainsMono.tar.xz
 61f53438b240a00c87c92dc2c372db0bbb264473b36a8144ea62babf787f8383  https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/RobotoMono.tar.xz
+8d7dc7b4495e5812b5613274c250ba5d3900933d78888ce7921c01247f191cc8  https://github.com/sentriz/cliphist/archive/v0.7.0/cliphist-0.7.0.tar.gz
 add4604d3bc410344433122a819ee4154b79dd8316a56298c60417e637c07608  https://github.com/shadow-maint/shadow/releases/download/4.18.0/shadow-4.18.0.tar.xz
 4474de87e084953eefc1120cf905a79f72bbbf85091e30cf37c9214eafcaa9c9  https://github.com/sharkdp/bat/archive/v0.26.1/bat-0.26.1.tar.gz
 8991b6504cac33c00528050622dfe3f2a0db1be1a6faf99f69b46d1a8f737dc5  https://github.com/sharkdp/fd/archive/v10.5.2/fd-10.5.2.tar.gz
@@ -192,6 +203,9 @@ f4b71df3c78e4cf752ca6fb6ebc4b025f7ea6a5ca5c48fea75f8a1fdb4c7d721  https://github
 690b83ca331378da9ea0d9d61008c4b22dde391387b9bbad7f29387f2595f76e  https://github.com/smartmontools/smartmontools/releases/download/RELEASE_7_5/smartmontools-7.5.tar.gz
 f1887ffa88a7ba437d2932501794047e28d03387996f7d1c364631c053cffc44  https://github.com/starship/starship/archive/v1.27.0/starship-1.27.0.tar.gz
 529634c40910895a9a1f3c5c1e65da2ca9ed72fb158dfc4bcc89efdf05e39b72  https://github.com/strace/strace/releases/download/v7.3/strace-7.3.tar.xz
+a6652a0060a0bea3c3318d9d03b6dddac34f6aeca01b883eef9e58281f5202a1  https://github.com/swaywm/swaybg/releases/download/v1.2.2/swaybg-1.2.2.tar.gz
+6e1655ecba30db14de3df1652ef9dd1db72784946fa65cb222404a87ac825d57  https://github.com/swaywm/swayidle/releases/download/v1.9.1/swayidle-1.9.1.tar.gz
+a15154348fef852fdb224112d137c393c826478b777f63479beb15e8d3812eaf  https://github.com/swaywm/swaylock/releases/download/v1.8.6/swaylock-1.8.6.tar.gz
 66857f1b670469daf258edd0bb2ea51d9ad3e2cab4eea9684028c80059fd6862  https://github.com/sxyazi/yazi/archive/v26.9.1/yazi-26.9.1.tar.gz
 f280278161446fe3838bedb970c7b3998043ad107f7627735a81483218c6f6f9  https://github.com/systemd/systemd/archive/v257.8/systemd-257.8.tar.gz
 9c82cd3db386e82fba2adfe01c3d09436c9e9cfe3ca8bb341d7eb882768c58af  https://github.com/systemd/zram-generator/archive/v1.2.1/zram-generator-1.2.1.tar.gz
@@ -214,6 +228,7 @@ acc4d5f7c3cbba5f9f8d08d8bdbeede84ecede46792f47929aa9321873385528  https://github
 513a53cbc42ca1f4ea06af2bab1f5283524a3848266b1d162416f8033afc4985  https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.3.2/unix-tree-2.3.2.tar.gz
 9f5cae93f4fffc1fbc05ae99cdfc708cd60dfd6612ffc0512827025c026fa541  https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/2.17.1/fontconfig-2.17.1.tar.xz
 4f7b554a38cdf78c033f666c8871f3749e14a094f65a07f630c91ed0b43d35e3  https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/2.18.3/fontconfig-2.18.3.tar.xz
+9e72a98f7621b1f5741b405b8dbd447acf7d300ddb12667ec526db1ce6154eaa  https://gitlab.freedesktop.org/emersion/grim/-/archive/v1.5.0/grim-v1.5.0.tar.gz
 6ae77cd937f9cf7d1321d35c116062c4911e8447010a6a713ac4286f7a9d5987  https://gitlab.freedesktop.org/emersion/libdisplay-info/-/releases/0.3.0/downloads/libdisplay-info-0.3.0.tar.xz
 43b180baa143e2035654759d84e2b2f5ee77d5fe817c423838c7fe59c0d68459  https://gitlab.freedesktop.org/emersion/libdisplay-info/-/releases/0.4.0/downloads/libdisplay-info-0.4.0.tar.xz
 7dd6c1ca964c86eb6810ccd6639cda634e68bdca43bf3afec39e94e942fac8d4  https://gitlab.freedesktop.org/libinput/libinput/-/archive/1.32.0/libinput-1.32.0.tar.gz
@@ -3857,6 +3872,7 @@ fff8168d98e6a07156c454a1b6e925509f3177e96c155516d7f96b4079cca3bf  https://proxy.
 1606b50c960da56308912c2d6e261885c36978894ff407b0e20ee8799182b402  https://proxy.golang.org/github.com/stretchr/testify/@v/v1.7.2.mod
 e076074c1560ad1dda98b8b00fea6308c4b6ccd06ddd088d22db4626ed68f738  https://proxy.golang.org/github.com/stretchr/testify/@v/v1.8.0.mod
 af1a5dcb331ace7a3f9fc1b5d7eee9c0bc82b4a2a182fe4cec2add217e2853d6  https://proxy.golang.org/github.com/stretchr/testify/@v/v1.8.1.mod
+36f64e4f229f87672ef8de1c756648c4165e76abd034362517578397e824856c  https://proxy.golang.org/github.com/stretchr/testify/@v/v1.8.1.zip
 af1a5dcb331ace7a3f9fc1b5d7eee9c0bc82b4a2a182fe4cec2add217e2853d6  https://proxy.golang.org/github.com/stretchr/testify/@v/v1.8.2.mod
 05e26cd069285a33cf2af46fdacdef569d5ae185e7963a76c0178328f68e97f9  https://proxy.golang.org/github.com/stretchr/testify/@v/v1.8.4.mod
 c0a648a037da54a6b02e8a811b1d3917d49dc4e1841cd756f28f0c4f1593933c  https://proxy.golang.org/github.com/stretchr/testify/@v/v1.9.0.mod
@@ -4222,6 +4238,8 @@ cd288e617bfac2c2705de4911a1bd62dcea74e363fdf5988b4e99e129038d782  https://proxy.
 dcc18e96a86fec32194f0bc7fa831051ab91285ea06fd8186cef4cfa99e5f18f  https://proxy.golang.org/go-simpler.org/sloglint/@v/v0.5.0.zip
 9624844350abee4237237b3947aa4835e89e97791cc3439c91351535f403ad80  https://proxy.golang.org/go.etcd.io/bbolt/@v/v1.3.11.mod
 d1651f094029c4f637fb8a39fee47dd146b41ae77eec79aac431a557f8656b0a  https://proxy.golang.org/go.etcd.io/bbolt/@v/v1.3.11.zip
+973fb2c837df2cde77c1d472c6a44f0f24e898af11fb95fcbcbc2cf1d9fc920b  https://proxy.golang.org/go.etcd.io/bbolt/@v/v1.3.9.mod
+412ac7f1928d89b1a5efc240ece45e02150c0e02374a0dd550fd0695b2f37c8e  https://proxy.golang.org/go.etcd.io/bbolt/@v/v1.3.9.zip
 b577328e3c40ce8dc76ae277f7bdce40d8917da258e71317fc584381ffc37a11  https://proxy.golang.org/go.etcd.io/bbolt/@v/v1.4.3.mod
 3110374ed5e6984200e6360b6488312803fb41516fff556b350d2a1abaa5ecb5  https://proxy.golang.org/go.etcd.io/bbolt/@v/v1.4.3.zip
 3acf3f97a95e4028c1bbe27e58a1a6ba4ec8fc510e17d3166c47c50f601b4a2e  https://proxy.golang.org/go.etcd.io/bbolt/@v/v1.5.0.mod
@@ -4422,6 +4440,8 @@ ae0759503b09f3017bda6d8a83d4f3f2301354fe0ff8afc177950b3cf134a4ab  https://proxy.
 e3a7620a870107686e7dd9af7e3e7f7b5d8e9f1a12f741bf3a01532a2231bba0  https://proxy.golang.org/go.opentelemetry.io/proto/otlp/@v/v1.3.1.zip
 c9ae80a7aa3ad811c302f9772b7c9498e81df246221b8c17d473fd041a5d4d8a  https://proxy.golang.org/go.opentelemetry.io/proto/otlp/@v/v1.7.1.mod
 15692d8e0dea5eadfad0aa451ab3ba1c7ed20af1d19075306db2301664695dd9  https://proxy.golang.org/go.opentelemetry.io/proto/otlp/@v/v1.7.1.zip
+e71edcc581e1aa848263558e0685e5ec12f60e809fe77112b4b78a4ad3803a09  https://proxy.golang.org/go.senan.xyz/flagconf/@v/v0.1.9.mod
+728dc8c307e490f55ffbd71c335b35d4142b007a28cf39d19ca986387a9bc9c0  https://proxy.golang.org/go.senan.xyz/flagconf/@v/v0.1.9.zip
 0fdcf995ad2be4b415b58418891f5a362cba1fd6182c1bbf39d7a73c580d6fb8  https://proxy.golang.org/go.step.sm/crypto/@v/v0.77.7.mod
 7d1fcac1035c84827bfd73f9b06f685bf26b665aa8b6e8ee9ca3c96f231b3651  https://proxy.golang.org/go.step.sm/crypto/@v/v0.77.7.zip
 f7476ceca88ad6eceea6936b4902d27c5071e88c24ed262e814923260e9778c7  https://proxy.golang.org/go.uber.org/atomic/@v/v1.7.0.mod
@@ -4570,6 +4590,8 @@ de285d08489fcd4d420a8561501e75b5124db0a48121dfc26e811959f518db4e  https://proxy.
 750f3c9741e41fe464879a60b1df257f3a311aff01d19f43f4987dba30007098  https://proxy.golang.org/golang.org/x/image/@v/v0.0.0-20180708004352-c73c2afc3b81.mod
 9b905a7a8c84ce9e164760c09071b95301e8d3d402ed962173f12f92b8ad62fc  https://proxy.golang.org/golang.org/x/image/@v/v0.0.0-20190227222117-0694c2d4d067.mod
 4fa94ad41d9c4b097044b0b7fc21ca03d78e070e9ec10a6c9c311f05d0d51d00  https://proxy.golang.org/golang.org/x/image/@v/v0.0.0-20190802002840-cff245a6509b.mod
+a93695836ebd2d5303520ed1d0252d120c230f937932d6fb2666fff151d93c9c  https://proxy.golang.org/golang.org/x/image/@v/v0.21.0.mod
+7ca937a1f9501b5d0b46631a6813f833292e33a9c5070f03630f18ab8d65bba3  https://proxy.golang.org/golang.org/x/image/@v/v0.21.0.zip
 5cbf30086cb7dd5aa10f888b4e799e486e66e24fee12dc6ff01a504d0c828365  https://proxy.golang.org/golang.org/x/image/@v/v0.27.0.mod
 db4846c8edb8cdcb556d205840361f62382df9bd5946b756e700c5fb43d90332  https://proxy.golang.org/golang.org/x/image/@v/v0.27.0.zip
 ef449fc2ce81261b7b416f8e3547bdddcb7be42daab2b9702e167ffe376587ce  https://proxy.golang.org/golang.org/x/image/@v/v0.46.0.mod
@@ -4766,6 +4788,7 @@ c27da17d7e217dec0c2f8c715e5ce2b92815fa76fc08da13c41a73dd6a67dfe0  https://proxy.
 ed0ff0c5081a754cfcbe768cbcf60c63975b35d76e7d7b99c5ac9bfa6d982851  https://proxy.golang.org/golang.org/x/sync/@v/v0.3.0.mod
 ed0ff0c5081a754cfcbe768cbcf60c63975b35d76e7d7b99c5ac9bfa6d982851  https://proxy.golang.org/golang.org/x/sync/@v/v0.4.0.mod
 700e5db00dd26aa19a17dce5fc552436d60f68c5606c85b821f24c3d6072a151  https://proxy.golang.org/golang.org/x/sync/@v/v0.5.0.mod
+c79473c265ca571d389bf64fa1e7b2d8999b4ab3eb7af5e3bc185644783a1087  https://proxy.golang.org/golang.org/x/sync/@v/v0.8.0.zip
 8969115e4a39108848324e79a1bd8a8445230e6e3aaccbe9f8057fb50fffc8c1  https://proxy.golang.org/golang.org/x/sys/@v/v0.0.0-20170407050850-f3918c30c5c2.mod
 8969115e4a39108848324e79a1bd8a8445230e6e3aaccbe9f8057fb50fffc8c1  https://proxy.golang.org/golang.org/x/sys/@v/v0.0.0-20180823144017-11551d06cbcc.mod
 8969115e4a39108848324e79a1bd8a8445230e6e3aaccbe9f8057fb50fffc8c1  https://proxy.golang.org/golang.org/x/sys/@v/v0.0.0-20180830151530-49385e6e1522.mod
@@ -4875,6 +4898,8 @@ d227b325f621f4ebe28d39ba773ea99b870f393b7c09c34592c365b16dd560de  https://proxy.
 f033333096fe198f3151deed93f2deba74e50bbfe7739134045bc3b7ce4a5024  https://proxy.golang.org/golang.org/x/sys/@v/v0.2.0.mod
 d227b325f621f4ebe28d39ba773ea99b870f393b7c09c34592c365b16dd560de  https://proxy.golang.org/golang.org/x/sys/@v/v0.21.0.mod
 2588f4e77c83774bc6f168e8594f2dcbd21c1d26849a877f7e6a0d151392e735  https://proxy.golang.org/golang.org/x/sys/@v/v0.21.0.zip
+d227b325f621f4ebe28d39ba773ea99b870f393b7c09c34592c365b16dd560de  https://proxy.golang.org/golang.org/x/sys/@v/v0.26.0.mod
+f44842acff792af010dcb5a24308b72272ebd57c74e00d5f530c9e5d55b86979  https://proxy.golang.org/golang.org/x/sys/@v/v0.26.0.zip
 f033333096fe198f3151deed93f2deba74e50bbfe7739134045bc3b7ce4a5024  https://proxy.golang.org/golang.org/x/sys/@v/v0.3.0.mod
 d227b325f621f4ebe28d39ba773ea99b870f393b7c09c34592c365b16dd560de  https://proxy.golang.org/golang.org/x/sys/@v/v0.30.0.mod
 f5214bfec98f00e5432da68bbece03e98600fa41594ed026556cbde8fcb6f7c9  https://proxy.golang.org/golang.org/x/sys/@v/v0.30.0.zip
@@ -5069,6 +5094,8 @@ b0365b9f4f633a56c8a9b99b485155a1d2cbfd9fe151db9b4783c34152e8ecf2  https://proxy.
 9c9b5e62af69f2b10029ce12944dc8834f1226a83bb243e9a0dbf37e0bb186ba  https://proxy.golang.org/golang.org/x/tools/@v/v0.2.0.mod
 71fd17b2c11bf1e68b607fd3827ae3b57d87ecf471b0532389cfa2088b2feb3a  https://proxy.golang.org/golang.org/x/tools/@v/v0.22.0.mod
 6c12cd419d997290febb441698d0e52cab5a71be959ac7c4dd023f86b2d01d1e  https://proxy.golang.org/golang.org/x/tools/@v/v0.22.0.zip
+82819e438fe12dba2ae05162302d3ce19cc5351f00a887ad22628b125345d989  https://proxy.golang.org/golang.org/x/tools/@v/v0.24.0.mod
+92607be1cacf4647fd31b19ee64b1a7c198178f1005c75371e38e7b08fb138e7  https://proxy.golang.org/golang.org/x/tools/@v/v0.24.0.zip
 be082bd1ac60dce89e16e82652f02d1236109c95f3fd76c165b500d97ea3984e  https://proxy.golang.org/golang.org/x/tools/@v/v0.3.0.mod
 428571a10aab7586a67da2c9375e8ae480def8d2fa11de8c6fff28a696b9591f  https://proxy.golang.org/golang.org/x/tools/@v/v0.33.0.mod
 da7a76d9db0956f30dd7f9957eead7aab5aa132dbca78a6d578436f94fdfee84  https://proxy.golang.org/golang.org/x/tools/@v/v0.33.0.zip
