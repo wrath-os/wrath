@@ -10,6 +10,22 @@ style (Starlark), the builder (Rust), or the recipe.
 
 ## Open
 
+### Unit directories from systemd's pkg-config file
+
+- **Seen in:** Waybar, polkit, and any project that asks `systemd.pc` where units go.
+- **What happened:** the answer is systemd's own store path, so the install fails, and pkgconf
+  doesn't take a `PKG_CONFIG_SYSTEMD_*` override from the environment there.
+- **What we did:** a `prepare` line puts `$PREFIX/lib/systemd/user` in place of the lookup.
+- **What would prevent it:** systemd's `.pc` giving its directories relative to `${prefix}`, and
+  builds defining `prefix` as their own when they read it.
+
+### Zip archives
+
+- **Seen in:** fmt, which releases a `.zip`.
+- **What happened:** listing the source with tar failed.
+- **What we did:** used the forge's tarball of the tag.
+- **What would prevent it:** reading and unpacking zips, by their first bytes.
+
 ### No desktop OpenGL library
 
 - **Seen in:** imv 5, which links `gl`, or `opengl` on a system with libglvnd.
@@ -228,14 +244,16 @@ style (Starlark), the builder (Rust), or the recipe.
 ### An install outside the prefix
 
 - **Seen in:** wl-clipboard, which installs fish completions where fish's pkg-config file says,
-  `/usr/share/fish`, inside the build's read-only `/usr`.
+  `/usr/share/fish`, inside the build's read-only `/usr`. Waybar, whose user unit went to
+  systemd's own store path, which Python reports as `OSError: [Errno 30]`.
 - **What happened:** Meson failed with "Unhandled python OSError" and nothing else to go on.
 - **What we did:** a failed build that last installed outside `/store`, or wrote to a read-only
   place, says so and to point that directory's option under the prefix.
 
 ### A sign-in page pinned as a source
 
-- **Seen in:** slurp, whose GitLab archive URL names a project that isn't there.
+- **Seen in:** slurp, whose GitLab archive URL names a project that isn't there. Also
+  code.videolan.org, whose bot check answers every archive URL with a page.
 - **What happened:** GitLab answered with its sign-in page and a success status, so the page was
   pinned in `sources.lock` and the meson style read it as a project with no options.
 - **What we did:** a download that starts as an HTML page is refused and not pinned.

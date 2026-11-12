@@ -1,0 +1,127 @@
+# Playing video and music: mpv and the libraries under it, FFmpeg's decoders, subtitles and
+# libplacebo's renderer.
+
+[[package]]
+id = "nasm"
+version = "3.02"
+scope = "runtime"
+core = true
+sources = [{ url = "https://www.nasm.us/pub/nasm/releasebuilds/{version}/nasm-{version}.tar.xz" }]
+smoke = ["bin/nasm -v"]
+
+# The assembler the decoders' hand-written x86 code is in.
+[package.autotools]
+
+[[package]]
+id = "dav1d"
+version = "1.5.4"
+scope = "runtime"
+core = true
+extra_deps = ["nasm"]
+sources = [{ url = "https://github.com/videolan/dav1d/archive/{version}/dav1d-{version}.tar.gz" }]
+probes = ["dav1d"]
+
+# AV1, which FFmpeg decodes in software with it.
+[package.meson]
+args = ["-D enable_tools=false", "-D enable_tests=false", "-D enable_examples=false"]
+
+[[package]]
+id = "ffmpeg"
+version = "9.0.2"
+scope = "runtime"
+core = true
+extra_deps = ["nasm", "pkgconf", "dav1d", "libdrm", "zlib"]
+sources = [{ url = "https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz" }]
+probes = ["libavcodec", "libavformat", "libavfilter", "libavutil", "libswscale"]
+smoke = ["bin/ffmpeg -version", "bin/ffprobe -version"]
+# Its configure is its own, and refuses the options the autotools style passes.
+script = '''
+./configure --prefix=$PREFIX --enable-shared --disable-static --disable-doc --disable-debug \
+  --enable-gpl --enable-libdav1d --enable-libdrm
+make -j$NPROC
+make install DESTDIR=$DEST
+'''
+
+[[package]]
+id = "libass"
+version = "0.17.5"
+scope = "runtime"
+core = true
+extra_deps = ["nasm", "fribidi", "harfbuzz", "fontconfig"]
+sources = [{ url = "https://github.com/libass/libass/releases/download/{version}/libass-{version}.tar.xz" }]
+probes = ["libass"]
+
+# Subtitles, styled and placed as they were written.
+[package.meson]
+args = ["-D test=disabled", "-D libunibreak=disabled", "-D asm=enabled"]
+
+[[package]]
+id = "vulkan-headers"
+version = "1.4.363.0"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/vulkan-sdk-{version}/Vulkan-Headers-{version}.tar.gz" }]
+probes = ["vulkan"]
+
+# Vulkan's headers, which libplacebo includes even when it draws with OpenGL.
+[package.cmake]
+args = ["-D VULKAN_HEADERS_ENABLE_TESTS=OFF", "-D VULKAN_HEADERS_ENABLE_MODULE=OFF"]
+
+[[package]]
+id = "libplacebo"
+version = "7.387.0"
+scope = "runtime"
+core = true
+extra_deps = ["python3", "jinja2", "markupsafe", "lcms2", "mesa", "vulkan-headers"]
+propagates = ["vulkan-headers"]
+sources = [
+  { url = "https://github.com/haasn/libplacebo/archive/v{version}/libplacebo-{version}.tar.gz" },
+  # The OpenGL loader is generated with glad, a submodule archives leave out.
+  { url = "https://github.com/Dav1dde/glad/archive/v2.0.8/glad-2.0.8.tar.gz", into = "3rdparty/glad" },
+]
+probes = ["libplacebo"]
+
+# The renderer under mpv's video output, with OpenGL.
+[package.meson]
+env = { PYTHONPATH = "$LAB_DEP_jinja2/site:$LAB_DEP_markupsafe/site" }
+args = [
+  "-D vulkan=disabled", "-D opengl=enabled", "-D glslang=disabled", "-D shaderc=disabled",
+  "-D lcms=enabled", "-D libdovi=disabled", "-D unwind=disabled", "-D xxhash=disabled",
+  "-D demos=false", "-D tests=false",
+]
+
+[[package]]
+id = "luajit"
+# A rolling release: each commit on its v2.1 branch is one, numbered by its time.
+version = "2.1"
+scope = "runtime"
+core = true
+sources = [{ url = "https://github.com/LuaJIT/LuaJIT/archive/63c8f1a9b479ba5518cf6a170ff7729178bc3cfd.tar.gz" }]
+probes = ["luajit"]
+smoke = ["bin/luajit -v"]
+script = '''
+# mpv's on-screen controls and scripts are Lua 5.1, which LuaJIT is.
+make -j$NPROC PREFIX=$PREFIX
+make install PREFIX=$PREFIX DESTDIR=$DEST
+rm $DEST$PREFIX/lib/libluajit-5.1.a
+'''
+
+[[package]]
+id = "mpv"
+version = "0.42.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "python3", "ffmpeg", "libplacebo", "libass", "luajit", "pipewire", "wayland",
+  "wayland-protocols", "libxkbcommon", "mesa", "libjpeg-turbo",
+]
+sources = [{ url = "https://github.com/mpv-player/mpv/archive/v{version}/mpv-{version}.tar.gz" }]
+smoke = ["bin/mpv --version"]
+
+# The video player, on Wayland with EGL, playing sound through PipeWire.
+[package.meson]
+args = [
+  "-D lua=luajit", "-D javascript=disabled", "-D x11=disabled", "-D vulkan=disabled",
+  "-D wayland=enabled", "-D egl-wayland=enabled", "-D pipewire=enabled",
+  "-D manpage-build=disabled", "-D html-build=disabled", "-D pdf-build=disabled",
+]
