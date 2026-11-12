@@ -1,6 +1,6 @@
 # 0031: A switch does only what changed, and proves it
 
-Status: proposed, 2026-11-12.
+Status: accepted, 2026-11-12.
 
 ## Context
 
@@ -31,23 +31,38 @@ yet who starts watching to try a theme would get those changes too.
   - `daemon-reload`: unit files, drop-ins and generators, the system's and its packages';
   - the users' service managers: users' units and what's enabled for them;
   - wrappers: the model's wrappers.
+  A step's inputs include what it reads on the machine as well as in the generation:
+  systemd-sysusers reads the machine's `/etc/passwd`, and systemd-tmpfiles makes what someone
+  deleted. A step whose machine-side inputs can't be compared runs.
 - A step is skipped only when everything it reads is byte for byte the same in the old and new
   generation, compared on disk, as restarts already are (unit fingerprints). A step that doesn't
   declare its inputs always runs, so missing knowledge makes a switch slower, never wrong.
+- Links into the store compare by their target. Store paths are content-addressed, so the same
+  target is the same content.
+- `apply` when the model hasn't changed runs every step. That's what people reach for when
+  something is off, and it repairs what drifted.
 - `apply -v`, and the plan, show each step as run or skipped and the input that decided it.
 - A VM test switches each change twice, once skipping and once running every step, and compares
   unit states, `/etc`, accounts and the users' managers. A difference fails the test. Skipping is
   on by default only once that test covers the scenarios.
+- Before then, switches run in shadow: they work out what they'd skip, run everything anyway, and
+  log each skipped step that would have changed something. Running that on the Framework for a
+  while is the evidence from real use that the VM test can't give.
 
 ### Watching applies settings, and nothing lasts until you keep it
 
 - `apply --watch` switches again on each save of the configuration. There's no other new command.
-- It applies a save by itself only when the plan against the running system is settings: changed
-  files and nothing else. No package, unit, account, wrapper, secret or boot change, and no
-  service restarting or reloading because a file it reads changed. Anything more and it stops,
-  shows the plan, and waits for a yes, as `apply` does.
-- The same goes for starting: when the configuration already differs from the running system by
-  more than settings, watching shows the plan and waits for a yes before it starts.
+- It applies a save by itself only when the plan against the running system is settings: changes
+  to files a module marks as settings, and nothing else. `program-settings` and theme files are
+  settings; `/etc/sudoers`, PAM, `sshd_config` and the firewall aren't, since a bad edit there
+  can lock you out. No package, unit, account, wrapper, secret or boot change, and no service
+  restarting or reloading because a file it reads changed. Anything more and it stops, shows the
+  plan, and waits for a yes, as `apply` does.
+- Each applied save says when it takes effect, from how the module says its program picks up the
+  file. A program that reads it only when it starts shows nothing until then, and the watcher
+  says so.
+- Starting is held to the same line: when the configuration already differs from the running
+  system by more than settings, watching shows the plan and waits for a yes before it starts.
 - Watching works like `try`: saves switch the running system without making a generation. `keep`
   makes what's running a generation; stopping without it, a crash or a reboot returns to the
   current generation. A forgotten watcher can't leave a lasting change, and neither the boot menu

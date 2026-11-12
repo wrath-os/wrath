@@ -67,9 +67,9 @@ machine (for a home of its own, by its user), and referenced as `{ secret = "nam
 `${secret.name}`.
 
 A **service** is a program that's kept running, or a task run once. A machine's services are its
-platform's own: on Linux, systemd **units**, from modules or written under `[units]` with systemd's
-own sections. A home's or a project's services are written the same
-way everywhere, with a command, environment, restart policy, readiness and the services they need
+operating system's own: on Linux, systemd **units**, from modules or written under `[units]`
+with systemd's own sections. A home's or a project's services are written the same way
+everywhere, with a command, environment, restart policy, readiness and the services they need
 (projects run them with `distro up`).
 
 A **home** is what a configuration puts in one user's home directory: files, packages, services

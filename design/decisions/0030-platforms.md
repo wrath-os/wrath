@@ -1,6 +1,6 @@
 # 0030: A configuration builds on a platform
 
-Status: proposed, 2026-11-12.
+Status: accepted, 2026-11-12.
 
 ## Context
 
@@ -66,9 +66,15 @@ subtracts, which reads badly for a system that shares little with ours.
 - Recipe ids keep one namespace for now. Two sources declaring the same recipe id is an error
   naming both; namespacing recipes by source (`acme#jq`) is separate.
 
+- A platform builds on distro's modules only, never on another platform. A chain of platforms is
+  the layering 0007 left out: where a module came from would take walking the chain. Taking
+  modules by name from another source, without its platform, can come later if a real case
+  needs it.
+
 ## Open
 
 - The mechanism stays in Rust: the store, generations in `/store/.system`, activation, the init
   that starts systemd, and boot entries. A platform that updates another way, such as A/B
-  partitions, needs that mechanism chosen by the platform too. That's its own decision.
-- Whether a platform can build on another platform rather than only on distro's modules.
+  partitions, needs that mechanism chosen by the platform too. That's its own decision, for when
+  it's needed.
+- Platform-wide defaults, such as which kernel, if a platform needs them.
