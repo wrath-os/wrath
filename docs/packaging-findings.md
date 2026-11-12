@@ -10,6 +10,15 @@ style (Starlark), the builder (Rust), or the recipe.
 
 ## Open
 
+### No desktop OpenGL library
+
+- **Seen in:** imv 5, which links `gl`, or `opengl` on a system with libglvnd.
+- **What happened:** mesa is built with EGL and GLES but without GLX, so it installs no `libGL`
+  or `libOpenGL`, and imv's configure stopped.
+- **What we did:** left imv out for now.
+- **What would prevent it:** libglvnd, with mesa as its vendor. That rebuilds mesa and the whole
+  desktop, and the EGL vendor files need a place in the system the loader reads.
+
 ### Option names drift between releases
 
 - **Seen in:** libsecret 0.21 (`gir` became `introspection`), libical 4 (`SHARED_ONLY` removed,
@@ -215,6 +224,14 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What happened:** reading the lock out of the archive gave both copies one after the other,
   which isn't TOML, while unpacking leaves only the last.
 - **What we did:** the lock is read from the last copy, as unpacking leaves it.
+
+### An install outside the prefix
+
+- **Seen in:** wl-clipboard, which installs fish completions where fish's pkg-config file says,
+  `/usr/share/fish`, inside the build's read-only `/usr`.
+- **What happened:** Meson failed with "Unhandled python OSError" and nothing else to go on.
+- **What we did:** a failed build that last installed outside `/store`, or wrote to a read-only
+  place, says so and to point that directory's option under the prefix.
 
 ### A sign-in page pinned as a source
 

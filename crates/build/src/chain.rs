@@ -1227,6 +1227,8 @@ enum Missing {
     Header(String),
     /// An autoconf macro left unexpanded in `configure`, which the shell then runs as a command.
     Macro(String),
+    /// A place outside the package's prefix that its install wrote to, which is read-only.
+    Outside(String),
 }
 
 /// What the last lines of `log` say a build was missing, when they say it the way Meson,
@@ -1248,6 +1250,19 @@ fn missing_in(log: &str) -> Option<Missing> {
         }
         if let Some(name) = between(line, "fatal error: ", ": No such file or directory") {
             return Some(Missing::Header(name));
+        }
+        if let Some(place) = line
+            .strip_prefix("Installing ")
+            .and_then(|l| l.rsplit(" to ").next())
+            && place.starts_with('/')
+            && !place.starts_with("/store/")
+        {
+            return Some(Missing::Outside(place.to_owned()));
+        }
+        if line.ends_with(": Read-only file system")
+            && let Some(place) = between(line, " '/", "'")
+        {
+            return Some(Missing::Outside(format!("/{place}")));
         }
         let program = line
             .strip_suffix(": command not found")?
@@ -1272,6 +1287,12 @@ fn failure_hint(lab: &Lab, built: &Built, missing: &Missing) -> String {
                 "`{name}` is an autoconf macro configure was made without: when it's made in \
                  the build, aclocal finds macros in the build's /usr with \
                  ACLOCAL_PATH=/usr/share/aclocal"
+            );
+        }
+        Missing::Outside(place) => {
+            return format!(
+                "it installs into `{place}`, outside its prefix: set the option for that \
+                 directory to one under the prefix"
             );
         }
         Missing::Program(name) => ("the program", name, name.clone(), &["bin"]),
@@ -3881,12 +3902,24 @@ mod hint_tests {
                 "./configure: line 6130: PKG_PROG_PKG_CONFIG: command not found",
                 Missing::Macro("PKG_PROG_PKG_CONFIG".into()),
             ),
+            (
+                "Installing src/wl-copy.fish to /usr/share/fish/vendor_completions.d",
+                Missing::Outside("/usr/share/fish/vendor_completions.d".into()),
+            ),
+            (
+                "install: cannot create regular file '/etc/udev/x.rules': Read-only file system",
+                Missing::Outside("/etc/udev/x.rules".into()),
+            ),
         ];
         for (line, missing) in cases {
             let log = format!("checking things...\n{line}\nA full log can be found at x\n");
             assert_eq!(missing_in(&log), Some(missing), "{line}");
         }
         assert_eq!(missing_in("error: something else entirely\n"), None);
+        assert_eq!(
+            missing_in("Installing src/x to /store/abc-x/bin\nFAILED\n"),
+            None
+        );
     }
 
     #[test]
@@ -3922,6 +3955,11 @@ mod hint_tests {
         assert_eq!(
             hint(Missing::Program("scdoc".into())),
             "no recipe built so far has the program `scdoc`; one may need writing"
+        );
+        assert_eq!(
+            hint(Missing::Outside("/usr/share/fish".into())),
+            "it installs into `/usr/share/fish`, outside its prefix: set the option for that \
+             directory to one under the prefix"
         );
     }
 }
