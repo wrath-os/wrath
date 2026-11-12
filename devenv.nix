@@ -32,6 +32,8 @@
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
-    cargo run --quiet --package distro-cli -- status
+    cargo run --quiet --package distro-cli -- dev test fixtures/bad-configs
+    cargo run --quiet --package distro-cli -- dev test modules/tests
+    cargo run --quiet --package distro-cli -- dev docs --check
   '';
 }
