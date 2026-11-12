@@ -127,7 +127,7 @@ tie the system together get built this time.
 
 On a real machine you don't rebuild images, of course. You run `distro apply`, which shows the
 plan, asks, and switches the running system. That's what [Setting up a machine](setting-up.md)
-is about (not written yet).
+is about.
 
 ## What next
 
