@@ -135,8 +135,10 @@ style (Starlark), the builder (Rust), or the recipe.
 
 ### GCC 15 compiles C23 by default
 
-- **Seen in:** libsndfile, whose ALAC code defines its own `bool`.
-- **What happened:** `bool`, `true` and `false` are keywords in C23, so the code didn't compile.
+- **Seen in:** libsndfile, whose ALAC code defines its own `bool`; unzip, whose K&R
+  declarations such as `struct tm *localtime();` now mean no arguments.
+- **What happened:** `bool`, `true` and `false` are keywords in C23, and `()` declares no
+  arguments where it used to mean any, so the code didn't compile.
 - **What we did:** `-std=gnu17` for that recipe.
 - **What would prevent it:** nothing general; old C code needs it said per recipe. With the
   `cflags` option above, it's one line. Worth noting so the next one is recognised quickly.

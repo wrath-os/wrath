@@ -24,6 +24,8 @@ b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f  https://cdn.ke
 01b4a91cec5167ed48c11e8ab78f2048cead78ce94b0cafcad0ae8c5a3044d3d  https://data.iana.org/time-zones/releases/tzdata2026f.tar.gz
 0ba2a1a4b16afe7bceb2c07e9ce99a8c2c3508e5dec290dbb643384bd6beb7e2  https://dbus.freedesktop.org/releases/dbus/dbus-1.16.2.tar.xz
 5bb5d1be011158090157c9e7587ae5606c262a5020ecdc5caac6686b9910592e  https://deb.debian.org/debian/pool/main/h/hostname/hostname_3.25.tar.xz
+e51364116c84739c591728ecc841113a914fa11358fd10ff0d6813524d811bb9  https://deb.debian.org/debian/pool/main/u/unzip/unzip_6.0-28.debian.tar.xz
+036d96991646d0449ed0aa952e4fbe21b476ce994abc276e49d30e686708bd37  https://deb.debian.org/debian/pool/main/u/unzip/unzip_6.0.orig.tar.gz
 121a3b0467ad64a0e7034b44e71bd1cf28a2e4cca82886d40804ce1fac6494c0  https://deb.debian.org/debian/pool/main/w/whois/whois_5.6.6.tar.xz
 cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243  https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
 92893c8188355264ba639ca3d27943437b26ef069971ea9faa4b20de40595b9a  https://download.gnome.org/sources/at-spi2-core/2.60/at-spi2-core-2.60.7.tar.xz

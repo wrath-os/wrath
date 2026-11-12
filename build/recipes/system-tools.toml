@@ -392,6 +392,31 @@ ln -s 7zz $DEST$PREFIX/bin/7z
 '''
 smoke = ["bin/7zz i"]
 
+# Info-ZIP's last release, from 2009, with the fixes for its CVEs Debian carries, all but the one
+# that puts Debian in its banner. Its 1990s declarations are errors in C23, GCC 15's default.
+[[package]]
+id = "unzip"
+version = "6.0"
+scope = "runtime"
+core = true
+extra_deps = ["bzip2"]
+sources = [
+  { url = "https://deb.debian.org/debian/pool/main/u/unzip/unzip_{version}.orig.tar.gz" },
+  { url = "https://deb.debian.org/debian/pool/main/u/unzip/unzip_{version}-28.debian.tar.xz", into = "debian" },
+]
+script = '''
+for patch in $(grep -v -e '^#' -e this-is-debian debian/patches/series); do
+    patch -p1 < debian/patches/$patch
+done
+make -f unix/Makefile -j$NPROC D_USE_BZ2=-DUSE_BZIP2 L_BZ2=-lbz2 CC=cc \
+    CF="-O2 -Wall -std=gnu17 -I. -DACORN_FTYPE_NFS -DWILD_STOP_AT_DIR -DLARGE_FILE_SUPPORT \
+        -DUNICODE_SUPPORT -DUNICODE_WCHAR -DUTF8_MAYBE_NATIVE -DNO_LCHMOD -DDATE_FORMAT=DF_YMD \
+        -DUSE_BZIP2 -DIZ_HAVE_UXUIDGID -DNOMEMCPY -DNO_WORKING_ISPRINT" \
+    unzips
+make -f unix/Makefile install prefix=$DEST$PREFIX MANDIR=$DEST$PREFIX/share/man/man1
+'''
+smoke = ["bin/unzip -v", "bin/zipinfo -h"]
+
 [[package]]
 id = "tree"
 version = "2.3.2"
