@@ -1269,7 +1269,12 @@ fn plan(
     modules: &Path,
     json: bool,
 ) -> Result<ExitCode, String> {
-    let Some(after) = model(config, modules) else {
+    // Another machine is planned for as the role it has, as `apply --host` builds it.
+    let role = match &against {
+        Against::Host(name) => remote_role(config, &host::Remote::new(name)?)?,
+        _ => role(config).map(str::to_owned),
+    };
+    let Some(after) = model_as(config, modules, role.as_deref()) else {
         return Ok(ExitCode::FAILURE);
     };
     // What the system compared against was built from, for a system that was built.
@@ -1429,10 +1434,31 @@ fn on_host(
     modules: &Path,
 ) -> Result<ExitCode, String> {
     let config = config()?;
-    let Some(model) = model(&config, modules) else {
+    let remote = host::Remote::new(host)?;
+    let role = remote_role(&config, &remote)?;
+    let Some(model) = model_as(&config, modules, role.as_deref()) else {
         return Ok(ExitCode::FAILURE);
     };
-    host::apply(root, &config, model, &host::Remote::new(host)?, how, yes)
+    host::apply(root, &config, model, &remote, how, yes)
+}
+
+/// The role to build for another machine: `--role`, the configuration's only role, or the one the
+/// machine recorded when it was installed or `machines.toml` lists for it, never this machine's.
+fn remote_role(config: &Path, remote: &host::Remote) -> Result<Option<String>, String> {
+    if let Some(role) = given_role() {
+        return Ok(Some(role.to_owned()));
+    }
+    let roles = all_roles(config)?;
+    if let [only] = roles.as_slice() {
+        return Ok(only.clone());
+    }
+    let given = remote.given()?;
+    let name = given.name.as_deref().unwrap_or(remote.host_name());
+    let role = machine::role(&given, machine::listed(config, name).as_ref()).ok_or_else(|| {
+        format!("{name} has no role on record and machines.toml doesn't list it: pass --role")
+    })?;
+    eprintln!("role {role}, {name}'s");
+    Ok(Some(role))
 }
 
 /// Prints `plan`, in color on a terminal.

@@ -26,7 +26,10 @@ pub struct Remote {
 
 impl Remote {
     pub fn new(name: &str) -> Result<Self, String> {
-        let ssh = std::env::var("DISTRO_SSH").unwrap_or_else(|_| "ssh".to_owned());
+        let ssh = std::env::var("DISTRO_SSH")
+            .ok()
+            .filter(|ssh| !ssh.trim().is_empty())
+            .unwrap_or_else(|| "ssh".to_owned());
         Ok(Self {
             name: name.to_owned(),
             ssh: ssh.split_whitespace().map(str::to_owned).collect(),
@@ -67,6 +70,20 @@ impl Remote {
             self.name,
             String::from_utf8_lossy(&output.stderr).trim()
         ))
+    }
+
+    /// What the machine recorded about itself when it was installed, such as its role.
+    pub fn given(&self) -> Result<crate::machine::Given, String> {
+        let file = crate::machine::MACHINE_FILE;
+        let text = self.output(&format!("cat {file} 2>/dev/null || true"))?;
+        crate::machine::Given::parse(&text, &format!("{}:{file}", self.name))
+    }
+
+    /// The machine's name as `ssh` is given it, without a user or port: `root@framework` is
+    /// `framework`.
+    pub fn host_name(&self) -> &str {
+        let host = self.name.rsplit('@').next().unwrap_or(&self.name);
+        host.split(':').next().unwrap_or(host)
     }
 
     /// The model the machine runs, or `None` when distro didn't build what it runs.
@@ -226,6 +243,17 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_machine_is_named_without_its_user_or_port() {
+        for (given, name) in [
+            ("root@framework", "framework"),
+            ("framework", "framework"),
+            ("me@w-01:2222", "w-01"),
+        ] {
+            assert_eq!(Remote::new(given).unwrap().host_name(), name);
+        }
+    }
 
     #[test]
     fn only_what_the_machine_lacks_is_sent() {

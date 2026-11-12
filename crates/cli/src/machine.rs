@@ -23,25 +23,26 @@ pub(crate) struct Given {
 impl Given {
     /// What `file` records, or nothing when there's no such file.
     pub fn read(file: &Path) -> Result<Self, String> {
-        let text = match std::fs::read_to_string(file) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(e) => return Err(format!("{}: {e}", file.display())),
-        };
-        let doc: toml_edit::DocumentMut = text
-            .parse()
-            .map_err(|e| format!("{}: {e}", file.display()))?;
+        match std::fs::read_to_string(file) {
+            Ok(text) => Self::parse(&text, &file.display().to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(format!("{}: {e}", file.display())),
+        }
+    }
+
+    /// What `text`, the file at `at`, records.
+    pub fn parse(text: &str, at: &str) -> Result<Self, String> {
+        let doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{at}: {e}"))?;
         let mut given = Self::default();
         for (key, item) in doc.iter() {
             if key == DISKS {
-                given.disks = disks(item).ok_or_else(|| {
-                    format!("{}: `disks` lists each disk's devices", file.display())
-                })?;
+                given.disks = disks(item)
+                    .ok_or_else(|| format!("{at}: `disks` lists each disk's devices"))?;
                 continue;
             }
             let value = item
                 .as_str()
-                .ok_or_else(|| format!("{}: `{key}` isn't a string", file.display()))?
+                .ok_or_else(|| format!("{at}: `{key}` isn't a string"))?
                 .to_owned();
             match key {
                 ROLE => given.role = Some(value),
@@ -258,6 +259,20 @@ pub(crate) fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_machine_recorded_is_read_from_its_text() {
+        let given = Given::parse(
+            "role = \"worker\"\nname = \"w-01\"\nzone = \"eu\"\n",
+            "w-01:file",
+        )
+        .unwrap();
+        assert_eq!(given.role.as_deref(), Some("worker"));
+        assert_eq!(given.name.as_deref(), Some("w-01"));
+        assert!(Given::parse("", "w-01:file").unwrap().role.is_none());
+        let error = Given::parse("role = 1\n", "w-01:file").unwrap_err();
+        assert!(error.starts_with("w-01:file: `role`"), "{error}");
+    }
 
     fn listed(role: &str, zone: &str) -> Listed {
         Listed {

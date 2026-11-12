@@ -630,3 +630,36 @@ fn adding_a_misspelled_package_leaves_the_configuration_alone() {
         text
     );
 }
+
+#[test]
+fn another_machine_is_planned_for_as_the_role_it_recorded() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    // Stands in for `ssh HOST SCRIPT`: the machine recorded that it's a worker, and runs nothing
+    // distro built.
+    let ssh = dir.path().join("ssh");
+    let script = "#!/bin/sh\ncase \"$*\" in\n  \
+                  *machine.toml*) printf 'role = \"worker\"\\n' ;;\nesac\n";
+    std::fs::write(&ssh, script).unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let roles = copied("roles");
+    let output = Command::new(env!("CARGO_BIN_EXE_distro"))
+        .args([
+            "-C",
+            roles.path().to_str().unwrap(),
+            "plan",
+            "--host",
+            "root@w-01",
+        ])
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .env("DISTRO_SSH", &ssh)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains("role worker, w-01's"), "{stderr}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("nginx"),
+        "{stderr}"
+    );
+}
