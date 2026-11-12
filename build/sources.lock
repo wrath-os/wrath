@@ -52,6 +52,7 @@ a9dbee323351d109b7aee074a9cb89ca3e7bcf8ad8edef1851f4cf359bd50843  https://downlo
 17065e2fcc5f5a5bdbffc884c956bfc7c451a96e8c4fb2f8ad837c6413cb5a01  https://download.gnome.org/sources/pango/1.56/pango-1.56.4.tar.xz
 342385b6ca3b7c73455d7c80a13b7dbe4489e00bc3bd4c5bd6ed4dce421e374a  https://download.gnome.org/sources/pango/1.58/pango-1.58.2.tar.xz
 38ca0b050b065de4e3da0c182df657437757063bbf0c4b6c9567ddba019b1d68  https://download.gnome.org/sources/pangomm/2.46/pangomm-2.46.5.tar.xz
+b6656f6348f5245606cf15ea48c384c7f05156c75ead206c1b246c80a22fb585  https://download.gnome.org/sources/pygobject/3.54/pygobject-3.54.5.tar.gz
 adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349  https://download.libsodium.org/libsodium/releases/libsodium-1.0.22.tar.gz
 4996f0c4f93094719b1ca5c6279b20e588773ba8a247533e486416fb662ddb88  https://download.osgeo.org/libtiff/tiff-4.7.2.tar.xz
 a10d591825251e070f74c98df3daad195def4ed81b4a2de16169026aea33f6c8  https://download.samba.org/pub/rsync/src/rsync-3.5.2.tar.gz
@@ -276,6 +277,7 @@ f9454eae3a5a6ca903c05ead2a7e47d7d3957fb0ffac3ebb11d92842603ae80f  https://gitlab
 4460c20cfcf68b994a5ee206ed15fc19ad312f16c96075186e83b0e3f4aa48a5  https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.50/downloads/wayland-protocols-1.50.tar.xz
 64176eaa46e4969903e286f8e5ef8331affc17fdf03ac9b58381d2b23162b7a3  https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.26.0/downloads/wayland-1.26.0.tar.xz
 ea248ea157b7fa0165f4fe282c84919fa84c3f175553642f229c8f1ab7539128  https://gitlab.freedesktop.org/xdg/shared-mime-info/-/archive/2.5.1/shared-mime-info-2.5.1.tar.gz
+ba4dddeb22a1929ed5987e74cb69c592e22bc74f0c04cfdb9028b907cf688af6  https://gitlab.gnome.org/GNOME/blueprint-compiler/-/archive/v0.22.2/blueprint-compiler-v0.22.2.tar.gz
 bf149d01a2b9fcc0e4589b8ae8697d3d5c557ea48ed95a3fa55dd3b1187e6039  https://gnupg.org/ftp/gcrypt/gnupg/gnupg-2.5.24.tar.bz2
 d2931cdad266e633510f9970e1a2f346055e351bb19f9b78912475b8074c36f6  https://gnupg.org/ftp/gcrypt/libassuan/libassuan-3.0.2.tar.bz2
 d77f68f48879510e79a2f65977ccc68981781ea0923e5bdffac2a193ea3d660e  https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.12.4.tar.bz2

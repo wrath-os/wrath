@@ -195,3 +195,31 @@ args = [
   "-D build-tests=false",
 ]
 keep = ["share/gir-1.0", "lib/girepository-1.0"]
+
+# GObject libraries from Python, through their typelibs: what blueprint-compiler reads them with.
+[[package]]
+id = "pygobject"
+version = "3.54.5"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "glib", "libffi", "glib-gir"]
+sources = [{ url = "https://download.gnome.org/sources/pygobject/{series}/pygobject-{version}.tar.gz" }]
+
+[package.meson]
+args = [
+  "-D pycairo=disabled", "-D tests=false", "-D python.purelibdir=site",
+  "-D python.platlibdir=site",
+]
+
+# GTK interfaces written in Blueprint, compiled to the `.ui` files GTK loads.
+[[package]]
+id = "blueprint-compiler"
+version = "0.22.2"
+scope = "runtime"
+core = true
+runtime_deps = ["pygobject", "glib-gir"]
+extra_deps = ["meson", "ninja", "python3"]
+sources = [{ url = "https://gitlab.gnome.org/GNOME/blueprint-compiler/-/archive/v{version}/blueprint-compiler-v{version}.tar.gz" }]
+
+[package.meson]
+args = ["-D python.purelibdir=site"]
