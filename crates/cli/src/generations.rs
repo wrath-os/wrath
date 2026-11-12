@@ -270,6 +270,17 @@ fn switched(system: &Path, how: Switch, tier: Option<Tier>) -> Result<ExitCode, 
     Ok(code)
 }
 
+/// Whether the lock next to `config` lacks something `model` needs pinned: a source, or a uid or
+/// gid. Distro itself is only pinned by a distro that knows where it came from, which one built
+/// from a checkout doesn't.
+pub(crate) fn needs_locking(root: &Path, config: &Path, model: &Model) -> Result<bool, String> {
+    let kept = crate::read_lock(config)?.unwrap_or_default().ids;
+    let distro_unpinned =
+        !model.sources.contains_key(DISTRO_SOURCE) && crate::pinned::running(root).is_some();
+    let unpinned = model.sources.values().any(|source| !source.is_locked());
+    Ok(distro_unpinned || unpinned || kept.merged(&model.ids())? != kept)
+}
+
 /// `model` with its sources pinned: pins what the lock next to `config` doesn't have yet, so the
 /// lock always describes what runs.
 pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, String> {
@@ -586,15 +597,19 @@ pub fn history() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Shows what changed going from generation `from` to `to`, or to the current one.
-pub fn diff(from: u32, to: Option<u32>) -> Result<ExitCode, String> {
-    let to = match to {
-        Some(to) => to,
-        None => {
-            let current = here::history()?.into_iter().find(|g| g.current);
-            current.ok_or("there's no current generation")?.number
-        }
-    };
+/// Shows what changed in generation `number`, from the one before it.
+pub fn changes_in(number: u32) -> Result<ExitCode, String> {
+    let before = here::history()?
+        .into_iter()
+        .map(|generation| generation.number)
+        .filter(|earlier| *earlier < number)
+        .max()
+        .ok_or(format!("nothing came before generation {number}"))?;
+    diff(before, number)
+}
+
+/// Shows what changed going from generation `from` to `to`.
+pub fn diff(from: u32, to: u32) -> Result<ExitCode, String> {
     let (before, after) = (generation_model(from)?, generation_model(to)?);
     println!("generation {from} -> {to}");
     print!("{}", distro_model::plan(&before, &after));

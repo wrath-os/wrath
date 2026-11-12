@@ -98,10 +98,9 @@ The machine:
 | `distro plan` | What would change |
 | `distro apply` | Shows the plan, asks, switches, and says when the change takes full effect. `-y` skips asking. Also takes a system built elsewhere: `distro apply ./result` |
 | `distro try` | Like `apply`, but rolls back after five minutes unless you run `distro keep` |
-| `distro history` | The generations, each with what changed in it |
+| `distro history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
 | `distro rollback [N]` | Back one generation, or to generation N |
-| `distro diff [A] [B]` | The plan between two generations, or a generation and the configuration |
-| `distro build` | Builds the system without switching, for another machine or a VM |
+| `distro build` | Builds the configuration's system without switching; `--role` builds another of its roles, to test it or for another machine |
 | `distro clean` | Removes old generations and what only they used, after showing how much it frees |
 
 Packages:
@@ -120,9 +119,8 @@ The lock:
 
 | Command | Does |
 |---|---|
-| `distro lock` | Locks what isn't locked yet, moving nothing |
 | `distro update [SOURCE or PKG...]` | Moves sources, or single packages, to their newest versions |
-| `distro sources` | Each source with what it follows, where it's pinned and how old that is |
+| `distro update --list` | Each source with what it follows, where it's pinned and how old that is |
 
 The lock pins distro too, as the source `distro`: its modules, its evaluator and its recipes.
 `distro update` pins the distro you're running, and `[sources.distro]` says where distro is
@@ -145,7 +143,7 @@ Understanding the configuration:
 
 | Command | Does |
 |---|---|
-| `distro check` | Evaluates the configuration and reports errors, without building |
+| `distro check` | Evaluates the configuration and reports errors, without building, and pins anything new in it. `--locked` fails instead of pinning, for CI |
 | `distro why THING` | Where an option's value, a file such as `/etc/nginx/main.conf`, or a package comes from |
 | `distro options [PREFIX]` | The options there are, with their types, defaults and docs |
 
@@ -190,7 +188,7 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 ## For contributors
 
 The commands that only make sense in this repository move under `distro dev`: `dev test`
-(running scenarios, today's `check`), `dev status`, `dev bench`. `fill-templates` stays hidden;
+(running scenarios), `dev acceptance`, `dev bench`. `fill-templates` stays hidden;
 activation runs it, and people don't.
 
 `dev test DIR` checks each configuration in `DIR`. One with an `expected/` directory renders:
@@ -203,19 +201,19 @@ paths to check, then bless and review them.
 ## What's built
 
 Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `try`, `keep`,
-`history`, `diff`, `rollback`, `clean`, `build`, `apply PATH`, `run`, `shell`, `add`, `remove`,
-`lock`, `update`, `sources`, `check`, `why` for options, files and packages, `options`,
-`secret`, the `dev` commands, `--json` for `plan`, `status`, `history` and `sources`, and
+`history`, `rollback`, `clean`, `build`, `apply PATH`, `run`, `shell`, `add`, `remove`,
+`update`, `check`, `why` for options, files and packages, `options`,
+`secret`, the `dev` commands, `--json` for `plan`, `status`, `history` and `update --list`, and
 `--role` for configurations with `roles/`, which defaults to the machine's role from install or
 `machines.toml`. `apply` and `try` check `[machine.requires]` first, except for a system built
 elsewhere (`apply PATH`), which shows its plan and asks but whose requirements aren't recorded
 yet. Projects: found from the current directory, with `shell`, `up`, `run`, `add`, `remove`,
-`check`, `lock`, `update` and `why`, and `distro.local.lock` for what only `distro.local.toml` adds.
+`check`, `update` and `why`, and `distro.local.lock` for what only `distro.local.toml` adds.
 
 A home of its own, `home.toml` in `~/.config/distro`, isn't supported for now: a user's
 packages and files go under `[users.NAME]` in the system's configuration.
 
-Not yet: versions (`jq@1.7`), `search`, `info`, `--json` elsewhere, and `--verbose`.
+Not yet: versions (`jq@1.7`), `search`, `info`, and `--json` elsewhere.
 `clean` lists the generations it removes rather than estimating the space first, and says what it
 freed afterwards.
 

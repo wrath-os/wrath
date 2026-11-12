@@ -179,6 +179,22 @@ fn bench_measures_plan_time() {
     );
 }
 
+/// `fixtures/configs/NAME` copied to a temporary directory, for commands that write its lock.
+fn copied(name: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/configs")
+        .join(name);
+    let status = Command::new("cp")
+        .arg("-r")
+        .arg(source.join("."))
+        .arg(dir.path())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    dir
+}
+
 /// `fixtures/configs/basic` copied to a temporary directory, with `lock` as its lock file.
 fn basic_with_lock(lock: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -300,11 +316,13 @@ fn a_model_file_of_another_format_is_an_error() {
 
 #[test]
 fn check_evaluates_the_configuration_and_says_which_it_is() {
-    let output = distro(&["check", "-C", "fixtures/configs/basic"]);
+    let basic = copied("basic");
+    let config = basic.path().to_str().unwrap();
+    let output = distro(&["check", "-C", config]);
 
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "config fixtures/configs/basic\n");
+    assert_eq!(stderr, format!("config {config}\n"));
     let stdout = stdout(&output);
     assert!(stdout.starts_with("no errors: "), "{stdout}");
 
@@ -399,19 +417,21 @@ fn json_is_the_plan_as_data_and_refused_where_it_isnt_supported() {
 
 #[test]
 fn check_covers_every_role_unless_one_is_given() {
-    let all = distro(&["check", "-C", "fixtures/configs/roles"]);
+    let roles = copied("roles");
+    let config = roles.path().to_str().unwrap();
+    let all = distro(&["check", "-C", config]);
     assert!(all.status.success());
     let stderr = String::from_utf8_lossy(&all.stderr);
     assert_eq!(
         stderr,
-        "config fixtures/configs/roles\nrole laptop\nrole worker\n"
+        format!("config {config}\nrole laptop\nrole worker\n")
     );
     assert_eq!(stdout(&all).matches("no errors: ").count(), 2);
 
-    let one = distro(&["check", "-C", "fixtures/configs/roles", "--role", "worker"]);
+    let one = distro(&["check", "-C", config, "--role", "worker"]);
     assert!(one.status.success());
     let stderr = String::from_utf8_lossy(&one.stderr);
-    assert_eq!(stderr, "config fixtures/configs/roles, role worker\n");
+    assert_eq!(stderr, format!("config {config}, role worker\n"));
 
     let none = distro(&["plan", "-C", "fixtures/configs/roles"]);
     assert!(!none.status.success());
@@ -539,7 +559,7 @@ fn locking_keeps_each_users_uid_as_users_come_and_go() {
             .collect();
         let text = format!("[system]\nhostname = \"box\"\n{tables}");
         std::fs::write(dir.path().join("system.toml"), text).unwrap();
-        stdout(&distro(&["-C", config, "lock"]));
+        stdout(&distro(&["-C", config, "check"]));
         std::fs::read_to_string(dir.path().join("distro.lock")).unwrap()
     };
     assert!(users(&["bo"]).contains("[ids.users]\nbo = 1000\n"));
@@ -551,4 +571,22 @@ fn locking_keeps_each_users_uid_as_users_come_and_go() {
         lock.contains("aaron = 1001\nbo = 1000\ncarl = 1002\n"),
         "{lock}"
     );
+}
+
+#[test]
+fn check_pins_whats_new_and_with_locked_refuses_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().to_str().unwrap();
+    let text = "[system]\nhostname = \"box\"\n[users.bo]\n";
+    std::fs::write(dir.path().join("system.toml"), text).unwrap();
+    let refused = distro(&["-C", config, "check", "--locked"]);
+    assert!(!refused.status.success());
+    assert!(!dir.path().join("distro.lock").exists());
+    stdout(&distro(&["-C", config, "check"]));
+    assert!(
+        std::fs::read_to_string(dir.path().join("distro.lock"))
+            .unwrap()
+            .contains("bo = 1000")
+    );
+    stdout(&distro(&["-C", config, "check", "--locked"]));
 }

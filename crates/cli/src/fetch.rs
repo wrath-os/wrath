@@ -95,7 +95,7 @@ fn choose<'l>(
     }
     match (pinned, fetching) {
         (Some(source), _) => Ok(Some(source)),
-        (None, Fetching::Pinned) => Err("it isn't locked yet; `distro lock` fetches it".to_owned()),
+        (None, Fetching::Pinned) => Err("it isn't pinned yet; `distro check` pins it".to_owned()),
         (None, Fetching::Missing | Fetching::Newest(_)) => Ok(None),
     }
 }
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(choose(Some(&moved), &Fetching::Missing), Ok(None));
         assert_eq!(
             choose(Some(&moved), &Fetching::Pinned),
-            Err("it isn't locked yet; `distro lock` fetches it".to_owned())
+            Err("it isn't pinned yet; `distro check` pins it".to_owned())
         );
         assert!(choose(None, &Fetching::Pinned).is_err());
     }

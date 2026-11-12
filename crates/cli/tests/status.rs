@@ -36,7 +36,7 @@ fn fixture() -> tempfile::TempDir {
 fn status_runs_scenarios_and_prints_scoreboard() {
     let dir = fixture();
 
-    let out = distro(&["dev", "status", "--root", dir.path().to_str().unwrap()]);
+    let out = distro(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
 
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -56,7 +56,7 @@ fn status_filters_by_milestone() {
 
     let out = distro(&[
         "dev",
-        "status",
+        "acceptance",
         "--root",
         dir.path().to_str().unwrap(),
         "--milestone",
@@ -75,7 +75,7 @@ fn status_rejects_unknown_milestone() {
 
     let out = distro(&[
         "dev",
-        "status",
+        "acceptance",
         "--root",
         dir.path().to_str().unwrap(),
         "--milestone",
@@ -97,7 +97,7 @@ fn status_reports_invalid_scenarios() {
         "title = \"no runner\"\n",
     );
 
-    let out = distro(&["dev", "status", "--root", dir.path().to_str().unwrap()]);
+    let out = distro(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
 
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();

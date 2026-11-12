@@ -109,7 +109,8 @@ enum Command {
     },
     /// Keep the system being tried as the current generation
     Keep,
-    /// Build the system without switching to it, and print where it is
+    /// Build the configuration's system without switching to it, and print where it is;
+    /// `--role` builds another of its roles
     Build {
         #[arg(long, value_enum, default_value = "generation")]
         target: generations::BuildTarget,
@@ -120,8 +121,12 @@ enum Command {
         #[arg(long)]
         with_configuration: bool,
     },
-    /// Show the system's generations
-    History,
+    /// Show the system's generations; with one, what changed in it, and with two, between them
+    History {
+        /// A generation, or two to compare
+        #[arg(num_args = 0..=2, value_name = "GENERATION")]
+        generations: Vec<u32>,
+    },
     /// Remove old generations and what only they used
     Clean {
         /// How many generations before the current one to keep
@@ -130,13 +135,6 @@ enum Command {
         /// Remove them without asking first
         #[arg(short, long)]
         yes: bool,
-    },
-    /// Show what changed between two generations
-    Diff {
-        /// The generation to compare from
-        from: u32,
-        /// The generation to compare to [default: the current one]
-        to: Option<u32>,
     },
     /// Switch back to the previous generation
     Rollback,
@@ -203,17 +201,20 @@ enum Command {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Lock what isn't locked yet, moving nothing that is
-    Lock,
     /// Move sources to their newest versions and lock them
     Update {
         /// Sources to update, such as `distro` [default: all of them]
         sources: Vec<String>,
+        /// Only show each source: what it follows, where it's pinned and how old that is
+        #[arg(long, conflicts_with = "sources")]
+        list: bool,
     },
-    /// Show each source: what it follows, where it's pinned and how old that is
-    Sources,
-    /// Check the configuration for errors, without building it
-    Check,
+    /// Check the configuration for errors, without building it, and pin what's new in it
+    Check {
+        /// Fail when something isn't pinned yet instead of pinning it, as CI wants
+        #[arg(long)]
+        locked: bool,
+    },
     /// Show the options there are, with their types, defaults and docs
     Options {
         /// Only the options under this one, such as `services.nginx` or `users.john`
@@ -278,7 +279,7 @@ enum DevCommand {
         test: TestOptions,
     },
     /// Run the acceptance scenarios and show which pass
-    Status {
+    Acceptance {
         /// Only run the scenarios of this milestone, for example `m2`
         #[arg(long)]
         milestone: Option<String>,
@@ -292,6 +293,7 @@ enum DevCommand {
     /// Print the configuration's model as JSON
     Model,
     /// Print what an apply keeps of the configuration, as JSON
+    #[command(hide = true)]
     ApplyRecord,
     /// Measure how long `plan` takes with many synthetic modules
     Bench {
@@ -335,8 +337,11 @@ fn main() -> ExitCode {
         std::io::IsTerminal::is_terminal(&std::io::stderr()),
     ));
     fetch::set(match &cli.command {
-        Command::Update { sources } => fetch::Fetching::Newest(sources.clone()),
-        Command::Lock
+        Command::Update {
+            sources,
+            list: false,
+        } => fetch::Fetching::Newest(sources.clone()),
+        Command::Check { locked: false }
         | Command::Apply { .. }
         | Command::Try { .. }
         | Command::Add { .. }
@@ -347,10 +352,13 @@ fn main() -> ExitCode {
     if json
         && !matches!(
             cli.command,
-            Command::Plan { .. } | Command::Status | Command::History | Command::Sources
+            Command::Plan { .. }
+                | Command::Status
+                | Command::History { .. }
+                | Command::Update { list: true, .. }
         )
     {
-        style::error("--json works with plan, status, history and sources so far");
+        style::error("--json works with plan, status, history and update --list so far");
         return ExitCode::FAILURE;
     }
     // A distro told where its files are is being developed, and runs as it is.
@@ -435,10 +443,13 @@ fn main() -> ExitCode {
             }
             None => Ok(ExitCode::FAILURE),
         }),
-        Command::History if json => generations::history_json().and_then(|v| print_serde(&v)),
-        Command::History => generations::history(),
+        Command::History { generations } => match generations.as_slice() {
+            [] if json => generations::history_json().and_then(|v| print_serde(&v)),
+            [] => generations::history(),
+            [number] => generations::changes_in(*number),
+            [from, to, ..] => generations::diff(*from, *to),
+        },
         Command::Clean { keep, yes } => generations::clean(keep, yes),
-        Command::Diff { from, to } => generations::diff(from, to),
         Command::Rollback => generations::rollback(),
         Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, _)| run::run(root, model, &package, &args)),
@@ -490,16 +501,20 @@ fn main() -> ExitCode {
                 },
             )
         }),
-        Command::Lock => config().and_then(|config| lock(root, &config, &modules, None)),
-        Command::Update { sources } => {
-            config().and_then(|config| lock(root, &config, &modules, Some(&sources)))
+        Command::Update {
+            sources,
+            list: false,
+        } => config().and_then(|config| lock(root, &config, &modules, Some(&sources))),
+        Command::Update { list: true, .. } => {
+            config().and_then(|config| match model(&config, &modules) {
+                Some(model) if json => print_serde(&generations::sources_json(&model)),
+                Some(model) => generations::sources(&model),
+                None => Ok(ExitCode::FAILURE),
+            })
         }
-        Command::Sources => config().and_then(|config| match model(&config, &modules) {
-            Some(model) if json => print_serde(&generations::sources_json(&model)),
-            Some(model) => generations::sources(&model),
-            None => Ok(ExitCode::FAILURE),
-        }),
-        Command::Check => config().and_then(|config| check_config(&config, &modules)),
+        Command::Check { locked } => {
+            config().and_then(|config| check_config(root, &config, &modules, locked))
+        }
         Command::Options {
             prefix,
             schema,
@@ -517,7 +532,7 @@ fn main() -> ExitCode {
         }
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
-            DevCommand::Status { milestone } => status(root, milestone.as_deref()),
+            DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
             DevCommand::Outdated { all } => outdated(root, all),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::ApplyRecord => {
@@ -586,8 +601,8 @@ fn machine_role(config: &Path) -> Option<String> {
 /// Commands on built generations, and updates that move distro's own pin, don't.
 fn runs_pinned(command: &Command) -> bool {
     match command {
-        Command::Update { sources } => {
-            !sources.is_empty() && !sources.iter().any(|name| name == DISTRO_SOURCE)
+        Command::Update { sources, list } => {
+            *list || (!sources.is_empty() && !sources.iter().any(|name| name == DISTRO_SOURCE))
         }
         Command::Status
         | Command::Plan { .. }
@@ -600,16 +615,13 @@ fn runs_pinned(command: &Command) -> bool {
         | Command::Add { .. }
         | Command::Remove { .. }
         | Command::Install { .. }
-        | Command::Lock
-        | Command::Sources
-        | Command::Check
+        | Command::Check { .. }
         | Command::Options { .. }
         | Command::Why { .. }
         | Command::Secret { .. } => true,
         Command::Keep
-        | Command::History
+        | Command::History { .. }
         | Command::Clean { .. }
-        | Command::Diff { .. }
         | Command::Rollback
         | Command::Dev { .. }
         | Command::Activate { .. }
@@ -714,30 +726,46 @@ fn print_apply_record(config: &Path, modules: &Path) -> Result<ExitCode, String>
     Ok(ExitCode::SUCCESS)
 }
 
-/// Evaluates the configuration and says whether it has errors, without building anything: for
-/// the role given, or every role when none is.
-fn check_config(config: &Path, modules: &Path) -> Result<ExitCode, String> {
-    if let Some(role) = given_role() {
-        return Ok(check_role(config, modules, Some(role)));
-    }
-    let mut failed = false;
-    for role in all_roles(config)? {
-        if let Some(role) = &role {
+/// Checks every role, or the one `--role` names, then pins what's new in the lock, or with
+/// `locked` fails when something isn't pinned.
+fn check_config(
+    root: &Path,
+    config: &Path,
+    modules: &Path,
+    locked: bool,
+) -> Result<ExitCode, String> {
+    let roles = match given_role() {
+        Some(role) => vec![Some(role.to_owned())],
+        None => all_roles(config)?,
+    };
+    let mut models = Vec::new();
+    for role in &roles {
+        if roles.len() > 1
+            && let Some(role) = role
+        {
             eprintln!("role {role}");
         }
-        failed |= check_role(config, modules, role.as_deref()) == ExitCode::FAILURE;
+        match check_role(config, modules, role.as_deref()) {
+            Some(model) => models.push(model),
+            None => return Ok(ExitCode::FAILURE),
+        }
     }
-    Ok(if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    })
+    let mut unpinned = false;
+    for model in &models {
+        unpinned |= generations::needs_locking(root, config, model)?;
+    }
+    match (unpinned, locked) {
+        (false, _) => Ok(ExitCode::SUCCESS),
+        (true, true) => Err(
+            "the lock doesn't pin everything the configuration uses; `distro check` pins it".into(),
+        ),
+        (true, false) => lock(root, config, modules, None),
+    }
 }
 
-fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> ExitCode {
-    let Some(model) = model_as(config, modules, role) else {
-        return ExitCode::FAILURE;
-    };
+/// Checks one role and says what it holds, or prints why it can't be evaluated.
+fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
+    let model = model_as(config, modules, role)?;
     let packages = model.all_packages().count();
     let pinned = if model.is_locked() {
         "sources pinned"
@@ -749,7 +777,7 @@ fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> ExitCode {
         model.options.len(),
         &model.hash()[..16]
     );
-    ExitCode::SUCCESS
+    Some(model)
 }
 
 fn dev_test(

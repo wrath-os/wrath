@@ -89,7 +89,7 @@ impl Lock {
     /// The lock file's text, one source per table.
     pub fn to_toml(&self) -> String {
         let mut out = String::from(
-            "# The versions of the sources this configuration uses, written by `distro lock` and\n\
+            "# The versions of the sources this configuration uses, written by `distro check` and\n\
              # moved to newer ones by `distro update`.\n",
         );
         // Writing to a String cannot fail.
@@ -168,7 +168,7 @@ mod tests {
         let text = lock().to_toml();
 
         insta::assert_snapshot!(text, @r#"
-        # The versions of the sources this configuration uses, written by `distro lock` and
+        # The versions of the sources this configuration uses, written by `distro check` and
         # moved to newer ones by `distro update`.
         version = 4
 
