@@ -146,7 +146,8 @@ impl Watching<'_> {
         self.running = Some(model);
         self.tried = Some(Instant::now());
         if settings {
-            println!("tried {}{}", plan.summary(3), effect(&plan));
+            let files: Vec<&str> = plan.files.iter().map(|file| file.name.as_str()).collect();
+            println!("tried {}{}", files.join(", "), effect(&plan));
         } else {
             println!("tried it{}", effect(&plan));
         }

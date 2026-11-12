@@ -620,6 +620,10 @@ fn only_changes_to_setting_files_are_settings() {
     with_package.packages.insert("jq".into());
     assert!(!plan(&before, &with_package).settings_only());
 
+    let mut newly_a_setting = model("gaps 4\n", "root ALL\n");
+    newly_a_setting.setting_files.clear();
+    assert!(plan(&newly_a_setting, &model("gaps 8\n", "root ALL\n")).settings_only());
+
     let mut no_longer_a_setting = model("gaps 8\n", "root ALL\n");
     no_longer_a_setting.setting_files.clear();
     assert!(!plan(&before, &no_longer_a_setting).settings_only());

@@ -70,8 +70,8 @@ pub struct Plan {
     pub base: Vec<Change>,
     /// What switching does to the system's units, from the same comparison as `units`.
     pub activation: Activation,
-    /// Whether every file the plan changes is a setting, in the model it's in: the one before
-    /// for a removed file, the one after for an added one, and both for a changed one.
+    /// Whether every file the plan changes is a setting: as the model before says for a removed
+    /// file, and as the one after says for the rest, since that's what the file is now.
     pub files_are_settings: bool,
 }
 
@@ -425,9 +425,8 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     units.sort_by(|a, b| a.name.cmp(&b.name));
     let (was, is) = (&before.setting_files, &after.setting_files);
     let files_are_settings = files.iter().all(|change| match change.kind {
-        ChangeKind::Added => is.contains(&change.name),
         ChangeKind::Removed => was.contains(&change.name),
-        ChangeKind::Changed => was.contains(&change.name) && is.contains(&change.name),
+        ChangeKind::Added | ChangeKind::Changed => is.contains(&change.name),
     });
     Plan {
         files_are_settings,

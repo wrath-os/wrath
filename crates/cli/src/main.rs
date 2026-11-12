@@ -1466,7 +1466,7 @@ fn watching(
     let config = config()?;
     match host {
         Some(host) => {
-            let remote = host::Remote::new(host)?;
+            let remote = host::Remote::new(host)?.quietly();
             let role = remote_role(&config, &remote)?;
             let evaluate = || model_as(&config, modules, role.as_deref());
             watch::watch(root, &config, watch::Machine::Remote(&remote), evaluate)

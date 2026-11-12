@@ -23,6 +23,9 @@ pub struct Remote {
     name: String,
     ssh: Vec<String>,
     shared: tempfile::TempDir,
+    /// Leaves out what copying and switching say as they go, as watching does, which says one
+    /// line of its own.
+    quiet: bool,
 }
 
 impl Remote {
@@ -35,7 +38,14 @@ impl Remote {
             name: name.to_owned(),
             ssh: ssh.split_whitespace().map(str::to_owned).collect(),
             shared: tempfile::tempdir().map_err(|e| format!("cannot make a directory: {e}"))?,
+            quiet: false,
         })
+    }
+
+    /// This machine, said less about: see [`Remote::quiet`].
+    pub fn quietly(mut self) -> Self {
+        self.quiet = true;
+        self
     }
 
     fn ssh(&self) -> Command {
@@ -141,7 +151,9 @@ impl Remote {
         if missing.is_empty() {
             return Ok(None);
         }
-        eprintln!("copying {} store paths to {}", missing.len(), self.name);
+        if !self.quiet {
+            eprintln!("copying {} store paths to {}", missing.len(), self.name);
+        }
         let mut tar = Command::new("tar")
             .args(["--owner=0", "--group=0", "--numeric-owner", "-C"])
             .arg(lab.work.join("store"))
@@ -211,13 +223,17 @@ impl Remote {
     /// Runs `script` over SSH with a terminal, when there is one, so sudo on the machine can ask
     /// for a password. Whether it succeeded.
     fn run_as_root(&self, script: &str) -> Result<bool, String> {
-        let terminal: &[&str] = if std::io::stdin().is_terminal() {
-            &["-t"]
+        // Only errors from ssh itself, not that the shared connection closed.
+        let options: &[&str] = if std::io::stdin().is_terminal() {
+            &["-t", "-o", "LogLevel=ERROR"]
         } else {
-            &[]
+            &["-o", "LogLevel=ERROR"]
         };
-        let status = self
-            .ssh_with(terminal)
+        let mut command = self.ssh_with(options);
+        if self.quiet {
+            command.stdout(Stdio::null());
+        }
+        let status = command
             .arg(script)
             .status()
             .map_err(|e| format!("cannot run ssh: {e}"))?;
