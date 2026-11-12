@@ -138,16 +138,33 @@ fn fix_shebang(
     } else {
         (first.to_owned(), rest)
     };
-    let Some(real) = real_interpreter(&target, prefix, out_host, out_inside, view) else {
-        leaks.unresolved_shebangs += 1;
-        leaks.sample(format!("shebang {first}: {}", file.display()));
-        return Ok(false);
+    let line = match real_interpreter(&target, prefix, out_host, out_inside, view) {
+        Some(real) => {
+            let mut line = format!("#!{real}");
+            for word in arguments {
+                line.push(' ');
+                line.push_str(word);
+            }
+            line
+        }
+        None => {
+            leaks.unresolved_shebangs += 1;
+            leaks.sample(format!("shebang {first}: {}", file.display()));
+            if first.ends_with("/bin/env") {
+                return Ok(false);
+            }
+            // The build doesn't have it, so the system's PATH finds it when the script runs,
+            // through /usr/bin/env, the one other path a system makes for scripts (decision
+            // 0016). The kernel passes what follows as one argument, so `-S` splits it when
+            // there's more than a name.
+            let name = target.rsplit('/').next().unwrap_or(&target);
+            if arguments.is_empty() {
+                format!("#!/usr/bin/env {name}")
+            } else {
+                format!("#!/usr/bin/env -S {name} {}", arguments.join(" "))
+            }
+        }
     };
-    let mut line = format!("#!{real}");
-    for word in arguments {
-        line.push(' ');
-        line.push_str(word);
-    }
     let mut new = line.into_bytes();
     new.extend_from_slice(&bytes[end..]);
     replace_contents(file, &new)?;
@@ -665,15 +682,31 @@ mod tests {
     }
 
     #[test]
-    fn a_shebang_nothing_provides_is_a_leak() {
+    fn a_shebang_the_build_cant_resolve_finds_its_interpreter_on_the_path() {
         let dir = tempfile::tempdir().unwrap();
         let view = dir.path().join("view");
         fs::create_dir_all(&view).unwrap();
-        let file = dir.path().join("script");
-        fs::write(&file, "#!/usr/bin/nothing\n").unwrap();
         let mut leaks = Leaks::default();
-
+        for (before, after) in [
+            ("#!/bin/bash -e\nx\n", "#!/usr/bin/env -S bash -e\nx\n"),
+            ("#!/usr/bin/perl\nx\n", "#!/usr/bin/env perl\nx\n"),
+            (
+                "#!/usr/bin/env python3.13\nx\n",
+                "#!/usr/bin/env python3.13\nx\n",
+            ),
+        ] {
+            let file = dir.path().join("script");
+            fs::write(&file, before).unwrap();
+            fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap();
+            assert_eq!(fs::read_to_string(&file).unwrap(), after);
+        }
+        assert_eq!(
+            leaks.unresolved_shebangs, 3,
+            "each is still counted, to find recipes to fix"
+        );
+        // /bin/sh is on every system.
+        let file = dir.path().join("script");
+        fs::write(&file, "#!/bin/sh\nx\n").unwrap();
         assert!(!fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap());
-        assert_eq!(leaks.unresolved_shebangs, 1);
     }
 }

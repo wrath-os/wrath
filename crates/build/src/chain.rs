@@ -1718,11 +1718,13 @@ pub(crate) struct Prepared {
     pub(crate) limits: Limits,
     pub(crate) build_dir: PathBuf,
     pub(crate) dep_paths: Vec<StorePath>,
+    /// Held until the package is where it ends up, so another build of the same key waits for it.
+    pub(crate) _lock: fs::File,
 }
 
 /// The version of what the builder does to every package beside its recipe, such as fixing up
 /// run paths. Every package's key has it, so changing it rebuilds everything.
-const BUILD_RULES: &str = "9";
+const BUILD_RULES: &str = "10";
 
 /// The machines packages are built for, which every key has, so another one's never match.
 const TARGET: &str = "x86_64-linux-gnu";
@@ -1930,8 +1932,10 @@ fn build_package(
         },
     );
 
+    let lock = build_lock(lab, &out, &package.id)?;
     let done_dir = lab.work.join("done");
     let done = done_dir.join(out.hash());
+    // Read once the key is ours: a build that waited finds what the other one made.
     if done.exists() && !again {
         if !content_addressed(package) {
             return Ok(None);
@@ -2125,7 +2129,22 @@ fn build_package(
             .iter()
             .map(|dep| built.paths[&dep.id].clone())
             .collect(),
+        _lock: lock,
     }))
+}
+
+/// The lock on building `out`, waiting for another build of it to finish first. Two builds of one
+/// key would share a build directory and a temporary path, and wreck each other.
+fn build_lock(lab: &Lab, out: &StorePath, id: &str) -> Result<fs::File, String> {
+    let dir = lab.work.join("locks");
+    fs::create_dir_all(&dir).map_err(with_path(&dir))?;
+    let path = dir.join(out.hash());
+    let lock = fs::File::create(&path).map_err(with_path(&path))?;
+    if lock.try_lock().is_err() {
+        eprintln!("  wait   {id}, which another build is building");
+        lock.lock().map_err(with_path(&path))?;
+    }
+    Ok(lock)
 }
 
 /// What the compiler wrapper adds to every compile with the store's `gcc`: its own headers' paths
@@ -2507,7 +2526,8 @@ mod requirement_tests {
         assert!(parts("runtime").contains(&TARGET.as_bytes().to_vec()));
     }
 
-    /// Pinned so a change to what goes into a key can't slip through and rebuild everything.
+    /// Pinned so a change to what goes into a key can't slip through and rebuild everything. A
+    /// bump of `BUILD_RULES` changes them on purpose, and they're updated with it.
     #[test]
     fn keys_stay_what_they_were() {
         let key = |scope: &str| {
@@ -2520,8 +2540,8 @@ mod requirement_tests {
                 .hash()
                 .to_owned()
         };
-        assert_eq!(key("runtime"), "2ee582f30af5f62cdc843eb24a4f9f96de5d2ef0");
-        assert_eq!(key("boot"), "e7a577f1ef88b11d0975cfd85320eda65388bce9");
+        assert_eq!(key("runtime"), "8405c3dfa89766db1f73ad2b70120d9df2bd72bc");
+        assert_eq!(key("boot"), "b9dc9e7323545d68d9666468796b9ca700b167b7");
     }
 
     #[test]
@@ -2628,6 +2648,18 @@ mod tree_tests {
 mod crate_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn two_builds_of_one_key_take_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path());
+        let out = StorePath::derive("build", &[b"app"]);
+        let held = build_lock(&lab, &out, "app").unwrap();
+        let other = fs::File::open(dir.path().join("locks").join(out.hash())).unwrap();
+        assert!(other.try_lock().is_err());
+        drop(held);
+        assert!(other.try_lock().is_ok());
+    }
 
     #[test]
     fn a_source_goes_inside_the_source_tree() {
