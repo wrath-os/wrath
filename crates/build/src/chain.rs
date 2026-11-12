@@ -1259,8 +1259,8 @@ fn missing_in(log: &str) -> Option<Missing> {
         {
             return Some(Missing::Outside(place.to_owned()));
         }
-        if line.ends_with(": Read-only file system")
-            && let Some(place) = between(line, " '/", "'")
+        if line.contains("Read-only file system")
+            && let Some(place) = between(line, "'/", "'")
         {
             return Some(Missing::Outside(format!("/{place}")));
         }
@@ -3909,6 +3909,10 @@ mod hint_tests {
             (
                 "install: cannot create regular file '/etc/udev/x.rules': Read-only file system",
                 Missing::Outside("/etc/udev/x.rules".into()),
+            ),
+            (
+                "OSError: [Errno 30] Read-only file system: '/store/abc-systemd/lib/x.service'",
+                Missing::Outside("/store/abc-systemd/lib/x.service".into()),
             ),
         ];
         for (line, missing) in cases {
