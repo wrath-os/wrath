@@ -128,6 +128,9 @@ slibdir=$PREFIX/lib
 rtlddir=$PREFIX/lib
 sbindir=$PREFIX/bin
 rootsbindir=$PREFIX/bin
+# The loader checks trusted directories with a memcmp the compiler would turn into pieces of the
+# path in immediates, which nothing can rewrite once the package moves to its address.
+CFLAGS-dl-load.c += -fno-builtin-memcmp
 EOP
 CC=$LAB_REAL_BIN/gcc CXX=$LAB_REAL_BIN/g++ BUILD_CC=gcc MAKEINFO=true CFLAGS=-O2 CXXFLAGS=-O2 \
 ../src/configure --prefix=$PREFIX --libdir=$PREFIX/lib --libexecdir=$PREFIX/lib/glibc \
@@ -142,6 +145,10 @@ for script in $DEST$PREFIX/bin/*; do
         sed -i '1s|^#! */bin/bash|#!/usr/bin/env bash|' "$script"
     fi
 done
+# ldd looks for the loader where x86 distributions keep it, lib64, whatever rtlddir says.
+loader=$(cd $DEST$PREFIX/lib && ls ld-linux*.so.*)
+sed -i "s|^RTLDLIST=.*|RTLDLIST=\"$PREFIX/lib/$loader\"|" $DEST$PREFIX/bin/ldd
+grep -qx "RTLDLIST=\"$PREFIX/lib/$loader\"" $DEST$PREFIX/bin/ldd
 '''
 
 [[package]]

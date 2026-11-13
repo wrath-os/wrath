@@ -415,7 +415,7 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What would prevent it:** fixing `RTLDLIST` in the glibc recipe, with the next change that
   rebuilds everything anyway; and a smoke command such as `bin/ldd bin/ldconfig`.
 - **Belongs in:** the glibc recipe.
-- **Status:** known; worked around in gobject-introspection.
+- **Status:** fixed: glibc's recipe points `RTLDLIST` at the loader it installs, and checks it.
 
 ### Two packages with runtime dependencies couldn't share a build
 
@@ -447,7 +447,7 @@ style (Starlark), the builder (Rust), or the recipe.
 - **What would prevent it:** bzip2's recipe installing a `bzip2.pc`, as distributions do; it's in
   the toolset, so that waits for a change that rebuilds everything anyway.
 - **Belongs in:** the bzip2 recipe.
-- **Status:** worked around in Ghostty.
+- **Status:** fixed: bzip2's recipe installs `bzip2.pc`.
 
 ### Python packages a build uses are put on its path by hand
 
@@ -507,7 +507,9 @@ style (Starlark), the builder (Rust), or the recipe.
   `memcmp` builtin.
 - **Belongs in:** the builder, and glibc's recipe, together with the next change that rebuilds
   everything.
-- **Status:** known.
+- **Status:** fixed: builds see themselves at a path named by their package (`BUILD_RULES` 11),
+  the check writes `logs/split-pieces.txt`, and glibc builds `dl-load.c` without the `memcmp`
+  builtin.
 
 ### A change to the builder doesn't rebuild what it made
 

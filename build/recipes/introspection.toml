@@ -39,12 +39,6 @@ probes = ["gobject-introspection-1.0"]
 [package.meson]
 env = { PYTHONPATH = "$LAB_DEP_setuptools/site" }
 args = ["-D build_introspection_data=false", "-D doctool=disabled", "-D tests=false"]
-# The scanner asks ldd which libraries its dump program loads; the loader answers the same, and
-# glibc's ldd looks for the loader in `lib64`, where it isn't.
-prepare = '''
-sed -i "s|args.extend(\['ldd', binary.args\[0\]\])|args.extend(['$LAB_LIB_glibc/lib/ld-linux-x86-64.so.2', '--list', binary.args[0]])|" giscanner/shlibs.py
-grep -q -- --list giscanner/shlibs.py
-'''
 
 # GLib, GObject, Gio and GModule.
 [[package]]
@@ -86,14 +80,8 @@ args = [
 keep = ["share/gir-1.0", "lib/girepository-1.0"]
 # The schema for `.gir` files is gobject-introspection's own.
 install = "rm $DEST$PREFIX/share/gir-1.0/gir-1.2.rnc\n"
-# Its own scanner, from the source, asks the loader too, as the one above does.
-prepare = '''
-sed -i "s|args.extend(\['ldd', binary.args\[0\]\])|args.extend(['$LAB_LIB_glibc/lib/ld-linux-x86-64.so.2', '--list', binary.args[0]])|" giscanner/shlibs.py
-grep -q -- --list giscanner/shlibs.py
-'''
 
-# HarfBuzz, with the GObject library its description names, which harfbuzz itself leaves out.
-# Tools that read types, as blueprint-compiler does, never load it.
+# HarfBuzz's description of itself and its GObject library.
 [[package]]
 id = "harfbuzz-gir"
 version = "15.1.0"
@@ -113,28 +101,6 @@ args = [
   "-D docs=disabled", "-D utilities=disabled",
 ]
 keep = ["share/gir-1.0", "lib/girepository-1.0"]
-
-# HarfBuzz's GObject library alone, which bindings made from Pango's typelib link, such as
-# Ghostty's. It finds the rest of HarfBuzz by name.
-[[package]]
-id = "harfbuzz-gobject"
-version = "15.1.0"
-scope = "runtime"
-core = true
-extra_deps = ["meson", "ninja", "pkgconf", "python3", "freetype", "glib", "harfbuzz"]
-sources = [{ url = "https://github.com/harfbuzz/harfbuzz/releases/download/{version}/harfbuzz-{version}.tar.xz" }]
-probes = ["harfbuzz-gobject"]
-
-[package.meson]
-args = [
-  "-D freetype=enabled", "-D glib=enabled", "-D gobject=enabled", "-D cairo=disabled",
-  "-D icu=disabled", "-D chafa=disabled", "-D introspection=disabled", "-D tests=disabled",
-  "-D docs=disabled", "-D utilities=disabled",
-]
-install = '''
-find $DEST$PREFIX ! -type d ! -name '*gobject*' -delete
-find $DEST$PREFIX -depth -type d -empty -delete
-'''
 
 [[package]]
 id = "gdk-pixbuf-gir"

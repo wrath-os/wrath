@@ -29,7 +29,7 @@ extra_deps = [
   "highway", "libpng", "zlib", "bzip2", "wayland", "wayland-protocols", "libxkbcommon", "mesa",
   "gettext", "ncurses", "glib", "blueprint-compiler", "pygobject", "glib-gir",
   "gobject-introspection-gir", "harfbuzz-gir", "pango-gir", "gdk-pixbuf-gir", "graphene-gir",
-  "gtk4-gir", "harfbuzz-gobject", "libX11",
+  "gtk4-gir", "libX11",
 ]
 sources = [{ url = "https://release.files.ghostty.org/{version}/ghostty-{version}.tar.gz" }]
 smoke = ["bin/ghostty --version"]
@@ -41,18 +41,6 @@ args = [
   # Without git it calls itself a development build; its own version is in its package list.
   "-Dversion-string=$(sed -n 's/^ *\\.version = \"\\(.*\\)\",$/\\1/p' build.zig.zon)",
 ]
-# bzip2 ships no pkg-config file, which Ghostty asks for it by when it links freetype from the
-# system.
-prepare = '''
-mkdir -p /build/pkgconfig
-cat > /build/pkgconfig/bzip2.pc <<EOF
-Name: bzip2
-Description: bzip2 compression
-Version: 1.0.8
-Libs: -lbz2
-EOF
-export PKG_CONFIG_PATH=/build/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-'''
 
 [package.zig.env]
 PYTHONPATH = "$LAB_DEP_blueprint_compiler/site:$LAB_DEP_pygobject/site"

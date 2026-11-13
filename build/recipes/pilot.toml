@@ -51,6 +51,21 @@ cp -a libbz2.so.* $DEST$PREFIX/lib
 ln -s libbz2.so.1.0.8 $DEST$PREFIX/lib/libbz2.so
 cp bzip2-shared $DEST$PREFIX/bin/bzip2
 rm -f $DEST$PREFIX/lib/libbz2.a
+# The pkg-config file distributions write, which bzip2's own makefiles leave out and projects
+# such as Ghostty ask for it by.
+version=$(ls libbz2.so.1.0.* | sed 's/^libbz2\.so\.//')
+mkdir -p $DEST$PREFIX/lib/pkgconfig
+cat > $DEST$PREFIX/lib/pkgconfig/bzip2.pc <<EOF
+prefix=$PREFIX
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: bzip2
+Description: A file compressor and its library
+Version: $version
+Libs: -L\${libdir} -lbz2
+Cflags: -I\${includedir}
+EOF
 '''
 smoke = ["bin/bzip2 --help"]
 probes = ["bz2"]

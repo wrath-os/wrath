@@ -4,7 +4,7 @@
        return false;
  
      handle = __libc_dlopen (shlib_name);
-+    /* distro: a module from another package, such as systemd's, is
++    /* wrath: a module from another package, such as systemd's, is
 +       linked into the running system's lib/nss, which no library search
 +       path reaches.  */
 +    if (handle == NULL)
