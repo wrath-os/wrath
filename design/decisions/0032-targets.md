@@ -1,6 +1,6 @@
 # 0032: Packages build for a target, natively
 
-Status: proposed, 2026-11-13.
+Status: proposed, 2026-11-13; step 1 accepted the same day.
 
 ## Context
 
