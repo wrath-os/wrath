@@ -12,3 +12,22 @@ Ideas that belong to later milestones. Add a line here instead of building them 
   checks every configuration it's given after merging, so nobody who writes the configuration can
   get around it, and errors point at the TOML line that broke the rule. Policy doesn't change how
   values merge. For fleets and Talos-like appliances; a single-owner machine doesn't need it.
+- Settings changes under a second: change a theme in the TOML, save, and the editor or niri shows
+  it right away. Evaluation already takes about 40 ms on the Framework config; the time goes
+  around it. On 2026-11-12 a build of that config spent about 5.5 s before building anything
+  (not yet explained, possibly hashing the checkout) and 0.7 s assembling the system. What it
+  takes, for a change that only touches files:
+  - Assembly does only what changed: the one rendered file's action runs, everything else is a
+    cache hit, and putting the system together costs milliseconds.
+  - A files-only switch. Today every switch runs sysusers, tmpfiles, `daemon-reload`, restarts and
+    the user managers. When the plan says only files changed, moving `/etc/.system` is the whole
+    switch.
+  - Programs notice. A module says how its program picks up a new file: it watches it (niri,
+    alacritty), a signal (helix on `SIGUSR1`), a command, or a restart. The plan shows which.
+    Unknown: whether a program watching a path with inotify sees a change when only a symlink
+    further along the chain moves. Test per program; a direct link or a touch may be needed.
+  - No generation per save. `distro try --watch` keeps one working generation and updates it in
+    place on each save; `keep` makes it a generation and stopping goes back. Same verbs as today.
+  - Per-user settings such as an editor theme wait for homes to come back. System-wide files
+    (`/etc/xdg`, niri's system config) are enough to prove it.
+  Changes to packages or units stay slower; that's fine.
