@@ -1,4 +1,4 @@
-//! The modules a configuration builds on: wrath's own, or those a platform from a source lists in
+//! The modules a configuration builds on: grapes', or those a platform from a source lists in
 //! its `platform.toml`.
 
 use std::path::{Component, Path, PathBuf};
@@ -12,21 +12,21 @@ use crate::system::{ModuleOrder, load_modules};
 struct Listed {
     /// Directories of the platform's own modules, relative to the file.
     modules: Vec<String>,
-    /// Wrath's modules the platform keeps, by name.
-    from_wrath: Vec<String>,
+    /// Grapes' modules the platform keeps, by name.
+    from_grapes: Vec<String>,
 }
 
-/// The modules for `config`, as the platform its starting file for `role` chooses, with wrath's
-/// own modules in `wrath`.
+/// The modules for `config`, as the platform its starting file for `role` chooses, with grapes'
+/// modules in `grapes`.
 pub fn modules(
     config: &dyn ConfigFs,
     role: Option<&str>,
-    wrath: &Path,
+    grapes: &Path,
     sources: &mut Sources,
     order: ModuleOrder,
 ) -> Result<Vec<Box<dyn Module>>, String> {
     let Platform::Source { name, url, path } = wrath_eval::platform(config, role)? else {
-        return load_modules(wrath, sources, order);
+        return load_modules(grapes, sources, order);
     };
     let tree = config
         .source(&name, &url)
@@ -48,13 +48,13 @@ pub fn modules(
         })?;
         modules.extend(load_modules(&dir, sources, order)?);
     }
-    modules.extend(from_wrath(wrath, &listed.from_wrath, sources, order)?);
+    modules.extend(from_grapes(grapes, &listed.from_grapes, sources, order)?);
     Ok(modules)
 }
 
-/// Wrath's modules named in `names`.
-fn from_wrath(
-    wrath: &Path,
+/// Grapes' modules named in `names`.
+fn from_grapes(
+    grapes: &Path,
     names: &[String],
     sources: &mut Sources,
     order: ModuleOrder,
@@ -62,13 +62,13 @@ fn from_wrath(
     if names.is_empty() {
         return Ok(Vec::new());
     }
-    let all = load_modules(wrath, sources, order)?;
+    let all = load_modules(grapes, sources, order)?;
     let known: Vec<&str> = all.iter().map(|module| module.name()).collect();
     if let Some(unknown) = names.iter().find(|name| !known.contains(&name.as_str())) {
         let hint = wrath_eval::closest(unknown, known.iter().copied())
             .map(|close| format!("; did you mean `{close}`?"))
             .unwrap_or_default();
-        return Err(format!("wrath has no module `{unknown}`{hint}"));
+        return Err(format!("grapes has no module `{unknown}`{hint}"));
     }
     Ok(all
         .into_iter()
@@ -81,10 +81,10 @@ fn listed(text: &str) -> Result<Listed, String> {
     let document: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
     if let Some((key, _)) = document
         .iter()
-        .find(|(key, _)| !["modules", "from-wrath"].contains(key))
+        .find(|(key, _)| !["modules", "from-grapes"].contains(key))
     {
         return Err(format!(
-            "unknown key `{key}`; a platform has `modules` and `from-wrath`"
+            "unknown key `{key}`; a platform has `modules` and `from-grapes`"
         ));
     }
     let strings = |key: &str| -> Result<Vec<String>, String> {
@@ -105,7 +105,7 @@ fn listed(text: &str) -> Result<Listed, String> {
     };
     Ok(Listed {
         modules: strings("modules")?,
-        from_wrath: strings("from-wrath")?,
+        from_grapes: strings("from-grapes")?,
     })
 }
 
@@ -124,12 +124,12 @@ mod tests {
 
     #[test]
     fn a_platform_lists_its_own_module_directories_and_wrath_modules_by_name() {
-        let text = "modules = [\"modules\"]\nfrom-wrath = [\"dbus\", \"users\"]\n";
+        let text = "modules = [\"modules\"]\nfrom-grapes = [\"dbus\", \"users\"]\n";
         assert_eq!(
             listed(text).unwrap(),
             Listed {
                 modules: vec!["modules".into()],
-                from_wrath: vec!["dbus".into(), "users".into()],
+                from_grapes: vec!["dbus".into(), "users".into()],
             }
         );
         assert_eq!(listed("").unwrap().modules, Vec::<String>::new());
@@ -149,11 +149,11 @@ mod tests {
         );
     }
 
-    /// A system on acme's platform: acme's own `motd` module and wrath's `users`, with the
+    /// A system on acme's platform: acme's own `motd` module and grapes' `users`, with the
     /// lock pinning acme. Gives the configuration's directory and acme's.
-    fn on_acme(from_wrath: &str) -> (tempfile::TempDir, tempfile::TempDir) {
+    fn on_acme(from_grapes: &str) -> (tempfile::TempDir, tempfile::TempDir) {
         let acme = tempfile::tempdir().unwrap();
-        let platform = format!("modules = [\"modules\"]\nfrom-wrath = [{from_wrath}]\n");
+        let platform = format!("modules = [\"modules\"]\nfrom-grapes = [{from_grapes}]\n");
         std::fs::write(acme.path().join("platform.toml"), platform).unwrap();
         std::fs::create_dir(acme.path().join("modules")).unwrap();
         let motd = "def render(ctx: Context) -> None:\n    \
@@ -204,7 +204,7 @@ mod tests {
         let error =
             crate::system::evaluate_dir(config.path(), &wrath_modules(), ModuleOrder::Sorted, None)
                 .unwrap_err();
-        assert_eq!(error, "wrath has no module `userz`; did you mean `users`?");
+        assert_eq!(error, "grapes has no module `userz`; did you mean `users`?");
     }
 
     #[test]

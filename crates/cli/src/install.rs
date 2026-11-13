@@ -131,7 +131,7 @@ pub fn disks(given: &[String]) -> BTreeMap<String, Vec<PathBuf>> {
 
 /// Lays out the disks the model's `storage` describes, mounts them at the target, and installs
 /// the system on them.
-pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, String> {
+pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
     let storage = model
         .base
         .get("storage")
@@ -183,7 +183,7 @@ pub fn install(root: &Path, model: Model, how: &Install) -> Result<ExitCode, Str
         .map_err(|e| format!("cannot keep the passphrase: {e}"))?;
     let system = match how.prebuilt {
         Some(system) => system.to_path_buf(),
-        None => generations::build_generation(root, &model, false)?,
+        None => generations::build_generation(&model, false)?,
     };
     let result = lay_out(&partitions, storage, how, &key, work.path())
         // Before the boot loader: it copies the initrd's SSH key into the initrd.

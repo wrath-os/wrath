@@ -8,6 +8,7 @@
 - `--role <NAME>`: The role to act as, for a configuration with kinds of machines in `roles/`
 - `--json`: Print data as JSON instead of text, where a command supports it
 - `-v, --verbose`: Show everything each build prints, as it prints it
+- `--source <NAME=DIR>`: A source read from a directory instead of where the lock pins it, for this command only, such as `grapes=../grapes` to work on grapes beside a configuration
 
 ## `wrath status`
 

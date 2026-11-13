@@ -70,16 +70,16 @@ fn encrypted_secrets(model: &Model) -> Result<BTreeMap<String, Vec<u8>>, String>
         .collect()
 }
 
-/// Builds `model` into a generation with wrath's own builder, from the recipes in `build/` under
-/// `root`, and returns where it is. Packages without a recipe are left out, with a warning.
-pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBuf, String> {
-    if !crate::known::recipes_here(root) {
+/// Builds `model` into a generation with wrath's own builder, from grapes' recipes, and returns
+/// where it is. Packages without a recipe are left out, with a warning.
+pub fn build_generation(model: &Model, test: bool) -> Result<PathBuf, String> {
+    if !crate::known::recipes_here() {
         return Err(crate::known::NO_RECIPES.to_owned());
     }
-    let repository = root
-        .join("build")
+    let grapes = crate::places::grapes()?;
+    let repository = grapes
         .canonicalize()
-        .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
+        .map_err(|e| format!("cannot find the recipes in {}: {e}", grapes.display()))?;
     let kept = wrath_build::graph::Kept {
         text: model.canonical(),
         hash: model.hash(),
@@ -89,7 +89,7 @@ pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBu
     if test {
         add_test_layer(&mut model);
     }
-    let system = wrath_build::graph::system(&repository, &model, &kept)?;
+    let system = wrath_build::graph::system(&repository, &crate::places::work(), &model, &kept)?;
     match missing(&system.skipped, &system.unfound) {
         Some(message) => Err(message),
         None => Ok(system.path),
@@ -163,16 +163,15 @@ const IMAGE_OPTIONS: &str = "wrath.rescue console=ttyS0,115200 console=tty0";
 /// `install`, the system `wrath install` puts on the disks, built and in its store. Returns where
 /// the image is: in `build/work/images`, named by the generation.
 pub fn build_image(
-    root: &Path,
     config: Option<&Path>,
     model: &Model,
     install: Option<&Model>,
     options: &[String],
     test: bool,
 ) -> Result<PathBuf, String> {
-    let generation = build_generation(root, model, test)?;
+    let generation = build_generation(model, test)?;
     let install = install
-        .map(|install| build_generation(root, install, test))
+        .map(|install| build_generation(install, test))
         .transpose()?;
     let store_path = |path: &Path| {
         path.file_name()
@@ -181,7 +180,7 @@ pub fn build_image(
     };
     let generation = store_path(&generation)?;
     let install = install.as_deref().map(store_path).transpose()?;
-    let work = std::path::absolute(root.join("build/work")).map_err(|e| e.to_string())?;
+    let work = std::path::absolute(crate::places::work()).map_err(|e| e.to_string())?;
     let images = work.join("images");
     std::fs::create_dir_all(&images).map_err(|e| format!("{}: {e}", images.display()))?;
     let out = images.join(format!("{}.img", generation.hash()));
@@ -207,11 +206,7 @@ pub fn build_image(
 /// [`wrath_build::graph::PACKAGE_KEYS`], as changes for a plan. `None`, with a note saying why,
 /// when that can't be told: the system doesn't say what it was built from, or there are no
 /// recipes here to compare with.
-pub(crate) fn rebuilt(
-    root: &Path,
-    model: &Model,
-    built_from: Option<&str>,
-) -> Option<Vec<wrath_model::Change>> {
+pub(crate) fn rebuilt(model: &Model, built_from: Option<&str>) -> Option<Vec<wrath_model::Change>> {
     let Some(before) = built_from.and_then(|text| serde_json::from_str(text).ok()) else {
         crate::style::note(
             "what runs doesn't say which packages it was built from, so the plan can't show \
@@ -219,9 +214,9 @@ pub(crate) fn rebuilt(
         );
         return None;
     };
-    let repository = root.join("build").canonicalize().ok()?;
+    let repository = crate::places::grapes().ok()?.canonicalize().ok()?;
     let value = serde_json::from_str(&model.canonical()).ok()?;
-    match wrath_build::graph::package_keys(&repository, &value) {
+    match wrath_build::graph::package_keys(&repository, &crate::places::work(), &value) {
         Ok(after) => Some(wrath_model::rebuilt(model, &before, &after)),
         Err(message) => {
             crate::style::warning(&format!(
@@ -269,7 +264,7 @@ pub fn apply(
 ) -> Result<ExitCode, String> {
     let model = locked(root, config, model)?;
     let hash = model.hash();
-    let rebuilt = rebuilt(root, &model, here::running_built_from().as_deref());
+    let rebuilt = rebuilt(&model, here::running_built_from().as_deref());
     let current = here::history()
         .ok()
         .and_then(|all| all.into_iter().find(|generation| generation.current))
@@ -299,7 +294,7 @@ pub fn apply(
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     };
-    let system = build_generation(root, &model, false)?;
+    let system = build_generation(&model, false)?;
     if let Some(record) = record {
         record.write()?;
     }
@@ -950,8 +945,7 @@ mod tests {
 
     #[test]
     fn building_without_recipes_says_where_to_build_from() {
-        let dir = tempfile::tempdir().unwrap();
-        let error = build_generation(dir.path(), &Model::default(), false).unwrap_err();
+        let error = build_generation(&Model::default(), false).unwrap_err();
         assert!(error.contains("wrath apply --host"), "{error}");
     }
 

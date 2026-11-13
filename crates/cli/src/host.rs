@@ -447,7 +447,7 @@ pub fn apply(
         }
         None => (remote.running_model()?, false),
     };
-    let rebuilt = generations::rebuilt(root, &model, remote.running_built_from()?.as_deref());
+    let rebuilt = generations::rebuilt(&model, remote.running_built_from()?.as_deref());
     let same = running.as_ref().is_some_and(|r| r.hash() == model.hash());
     if same && !unfinished && rebuilt.as_ref().is_some_and(Vec::is_empty) {
         println!("{} runs model {} already", remote.name, &model.hash()[..16]);
@@ -468,7 +468,7 @@ pub fn apply(
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     }
-    let built = generations::build_generation(root, &model, false)?;
+    let built = generations::build_generation(&model, false)?;
     remote.switch_built(root, &built, how)?;
     if let Some(note) = running.and(plan.tier()).and_then(generations::full_effect) {
         println!("{note}");

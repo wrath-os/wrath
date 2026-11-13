@@ -39,7 +39,7 @@ impl Machine<'_> {
 
     /// Builds `model` here and tries it on the machine for [`TRIAL`] seconds.
     fn try_model(&self, root: &Path, model: &Model) -> Result<(), String> {
-        let built = generations::build_generation(root, model, false)?;
+        let built = generations::build_generation(model, false)?;
         match self {
             Self::Here => here::try_system(&built, TRIAL),
             Self::Remote(remote) => remote.switch_built(root, &built, Switch::Try(TRIAL)),

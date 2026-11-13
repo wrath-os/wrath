@@ -440,8 +440,12 @@ pub struct Checked {
 
 /// Builds the packages `ids` and checks each: its smoke commands run on what was built, and its
 /// own tests, when its recipe has them, run in a build of it made again and thrown away.
-pub fn check_packages(repository: &Path, ids: &[&str]) -> Result<Vec<Checked>, String> {
-    let lab = Lab::new(repository.join("work"));
+pub fn check_packages(
+    repository: &Path,
+    work: &Path,
+    ids: &[&str],
+) -> Result<Vec<Checked>, String> {
+    let lab = Lab::new(work);
     let (mut built, seed, packages) = build_some(&lab, repository, Some(ids))?;
     let mut sources = Sources::load(repository)?;
     let mut checked = Vec::new();

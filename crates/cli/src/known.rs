@@ -2,23 +2,22 @@
 //! `check` or `plan`, with where it's written, rather than after a long build.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use wrath_eval::{Diagnostic, Evaluation, Site, Value, closest};
 use wrath_model::{Model, WRATH_SOURCE, package_source};
 
-/// Whether wrath has recipes here: a checkout does, and the wrath a machine runs doesn't.
-pub fn recipes_here(root: &Path) -> bool {
-    root.join("build/recipes").is_dir()
+/// Whether wrath has recipes to build from: grapes, as [`crate::places`] finds it. A checkout or
+/// a grapes beside it does; the wrath a machine runs has none yet.
+pub fn recipes_here() -> bool {
+    crate::places::grapes().is_ok_and(|grapes| grapes.join("recipes").is_dir())
 }
 
 /// The names packages can have: every recipe's id and every build the configuration declares.
-pub fn names(root: &Path, model: &Model) -> Result<BTreeSet<String>, String> {
-    let repository = root.join("build");
-    if !recipes_here(root) {
+pub fn names(model: &Model) -> Result<BTreeSet<String>, String> {
+    if !recipes_here() {
         return Err(NO_RECIPES.to_owned());
     }
-    let mut names = wrath_build::graph::recipe_ids(&repository)?;
+    let mut names = wrath_build::graph::recipe_ids(&crate::places::grapes()?)?;
     names.extend(model.builds.keys().cloned());
     Ok(names)
 }
@@ -99,8 +98,7 @@ mod tests {
 
     #[test]
     fn a_wrath_without_recipes_says_where_to_plan_from() {
-        let dir = tempfile::tempdir().unwrap();
-        let error = names(dir.path(), &Model::default()).unwrap_err();
+        let error = names(&Model::default()).unwrap_err();
         assert!(error.contains("wrath apply --host"), "{error}");
     }
 }

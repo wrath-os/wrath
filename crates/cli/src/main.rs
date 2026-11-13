@@ -28,6 +28,7 @@ mod machine;
 mod on_machine;
 mod options;
 mod pinned;
+mod places;
 mod platforms;
 mod project;
 mod reference;
@@ -69,6 +70,10 @@ struct Cli {
     /// Repository root containing `acceptance/` and `build/` [default: found, see `find_root`]
     #[arg(long, global = true, hide = true)]
     root: Option<PathBuf>,
+    /// A source read from a directory instead of where the lock pins it, for this command only,
+    /// such as `grapes=../grapes` to work on grapes beside a configuration
+    #[arg(long = "source", global = true, value_name = "NAME=DIR")]
+    sources: Vec<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -436,6 +441,17 @@ fn main() -> ExitCode {
             }
         }
     }
+    let grapes = match source_dirs(&cli.sources) {
+        Ok(grapes) => grapes,
+        Err(message) => {
+            style::error(&message);
+            return ExitCode::FAILURE;
+        }
+    };
+    places::init(&root, grapes);
+    if let Ok(checkout) = std::path::absolute(&root) {
+        wrath_build::chain::set_wrath_tree(&checkout);
+    }
     let modules = modules_dir(&root, cli.modules);
     let root = root.as_path();
     REPOSITORY
@@ -464,7 +480,7 @@ fn main() -> ExitCode {
                 (None, false, Some(host)) => Against::Host(host),
                 (None, false, None) => Against::Running,
             };
-            machine().and_then(|config| plan(root, &config, against, &modules, json))
+            machine().and_then(|config| plan(&config, against, &modules, json))
         }
         Command::Apply {
             watch: true, host, ..
@@ -494,7 +510,7 @@ fn main() -> ExitCode {
             check,
             ..
         } if !packages.is_empty() => package_context(cli.config.as_deref(), &modules)
-            .and_then(|(model, _)| run::built(root, &model, &packages))
+            .and_then(|(model, _)| run::built(&model, &packages))
             .and_then(|built| {
                 let paths = built.paths.iter().map(|path| built.store.join(path.hash()));
                 let named: Vec<_> = built.packages.iter().cloned().zip(paths).collect();
@@ -504,7 +520,8 @@ fn main() -> ExitCode {
                 }
                 let ids: Vec<&str> = built.packages.iter().map(String::as_str).collect();
                 show_checked(&wrath_build::pilot::check_packages(
-                    &root.join("build"),
+                    &places::grapes()?,
+                    &places::work(),
                     &ids,
                 )?)
             }),
@@ -535,17 +552,11 @@ fn main() -> ExitCode {
                         Some(live) => (live, Some(&model)),
                         None => (&model, None),
                     };
-                    let path = generations::build_image(
-                        root,
-                        keep,
-                        boots,
-                        install,
-                        &kernel_options,
-                        test,
-                    )?;
+                    let path =
+                        generations::build_image(keep, boots, install, &kernel_options, test)?;
                     (format!("{name}.img"), path)
                 } else {
-                    let path = generations::build_generation(root, &model, test)?;
+                    let path = generations::build_generation(&model, test)?;
                     (name.to_owned(), path)
                 };
                 generations::show_built(&[built], link.as_deref())
@@ -561,16 +572,16 @@ fn main() -> ExitCode {
         Command::Clean { keep, yes } => generations::clean(keep, yes),
         Command::Rollback { generation } => generations::rollback(generation),
         Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
-            .and_then(|(model, _)| run::run(root, model, &package, &args)),
+            .and_then(|(model, _)| run::run(model, &package, &args)),
         Command::Up => {
             package_context(cli.config.as_deref(), &modules).and_then(|(model, project)| {
                 let project =
                     project.ok_or("only a project has services to run; `wrath up` runs in one")?;
-                run::up(root, model, &project)
+                run::up(model, &project)
             })
         }
         Command::Shell { packages } => package_context(cli.config.as_deref(), &modules)
-            .and_then(|(model, project)| run::shell(root, model, &packages, project.as_deref())),
+            .and_then(|(model, project)| run::shell(model, &packages, project.as_deref())),
         Command::Add { packages, home } => config()
             .and_then(|config| edit::add(root, &config, &modules, home.as_deref(), &packages)),
         Command::Remove { packages, home } => config()
@@ -599,7 +610,6 @@ fn main() -> ExitCode {
                 return Ok(ExitCode::FAILURE);
             };
             install::install(
-                root,
                 model,
                 &install::Install {
                     config: &config,
@@ -647,7 +657,7 @@ fn main() -> ExitCode {
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
-            DevCommand::Lint { packages } => lint(root, &packages),
+            DevCommand::Lint { packages } => lint(&packages),
             DevCommand::Docs { check } => reference::write(
                 root,
                 &modules,
@@ -656,20 +666,20 @@ fn main() -> ExitCode {
             ),
             DevCommand::Repro { packages } => {
                 let only: Vec<&str> = packages.iter().map(String::as_str).collect();
-                let (lab, repository) = builder(root);
-                wrath_build::experiments::reproduce(&lab, &repository, &only)
+                builder()
+                    .and_then(|(lab, repository)| {
+                        wrath_build::experiments::reproduce(&lab, &repository, &only)
+                    })
                     .map(|()| ExitCode::SUCCESS)
             }
-            DevCommand::Seed { command } => {
-                let (lab, repository) = builder(root);
-                match command {
+            DevCommand::Seed { command } => builder()
+                .and_then(|(lab, repository)| match command {
                     SeedCommand::Check => seed_pack::check_toolchain(&lab, &repository),
                     SeedCommand::Pack => seed_pack::pack(&lab, &repository),
                     SeedCommand::Addresses => seed_pack::addresses(&lab, &repository),
-                }
-                .map(|()| ExitCode::SUCCESS)
-            }
-            DevCommand::Outdated { all } => outdated(root, all),
+                })
+                .map(|()| ExitCode::SUCCESS),
+            DevCommand::Outdated { all } => outdated(all),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::ApplyRecord => {
                 config().and_then(|config| print_apply_record(&config, &modules))
@@ -735,8 +745,8 @@ fn machine_role(config: &Path) -> Option<String> {
     Some(role)
 }
 
-/// Whether `command` reads the configuration, so it says when the lock pins another version of wrath.
-/// Commands on built generations, and updates that move wrath's own pin, don't.
+/// Whether `command` reads the configuration, so it says when the lock pins another version of
+/// wrath. Commands on built generations, and updates that move wrath's own pin, don't.
 fn runs_pinned(command: &Command) -> bool {
     match command {
         Command::Update { sources, list } => {
@@ -975,17 +985,22 @@ fn show_checked(checked: &[wrath_build::pilot::Checked]) -> Result<ExitCode, Str
     })
 }
 
-/// The builder's work directory and the recipes, in the repository at `root`.
-fn builder(root: &Path) -> (Lab, PathBuf) {
-    let repository = root.join("build");
-    (Lab::new(repository.join("work")), repository)
+/// The builder's work directory and grapes, where its recipes are.
+fn builder() -> Result<(Lab, PathBuf), String> {
+    Ok((Lab::new(places::work()), places::grapes()?))
 }
 
-/// Prints each recipe's needless dependencies, and fails when there are any.
-fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
+/// Prints recipes that write the target out and each recipe's needless dependencies, and fails
+/// when there are any.
+fn lint(packages: &[String]) -> Result<ExitCode, String> {
     let only: Vec<&str> = packages.iter().map(String::as_str).collect();
-    let mut found = wrath_build::graph::targets_written(&root.join("build"))?;
-    found.push_str(&wrath_build::graph::redundant(&root.join("build"), &only)?);
+    let grapes = places::grapes()?;
+    let mut found = wrath_build::graph::targets_written(&grapes)?;
+    found.push_str(&wrath_build::graph::redundant(
+        &grapes,
+        &places::work(),
+        &only,
+    )?);
     if found.is_empty() {
         println!("nothing to point out");
         return Ok(ExitCode::SUCCESS);
@@ -995,9 +1010,8 @@ fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
 }
 
 /// Prints the recipes upstream has released something newer of, and those it couldn't check.
-fn outdated(root: &Path, all: bool) -> Result<ExitCode, String> {
-    let reports =
-        wrath_build::upstream::outdated(&root.join("build"), &wrath_build::upstream::run)?;
+fn outdated(all: bool) -> Result<ExitCode, String> {
+    let reports = wrath_build::upstream::outdated(&places::grapes()?, &wrath_build::upstream::run)?;
     let width = reports.iter().map(|r| r.id.len()).max().unwrap_or(0);
     let (mut newer, mut held, mut unchecked) = (0, 0, Vec::new());
     for report in &reports {
@@ -1164,7 +1178,26 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
 }
 
 fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
-    modules.unwrap_or_else(|| under_root(root, Path::new("modules")))
+    modules.unwrap_or_else(|| places::modules(root))
+}
+
+/// Grapes' directory from `--source` arguments, `NAME=DIR` each. Only grapes can be given so far.
+fn source_dirs(given: &[String]) -> Result<Option<PathBuf>, String> {
+    let mut grapes = None;
+    for source in given {
+        let Some((name, dir)) = source.split_once('=') else {
+            return Err(format!(
+                "`--source {source}` needs a name and a directory, NAME=DIR"
+            ));
+        };
+        if name != "grapes" {
+            return Err(format!(
+                "only grapes can be read from a directory so far, not `{name}`"
+            ));
+        }
+        grapes = Some(PathBuf::from(dir));
+    }
+    Ok(grapes)
 }
 
 /// Evaluates a configuration for the role to act as, or prints why it can't and returns
@@ -1219,10 +1252,10 @@ fn model_of(config: &Path, evaluation: Evaluation) -> Option<Model> {
 fn packages_known(evaluation: &Evaluation, model: &Model) -> bool {
     // Without recipes, as on a machine, there's nothing to check names against; what would build
     // them says so itself.
-    let Some(root) = REPOSITORY.get().filter(|root| known::recipes_here(root)) else {
+    if !known::recipes_here() {
         return true;
-    };
-    let names = match known::names(root, model) {
+    }
+    let names = match known::names(model) {
         Ok(names) => names,
         Err(message) => {
             style::error(&message);
@@ -1320,13 +1353,7 @@ enum Against {
     Host(String),
 }
 
-fn plan(
-    root: &Path,
-    config: &Path,
-    against: Against,
-    modules: &Path,
-    json: bool,
-) -> Result<ExitCode, String> {
+fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<ExitCode, String> {
     // Another machine is planned for as the role it has, as `apply --host` builds it.
     let role = match &against {
         Against::Host(name) => remote_role(config, &host::Remote::new(name)?)?,
@@ -1366,7 +1393,7 @@ fn plan(
             None => (Model::default(), None, None),
         },
     };
-    let rebuilt = built_from.and_then(|text| generations::rebuilt(root, &after, text.as_deref()));
+    let rebuilt = built_from.and_then(|text| generations::rebuilt(&after, text.as_deref()));
     let plan = generations::with_rebuilt(wrath_model::plan(&before, &after), rebuilt);
     if json {
         let Value::Table(mut fields) = plan.to_value() else {

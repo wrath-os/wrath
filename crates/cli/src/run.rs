@@ -12,8 +12,8 @@ use crate::project;
 
 /// Runs `package`'s program with `args`, in place of this process: the one named like the
 /// package, or its only one.
-pub fn run(root: &Path, model: Model, package: &str, args: &[String]) -> Result<ExitCode, String> {
-    let environment = Environment::build(root, &model, &[package.to_owned()])?;
+pub fn run(model: Model, package: &str, args: &[String]) -> Result<ExitCode, String> {
+    let environment = Environment::build(&model, &[package.to_owned()])?;
     let name = &environment.packages[0];
     let programs = environment.programs();
     let program = if programs.contains(name) {
@@ -34,7 +34,6 @@ pub fn run(root: &Path, model: Model, package: &str, args: &[String]) -> Result<
 /// project at `project`, the shell has the project's packages and variables too, and says what
 /// they hide from the home.
 pub fn shell(
-    root: &Path,
     model: Model,
     packages: &[String],
     project: Option<&Path>,
@@ -57,7 +56,7 @@ pub fn shell(
     if wanted.is_empty() {
         return Err("name the packages the shell should have".into());
     }
-    let environment = Environment::build(root, &model, &wanted)?;
+    let environment = Environment::build(&model, &wanted)?;
     let inherited = inherited_path();
     if let Some(dir) = project {
         keep(&environment.path, &dir.join(".wrath/shell"));
@@ -90,7 +89,7 @@ pub fn shell(
 
 /// Runs the services of the project at `project` with process-compose, in place of this process,
 /// with the project's packages and variables, until you stop them.
-pub fn up(root: &Path, model: Model, project: &Path) -> Result<ExitCode, String> {
+pub fn up(model: Model, project: &Path) -> Result<ExitCode, String> {
     let compose = project::compose(&model)
         .ok_or("the project has no services; add them under `[services]`")?;
     let state = project.join(".wrath");
@@ -101,7 +100,7 @@ pub fn up(root: &Path, model: Model, project: &Path) -> Result<ExitCode, String>
     let variables = project::variables(&model, lookup);
     let mut wanted: Vec<String> = model.packages.iter().cloned().collect();
     wanted.push(PROCESS_COMPOSE.to_owned());
-    let environment = Environment::build(root, &model, &wanted)?;
+    let environment = Environment::build(&model, &wanted)?;
     keep(&environment.path, &state.join("up"));
     let bin = environment.bin();
     let path = path_with(&bin, &inherited_path())?;
@@ -147,22 +146,23 @@ pub struct Built {
     pub store: PathBuf,
 }
 
-/// Builds `references`, such as `jq`, from the recipes of the wrath under `root`.
-pub fn built(root: &Path, model: &Model, references: &[String]) -> Result<Built, String> {
+/// Builds `references`, such as `jq`, from grapes' recipes.
+pub fn built(model: &Model, references: &[String]) -> Result<Built, String> {
     let packages = references
         .iter()
         .map(|reference| package_name(model, reference))
         .collect::<Result<Vec<_>, _>>()?;
-    let repository = root
-        .join("build")
+    let grapes = crate::places::grapes()?;
+    let repository = grapes
         .canonicalize()
-        .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
+        .map_err(|e| format!("cannot find the recipes in {}: {e}", grapes.display()))?;
+    let work = crate::places::work();
     let names: Vec<&str> = packages.iter().map(String::as_str).collect();
-    let paths = wrath_build::graph::packages(&repository, &names)?;
+    let paths = wrath_build::graph::packages(&repository, &work, &names)?;
     Ok(Built {
         packages,
         paths,
-        store: repository.join("work/store"),
+        store: work.join("store"),
     })
 }
 
@@ -181,12 +181,12 @@ struct Environment {
 impl Environment {
     /// Builds `references` from wrath's recipes and links their programs into a directory under
     /// the user's cache, one for each set of packages.
-    fn build(root: &Path, model: &Model, references: &[String]) -> Result<Self, String> {
+    fn build(model: &Model, references: &[String]) -> Result<Self, String> {
         let Built {
             packages,
             paths,
             store,
-        } = built(root, model, references)?;
+        } = built(model, references)?;
         let names: Vec<&str> = packages.iter().map(String::as_str).collect();
         let path = environment_dir(&packages)?;
         let bin = path.join("bin");

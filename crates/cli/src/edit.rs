@@ -40,7 +40,7 @@ pub fn add(
         return Ok(ExitCode::SUCCESS);
     }
     // Refused before the configuration is touched, so a typo never ends up in it.
-    let known = crate::known::names(root, &Model::from_evaluation(&evaluation))?;
+    let known = crate::known::names(&Model::from_evaluation(&evaluation))?;
     for name in &names {
         if let Some((package, near)) = crate::known::missing(name, &known) {
             let near = near

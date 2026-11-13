@@ -153,14 +153,14 @@ Bad configurations work the same way, with an `expected-error.txt` instead, and
 
 ## Platforms
 
-Every system builds on a platform, a set of modules. Unless it says otherwise, that's `wrath`:
-the built-in modules. A platform of your own lives in a source, with a `platform.toml` that lists
-its modules:
+Every system builds on a platform, a set of modules. Unless it says otherwise, that's grapes':
+the modules a wrath system is made of. A platform of your own lives in a source, with a
+`platform.toml` that lists its modules:
 
 ```toml
 # platform.toml, in the acme source
 modules = ["modules"]                       # acme's own, in modules/
-from-wrath = ["dbus", "polkit", "users"]   # the built-in modules acme keeps
+from-grapes = ["dbus", "polkit", "users"]  # grapes' modules acme keeps
 ```
 
 A system chooses it in the file it starts from, `system.toml` or a role's file:
@@ -171,6 +171,10 @@ platform = { source = "acme" }
 [sources.acme]
 url = "github:acme/platform"
 ```
+
+A platform of your own changes only the modules: packages still come from grapes' recipes, so
+something built your own way still gets the same packages, and ones you add with recipes of your
+own.
 
 A module is in the system because the platform lists it, so leaving one of ours out is leaving it
 off the list. Two modules declaring the same option is an error, and so is a module writing to an

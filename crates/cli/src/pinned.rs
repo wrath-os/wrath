@@ -1,7 +1,7 @@
 //! wrath pinned in the lock like a source, so a configuration is built by the wrath it was
-//! locked with: its evaluator, modules and recipes. Running another version of wrath than the locked one
-//! needs a builder for it, which only a checkout has so far, so for now a version that isn't the
-//! locked one says so and goes on.
+//! locked with: its evaluator, modules and recipes. Running another version of wrath than the
+//! locked one needs a builder for it, which only a checkout has so far, so for now a version that
+//! isn't the locked one says so and goes on.
 
 use std::path::Path;
 

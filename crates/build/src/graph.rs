@@ -2241,8 +2241,6 @@ pub(crate) fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-/// Each system recipe's listed dependencies that another dependency it lists already brings,
-/// one line per recipe, after building what isn't built yet.
 /// Lines of recipes and styles under `repository` that write a target's name, such as `x86_64`,
 /// where a placeholder or variable says it for whichever target builds (0032): `{arch}`,
 /// `{triple}`, `$LAB_ARCH`, `$LAB_TRIPLE` or `$LAB_LOADER`. Comments don't count.
@@ -2283,8 +2281,10 @@ pub fn targets_written(repository: &Path) -> Result<String, String> {
     Ok(lines)
 }
 
-pub fn redundant(repository: &Path, only: &[&str]) -> Result<String, String> {
-    let lab = Lab::new(repository.join("work"));
+/// Each system recipe's listed dependencies that another dependency it lists already brings,
+/// one line per recipe, after building what isn't built yet.
+pub fn redundant(repository: &Path, work: &Path, only: &[&str]) -> Result<String, String> {
+    let lab = Lab::new(work);
     let wanted = (!only.is_empty()).then_some(only);
     let (mut built, _, mut packages) = pilot::build_some(&lab, repository, wanted)?;
     if let Some(wanted) = wanted {
@@ -2389,8 +2389,12 @@ fn variants(
 
 /// The key each package of the toolchain, the system recipes `model` reaches and the builds it asks
 /// for has before anything is built: what [`PACKAGE_KEYS`] records, from today's recipes.
-pub fn package_keys(repository: &Path, model: &Value) -> Result<BTreeMap<String, String>, String> {
-    let lab = Lab::new(repository.join("work"));
+pub fn package_keys(
+    repository: &Path,
+    work: &Path,
+    model: &Value,
+) -> Result<BTreeMap<String, String>, String> {
+    let lab = Lab::new(work);
     let mut packages = chain::load_styled(&lab, repository, TOOLCHAIN_RECIPES)?;
     let wanted = system_packages(model);
     packages.extend(chain::load_reached(
@@ -2466,8 +2470,13 @@ fn system_packages(model: &Value) -> Vec<String> {
 
 /// Builds the system `model` describes from the recipes in `repository`, which holds `recipes/`,
 /// the pins and the `work` directory with the store, building packages it doesn't have yet.
-pub fn system(repository: &Path, model: &Value, kept: &Kept) -> Result<System, String> {
-    let lab = Lab::new(repository.join("work"));
+pub fn system(
+    repository: &Path,
+    work: &Path,
+    model: &Value,
+    kept: &Kept,
+) -> Result<System, String> {
+    let lab = Lab::new(work);
     let wanted = system_packages(model);
     let (mut built, seed, recipes) = pilot::build_some(&lab, repository, Some(&names_of(&wanted)))?;
     build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
@@ -2492,8 +2501,8 @@ pub fn recipe_ids(repository: &Path) -> Result<BTreeSet<String>, String> {
 
 /// Builds the packages `names` from the recipes in `repository`, as [`system`] would, and returns
 /// where each one is in the store.
-pub fn packages(repository: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {
-    let lab = Lab::new(repository.join("work"));
+pub fn packages(repository: &Path, work: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {
+    let lab = Lab::new(work);
     let (built, ..) = pilot::build_some(&lab, repository, Some(names))?;
     names
         .iter()

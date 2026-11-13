@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use wrath_starlark::style::{self, Style};
 
@@ -658,6 +658,18 @@ fn write_runtime_deps(
     fs::write(&file, text).map_err(with_path(&file))
 }
 
+/// The wrath checkout running the build, which `tree:@wrath` sources read: grapes carries the
+/// recipe for wrath, built from the tool's own files (0036). Set once by the command.
+static WRATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// What a `tree:` source starts with to name the wrath checkout instead of grapes.
+const WRATH_TREE: &str = "@wrath";
+
+/// Says where the wrath checkout running this command is, for `tree:@wrath` sources.
+pub fn set_wrath_tree(dir: &Path) {
+    let _ = WRATH.set(dir.to_path_buf());
+}
+
 /// Where a package keeps the store paths of its `runtime_deps`.
 const RUNTIME_DEPS: &str = "lib/wrath/runtime-deps";
 
@@ -853,9 +865,9 @@ impl Sources {
         self.fetch(lab, &source.url, source.sha256.as_deref())
     }
 
-    /// The files `include` names in `tree`, a directory relative to the repository, packed by
-    /// [`pack`]. Named by its hash, which isn't pinned: the tree is the repository's own and
-    /// changes with it.
+    /// The files `include` names in `tree`, a directory relative to the repository, or under the
+    /// wrath checkout for `@wrath/...`, packed by [`pack`]. Named by its hash, which isn't pinned:
+    /// the tree is the repository's own and changes with it.
     fn fetch_tree(
         &mut self,
         lab: &Lab,
@@ -863,7 +875,13 @@ impl Sources {
         include: &[String],
     ) -> Result<(PathBuf, String), String> {
         let repository = self.file.parent().unwrap_or(Path::new("."));
-        let from = repository.join(tree);
+        let from = match tree.strip_prefix(WRATH_TREE) {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => WRATH
+                .get()
+                .ok_or("only a checkout of wrath can build wrath from `tree:@wrath`")?
+                .join(rest.trim_start_matches('/')),
+            Some(_) | None => repository.join(tree),
+        };
         let mut include = include.to_vec();
         include.sort();
         if let Some(missing) = include.iter().find(|name| !from.join(name).exists()) {
@@ -1701,14 +1719,15 @@ pub(crate) fn place_outputs(
     package: &Package,
     out: &StorePath,
 ) -> Result<(split::Outputs, Option<String>), String> {
-    let pieces = crate::content::split_pieces(&lab.on_host(out), out.temporary().hash())?;
+    let seen_as = out.temporary();
+    let pieces = crate::content::split_pieces(&lab.on_host(out), seen_as.hash())?;
     if !pieces.is_empty() {
         note_pieces(lab, package, out, &pieces)?;
     }
     if package.whole {
-        split::keep_whole(lab, out, &out.temporary(), "the recipe asks".to_owned())
+        split::keep_whole(lab, out, &seen_as, "the recipe asks".to_owned())
     } else {
-        split::split_package(lab, out, &out.temporary())
+        split::split_package(lab, out, &seen_as)
     }
 }
 
