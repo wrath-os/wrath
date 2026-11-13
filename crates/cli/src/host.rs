@@ -355,7 +355,7 @@ impl Drop for RootShell {
 }
 
 /// Reads a password from the terminal without showing it.
-fn read_password(prompt: &str) -> Result<String, String> {
+pub(crate) fn read_password(prompt: &str) -> Result<String, String> {
     use rustix::termios::{LocalModes, OptionalActions, tcgetattr, tcsetattr};
     let tty = std::fs::OpenOptions::new()
         .read(true)

@@ -397,20 +397,11 @@ fn check_disks(storage: &Value, given: &BTreeMap<String, Vec<PathBuf>>) -> Resul
     Ok(())
 }
 
+/// Asks on the terminal, without showing what's typed, and twice, so a typo can't lock the disks.
 fn ask_passphrase() -> Result<String, String> {
-    let ask = |prompt: &str| {
-        let output = Command::new("systemd-ask-password")
-            .arg(prompt)
-            .output()
-            .map_err(|e| format!("cannot run systemd-ask-password: {e}"))?;
-        Ok::<_, String>(
-            String::from_utf8_lossy(&output.stdout)
-                .trim_end()
-                .to_owned(),
-        )
-    };
-    let passphrase = ask("Passphrase for the disks:")?;
-    if passphrase.is_empty() || passphrase != ask("The same passphrase again:")? {
+    use crate::host::read_password as ask;
+    let passphrase = ask("Passphrase for the disks: ")?;
+    if passphrase.is_empty() || passphrase != ask("The same passphrase again: ")? {
         return Err("the passphrases were empty or didn't match".into());
     }
     Ok(passphrase)
