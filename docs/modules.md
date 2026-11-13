@@ -9,7 +9,7 @@ small, deterministic Python: no imports beyond `load`, no I/O, no clocks. Module
 annotations, and wrath checks them when it loads them, so a typo in a module shows up as an
 error with a line number instead of a mystery later.
 
-The built-in modules live in wrath's own repository, in `modules/`. To bring your own, or to
+The built-in modules live in [grapes](https://github.com/wrath-os/grapes), in `modules/`. To bring your own, or to
 build something quite different, a system builds on a platform of your own (see Platforms below).
 
 ## A small one
@@ -186,4 +186,4 @@ system moves to another platform.
 
 The built-in modules are the best examples. `ssh.star`, `greetd.star` and `syncthing.star` are
 short and cover most of the above. [The module API](reference/module-api.md) lists every call
-and [Options](reference/options.md) every option the built-in modules declare.
+and [Options](https://github.com/wrath-os/grapes/blob/main/docs/reference/options.md) every option the built-in modules declare.

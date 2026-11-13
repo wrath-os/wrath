@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 
 {
   languages.rust.enable = true;
@@ -27,13 +27,16 @@
   env.OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
   env.OVMF = "${pkgs.OVMF.fd}/FV/OVMF.fd";
 
+  # A checkout of grapes beside this one, for the tests and building while working on both.
+  env.WRATH_GRAPES = "${config.devenv.root}/../grapes";
+
   enterTest = ''
     set -euo pipefail
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
     cargo run --quiet --package wrath-cli -- dev test fixtures/bad-configs
-    cargo run --quiet --package wrath-cli -- dev test modules/tests
+    cargo run --quiet --package wrath-cli -- dev test "$WRATH_GRAPES/modules/tests"
     cargo run --quiet --package wrath-cli -- dev docs --check
   '';
 }

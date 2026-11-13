@@ -6,6 +6,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
@@ -66,9 +67,20 @@ pub(crate) fn run(command: &mut Command, what: &str) -> Result<(), String> {
     }
 }
 
+/// Where `seed.pin` is when it isn't beside the work directory: in the set being built.
+static PIN: OnceLock<PathBuf> = OnceLock::new();
+
+/// Builds from the seed the file at `path` pins. Only the first call counts.
+pub fn set_pin(path: PathBuf) {
+    let _ = PIN.set(path);
+}
+
 /// Which seed to build from: `seed.pin` holds its hash, and a URL if it can be downloaded.
 fn pin(lab: &Lab) -> Result<(String, Option<String>), String> {
-    let path = lab.work.with_file_name("seed.pin");
+    let path = PIN
+        .get()
+        .cloned()
+        .unwrap_or_else(|| lab.work.with_file_name("seed.pin"));
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     Ok(parse_pin(&text))
 }

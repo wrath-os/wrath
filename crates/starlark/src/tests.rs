@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use wrath_eval::{
     ConfigFs, ConfigKind, DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output,
@@ -20,6 +20,11 @@ const MODULES: [&str; 8] = [
 
 fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+}
+
+/// A checkout of grapes, whose modules these tests run: `WRATH_GRAPES`, or one beside wrath's.
+fn grapes() -> PathBuf {
+    std::env::var_os("WRATH_GRAPES").map_or_else(|| repo().join("../grapes"), PathBuf::from)
 }
 
 fn base_schema() -> Schema {
@@ -44,8 +49,8 @@ fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, St
         .iter()
         .map(|name| {
             let path = format!("modules/{name}.star");
-            let text = std::fs::read_to_string(repo().join(&path)).unwrap();
-            load(&mut sources, &path, text, &repo().join("modules"))
+            let text = std::fs::read_to_string(grapes().join(&path)).unwrap();
+            load(&mut sources, &path, text, &grapes().join("modules"))
                 .unwrap_or_else(|e| panic!("{}", wrath_eval::render(&[e], &sources)))
         })
         .collect();
@@ -67,7 +72,7 @@ fn run(source: &str) -> Result<Evaluation, String> {
         &mut sources,
         "test.star",
         source.to_owned(),
-        &repo().join("modules"),
+        &grapes().join("modules"),
     )
     .map_err(|e| wrath_eval::render(&[e], &sources))?;
     evaluate(Input {
@@ -439,20 +444,20 @@ module(
 )
 "#;
     let mut sources = Sources::default();
-    let secrets = std::fs::read_to_string(repo().join("modules/secrets.star")).unwrap();
+    let secrets = std::fs::read_to_string(grapes().join("modules/secrets.star")).unwrap();
     let modules = vec![
         load(
             &mut sources,
             "app.star",
             module.to_owned(),
-            &repo().join("modules"),
+            &grapes().join("modules"),
         )
         .unwrap(),
         load(
             &mut sources,
             "modules/secrets.star",
             secrets,
-            &repo().join("modules"),
+            &grapes().join("modules"),
         )
         .unwrap(),
     ];
@@ -855,7 +860,7 @@ fn a_module_says_which_configurations_it_belongs_to() {
     };
     let load_one = |source: String| {
         let mut sources = Sources::default();
-        load(&mut sources, "m.star", source, &repo().join("modules"))
+        load(&mut sources, "m.star", source, &grapes().join("modules"))
             .map(|module| module.configurations().to_vec())
             .map_err(|e| wrath_eval::render(&[e], &sources))
     };
@@ -1486,7 +1491,7 @@ fn declared(source: &str) -> std::collections::BTreeMap<String, OptionSpec> {
         &mut sources,
         "m.star",
         source.to_owned(),
-        &repo().join("modules"),
+        &grapes().join("modules"),
     )
     .unwrap_or_else(|e| panic!("{}", wrath_eval::render(&[e], &sources)));
     module
@@ -1553,7 +1558,7 @@ fn evaluate_module(source: &str, toml: &str) -> Result<Evaluation, String> {
         &mut sources,
         "m.star",
         source.to_owned(),
-        &repo().join("modules"),
+        &grapes().join("modules"),
     )
     .map_err(|e| wrath_eval::render(&[e], &sources))?;
     let config = format!("[system]\nhostname = \"box\"\n{toml}");
@@ -1623,7 +1628,7 @@ fn a_switch_needs_one_table_of_options_without_its_own() {
         &mut sources,
         "m.star",
         two.to_owned(),
-        &repo().join("modules"),
+        &grapes().join("modules"),
     )
     .map(|_| ())
     .unwrap_err();
@@ -1635,7 +1640,7 @@ fn a_switch_needs_one_table_of_options_without_its_own() {
         "enable = option(types.bool), port = option",
     );
     let mut sources = Sources::default();
-    let error = load(&mut sources, "m.star", own, &repo().join("modules"))
+    let error = load(&mut sources, "m.star", own, &grapes().join("modules"))
         .map(|_| ())
         .unwrap_err();
     let text = wrath_eval::render(&[error], &sources);
@@ -1723,11 +1728,11 @@ fn unannotated(
 #[test]
 fn every_function_in_the_built_in_modules_is_fully_annotated() {
     let mut files = Vec::new();
-    star_files(&repo().join("modules"), &mut files);
+    star_files(&grapes().join("modules"), &mut files);
     files.sort();
     let mut missing = Vec::new();
     for path in &files {
-        let file = path.strip_prefix(repo()).unwrap().display().to_string();
+        let file = path.strip_prefix(grapes()).unwrap().display().to_string();
         let module = super::parse(&file, &std::fs::read_to_string(path).unwrap())
             .unwrap_or_else(|e| panic!("{e}"));
         unannotated(&module, &file, module.statement(), &mut missing);

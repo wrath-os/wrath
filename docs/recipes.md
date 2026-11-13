@@ -1,8 +1,9 @@
 # Recipes and styles
 
-Every package comes from a recipe in `build/recipes/` in wrath's repository. A recipe says where
-the source is, what the build needs and how to build it. Most of the time a build style writes
-the build script, so the recipe is mostly a list of what's different about this project.
+Every package comes from a recipe in `recipes/` in [grapes](https://github.com/wrath-os/grapes),
+the set wrath builds from. A recipe says where the source is, what the build needs and how to
+build it. Most of the time a build style writes the build script, so the recipe is mostly a list
+of what's different about this project.
 
 ## A recipe
 
@@ -35,7 +36,7 @@ What the fields mean:
 - `extra_deps` lists what the build needs, by id. That's exactly what the build sees in its
   `/usr`, nothing else.
 - `sources` are downloads, or `git+URL#COMMIT` for a git commit. Each is pinned in
-  `build/sources.lock` the first time it's fetched, so recipes never carry hashes. A second source
+  grapes' `sources.lock` the first time it's fetched, so recipes never carry hashes. A second source
   goes somewhere else in the tree with `into = "subdir"`.
 - `smoke` lists quick commands that should work once it's built, run from the package's
   directory. `check`, when there is one, runs the project's own tests in its build tree.
@@ -61,7 +62,7 @@ leaves out), and the autotools, meson and cmake styles take `prepare` (shell run
 configuring) too. The cargo and go styles read the project's own lock file, fetch every crate
 or module separately and build offline. You never write a vendor hash.
 
-Styles are Starlark too, in `build/styles/`. A style is a `build(recipe, options)` function that
+Styles are Starlark too, in grapes' `styles/`. A style is a `build(recipe, options)` function that
 returns the script and the dependencies it adds, plus a `style(...)` declaration of its options.
 `meson.star` is a good one to read: it's short, and it shows how a style can check a recipe
 against the project before anything builds.
@@ -110,9 +111,9 @@ wrath dev repro grim      # build it again as someone else and compare
 wrath dev outdated        # every recipe against upstream's newest release
 ```
 
-When packaging goes wrong in a way the tool could have caught, it goes in
-`design/packaging-findings.md`: what happened, what we did, what would prevent it. Most of the
-hints above started out there.
+When packaging goes wrong in a way the tool could have caught, it goes in grapes'
+[packaging findings](https://github.com/wrath-os/grapes/blob/main/docs/packaging-findings.md):
+what happened, what we did, what would prevent it. Most of the hints above started out there.
 
 ## What's not there yet
 

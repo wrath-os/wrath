@@ -12,8 +12,14 @@ use wrath_build::seed;
 use wrath_build::store::{Lab, StorePath};
 use wrath_build::view;
 
+/// wrath's store, building from the seed a checkout of grapes pins: `WRATH_GRAPES`, or one beside
+/// wrath's.
 fn lab() -> Lab {
-    Lab::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/work"))
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let grapes = std::env::var_os("WRATH_GRAPES")
+        .map_or_else(|| manifest.join("../../../grapes"), PathBuf::from);
+    seed::set_pin(grapes.join("seed.pin"));
+    Lab::new(manifest.join("../../build/work"))
 }
 
 struct Fixture {

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// Runs `wrath` from the repository root, so fixture and module paths are relative to it.
@@ -6,8 +6,23 @@ fn wrath(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_wrath"))
         .args(args)
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .env("WRATH_GRAPES", grapes())
         .output()
         .unwrap()
+}
+
+/// A checkout of grapes, whose modules and recipes these run: `WRATH_GRAPES`, or one beside
+/// wrath's.
+fn grapes() -> PathBuf {
+    std::env::var_os("WRATH_GRAPES").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../grapes"),
+        PathBuf::from,
+    )
+}
+
+/// A path under grapes, as an argument.
+fn in_grapes(path: &str) -> String {
+    grapes().join(path).display().to_string()
 }
 
 fn stdout(output: &Output) -> String {
@@ -33,7 +48,7 @@ fn plan(modules: &str) -> String {
 
 #[test]
 fn plan_shows_the_changed_option_and_what_it_renders() {
-    let plan = plan("modules");
+    let plan = plan(&in_grapes("modules"));
 
     let body = plan.split_once('\n').unwrap().1;
     insta::assert_snapshot!(body, @"
@@ -50,7 +65,12 @@ fn plan_shows_the_changed_option_and_what_it_renders() {
 
 #[test]
 fn modules_render_the_same_model_in_any_load_order() {
-    let output = stdout(&wrath(&["dev", "test", "--determinism", "modules"]));
+    let output = stdout(&wrath(&[
+        "dev",
+        "test",
+        "--determinism",
+        &in_grapes("modules"),
+    ]));
 
     assert!(output.contains("PASS  s4"), "{output}");
     assert!(!output.contains("FAIL"), "{output}");
@@ -120,7 +140,7 @@ fn a_bad_config_whose_error_changed_fails_until_blessed() {
 
 #[test]
 fn the_modules_write_what_their_cases_expect() {
-    let output = wrath(&["dev", "test", "modules/tests"]);
+    let output = wrath(&["dev", "test", &in_grapes("modules/tests")]);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(output.status.success(), "{stdout}");
     assert!(stdout.contains("PASS  firewall"), "{stdout}");
@@ -521,7 +541,7 @@ fn an_apply_record_keeps_the_module_and_library_code_its_origins_point_into() {
             .iter()
             .find(|(name, _)| name.ends_with(&format!("modules/{file}")))
             .unwrap_or_else(|| panic!("no {file} in {:?}", sources.keys()));
-        let path = format!("{}/../../modules/{file}", env!("CARGO_MANIFEST_DIR"));
+        let path = grapes().join("modules").join(file);
         let on_disk = std::fs::read_to_string(path).unwrap();
         assert_eq!(text.as_str().unwrap(), on_disk, "{file}");
     }
@@ -647,6 +667,7 @@ fn another_machine_is_planned_for_as_the_role_it_recorded() {
             "root@w-01",
         ])
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .env("WRATH_GRAPES", grapes())
         .env("WRATH_SSH", &ssh)
         .output()
         .unwrap();

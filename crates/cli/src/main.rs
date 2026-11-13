@@ -1140,7 +1140,7 @@ fn under_root(root: &Path, path: &Path) -> PathBuf {
 fn files_beside(exe: &Path) -> Option<PathBuf> {
     exe.ancestors()
         .flat_map(|dir| [dir.to_path_buf(), dir.join("share/wrath")])
-        .find(|dir| dir.join("modules").is_dir())
+        .find(|dir| dir.join("crates/cli").is_dir() || dir.join("modules").is_dir())
 }
 
 /// Reruns a failed scenario against the image of the failed run and reports whether it fails
@@ -1615,11 +1615,11 @@ mod tests {
     }
 
     #[test]
-    fn a_binary_built_in_a_checkout_finds_the_checkouts_modules() {
+    fn a_binary_built_in_a_checkout_finds_the_checkout() {
         let dir = tempfile::tempdir().unwrap();
         let checkout = dir.path().join("wrath");
         fs::create_dir_all(checkout.join("target/release")).unwrap();
-        fs::create_dir_all(checkout.join("modules")).unwrap();
+        fs::create_dir_all(checkout.join("crates/cli")).unwrap();
         assert_eq!(
             files_beside(&checkout.join("target/release/wrath")),
             Some(checkout)

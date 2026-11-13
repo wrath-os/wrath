@@ -1,6 +1,0 @@
-[system]
-hostname = "box"
-
-[programs.chromium.policies]
-BrowserSignin = 0
-ExtensionInstallForcelist = ["cjpalhdlnbpafiamejdnhcphjbkeiagm"]

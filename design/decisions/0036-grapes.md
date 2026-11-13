@@ -56,7 +56,7 @@ A platform can take any of grapes' modules by name, as 0030's list of distro's m
 | | wrath | grapes |
 |---|---|---|
 | what | the `wrath` command: evaluator, host API, builder, store, activator | what systems are made of |
-| holds | `crates/`, the tool's docs and design, acceptance | `recipes/`, `styles/`, `modules/`, `platform.toml`, `seed.pin`, `sources.lock`, module tests, VM scenarios, packaging findings |
+| holds | `crates/`, the tool's docs and design, acceptance, VM scenarios and their harness, bad configurations with their errors | `recipes/`, `styles/`, `modules/`, `platform.toml`, `seed.pin`, `sources.lock`, module tests, the options reference, packaging findings |
 | work | the store a checkout builds into (`build/work`), apart from either repository | |
 
 The store and the builder's records are the tool's: they don't live in the set, so the set can be

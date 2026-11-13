@@ -1,8 +1,0 @@
-[system]
-hostname = "box"
-
-[desktop]
-session = "niri"
-
-[fonts]
-monospace = "Iosevka Nerd Font"

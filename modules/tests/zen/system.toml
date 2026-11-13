@@ -1,5 +1,0 @@
-[system]
-hostname = "box"
-
-[users.ann]
-programs.zen.settings.zen.view.compact = true

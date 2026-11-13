@@ -2800,7 +2800,7 @@ mod crate_tests {
 
     #[test]
     fn every_recipe_in_the_repository_loads() {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build");
+        let repository = grapes_checkout();
         let files = crate::graph::recipe_files(&repository).unwrap();
         assert!(files.len() > 10, "{files:?}");
         for file in files {
@@ -3870,7 +3870,7 @@ mod style_goldens {
     }
 
     fn repository() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build")
+        super::grapes_checkout()
     }
 
     #[test]
@@ -4078,4 +4078,14 @@ mod hint_tests {
              directory to one under the prefix"
         );
     }
+}
+
+/// A checkout of grapes, whose recipes and styles tests read: `WRATH_GRAPES`, or one beside
+/// wrath's.
+#[cfg(test)]
+fn grapes_checkout() -> PathBuf {
+    std::env::var_os("WRATH_GRAPES").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../grapes"),
+        PathBuf::from,
+    )
 }

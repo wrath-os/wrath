@@ -9,27 +9,33 @@ use std::process::ExitCode;
 /// What every generated page starts with.
 const GENERATED: &str = "<!-- Made by `wrath dev docs` from the code. Don't edit it by hand. -->";
 
-/// Writes the reference pages under `root`, or with `check`, fails when one differs from what
-/// the code says.
+/// Writes the reference pages, wrath's under `root` and the options under the set whose
+/// `modules` they come from, or with `check`, fails when one differs from what the code says.
 pub fn write(
     root: &Path,
     modules: &Path,
     cli: &clap::Command,
     check: bool,
 ) -> Result<ExitCode, String> {
+    let own = root.join("docs/reference");
+    let set = modules.parent().unwrap_or(root).join("docs/reference");
     let pages = [
-        ("commands.md", "Commands", commands(cli)),
-        ("options.md", "Options", crate::options::markdown(modules)?),
+        (&own, "commands.md", "Commands", commands(cli)),
         (
+            &set,
+            "options.md",
+            "Options",
+            crate::options::markdown(modules)?,
+        ),
+        (
+            &own,
             "module-api.md",
             "The module API",
             wrath_starlark::module_api(),
         ),
     ];
-    let dir = root.join("docs/reference");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut stale = Vec::new();
-    for (file, title, body) in pages {
+    for (dir, file, title, body) in pages {
         let text = format!("{GENERATED}\n\n# {title}\n\n{}", body.trim_end()) + "\n";
         let path = dir.join(file);
         if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
@@ -39,6 +45,7 @@ pub fn write(
             stale.push(path.display().to_string());
             continue;
         }
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         println!("wrote {}", path.display());
     }

@@ -11,6 +11,9 @@ pub const HOST_API: u32 = 1;
 /// The file a set says what it is in.
 const SET_FILE: &str = "set.toml";
 
+/// The variable naming a checkout of grapes to build from when the command gives none.
+pub const GRAPES_VARIABLE: &str = "WRATH_GRAPES";
+
 struct Places {
     grapes: Result<PathBuf, String>,
     work: PathBuf,
@@ -22,13 +25,21 @@ static PLACES: OnceLock<Places> = OnceLock::new();
 /// given on the command line as `--source grapes=DIR`, for the configuration at `config`.
 pub fn init(root: &Path, grapes: Option<PathBuf>, config: Option<&Path>) {
     let cwd = std::env::current_dir().unwrap_or_default();
-    let grapes = match (grapes, config.and_then(pinned)) {
-        (Some(dir), _) => find(root, Some(dir), &cwd),
-        (None, Some(fetched)) => fetched,
-        (None, None) => find(root, None, &cwd),
+    // A checkout of grapes beside wrath's, for working on both and for their tests, which devenv
+    // names in `WRATH_GRAPES`; `--source` still decides for one command.
+    let grapes = grapes.or_else(|| std::env::var_os(GRAPES_VARIABLE).map(PathBuf::from));
+    let grapes = match grapes {
+        Some(dir) => find(root, Some(dir), &cwd),
+        None => config
+            .and_then(pinned)
+            .unwrap_or_else(|| find(root, None, &cwd)),
     };
+    let grapes = grapes.and_then(|dir| check(&dir).map(|()| dir));
+    if let Ok(dir) = &grapes {
+        wrath_build::seed::set_pin(dir.join("seed.pin"));
+    }
     let places = Places {
-        grapes: grapes.and_then(|dir| check(&dir).map(|()| dir)),
+        grapes,
         work: root.join("build/work"),
     };
     // Tests may decide more than once; the first decision stands.
@@ -129,8 +140,16 @@ pub fn modules(root: &Path) -> PathBuf {
         Ok(grapes) if grapes.join("modules").is_dir() => grapes.join("modules"),
         _ => root.join("modules"),
     };
-    // Errors name a module by this path, so a checkout's own reads `modules/x.star`.
     dir.strip_prefix(".").map(Path::to_path_buf).unwrap_or(dir)
+}
+
+/// A checkout of grapes for tests that run its modules: `WRATH_GRAPES`, or one beside wrath's.
+#[cfg(test)]
+pub(crate) fn checkout_for_tests() -> PathBuf {
+    std::env::var_os(GRAPES_VARIABLE).map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../grapes"),
+        PathBuf::from,
+    )
 }
 
 #[cfg(test)]

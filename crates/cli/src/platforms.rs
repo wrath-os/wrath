@@ -177,16 +177,20 @@ mod tests {
         (config, acme)
     }
 
-    fn wrath_modules() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules")
+    fn grapes_modules() -> PathBuf {
+        crate::places::checkout_for_tests().join("modules")
     }
 
     #[test]
     fn a_system_on_a_platform_has_its_modules_and_the_wrath_ones_it_keeps() {
         let (config, _acme) = on_acme("\"users\"");
-        let evaluation =
-            crate::system::evaluate_dir(config.path(), &wrath_modules(), ModuleOrder::Sorted, None)
-                .unwrap();
+        let evaluation = crate::system::evaluate_dir(
+            config.path(),
+            &grapes_modules(),
+            ModuleOrder::Sorted,
+            None,
+        )
+        .unwrap();
         let names: Vec<&str> = evaluation
             .modules()
             .iter()
@@ -201,9 +205,13 @@ mod tests {
     #[test]
     fn error_a_platform_keeping_a_module_wrath_doesnt_have() {
         let (config, _acme) = on_acme("\"userz\"");
-        let error =
-            crate::system::evaluate_dir(config.path(), &wrath_modules(), ModuleOrder::Sorted, None)
-                .unwrap_err();
+        let error = crate::system::evaluate_dir(
+            config.path(),
+            &grapes_modules(),
+            ModuleOrder::Sorted,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(error, "grapes has no module `userz`; did you mean `users`?");
     }
 

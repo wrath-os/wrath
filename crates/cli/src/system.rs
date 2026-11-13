@@ -194,7 +194,7 @@ mod tests {
     /// the system an image of it boots.
     fn installed_and_live() -> (Model, Model) {
         let config = repository().join("scenarios/fixtures/native-state");
-        let modules = repository().join("modules");
+        let modules = crate::places::checkout_for_tests().join("modules");
         let installed = evaluate_dir(&config, &modules, ModuleOrder::Sorted, None).unwrap();
         let live = evaluate_live(&config, &modules, None).unwrap();
         (
