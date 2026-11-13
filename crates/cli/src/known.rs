@@ -7,10 +7,15 @@ use std::path::Path;
 use wrath_eval::{Diagnostic, Evaluation, Site, Value, closest};
 use wrath_model::{Model, WRATH_SOURCE, package_source};
 
+/// Whether wrath has recipes here: a checkout does, and the wrath a machine runs doesn't.
+pub fn recipes_here(root: &Path) -> bool {
+    root.join("build/recipes").is_dir()
+}
+
 /// The names packages can have: every recipe's id and every build the configuration declares.
 pub fn names(root: &Path, model: &Model) -> Result<BTreeSet<String>, String> {
     let repository = root.join("build");
-    if !repository.join("recipes").is_dir() {
+    if !recipes_here(root) {
         return Err(NO_RECIPES.to_owned());
     }
     let mut names = wrath_build::graph::recipe_ids(&repository)?;
@@ -83,9 +88,10 @@ fn written_at(evaluation: &Evaluation, reference: &str) -> Option<wrath_eval::Sp
 }
 
 /// What a wrath without recipes says, such as the one a machine runs, which was built elsewhere.
-const NO_RECIPES: &str = "this wrath has no recipes, so it can't plan or build here; plan and \
-                          apply from a checkout of wrath, such as with `wrath apply --host` \
-                          from another machine";
+pub(crate) const NO_RECIPES: &str = concat!(
+    "this wrath has no recipes, so it can't plan or build here; plan and apply from a ",
+    "checkout of wrath, such as with `wrath apply --host` from another machine",
+);
 
 #[cfg(test)]
 mod tests {

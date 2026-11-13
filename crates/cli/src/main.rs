@@ -1216,7 +1216,9 @@ fn model_of(config: &Path, evaluation: Evaluation) -> Option<Model> {
 /// Whether every package `model` installs has a recipe or a build, printing an error for each one
 /// that doesn't, at where the configuration names it.
 fn packages_known(evaluation: &Evaluation, model: &Model) -> bool {
-    let Some(root) = REPOSITORY.get() else {
+    // Without recipes, as on a machine, there's nothing to check names against; what would build
+    // them says so itself.
+    let Some(root) = REPOSITORY.get().filter(|root| known::recipes_here(root)) else {
         return true;
     };
     let names = match known::names(root, model) {

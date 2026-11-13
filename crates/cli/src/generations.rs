@@ -73,6 +73,9 @@ fn encrypted_secrets(model: &Model) -> Result<BTreeMap<String, Vec<u8>>, String>
 /// Builds `model` into a generation with wrath's own builder, from the recipes in `build/` under
 /// `root`, and returns where it is. Packages without a recipe are left out, with a warning.
 pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBuf, String> {
+    if !crate::known::recipes_here(root) {
+        return Err(crate::known::NO_RECIPES.to_owned());
+    }
     let repository = root
         .join("build")
         .canonicalize()
@@ -944,6 +947,13 @@ fn days_since_epoch(date: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn building_without_recipes_says_where_to_build_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = build_generation(dir.path(), &Model::default(), false).unwrap_err();
+        assert!(error.contains("wrath apply --host"), "{error}");
+    }
 
     #[test]
     fn a_machine_has_a_model_only_when_it_runs_and_boots_it_and_isnt_trying_another() {
