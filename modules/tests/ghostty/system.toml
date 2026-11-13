@@ -1,0 +1,11 @@
+[system]
+hostname = "box"
+
+[programs.ghostty.settings]
+font-size = 12
+window-decoration = false
+keybind = ["ctrl+t=new_tab", "ctrl+w=close_surface"]
+
+[users.ann]
+
+[users.bob]

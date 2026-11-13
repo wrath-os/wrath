@@ -15,3 +15,43 @@ cp -r zig lib $DEST$PREFIX/lib/zig/
 ln -s ../lib/zig/zig $DEST$PREFIX/bin/zig
 '''
 smoke = ["bin/zig version"]
+
+# A terminal that draws with the GPU, in GTK 4 and libadwaita. Its interfaces are Blueprint, which
+# blueprint-compiler turns into `.ui` files as it builds, reading GTK's and libadwaita's typelibs.
+# The few libraries the system doesn't have, it builds its own copies of from its list.
+[[package]]
+id = "ghostty"
+version = "1.4.0"
+scope = "runtime"
+core = true
+extra_deps = [
+  "gtk4", "libadwaita", "gtk4-layer-shell", "fontconfig", "freetype", "harfbuzz", "glslang",
+  "highway", "libpng", "zlib", "bzip2", "wayland", "wayland-protocols", "libxkbcommon", "mesa",
+  "gettext", "ncurses", "glib", "blueprint-compiler", "pygobject", "glib-gir",
+  "gobject-introspection-gir", "harfbuzz-gir", "pango-gir", "gdk-pixbuf-gir", "graphene-gir",
+  "gtk4-gir", "harfbuzz-gobject", "libX11",
+]
+sources = [{ url = "https://release.files.ghostty.org/{version}/ghostty-{version}.tar.gz" }]
+smoke = ["bin/ghostty --version"]
+
+[package.zig]
+args = [
+  "-fno-sys=oniguruma", "-fno-sys=simdutf", "-fno-sys=spirv-cross", "-Dgtk-x11=false",
+  "-Demit-docs=false", "-Dinstalled-exe-path=$PREFIX/bin/ghostty",
+]
+# bzip2 ships no pkg-config file, which Ghostty asks for it by when it links freetype from the
+# system.
+prepare = '''
+mkdir -p /build/pkgconfig
+cat > /build/pkgconfig/bzip2.pc <<EOF
+Name: bzip2
+Description: bzip2 compression
+Version: 1.0.8
+Libs: -lbz2
+EOF
+export PKG_CONFIG_PATH=/build/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+'''
+
+[package.zig.env]
+PYTHONPATH = "$LAB_DEP_blueprint_compiler/site:$LAB_DEP_pygobject/site"
+GI_TYPELIB_PATH = "$LAB_DEP_glib_gir/lib/girepository-1.0:$LAB_DEP_gobject_introspection_gir/lib/girepository-1.0:$LAB_DEP_harfbuzz_gir/lib/girepository-1.0:$LAB_DEP_pango_gir/lib/girepository-1.0:$LAB_DEP_gdk_pixbuf_gir/lib/girepository-1.0:$LAB_DEP_graphene_gir/lib/girepository-1.0:$LAB_DEP_gtk4_gir/lib/girepository-1.0:$LAB_DEP_libadwaita/lib/girepository-1.0"

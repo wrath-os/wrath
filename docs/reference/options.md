@@ -102,6 +102,11 @@
 
 - `services.fprintd.enable`: a boolean, default false.
 
+### ghostty
+
+- `programs.ghostty.settings`: any value, default {}. Ghostty's settings, such as `font-size = 12` or `keybind = ["ctrl+t=new_tab"]`. The system's are every user's, and a user's own go over them.
+- `users.<name>.programs.ghostty.settings`: any value, default {}. Ghostty's settings, such as `font-size = 12` or `keybind = ["ctrl+t=new_tab"]`. The system's are every user's, and a user's own go over them.
+
 ### git
 
 - `users.<name>.programs.git.attributes`: a list of items that are each a string, default []. Attributes for every repository, such as `* merge=mergiraf`.

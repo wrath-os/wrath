@@ -417,6 +417,38 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Belongs in:** the glibc recipe.
 - **Status:** known; worked around in gobject-introspection.
 
+### Two packages with runtime dependencies couldn't share a build
+
+- **Seen in:** Ghostty, which builds with gtk4 and blueprint-compiler.
+- **What happened:** each package with `runtime_deps` records them in `lib/distro/runtime-deps`,
+  so a build view with two of them had one file from two packages, which is an error.
+- **What we did:** views leave out `lib/distro`, which builds have no use for.
+- **What would prevent it:** nothing more; the view test covers it.
+- **Belongs in:** the builder.
+- **Status:** fixed.
+
+### Zig links past the compiler wrapper
+
+- **Seen in:** Ghostty, whose program got a run path with GTK's directory alone, so it couldn't
+  find freetype.
+- **What happened:** the wrapper gives C and C++ programs the run paths of what they're built with;
+  `zig build` runs its own linker.
+- **What we did:** the zig style sets each ELF file's run path from `LAB_LINK_FLAGS` after the
+  build, and the build trims it as usual.
+- **What would prevent it:** the same step in any style whose tool links by itself.
+- **Belongs in:** the style.
+- **Status:** fixed for zig.
+
+### bzip2 has no pkg-config file
+
+- **Seen in:** Ghostty, which asks pkg-config for `bzip2` when it links freetype from the system.
+- **What happened:** bzip2 1.0.8 ships no `.pc`, so Zig didn't find it.
+- **What we did:** the recipe writes one for the build.
+- **What would prevent it:** bzip2's recipe installing a `bzip2.pc`, as distributions do; it's in
+  the toolset, so that waits for a change that rebuilds everything anyway.
+- **Belongs in:** the bzip2 recipe.
+- **Status:** worked around in Ghostty.
+
 ### Python packages a build uses are put on its path by hand
 
 - **Seen in:** gobject-introspection and glib's typelibs needing setuptools, as mesa needs mako

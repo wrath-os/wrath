@@ -1,0 +1,4 @@
+font-size = 12
+keybind = ctrl+t=new_tab
+keybind = ctrl+w=close_surface
+window-decoration = false

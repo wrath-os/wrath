@@ -1,0 +1,5 @@
+font-size = 14
+keybind = ctrl+t=new_tab
+keybind = ctrl+w=close_surface
+theme = Dracula
+window-decoration = false
