@@ -423,6 +423,7 @@ fn lay_out(
             for (name, text) in repart_definitions(partitions, disk, n as i64) {
                 std::fs::write(definitions.join(name), text).map_err(|e| e.to_string())?;
             }
+            println!("partitioning {}", device.display());
             run(Command::new("systemd-repart")
                 .arg("--dry-run=no")
                 .arg(if how.wipe {
@@ -440,6 +441,7 @@ fn lay_out(
         .iter()
         .filter(|p| p.encrypt && p.format.is_empty())
     {
+        println!("encrypting {}", partition.label);
         run(Command::new("cryptsetup")
             .args(["luksFormat", "--batch-mode", "--key-file"])
             .arg(key)
@@ -459,6 +461,7 @@ fn lay_out(
             _ => Vec::new(),
         };
         for partition in partitions.iter().filter(|p| p.encrypt) {
+            println!("letting the TPM unlock {}", partition.label);
             run(Command::new("systemd-cryptenroll")
                 .arg(format!("--unlock-key-file={}", key.display()))
                 .arg("--tpm2-device=auto")
@@ -470,6 +473,7 @@ fn lay_out(
         let members = strings(field(spanning, "members"));
         let name = text(spanning, "name");
         let raid = text(spanning, "raid");
+        println!("making the {name} filesystem");
         run(Command::new("mkfs.btrfs")
             .args([
                 "--force",
@@ -497,6 +501,7 @@ fn lay_out(
         }
         run(Command::new("umount").arg(&scratch))?;
     }
+    println!("mounting the new system at {}", how.target.display());
     let mut mounts = list(storage, "mounts").to_vec();
     // A mount point is made inside the filesystem mounted above it.
     mounts.sort_by_key(|mount| text(mount, "path").matches('/').count());

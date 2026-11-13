@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::{IsTerminal, Write};
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -455,6 +456,7 @@ pub fn install(system: &Path, target: &Path) -> Result<(), String> {
         ));
     }
     copy_onto(Path::new(ROOT), system, target)?;
+    println!("installing the boot loader");
     run(Command::new(system.join("bin/wrath"))
         .args(["activate", "--mode", "install", "--root"])
         .arg(target)
@@ -469,14 +471,28 @@ fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
     let store = target.join("store");
     fs::create_dir_all(&store).map_err(|e| format!("{}: {e}", store.display()))?;
     let lab = Lab::new(from);
-    for path in wrath_build::chain::runtime_closure(&lab, &generation)? {
-        if store.join(path.hash()).exists() {
-            continue;
+    let missing: Vec<_> = wrath_build::chain::runtime_closure(&lab, &generation)?
+        .into_iter()
+        .filter(|path| !store.join(path.hash()).exists())
+        .collect();
+    // A count that moves on a terminal, and one line elsewhere, such as in a log.
+    let terminal = std::io::stdout().is_terminal();
+    let total = missing.len();
+    if !terminal {
+        println!("copying the system: {total} store paths");
+    }
+    for (n, path) in missing.iter().enumerate() {
+        if terminal {
+            print!("\rcopying the system: {} of {total} store paths", n + 1);
+            let _ = std::io::stdout().flush();
         }
         run(Command::new("cp")
             .args(["-a", "--reflink=auto"])
-            .arg(lab.on_host(&path))
+            .arg(lab.on_host(path))
             .arg(&store))?;
+    }
+    if terminal && total > 0 {
+        println!();
     }
     let generations = target.join(GENERATIONS);
     fs::create_dir_all(&generations).map_err(|e| format!("{}: {e}", generations.display()))?;
