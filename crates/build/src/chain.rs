@@ -1053,10 +1053,7 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
                 .map_err(|e| format!("{}: {e}", path.display()))?;
             if let Some(version) = &package.version {
                 for source in &mut package.sources {
-                    source.url = source
-                        .url
-                        .replace("{version}", version)
-                        .replace("{series}", &series(version));
+                    source.url = expand(&source.url, version);
                 }
             }
             package
@@ -1464,6 +1461,14 @@ fn top_files(archive: &Path) -> Result<Vec<String>, String> {
     Ok(names.into_iter().collect())
 }
 
+/// `url` with `{version}`, `{series}` and `{underscored}`, the version with underscores for dots
+/// as some projects tag releases (`NSS_3_133_RTM`), filled in.
+fn expand(url: &str, version: &str) -> String {
+    url.replace("{version}", version)
+        .replace("{series}", &series(version))
+        .replace("{underscored}", &version.replace('.', "_"))
+}
+
 /// The release series a version belongs to, as GNOME names its download directories: `2.84` for
 /// `2.84.4`, and the major version alone from 40 on, so `51` for `51.1`.
 fn series(version: &str) -> String {
@@ -1494,6 +1499,15 @@ mod series_tests {
         assert_eq!(super::series("1.10.8"), "1.10");
         assert_eq!(super::series("51.1"), "51");
         assert_eq!(super::series("7"), "7");
+    }
+
+    #[test]
+    fn a_url_names_the_version_its_series_or_the_version_with_underscores() {
+        let url = "https://example.org/{series}/NSS_{underscored}_RTM/nss-{version}.tar.gz";
+        assert_eq!(
+            super::expand(url, "3.133"),
+            "https://example.org/3.133/NSS_3_133_RTM/nss-3.133.tar.gz"
+        );
     }
 }
 
