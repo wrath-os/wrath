@@ -448,7 +448,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    places::init(&root, grapes);
+    let configured = find_config(cli.config.as_deref()).ok();
+    places::init(&root, grapes, configured.as_deref());
     if let Ok(checkout) = std::path::absolute(&root) {
         wrath_build::chain::set_wrath_tree(&checkout);
     }

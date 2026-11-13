@@ -19,11 +19,16 @@ struct Places {
 static PLACES: OnceLock<Places> = OnceLock::new();
 
 /// Decides, once per command, where grapes and the work are for wrath at `root`, with `grapes`
-/// given on the command line as `--source grapes=DIR`.
-pub fn init(root: &Path, grapes: Option<PathBuf>) {
+/// given on the command line as `--source grapes=DIR`, for the configuration at `config`.
+pub fn init(root: &Path, grapes: Option<PathBuf>, config: Option<&Path>) {
     let cwd = std::env::current_dir().unwrap_or_default();
+    let grapes = match (grapes, config.and_then(pinned)) {
+        (Some(dir), _) => find(root, Some(dir), &cwd),
+        (None, Some(fetched)) => fetched,
+        (None, None) => find(root, None, &cwd),
+    };
     let places = Places {
-        grapes: find(root, grapes, &cwd).and_then(|dir| check(&dir).map(|()| dir)),
+        grapes: grapes.and_then(|dir| check(&dir).map(|()| dir)),
         work: root.join("build/work"),
     };
     // Tests may decide more than once; the first decision stands.
@@ -44,6 +49,21 @@ pub fn work() -> PathBuf {
     PLACES
         .get()
         .map_or_else(|| PathBuf::from("build/work"), |places| places.work.clone())
+}
+
+/// Grapes as the configuration at `config` declares it, `[sources.grapes]`, fetched at the
+/// version its lock pins, as includes are. `None` when it declares none.
+fn pinned(config: &Path) -> Option<Result<PathBuf, String>> {
+    let url = wrath_eval::declared_source(&wrath_eval::DirFs::new(config), None, "grapes")?;
+    let tree = wrath_eval::ConfigFs::source(&crate::fetch::Sourced::dir(config), "grapes", &url);
+    Some(
+        tree.map_err(|e| format!("cannot fetch grapes: {e}"))
+            .and_then(|tree| {
+                tree.dir()
+                    .map(Path::to_path_buf)
+                    .ok_or_else(|| "grapes isn't on disk".to_owned())
+            }),
+    )
 }
 
 /// Grapes as given, or a checkout of it: wrath's own `build/` while grapes still lives there,

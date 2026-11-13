@@ -160,7 +160,7 @@ impl Model {
                 .map(|(name, source)| (name.clone(), Source::follow(&source.url)))
                 .collect(),
             platform: match evaluation.platform() {
-                wrath_eval::Platform::Wrath => None,
+                wrath_eval::Platform::Grapes => None,
                 wrath_eval::Platform::Source { name, .. } => Some(name.clone()),
             },
             ..Self::default()

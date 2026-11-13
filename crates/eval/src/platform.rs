@@ -1,4 +1,4 @@
-//! Which platform a system builds on: wrath's own modules, or a platform from a source, chosen
+//! Which platform a system builds on: grapes' modules, or a platform from a source, chosen
 //! with `platform` in the starting file.
 
 use std::collections::BTreeMap;
@@ -21,9 +21,9 @@ const PLATFORM_FILE: &str = "platform.toml";
 /// The platform a configuration builds on.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Platform {
-    /// Wrath's own modules.
+    /// Grapes' modules (0036).
     #[default]
-    Wrath,
+    Grapes,
     /// The platform in a source: its name, the URL it follows, and the platform's file in it.
     Source {
         name: String,
@@ -33,33 +33,33 @@ pub enum Platform {
 }
 
 impl Platform {
-    /// How the plan and the model name it: `wrath`, or the source's name.
+    /// How the plan and the model name it: `grapes`, or the source's name.
     pub fn name(&self) -> &str {
         match self {
-            Self::Wrath => "wrath",
+            Self::Grapes => "grapes",
             Self::Source { name, .. } => name,
         }
     }
 }
 
 /// The platform `fs` builds on, as the starting file for `role` chooses it, read before the
-/// modules are loaded. Only a system chooses one; projects and homes use wrath's.
+/// modules are loaded. Only a system chooses one; projects and homes use grapes'.
 pub fn platform(fs: &dyn ConfigFs, role: Option<&str>) -> Result<Platform, String> {
     if load::kind_of(fs) != ConfigKind::System {
-        return Ok(Platform::Wrath);
+        return Ok(Platform::Grapes);
     }
     let mut sources = Sources::default();
     let path = load::starting_file(fs, role).map_err(|d| render(&[d], &sources))?;
     let Ok(text) = fs.read(&path) else {
         // Loading the configuration says what's missing.
-        return Ok(Platform::Wrath);
+        return Ok(Platform::Grapes);
     };
     let file = sources.add(fs.display(&path), text);
     let Ok(table) = DeTable::parse(sources.text(file)) else {
-        return Ok(Platform::Wrath);
+        return Ok(Platform::Grapes);
     };
     let Some(value) = table.get_ref().get(PLATFORM) else {
-        return Ok(Platform::Wrath);
+        return Ok(Platform::Grapes);
     };
     let mut declared = BTreeMap::new();
     if let Some(DeValue::Table(listed)) = table.get_ref().get(SOURCES).map(Spanned::get_ref) {
@@ -72,6 +72,22 @@ pub fn platform(fs: &dyn ConfigFs, role: Option<&str>) -> Result<Platform, Strin
     parse(value, file, &declared).map_err(|d| render(&[d], &sources))
 }
 
+/// The URL of the source `name` the starting file of `fs` for `role` declares, if it declares
+/// one, read before anything is evaluated, as where grapes is comes first.
+pub fn declared_source(fs: &dyn ConfigFs, role: Option<&str>, name: &str) -> Option<String> {
+    let mut sources = Sources::default();
+    let path = load::starting_file(fs, role).ok()?;
+    let file = sources.add(fs.display(&path), fs.read(&path).ok()?);
+    let table = DeTable::parse(sources.text(file)).ok()?;
+    let Some(DeValue::Table(listed)) = table.get_ref().get(SOURCES).map(Spanned::get_ref) else {
+        return None;
+    };
+    let source = listed.iter().find(|(key, _)| key.get_ref() == name)?.1;
+    load::source_url(name, source, file)
+        .ok()
+        .map(|(url, _)| url)
+}
+
 /// `platform`'s value in the starting file `file`, whose `[sources]` are `declared`.
 pub(crate) fn parse(
     value: &Spanned<DeValue<'_>>,
@@ -80,9 +96,9 @@ pub(crate) fn parse(
 ) -> Result<Platform, Diagnostic> {
     let span = Span::new(file, value.span());
     match value.get_ref() {
-        DeValue::String(name) if name == "wrath" => Ok(Platform::Wrath),
+        DeValue::String(name) if name == "grapes" => Ok(Platform::Grapes),
         DeValue::String(name) => Err(Diagnostic::error(format!("there's no platform `{name}`"))
-            .label(span, "only `wrath` is built in")
+            .label(span, "only `grapes` is built in")
             .note(format!(
                 "help: one from a source is `platform = {{ source = \"{name}\" }}`"
             ))),

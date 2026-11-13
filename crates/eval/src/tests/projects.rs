@@ -90,5 +90,5 @@ fn error_a_project_choosing_a_platform() {
         "{errors}"
     );
     let config = MemFs::new([("wrath.toml", "platform = { source = \"acme\" }\n")]);
-    assert_eq!(crate::platform(&config, None), Ok(crate::Platform::Wrath));
+    assert_eq!(crate::platform(&config, None), Ok(crate::Platform::Grapes));
 }

@@ -10,10 +10,10 @@ fn chosen(files: &[(&str, &str)]) -> Result<Platform, String> {
 }
 
 #[test]
-fn a_system_builds_on_wrath_unless_its_starting_file_says_otherwise() {
-    assert_eq!(chosen(&[("system.toml", SYSTEM)]), Ok(Platform::Wrath));
-    let wrath = format!("platform = \"wrath\"\n{SYSTEM}");
-    assert_eq!(chosen(&[("system.toml", &wrath)]), Ok(Platform::Wrath));
+fn a_system_builds_on_grapes_unless_its_starting_file_says_otherwise() {
+    assert_eq!(chosen(&[("system.toml", SYSTEM)]), Ok(Platform::Grapes));
+    let grapes = format!("platform = \"grapes\"\n{SYSTEM}");
+    assert_eq!(chosen(&[("system.toml", &grapes)]), Ok(Platform::Grapes));
     let acme = format!("platform = {{ source = \"acme\" }}\n{SYSTEM}{ACME}");
     let expected = Platform::Source {
         name: "acme".into(),
@@ -39,7 +39,7 @@ fn a_role_chooses_its_own_platform() {
         ("roles/desk.toml", SYSTEM),
     ];
     let config = MemFs::new(files.iter().copied());
-    assert_eq!(platform(&config, Some("desk")), Ok(Platform::Wrath));
+    assert_eq!(platform(&config, Some("desk")), Ok(Platform::Grapes));
     assert_eq!(platform(&config, Some("kiosk")).unwrap().name(), "acme");
 }
 
@@ -51,7 +51,7 @@ fn error_a_platform_that_isnt_built_in() {
      --> system.toml:1:12
       |
     1 | platform = "acme"
-      |            ^^^^^^ only `wrath` is built in
+      |            ^^^^^^ only `grapes` is built in
       = help: one from a source is `platform = { source = "acme" }`
     "#);
 }
@@ -89,4 +89,17 @@ fn error_a_platform_chosen_anywhere_but_the_starting_file() {
       | ^^^^^^^^ chosen here
       = help: move it to `system.toml`, or to the role's file
     "#);
+}
+
+#[test]
+fn a_configuration_says_where_its_grapes_is_before_anything_runs() {
+    let grapes = format!("{SYSTEM}\n[sources.grapes]\nurl = \"path:/srv/grapes\"\n");
+    let fs = MemFs::new([("system.toml", grapes.as_str())]);
+    assert_eq!(
+        crate::declared_source(&fs, None, "grapes").as_deref(),
+        Some("path:/srv/grapes")
+    );
+    assert_eq!(crate::declared_source(&fs, None, "acme"), None);
+    let none = MemFs::new([("system.toml", SYSTEM)]);
+    assert_eq!(crate::declared_source(&none, None, "grapes"), None);
 }

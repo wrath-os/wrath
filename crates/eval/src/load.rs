@@ -91,7 +91,7 @@ pub(crate) fn load(
         diagnostics: Vec::new(),
         kind,
         starting: None,
-        platform: Platform::Wrath,
+        platform: Platform::Grapes,
     };
     let start = match kind {
         ConfigKind::System => starting_file(fs, role_given),
