@@ -230,11 +230,7 @@ fn link_homes(system: &Path, activation: &Value) {
         let name = text(home, "name");
         let owner = users.get(name).zip(groups.get(text(home, "group")));
         let source = system.join("users").join(name).join("files");
-        let through = Path::new("/")
-            .join(crate::activate::RUNNING)
-            .join("users")
-            .join(name)
-            .join("files");
+        let through = crate::homes::through_running(name);
         let files = crate::homes::Files {
             user: name,
             home: Path::new(text(home, "home")),
@@ -242,13 +238,10 @@ fn link_homes(system: &Path, activation: &Value) {
             source: &source,
             through: &through,
         };
-        let record = Path::new(HOME_RECORDS).join(name);
+        let record = Path::new(crate::homes::HOME_RECORDS).join(name);
         match crate::homes::link(Path::new("/"), &files, &record) {
             Ok(notes) => notes.iter().for_each(|note| eprintln!("distro: {note}")),
             Err(e) => eprintln!("distro: linking {name}'s files failed: {e}"),
         }
     }
 }
-
-/// Where distro keeps the list of what it linked into each home.
-const HOME_RECORDS: &str = "/var/lib/distro/homes";

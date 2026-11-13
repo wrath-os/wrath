@@ -478,6 +478,7 @@ pub fn status_json(model: &Model) -> serde_json::Value {
         "running": running,
         "model": hash,
         "locked": model.is_locked(),
+        "replaced_home_files": crate::homes::replaced_in_homes(Path::new("/")),
     })
 }
 
@@ -522,6 +523,9 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
     println!("{}", matching(here::running_model_hash().as_deref(), model));
     if let Some(unfinished) = here::unfinished() {
         println!("{}", unfinished_note(&unfinished.error));
+    }
+    for note in crate::homes::replaced_in_homes(Path::new("/")) {
+        println!("{note}");
     }
     if !model.is_locked() {
         println!("the lock doesn't pin every source yet; `distro apply` pins them first");
