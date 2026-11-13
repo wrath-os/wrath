@@ -1,0 +1,20 @@
+# The Framework's layout: one encrypted disk the TPM unlocks, with homes on a subvolume of their
+# own, and a user with a file in their home.
+[system]
+hostname = "t-01"
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest", encrypt = true }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+subvolumes."@store" = { mount = "/store" }
+subvolumes."@home" = { mount = "/home" }
+
+[unlock]
+tpm2 = true
+
+[users.demo.files."~/.config/app/settings"]
+text = "from the configuration\n"

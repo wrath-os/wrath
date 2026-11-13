@@ -18,12 +18,24 @@ use crate::templates;
 const SECRETS: &str = "/run/secrets";
 const TEMPLATES: &str = "/run/wrath/templates";
 
-/// Does what `system` asks of the machine it's being switched on or booted into.
+/// Does what `system` asks of the machine it's being switched on: the machine's part, then
+/// users' homes.
 pub fn apply(system: &Path) -> Result<(), String> {
+    at_boot(system)?;
+    homes(system)
+}
+
+fn activation_of(system: &Path) -> Result<Value, String> {
     let path = system.join("activation.json");
     let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let activation: Value =
-        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The machine's part of what `system` asks, which the first program does at boot: secrets,
+/// filled-in files and the hostname. Homes wait for `wrath-homes.service`, since /home may be a
+/// filesystem of its own that isn't mounted yet.
+pub fn at_boot(system: &Path) -> Result<(), String> {
+    let activation = activation_of(system)?;
     // Programs from the system being activated, which may not be on the path yet at boot.
     let sw = system.join("bin");
     if activation["secrets"]
@@ -47,6 +59,14 @@ pub fn apply(system: &Path) -> Result<(), String> {
     if activation["hostname_filled"] == Value::Bool(true) {
         set_hostname();
     }
+    Ok(())
+}
+
+/// Users' homes as `system` has them: their directories, what's kept of them, and their files
+/// linked in. At boot this runs once /home is mounted.
+pub fn homes(system: &Path) -> Result<(), String> {
+    let activation = activation_of(system)?;
+    let sw = system.join("bin");
     run(
         Command::new(sw.join("systemd-tmpfiles"))
             .args(["--create", "/etc/tmpfiles.d/wrath-homes.conf"]),

@@ -29,6 +29,8 @@ pub enum Mode {
     Init,
     /// Install the boot loader on a machine being installed, with this as its first generation.
     Install,
+    /// Put users' homes in place at boot, once /home is mounted, as `wrath-homes.service` does.
+    Homes,
 }
 
 /// Accounts are copied into /etc rather than linked, so systemd-sysusers can add the system's
@@ -44,6 +46,7 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
         Mode::Switch => boot_entries(root, true).and_then(|()| switch(root, system)),
         Mode::Test => switch(root, system),
         Mode::Init => init(system),
+        Mode::Homes => crate::on_machine::homes(system),
         Mode::Install => {
             let esp = root.join("boot");
             run(Command::new("bootctl")
@@ -545,7 +548,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         state.save_accounts(root);
     }
     warn(make_wrappers(root, system, &model)?);
-    crate::on_machine::apply(system)
+    crate::on_machine::at_boot(system)
 }
 
 /// The running system, under the root.

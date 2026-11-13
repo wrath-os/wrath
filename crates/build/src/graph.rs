@@ -844,6 +844,15 @@ fn unit_action<'a>(
 
 const INIT: &str = include_str!("../system/init");
 const INITRD_ROOT: &str = include_str!("../system/initrd-root");
+
+/// Users' homes put in place at boot: their directories, what's kept of them and their files,
+/// once /home is mounted, which may be a filesystem of its own, and before anyone logs in. The
+/// first program does the rest before systemd starts, too early for /home.
+const HOMES_UNIT: &str = "[Unit]\nDescription=Put users' homes in place\n\
+    DefaultDependencies=no\nRequiresMountsFor=/home\nAfter=local-fs.target\n\
+    Before=systemd-user-sessions.service shutdown.target\nConflicts=shutdown.target\n\n\
+    [Service]\nType=oneshot\nRemainAfterExit=yes\n\
+    ExecStart=/run/system-booted/bin/wrath activate --mode homes /run/system-booted\n";
 const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
 
 /// The label of the file system a system's root is on.
@@ -1119,6 +1128,14 @@ fn lower<'a>(
             "etc/tmpfiles.d/wrath-homes.conf",
             0o644,
             homes(model)?,
+            &[],
+            packages,
+        )?,
+        text(
+            "base.users",
+            "etc/systemd/system/wrath-homes.service",
+            0o644,
+            HOMES_UNIT.to_owned(),
             &[],
             packages,
         )?,
@@ -1940,7 +1957,7 @@ const LINKED: [&str; 2] = ["systemd", "linux"];
 
 /// Links every system has, where `@id@` stands for the path of package `id`, one of [`LINKED`].
 /// They're part of the action's key, so changing one changes the action.
-const FIXED_LINKS: [(&str, &str); 6] = [
+const FIXED_LINKS: [(&str, &str); 7] = [
     // wrath starts systemd from here at boot.
     ("systemd", "@systemd@"),
     // The modules of the kernel, which wrath links at /lib/modules when the system boots.
@@ -1948,6 +1965,11 @@ const FIXED_LINKS: [(&str, &str); 6] = [
     (
         "etc/systemd/system/sockets.target.wants/dbus.socket",
         "../dbus.socket",
+    ),
+    // Users' homes, once /home is mounted.
+    (
+        "etc/systemd/system/multi-user.target.wants/wrath-homes.service",
+        "../wrath-homes.service",
     ),
     (
         "etc/systemd/system/default.target",

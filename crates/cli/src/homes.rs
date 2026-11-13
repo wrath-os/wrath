@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::os::unix::fs::{lchown, symlink};
+use std::os::unix::fs::{PermissionsExt, lchown, symlink};
 use std::path::{Path, PathBuf};
 
 use crate::trees::at;
@@ -128,6 +128,8 @@ pub fn link(root: &Path, files: &Files<'_>, record: &Path) -> Result<Vec<String>
         .map(|relative| format!("{}\n", relative.display()))
         .collect();
     fs::write(record, listed).map_err(at(record))?;
+    // Root's alone to change, whatever umask it was written with, such as the first program's.
+    fs::set_permissions(record, fs::Permissions::from_mode(0o644)).map_err(at(record))?;
     Ok(notes)
 }
 
@@ -258,6 +260,8 @@ mod tests {
             "a file the system no longer has is unlinked"
         );
         assert!(home.join(".bashrc").exists(), "the user's own stays");
+        let mode = fs::metadata(&record).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "only root changes the record");
         let listed = fs::read_to_string(&record).unwrap();
         assert!(
             listed.contains(".config/systemd/user/sync.service"),
