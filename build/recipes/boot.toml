@@ -66,6 +66,10 @@ scripts/config --enable FW_LOADER_COMPRESS --enable FW_LOADER_COMPRESS_ZSTD
 scripts/config --module BT --enable BT_BREDR --enable BT_LE --module BT_RFCOMM --module BT_BNEP \
     --module BT_HIDP --module BT_HCIBTUSB --enable BT_HCIBTUSB_MTK --enable BT_HCIBTUSB_AUTOSUSPEND \
     --module UHID
+# Sound: the HD-audio codecs behind the controller, the Framework Desktop's Realtek jack and its
+# graphics' HDMI and DisplayPort, which the controller finds nothing on without; and USB headsets.
+scripts/config --enable SND_HDA_CODEC_REALTEK --enable SND_HDA_CODEC_HDMI \
+    --enable SND_HDA_GENERIC --module SND_USB_AUDIO
 make olddefconfig
 make -j$NPROC bzImage modules
 mkdir -p $DEST$PREFIX /build/tools
