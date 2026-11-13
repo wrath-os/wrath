@@ -1,4 +1,4 @@
-//! `distro options --schema`: the options as a JSON Schema, so an editor that reads one, such as
+//! `wrath options --schema`: the options as a JSON Schema, so an editor that reads one, such as
 //! taplo, completes, checks and explains what's written in a configuration's TOML files.
 //!
 //! Everywhere a value goes, the forms the loader accepts in its place go too: a default written
@@ -8,7 +8,7 @@
 
 use serde_json::{Map, Value as Json, json};
 
-use distro_eval::{ListMerge, OptionSpec, Type, Value};
+use wrath_eval::{ListMerge, OptionSpec, Type, Value};
 
 /// The schema of a whole configuration file whose options start at `root`. A file of the
 /// configuration itself, as opposed to one about a single user, has `include`, `[sources]` and
@@ -151,7 +151,7 @@ fn include() -> Json {
     })
 }
 
-/// `[sources.NAME]`, each a URL distro fetches and the lock pins.
+/// `[sources.NAME]`, each a URL wrath fetches and the lock pins.
 fn sources() -> Json {
     json!({
         "description": "Where files to include come from, by name, pinned in the lock.",

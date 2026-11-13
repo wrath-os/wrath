@@ -1,4 +1,4 @@
-//! `distro secret`: editing and re-encrypting secrets with age. Needs `age` on PATH.
+//! `wrath secret`: editing and re-encrypting secrets with age. Needs `age` on PATH.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,11 +41,11 @@ impl Setup {
         self.config().join("secrets/api-token.age")
     }
 
-    /// Runs `distro secret` with an editor that runs the shell code `edit`.
+    /// Runs `wrath secret` with an editor that runs the shell code `edit`.
     fn run(&self, args: &[&str], edit: &str) -> Output {
         let editor = self.config().join("editor.sh");
         fs::write(&editor, format!("#!/bin/sh\nset -e\n{edit}\n")).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_distro"))
+        Command::new(env!("CARGO_BIN_EXE_wrath"))
             .arg("secret")
             .args(args)
             .arg("--config")

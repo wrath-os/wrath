@@ -21,7 +21,7 @@ const ROOM_MIB: u64 = 2048;
 
 /// Makes `out` a disk image that boots `generation`, with `options` added to the kernel's own,
 /// such as where its console is, and, when given, the `configuration` it was built from in
-/// `/etc/distro`, so distro on it can plan. `work` holds what's put together on the way.
+/// `/etc/wrath`, so wrath on it can plan. `work` holds what's put together on the way.
 pub fn image(
     lab: &Lab,
     generation: &StorePath,
@@ -48,7 +48,7 @@ pub fn image(
 }
 
 /// The root file system: every store path `generation` needs, the generation as generation 1
-/// and the current one, and the directories distro expects before it puts the system in place.
+/// and the current one, and the directories wrath expects before it puts the system in place.
 pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), String> {
     let store = root.join("store");
     fs::create_dir_all(&store).map_err(with_path(&store))?;
@@ -73,10 +73,10 @@ pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), S
     Ok(())
 }
 
-/// Copies `configuration` into the root as the system's own, in `/etc/distro`, leaving out what
+/// Copies `configuration` into the root as the system's own, in `/etc/wrath`, leaving out what
 /// was built or written in it, such as a VCS's files.
 pub fn keep_configuration(configuration: &Path, root: &Path) -> Result<(), String> {
-    let to = root.join("etc/distro");
+    let to = root.join("etc/wrath");
     fs::create_dir_all(&to).map_err(with_path(&to))?;
     run(
         Command::new("cp")
@@ -92,7 +92,7 @@ pub fn keep_configuration(configuration: &Path, root: &Path) -> Result<(), Strin
 }
 
 /// Where a link in a generation points, as a path in the store on the host, and its name on the
-/// ESP: the store path and file, such as `<hash>-bzImage`, which is how distro names them when it
+/// ESP: the store path and file, such as `<hash>-bzImage`, which is how wrath names them when it
 /// writes boot entries on the machine.
 fn boot_file(lab: &Lab, generation: &StorePath, name: &str) -> Result<(PathBuf, String), String> {
     let link = lab.on_host(generation).join(name);
@@ -104,7 +104,7 @@ fn boot_file(lab: &Lab, generation: &StorePath, name: &str) -> Result<(PathBuf, 
     Ok((lab.work.join("store").join(inside), on_esp))
 }
 
-/// The boot entry for `generation`, as distro on the machine would write it for generation 1,
+/// The boot entry for `generation`, as wrath on the machine would write it for generation 1,
 /// titled `title`.
 pub fn entry(
     title: &str,
@@ -114,14 +114,14 @@ pub fn entry(
     generation: &StorePath,
 ) -> String {
     format!(
-        "title {title}\nversion generation 1\nsort-key distro\nlinux /EFI/distro/{kernel}\n\
-         initrd /EFI/distro/{initrd}\noptions {params} init={}/init\n",
+        "title {title}\nversion generation 1\nsort-key wrath\nlinux /EFI/wrath/{kernel}\n\
+         initrd /EFI/wrath/{initrd}\noptions {params} init={}/init\n",
         generation.inside()
     )
 }
 
 /// What a system calls itself in the boot menu, from its `/etc/os-release`: its `PRETTY_NAME`, or
-/// its `NAME`, or `distro`.
+/// its `NAME`, or `wrath`.
 pub fn release_name(os_release: &str) -> String {
     let field = |key: &str| {
         os_release.lines().find_map(|line| {
@@ -132,7 +132,7 @@ pub fn release_name(os_release: &str) -> String {
     };
     field("PRETTY_NAME")
         .or_else(|| field("NAME"))
-        .unwrap_or_else(|| "distro".to_owned())
+        .unwrap_or_else(|| "wrath".to_owned())
 }
 
 /// The ESP's files: systemd-boot as the firmware's default loader, the kernel and the initrd,
@@ -143,7 +143,7 @@ pub fn esp_tree(
     options: &str,
     esp: &Path,
 ) -> Result<(), String> {
-    for dir in ["EFI/BOOT", "EFI/distro", "loader/entries"] {
+    for dir in ["EFI/BOOT", "EFI/wrath", "loader/entries"] {
         fs::create_dir_all(esp.join(dir)).map_err(with_path(esp))?;
     }
     let (systemd, _) = boot_file(lab, generation, "systemd")?;
@@ -152,7 +152,7 @@ pub fn esp_tree(
     let mut names = Vec::new();
     for part in ["kernel", "initrd"] {
         let (from, name) = boot_file(lab, generation, part)?;
-        copy(&from, &esp.join("EFI/distro").join(&name))?;
+        copy(&from, &esp.join("EFI/wrath").join(&name))?;
         names.push(name);
     }
     let params_file = lab.on_host(generation).join("kernel-params");
@@ -165,10 +165,10 @@ pub fn esp_tree(
     let release = fs::read_to_string(lab.on_host(generation).join("etc/os-release"));
     let title = release_name(&release.unwrap_or_default());
     let text = entry(&title, &names[0], &names[1], &params, generation);
-    write(&esp.join("loader/entries/distro-1.conf"), &text)?;
+    write(&esp.join("loader/entries/wrath-1.conf"), &text)?;
     write(
         &esp.join("loader/loader.conf"),
-        "default distro-1.conf\ntimeout 3\neditor no\n",
+        "default wrath-1.conf\ntimeout 3\neditor no\n",
     )
 }
 
@@ -297,7 +297,7 @@ mod tests {
         symlink(format!("{}/bzImage", linux.inside()), g.join("kernel")).unwrap();
         symlink(format!("{}/initrd", initrd.inside()), g.join("initrd")).unwrap();
         symlink(systemd.inside(), g.join("systemd")).unwrap();
-        fs::write(g.join("kernel-params"), "root=LABEL=distro-root rw\n").unwrap();
+        fs::write(g.join("kernel-params"), "root=LABEL=wrath-root rw\n").unwrap();
         (dir, lab, generation)
     }
 
@@ -336,7 +336,7 @@ mod tests {
         fs::write(configuration.join("users/demo.toml"), "\n").unwrap();
         let root = dir.path().join("root");
         keep_configuration(&configuration, &root).unwrap();
-        let etc = root.join("etc/distro");
+        let etc = root.join("etc/wrath");
         assert_eq!(
             fs::read_to_string(etc.join("system.toml")).unwrap(),
             "[system]\n"
@@ -353,19 +353,19 @@ mod tests {
         let read = |path: &str| fs::read_to_string(esp.join(path)).unwrap();
         assert_eq!(read("EFI/BOOT/BOOTX64.EFI"), "loader");
         let kernel = format!("{}-bzImage", "b".repeat(40));
-        assert_eq!(read(&format!("EFI/distro/{kernel}")), "kernel");
-        let entry = read("loader/entries/distro-1.conf");
+        assert_eq!(read(&format!("EFI/wrath/{kernel}")), "kernel");
+        let entry = read("loader/entries/wrath-1.conf");
         assert!(
-            entry.contains(&format!("linux /EFI/distro/{kernel}\n")),
+            entry.contains(&format!("linux /EFI/wrath/{kernel}\n")),
             "{entry}"
         );
         assert!(
             entry.contains(&format!(
-                "options root=LABEL=distro-root rw console=ttyS0 init={}/init\n",
+                "options root=LABEL=wrath-root rw console=ttyS0 init={}/init\n",
                 generation.inside()
             )),
             "{entry}"
         );
-        assert!(read("loader/loader.conf").starts_with("default distro-1.conf\n"));
+        assert!(read("loader/loader.conf").starts_with("default wrath-1.conf\n"));
     }
 }

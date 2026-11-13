@@ -9,11 +9,11 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, chown, lchown, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use distro_eval::Value;
-use distro_model::Model;
+use wrath_eval::Value;
+use wrath_model::Model;
 
 /// Under the state path: the users and groups the machine has, since /etc starts empty.
-const ACCOUNTS: &str = "var/lib/distro/accounts";
+const ACCOUNTS: &str = "var/lib/wrath/accounts";
 const ACCOUNT_FILES: [&str; 3] = ["passwd", "group", "shadow"];
 const MACHINE_ID: &str = "/etc/machine-id";
 
@@ -109,7 +109,7 @@ pub(crate) fn make_dirs(from: &Path, dir: &Path, owner: Owner) -> Result<(), Str
 
 fn say(result: Result<(), String>) {
     if let Err(message) = result {
-        eprintln!("distro: keeping state: {message}");
+        eprintln!("wrath: keeping state: {message}");
     }
 }
 
@@ -335,7 +335,7 @@ impl State {
         let groups = crate::activate::ids(Path::new("/etc/group"));
         for home in &self.homes {
             let (Some(uid), Some(gid)) = (users.get(&home.user), groups.get(&home.group)) else {
-                eprintln!("distro: keeping state: there's no user `{}`", home.user);
+                eprintln!("wrath: keeping state: there's no user `{}`", home.user);
                 continue;
             };
             let owner = Some((*uid, *gid));

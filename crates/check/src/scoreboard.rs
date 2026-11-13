@@ -133,10 +133,10 @@ mod tests {
         let vm = scenario("m1", "vm-boots", "A VM boots");
         let failure = Failure {
             reason: "unit `sshd.service` is not active (state: failed)".into(),
-            logs: Some(PathBuf::from("target/distro-check/runs/m1-vm-boots")),
+            logs: Some(PathBuf::from("target/wrath-check/runs/m1-vm-boots")),
             reproduction: Some(Reproduction {
                 image: PathBuf::from("build/work/abc.img"),
-                command: "distro dev test acceptance/m1/vm-boots.toml --image build/work/abc.img"
+                command: "wrath dev test acceptance/m1/vm-boots.toml --image build/work/abc.img"
                     .into(),
             }),
         };

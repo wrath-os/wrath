@@ -1,7 +1,7 @@
 # Setting up a machine
 
-Once distro runs a machine (see [Installing](installing.md)), everything about
-it lives in `/etc/distro`. This page is about what goes in there and the day-to-day loop of
+Once wrath runs a machine (see [Installing](installing.md)), everything about
+it lives in `/etc/wrath`. This page is about what goes in there and the day-to-day loop of
 changing it.
 
 ## The loop
@@ -9,19 +9,19 @@ changing it.
 It's the same three steps every time:
 
 ```sh
-$EDITOR /etc/distro/system.toml
-distro plan      # what would change, and when it takes effect
-distro apply     # shows the plan again, asks, then switches
+$EDITOR /etc/wrath/system.toml
+wrath plan      # what would change, and when it takes effect
+wrath apply     # shows the plan again, asks, then switches
 ```
 
 `apply` builds what's new, makes a new generation and switches to it. It also writes anything
-new into `distro.lock`. Keep `/etc/distro` in git (or jj) and you have the history of every
-change you meant to make, next to `distro history`, which has every system you actually ran.
+new into `wrath.lock`. Keep `/etc/wrath` in git (or jj) and you have the history of every
+change you meant to make, next to `wrath history`, which has every system you actually ran.
 
-When you're tuning something, such as a theme or your niri binds, let distro follow along:
+When you're tuning something, such as a theme or your niri binds, let wrath follow along:
 
 ```sh
-distro apply --watch
+wrath apply --watch
 ```
 
 Each save is tried at once when it only changes programs' own settings, files a bad edit can't
@@ -37,7 +37,7 @@ your password once, when watching starts.
 it grows, split it up and include the pieces:
 
 ```toml
-# /etc/distro/system.toml
+# /etc/wrath/system.toml
 include = ["desktop.toml", "users/*.toml"]
 
 [system]
@@ -54,7 +54,7 @@ say so:
 port = { default = 2222 }
 ```
 
-`distro why services.ssh.port` tells you which file set it and whether something overrode a
+`wrath why services.ssh.port` tells you which file set it and whether something overrode a
 default.
 
 ## Users
@@ -70,7 +70,7 @@ packages = ["helix", "lazygit"]
 
 `wheel` can use sudo. The password hash only applies when the account is first created; change
 your password with `passwd` on the machine and it stays changed. Each user gets a uid the first
-time distro sees them, recorded in the lock, so adding someone later never renumbers anyone
+time wrath sees them, recorded in the lock, so adding someone later never renumbers anyone
 else. Set `uid` yourself if you need a particular one.
 
 A user's `packages` end up on their own `PATH` only.
@@ -93,8 +93,8 @@ enable = true
 session = "niri"
 ```
 
-`distro options` lists everything there is, with types, defaults and docs, and
-`distro options services.ssh` narrows it down. For something no module covers, write the
+`wrath options` lists everything there is, with types, defaults and docs, and
+`wrath options services.ssh` narrows it down. For something no module covers, write the
 systemd unit yourself:
 
 ```toml
@@ -137,7 +137,7 @@ table is a section and `true` is a flag. What niri writes on a node, such as a w
 too, and a key can carry arguments, as `output "eDP-1"` does. niri applies a saved change by
 itself, so an apply that only changes its settings shows up within a second.
 `[programs.niri.settings]`, without a user, is for everyone, and a user's own go over it. A file
-of your own where distro would put one is left alone, and the apply says so.
+of your own where wrath would put one is left alone, and the apply says so.
 
 ### Browsers
 
@@ -157,7 +157,7 @@ browser.startup.homepage = "https://example.org"
 
 They go in a profile called `default`, in `~/.config/mozilla/firefox` and `~/.config/zen`. A
 `~/.mozilla/firefox` or `~/.zen` from before takes precedence, and the browser then doesn't read
-distro's: move it aside, or copy what you want to keep into the new profile.
+wrath's: move it aside, or copy what you want to keep into the new profile.
 
 Chromium keeps no settings file of its own a user could own, so it takes policies only, for
 everyone: `policies` it enforces, and `recommended` it starts from and lets each user change.
@@ -183,7 +183,7 @@ allowed_tcp_ports = [8080]
 trusted_interfaces = ["tailscale0"]
 ```
 
-It lives in its own nftables table, `inet distro`, so tables other programs make (tailscale has
+It lives in its own nftables table, `inet wrath`, so tables other programs make (tailscale has
 its own) are left alone. A change replaces the table in one step, with no moment in between
 where nothing is filtered.
 
@@ -193,9 +193,9 @@ Changing the network or SSH on a machine you're not sitting at is how you lock y
 `try` switches for a while and then back on its own:
 
 ```sh
-distro try --for 5m
+wrath try --for 5m
 # still reachable? keep it
-distro keep
+wrath keep
 ```
 
 If you can't get back in, just wait. After five minutes the machine switches back to what it was
@@ -204,24 +204,24 @@ running. A reboot does the same, since the tried system was never made the defau
 ## Going back
 
 ```sh
-distro history       # every generation, with what changed in each
-distro history 12    # the full plan for generation 12
-distro rollback      # back to the one before
-distro rollback 9    # back to generation 9
+wrath history       # every generation, with what changed in each
+wrath history 12    # the full plan for generation 12
+wrath rollback      # back to the one before
+wrath rollback 9    # back to generation 9
 ```
 
 If a switch fails partway, say a service won't start, the new generation is still current and
-boots next. distro says so, and `distro rollback` takes you back. Or fix what failed and run
-`distro apply` again: until the switch goes through or the machine restarts, `distro status` says
+boots next. wrath says so, and `wrath rollback` takes you back. Or fix what failed and run
+`wrath apply` again: until the switch goes through or the machine restarts, `wrath status` says
 it's unfinished, and the next apply plans from where it started, so it does all of it again.
-When a rollback itself fails partway, `distro rollback N` with the generation it names tries that
+When a rollback itself fails partway, `wrath rollback N` with the generation it names tries that
 one again.
 
 Every generation also has an entry in the boot menu, so if a change breaks booting you can pick
 the previous one there. A generation that fails to boot three times stops being the default on
 its own.
 
-`distro clean` removes old generations and what only they used. It keeps the current one, the
+`wrath clean` removes old generations and what only they used. It keeps the current one, the
 one running and the one that booted (after a boot fell back, those differ), plus the three before
 the current one by default, and asks first. Anything copied into the store in the last hour stays
 too, in case a switch is about to use it.
@@ -257,8 +257,8 @@ w-02 = { role = "worker" }
 
 Every worker runs the same system, built once. What differs between machines, like their names,
 is filled in on each machine when it switches. A machine knows its role from when it was
-installed, and `--role` picks another, such as `distro build --role worker` to see that it still
-builds. `distro check` checks every role.
+installed, and `--role` picks another, such as `wrath build --role worker` to see that it still
+builds. `wrath check` checks every role.
 
 ## Secrets
 
@@ -266,7 +266,7 @@ Secrets are encrypted with [age](https://age-encryption.org) and kept in `secret
 configuration, so they can go in git with everything else:
 
 ```sh
-distro secret edit api-token    # opens it in $EDITOR, encrypts it again on save
+wrath secret edit api-token    # opens it in $EDITOR, encrypts it again on save
 ```
 
 ```toml
@@ -287,7 +287,7 @@ plain text never ends up in the store or in a build.
 
 ## Checking before applying
 
-`distro check` evaluates the configuration and reports every error with its file and line,
+`wrath check` evaluates the configuration and reports every error with its file and line,
 without building anything. It's fast (tens of milliseconds), so it's handy in an editor hook or
-before committing. In CI, `distro check --locked` also fails when the lock is missing a pin,
+before committing. In CI, `wrath check --locked` also fails when the lock is missing a pin,
 instead of adding it.

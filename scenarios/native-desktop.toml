@@ -2,7 +2,7 @@ title = "the sample desktop boots to a niri session with audio, and its GTK port
 
 [vm]
 config = "scenarios/fixtures/native-desktop-before"
-store = "distro"
+store = "wrath"
 wait_for = ["unit:greetd.service", "user-unit:demo:niri.service", "user-unit:demo:pipewire.service"]
 steps = [
   { run = "test -z \"$(systemctl --failed --no-legend; systemctl --user -M demo@ --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },

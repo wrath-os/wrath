@@ -98,7 +98,7 @@ fn merge<'n>(
     Ok(())
 }
 
-/// What a package keeps for distro itself, such as the store paths of its runtime dependencies,
+/// What a package keeps for wrath itself, such as the store paths of its runtime dependencies,
 /// which builds have no use for and every package names the same.
 const OWN: &str = "lib/distro";
 
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn what_packages_keep_for_distro_itself_stays_out_of_views() {
+    fn what_packages_keep_for_wrath_itself_stays_out_of_views() {
         let dir = tempfile::tempdir().unwrap();
         let lab = Lab::new(dir.path());
         let a = dependency(&lab, "a", &["bin/a", "lib/distro/runtime-deps"]);

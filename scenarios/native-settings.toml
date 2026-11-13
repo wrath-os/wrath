@@ -2,7 +2,7 @@ title = "a system has its language, console keyboard and compressed swap"
 
 [vm]
 config = "scenarios/fixtures/native-settings"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { run = "echo $LANG; locale charmap; grep -c zram0 /proc/swaps; systemctl show -p Result --value systemd-vconsole-setup; grep KEYMAP /etc/vconsole.conf", stdout_contains = "en_US.UTF-8\nUTF-8\n1\nsuccess\nKEYMAP=sv-latin1" },

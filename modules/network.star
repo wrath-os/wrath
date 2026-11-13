@@ -59,7 +59,7 @@ def render(ctx: Context) -> None:
     if dns["fallback"]:
         resolve["FallbackDNS"] = " ".join(dns["fallback"])
     if resolve:
-        path = "/etc/systemd/resolved.conf.d/distro.conf"
+        path = "/etc/systemd/resolved.conf.d/wrath.conf"
         ctx.file(path, formats.systemd({"Resolve": resolve}))
         ctx.restart("systemd-resolved.service", on = [path])
         ctx.set("networking.resolved", True)

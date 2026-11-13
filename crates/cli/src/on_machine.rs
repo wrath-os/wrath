@@ -16,7 +16,7 @@ use crate::state::State;
 use crate::templates;
 
 const SECRETS: &str = "/run/secrets";
-const TEMPLATES: &str = "/run/distro/templates";
+const TEMPLATES: &str = "/run/wrath/templates";
 
 /// Does what `system` asks of the machine it's being switched on or booted into.
 pub fn apply(system: &Path) -> Result<(), String> {
@@ -39,7 +39,7 @@ pub fn apply(system: &Path) -> Result<(), String> {
         .as_array()
         .is_some_and(|all| !all.is_empty())
     {
-        fs::create_dir_all("/run/distro").map_err(|e| format!("/run/distro: {e}"))?;
+        fs::create_dir_all("/run/wrath").map_err(|e| format!("/run/wrath: {e}"))?;
         replace_on_ramfs(&sw, Path::new(TEMPLATES), |dir| {
             fill(system, &activation, dir)
         })?;
@@ -49,7 +49,7 @@ pub fn apply(system: &Path) -> Result<(), String> {
     }
     run(
         Command::new(sw.join("systemd-tmpfiles"))
-            .args(["--create", "/etc/tmpfiles.d/distro-homes.conf"]),
+            .args(["--create", "/etc/tmpfiles.d/wrath-homes.conf"]),
         "home directories",
     );
     if let Some(state) = State::of(&crate::activate::model_of(system)?) {
@@ -65,11 +65,11 @@ fn run(command: &mut Command, what: &str) -> bool {
         Ok(output) if output.status.success() => true,
         Ok(output) => {
             let errors = String::from_utf8_lossy(&output.stderr);
-            eprintln!("distro: {what} failed: {}", errors.trim());
+            eprintln!("wrath: {what} failed: {}", errors.trim());
             false
         }
         Err(e) => {
-            eprintln!("distro: {what} failed: {e}");
+            eprintln!("wrath: {what} failed: {e}");
             false
         }
     }
@@ -136,7 +136,7 @@ fn own(sw: &Path, path: &Path, owner: &str, mode: &str) {
     );
     let mode = u32::from_str_radix(mode, 8).unwrap_or(0o400);
     if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
-        eprintln!("distro: {}: {e}", path.display());
+        eprintln!("wrath: {}: {e}", path.display());
     }
 }
 
@@ -189,7 +189,7 @@ fn link_secret(name: &str, link: &Path) {
     }
     let _ = fs::remove_file(link);
     if let Err(e) = symlink(Path::new(SECRETS).join(name), link) {
-        eprintln!("distro: {}: {e}", link.display());
+        eprintln!("wrath: {}: {e}", link.display());
     }
 }
 
@@ -218,7 +218,7 @@ fn set_hostname() {
     if !name.is_empty()
         && let Err(e) = fs::write("/proc/sys/kernel/hostname", name)
     {
-        eprintln!("distro: setting the hostname: {e}");
+        eprintln!("wrath: setting the hostname: {e}");
     }
 }
 
@@ -240,8 +240,8 @@ fn link_homes(system: &Path, activation: &Value) {
         };
         let record = Path::new(crate::homes::HOME_RECORDS).join(name);
         match crate::homes::link(Path::new("/"), &files, &record) {
-            Ok(notes) => notes.iter().for_each(|note| eprintln!("distro: {note}")),
-            Err(e) => eprintln!("distro: linking {name}'s files failed: {e}"),
+            Ok(notes) => notes.iter().for_each(|note| eprintln!("wrath: {note}")),
+            Err(e) => eprintln!("wrath: linking {name}'s files failed: {e}"),
         }
     }
 }

@@ -2,9 +2,9 @@
 # these from the base settings this module works out: the kernel's command line, and what the
 # options say.
 
-# The label of the root filesystem distro's images have, which a system without disks of its own
+# The label of the root filesystem wrath's images have, which a system without disks of its own
 # boots from.
-ROOT_LABEL = "distro-root"
+ROOT_LABEL = "wrath-root"
 
 # Where the booted generation's firmware is, which the kernel reads before /etc is there.
 FIRMWARE = "/run/system-booted/firmware"

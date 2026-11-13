@@ -574,104 +574,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "distro-agent"
-version = "0.0.0"
-dependencies = [
- "clap",
- "serde",
- "serde_json",
- "vsock",
-]
-
-[[package]]
-name = "distro-build"
-version = "0.0.0"
-dependencies = [
- "distro-starlark",
- "memchr",
- "rusqlite",
- "rustix",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "toml",
- "zstd",
-]
-
-[[package]]
-name = "distro-check"
-version = "0.0.0"
-dependencies = [
- "distro-agent",
- "distro-build",
- "insta",
- "serde",
- "tempfile",
- "thiserror",
- "toml",
- "vsock",
-]
-
-[[package]]
-name = "distro-cli"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "clap",
- "ctrlc",
- "distro-build",
- "distro-check",
- "distro-eval",
- "distro-model",
- "distro-starlark",
- "insta",
- "rustix",
- "serde_json",
- "sha2",
- "tempfile",
- "toml_edit",
-]
-
-[[package]]
-name = "distro-eval"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "insta",
- "tempfile",
- "toml",
-]
-
-[[package]]
-name = "distro-model"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "distro-eval",
- "insta",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "distro-starlark"
-version = "0.0.0"
-dependencies = [
- "allocative",
- "anyhow",
- "blake3",
- "distro-eval",
- "insta",
- "serde_json",
- "starlark",
- "starlark_derive",
- "tempfile",
- "toml",
-]
-
-[[package]]
 name = "dupe"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2182,6 +2084,104 @@ name = "winnow"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
+
+[[package]]
+name = "wrath-agent"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "vsock",
+]
+
+[[package]]
+name = "wrath-build"
+version = "0.0.0"
+dependencies = [
+ "memchr",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
+ "wrath-starlark",
+ "zstd",
+]
+
+[[package]]
+name = "wrath-check"
+version = "0.0.0"
+dependencies = [
+ "insta",
+ "serde",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "vsock",
+ "wrath-agent",
+ "wrath-build",
+]
+
+[[package]]
+name = "wrath-cli"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "clap",
+ "ctrlc",
+ "insta",
+ "rustix",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml_edit",
+ "wrath-build",
+ "wrath-check",
+ "wrath-eval",
+ "wrath-model",
+ "wrath-starlark",
+]
+
+[[package]]
+name = "wrath-eval"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "insta",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "wrath-model"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "insta",
+ "serde",
+ "serde_json",
+ "toml",
+ "wrath-eval",
+]
+
+[[package]]
+name = "wrath-starlark"
+version = "0.0.0"
+dependencies = [
+ "allocative",
+ "anyhow",
+ "blake3",
+ "insta",
+ "serde_json",
+ "starlark",
+ "starlark_derive",
+ "tempfile",
+ "toml",
+ "wrath-eval",
+]
 
 [[package]]
 name = "zerocopy"

@@ -1,6 +1,6 @@
-//! The lock: the version of each source a configuration uses, distro's own among them. Distro's
+//! The lock: the version of each source a configuration uses, wrath's own among them. Wrath's
 //! pin decides every package, since recipes live in its repository. The lock sits next to the
-//! configuration as `distro.lock` and is read like it, so the model and its hash cover exactly
+//! configuration as `wrath.lock` and is read like it, so the model and its hash cover exactly
 //! what will run.
 
 use std::collections::BTreeMap;
@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use serde::Deserialize;
 
-pub use distro_eval::{DISTRO_SOURCE, Ids, LOCK_FILE, package_source};
+pub use wrath_eval::{Ids, LOCK_FILE, WRATH_SOURCE, package_source};
 
 /// The lock file format's version.
 const FORMAT: i64 = 4;
@@ -16,7 +16,7 @@ const FORMAT: i64 = 4;
 /// The format before the lock kept uids and gids.
 const FORMAT_WITHOUT_IDS: i64 = 3;
 
-/// The format before distro built its own packages, which also pinned each package. Those
+/// The format before wrath built its own packages, which also pinned each package. Those
 /// entries are ignored.
 const FORMAT_WITH_PACKAGES: i64 = 2;
 
@@ -46,7 +46,7 @@ struct File {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
-    /// What `distro update` follows, such as `github:johnae/distro`.
+    /// What `wrath update` follows, such as `github:johnae/wrath`.
     pub url: String,
     /// The revision it was at, when it has one.
     pub rev: Option<String>,
@@ -89,8 +89,8 @@ impl Lock {
     /// The lock file's text, one source per table.
     pub fn to_toml(&self) -> String {
         let mut out = String::from(
-            "# The versions of the sources this configuration uses, written by `distro check` and\n\
-             # moved to newer ones by `distro update`.\n",
+            "# The versions of the sources this configuration uses, written by `wrath check` and\n\
+             # moved to newer ones by `wrath update`.\n",
         );
         // Writing to a String cannot fail.
         let _ = writeln!(out, "version = {FORMAT}");
@@ -138,9 +138,9 @@ mod tests {
         Lock {
             sources: BTreeMap::from([
                 (
-                    "distro".to_owned(),
+                    "wrath".to_owned(),
                     Source {
-                        url: "github:johnae/distro".into(),
+                        url: "github:johnae/wrath".into(),
                         rev: Some("1d06008".into()),
                         hash: "sha256-abc".into(),
                         date: Some("2026-10-30".into()),
@@ -168,16 +168,16 @@ mod tests {
         let text = lock().to_toml();
 
         insta::assert_snapshot!(text, @r#"
-        # The versions of the sources this configuration uses, written by `distro check` and
-        # moved to newer ones by `distro update`.
+        # The versions of the sources this configuration uses, written by `wrath check` and
+        # moved to newer ones by `wrath update`.
         version = 4
 
         [sources.acme]
         url = "https://example.org/acme.tar.gz"
         hash = "sha256-def"
 
-        [sources.distro]
-        url = "github:johnae/distro"
+        [sources.wrath]
+        url = "github:johnae/wrath"
         rev = "1d06008"
         hash = "sha256-abc"
         date = "2026-10-30"
@@ -194,19 +194,19 @@ mod tests {
 
     #[test]
     fn a_lock_from_before_ids_reads_with_none() {
-        let old = "version = 3\n\n[sources.distro]\nurl = \"github:johnae/distro\"\nhash = \"x\"\n";
+        let old = "version = 3\n\n[sources.wrath]\nurl = \"github:johnae/wrath\"\nhash = \"x\"\n";
         let lock = Lock::parse(old).unwrap();
         assert!(lock.ids.is_empty());
-        assert_eq!(lock.sources["distro"].hash, "x");
+        assert_eq!(lock.sources["wrath"].hash, "x");
     }
 
     #[test]
     fn an_older_lock_reads_without_its_packages() {
-        let old = "version = 2\n\n[sources.distro]\nurl = \"github:johnae/distro\"\n\
+        let old = "version = 2\n\n[sources.wrath]\nurl = \"github:johnae/wrath\"\n\
                    hash = \"sha256-abc\"\n\n[packages]\n\
                    git = { version = \"2.51.0\", id = \"/x/aaa-git\" }\n";
         let lock = Lock::parse(old).unwrap();
-        assert_eq!(lock.sources["distro"].hash, "sha256-abc");
+        assert_eq!(lock.sources["wrath"].hash, "sha256-abc");
     }
 
     #[test]
@@ -223,8 +223,8 @@ mod tests {
     }
 
     #[test]
-    fn package_names_say_their_source_or_come_from_distro() {
+    fn package_names_say_their_source_or_come_from_wrath() {
         assert_eq!(package_source("acme#git"), ("acme", "git"));
-        assert_eq!(package_source("git"), ("distro", "git"));
+        assert_eq!(package_source("git"), ("wrath", "git"));
     }
 }

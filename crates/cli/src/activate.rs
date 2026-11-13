@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use distro_eval::Unit;
-use distro_model::{Activation, Model};
+use wrath_eval::Unit;
+use wrath_model::{Activation, Model};
 
 use crate::read_model;
 use crate::state::State;
@@ -54,7 +54,7 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
     }
 }
 
-/// Where a machine from distro's store keeps its generations, under the root: each a link named
+/// Where a machine from wrath's store keeps its generations, under the root: each a link named
 /// by its number to a system in `/store`, kept beside the store so a root erased at every boot
 /// keeps them.
 pub(crate) const GENERATIONS: &str = "store/.system/generations";
@@ -76,7 +76,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         return Ok(());
     }
     let (generations, current) = generations(root)?;
-    let kernels = esp.join("EFI/distro");
+    let kernels = esp.join("EFI/wrath");
     let entries = esp.join("loader/entries");
     for dir in [&kernels, &entries] {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -86,7 +86,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         let boot = match Boot::of(&inside(root, &link)) {
             Ok(boot) => boot,
             Err(e) if number != current => {
-                eprintln!("distro: generation {number} can't boot, so it has no entry: {e}");
+                eprintln!("wrath: generation {number} can't boot, so it has no entry: {e}");
                 continue;
             }
             Err(e) => return Err(e),
@@ -175,7 +175,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
             names.push(name);
         }
         let mut params = boot.params.join(" ");
-        // A system from distro's store can't name itself in its own files, so the entry does.
+        // A system from wrath's store can't name itself in its own files, so the entry does.
         if !params.split(' ').any(|param| param.starts_with("init=")) {
             let named = fs::read_link(&link).map_err(|e| format!("{}: {e}", link.display()))?;
             params.push_str(&format!(" init={}/init", named.display()));
@@ -183,7 +183,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         // An entry the boot loader is counting tries for keeps its name, which holds the count.
         // A new one gets its tries; a boot that comes up marks it good, and one that runs out of
         // tries is booted only when nothing else is left.
-        let fresh = format!("distro-{number}+{BOOT_TRIES}.conf");
+        let fresh = format!("wrath-{number}+{BOOT_TRIES}.conf");
         let entry = match counted_entry(&entries, number)? {
             Some(name) if renew && number == current && out_of_tries(&name) => fresh,
             Some(name) => name,
@@ -191,20 +191,20 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         };
         let initrds: String = names[1..]
             .iter()
-            .map(|file| format!("initrd /EFI/distro/{file}\n"))
+            .map(|file| format!("initrd /EFI/wrath/{file}\n"))
             .collect();
         // The current generation sorts first, so the boot loader starts it unless it ran out of
         // tries, and then the newest of the others.
         let sort_key = if number == current {
-            "distro-current"
+            "wrath-current"
         } else {
-            "distro-other"
+            "wrath-other"
         };
         let release = fs::read_to_string(link.join("etc/os-release")).unwrap_or_default();
         let text = format!(
             "title {}\nversion generation {number}\nsort-key {sort_key}\n\
-             linux /EFI/distro/{}\n{initrds}options {}\n",
-            distro_build::image::release_name(&release),
+             linux /EFI/wrath/{}\n{initrds}options {}\n",
+            wrath_build::image::release_name(&release),
             names[0],
             params
         );
@@ -213,11 +213,11 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     }
     write_replacing(
         &esp.join("loader/loader.conf"),
-        "default distro-*\ntimeout 3\neditor no\n",
+        "default wrath-*\ntimeout 3\neditor no\n",
         0o644,
     )?;
     remove_others(&entries, |name| {
-        name.starts_with("distro-") && !written.contains(name)
+        name.starts_with("wrath-") && !written.contains(name)
     })?;
     sync_tree(&kernels)?;
     sync_tree(&esp.join("loader"))
@@ -298,17 +298,17 @@ fn fitting(
 /// How many times the boot loader tries a new generation before it falls back to another.
 const BOOT_TRIES: u32 = 3;
 
-/// Whether an entry's name says the boot loader has no tries left for it, as `distro-4+0-3.conf`.
+/// Whether an entry's name says the boot loader has no tries left for it, as `wrath-4+0-3.conf`.
 fn out_of_tries(name: &str) -> bool {
     name.split_once('+')
         .is_some_and(|(_, count)| count.starts_with("0-") || count == "0.conf")
 }
 
 /// The file in `entries` that holds generation `number`'s entry, with or without the boot
-/// loader's count of tries in its name: `distro-4.conf`, `distro-4+3.conf`, `distro-4+1-2.conf`.
+/// loader's count of tries in its name: `wrath-4.conf`, `wrath-4+3.conf`, `wrath-4+1-2.conf`.
 fn counted_entry(entries: &Path, number: u32) -> Result<Option<String>, String> {
     let error = |e: io::Error| format!("{}: {e}", entries.display());
-    let prefix = format!("distro-{number}");
+    let prefix = format!("wrath-{number}");
     for entry in fs::read_dir(entries).map_err(error)? {
         let name = entry
             .map_err(error)?
@@ -462,7 +462,7 @@ fn inside(root: &Path, link: &Path) -> PathBuf {
 }
 
 fn copy_replacing(from: &Path, to: &Path) -> Result<(), String> {
-    let temporary = to.with_extension("distro-new");
+    let temporary = to.with_extension("wrath-new");
     // A copy that fails, such as on a full ESP, leaves nothing behind to fill it.
     // It's on disk before it takes the name, so a power cut never leaves a short file there.
     let copied = fs::copy(from, &temporary).and_then(|_| fs::File::open(&temporary)?.sync_all());
@@ -489,7 +489,7 @@ fn remove_others(dir: &Path, unwanted: impl Fn(&str) -> bool) -> Result<(), Stri
 /// starts even when part of that failed, so the machine still comes up to be fixed.
 fn init(system: &Path) -> Result<(), String> {
     if let Err(message) = put_in_place(Path::new("/"), system) {
-        eprintln!("distro: {message}; starting systemd anyway");
+        eprintln!("wrath: {message}; starting systemd anyway");
     }
     let systemd = system.join("systemd/lib/systemd/systemd");
     let error = Command::new(&systemd).exec();
@@ -601,7 +601,7 @@ fn link_foreign(root: &Path, system: &Path) -> Result<(), String> {
 }
 
 /// Where the last switch recorded how long each of its steps took, under the machine's root.
-pub(crate) const SWITCH_STEPS: &str = "run/distro/switch-steps";
+pub(crate) const SWITCH_STEPS: &str = "run/wrath/switch-steps";
 
 /// How long each step of a switch takes, in the order they ran.
 #[derive(Default)]
@@ -639,7 +639,7 @@ impl Steps {
 
 /// Where a switch that failed partway says what it switched from, until a switch succeeds or the
 /// machine boots, under the machine's root.
-pub(crate) const UNFINISHED: &str = "run/distro/switch-unfinished";
+pub(crate) const UNFINISHED: &str = "run/wrath/switch-unfinished";
 
 /// A switch to the running system that failed partway: what it switched from, when something
 /// ran before it, and why it failed.
@@ -782,7 +782,7 @@ fn switch_steps(
 }
 
 /// What switching to `after` compares against and does, from the running system's model if
-/// there is one. A running model this distro can't read, such as one in another format version,
+/// there is one. A running model this wrath can't read, such as one in another format version,
 /// is compared as nothing, and only what's new starts: nothing it ran is known to be gone or
 /// changed, so nothing stops or restarts, and the changes take effect at the next boot. A switch
 /// across formats then still goes through, either way.
@@ -791,10 +791,10 @@ fn against(running: Option<Result<Model, String>>, after: &Model) -> (Model, Act
         Some(Ok(before)) => before,
         Some(Err(e)) => {
             eprintln!(
-                "distro: the running system's model can't be read ({e}), so nothing stops or \
+                "wrath: the running system's model can't be read ({e}), so nothing stops or \
                  restarts; changed services take effect at the next boot"
             );
-            let mut activation = distro_model::plan(&Model::default(), after).activation;
+            let mut activation = wrath_model::plan(&Model::default(), after).activation;
             activation.restart.clear();
             activation.reload.clear();
             activation.stop.clear();
@@ -802,7 +802,7 @@ fn against(running: Option<Result<Model, String>>, after: &Model) -> (Model, Act
         }
         None => Model::default(),
     };
-    let activation = distro_model::plan(&before, after).activation;
+    let activation = wrath_model::plan(&before, after).activation;
     (before, activation)
 }
 
@@ -871,7 +871,7 @@ fn switch_user_managers(root: &Path, before: &Model, after: &Model) {
         };
         let warn = |what: &str, args: &[&str]| match user_systemctl(args) {
             Ok(out) if out.status.success() => {}
-            _ => eprintln!("distro: {user}'s session: couldn't {what}"),
+            _ => eprintln!("wrath: {user}'s session: couldn't {what}"),
         };
         warn("reload its units", &["daemon-reload"]);
         for unit in &dropped {
@@ -894,12 +894,12 @@ fn switch_user_managers(root: &Path, before: &Model, after: &Model) {
 /// Says what activation left out, and carries on.
 fn warn(left_out: Vec<String>) {
     for message in left_out {
-        eprintln!("distro: {message}");
+        eprintln!("wrath: {message}");
     }
 }
 
 pub(crate) fn model_of(system: &Path) -> Result<Model, String> {
-    read_model(&system.join("etc/distro/model.json"))
+    read_model(&system.join("etc/wrath/model.json"))
 }
 
 /// The units the activation starts that something wants, so they'd run after a boot too. Others
@@ -974,7 +974,7 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
                 .collect();
             return Err(format!(
                 "{} is a file in the new system, and it's a directory here with {} in it, which \
-                 distro didn't put there: move them, and switch again",
+                 wrath didn't put there: move them, and switch again",
                 link.display(),
                 left.join(", ")
             ));
@@ -1006,7 +1006,7 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
     Ok(())
 }
 
-/// Makes the directories above `path` under `etc`. A link of distro's where a directory now goes,
+/// Makes the directories above `path` under `etc`. A link of wrath's where a directory now goes,
 /// such as one to a file the old system had there, is removed first, so nothing is made through
 /// it; one someone else made is an error.
 fn make_dirs(etc: &Path, path: &Path) -> Result<(), String> {
@@ -1020,7 +1020,7 @@ fn make_dirs(etc: &Path, path: &Path) -> Result<(), String> {
             target.starts_with(Path::new("/").join(ETC_LINK)) || target.starts_with("/store");
         if !ours {
             return Err(format!(
-                "{} is a link distro didn't make, where the new system has a directory",
+                "{} is a link wrath didn't make, where the new system has a directory",
                 dir.display()
             ));
         }
@@ -1255,14 +1255,14 @@ fn merge_accounts(current: &str, old: &str, new: &str, keep_passwords: bool) -> 
 
 /// Makes `link` point at `target`, replacing what's there in one step.
 pub(crate) fn replace_link(target: &Path, link: &Path) -> Result<(), String> {
-    let temporary = link.with_extension("distro-new");
+    let temporary = link.with_extension("wrath-new");
     let _ = fs::remove_file(&temporary);
     symlink(target, &temporary).map_err(|e| format!("{}: {e}", temporary.display()))?;
     fs::rename(&temporary, link).map_err(|e| format!("{}: {e}", link.display()))
 }
 
 fn write_replacing(path: &Path, text: impl AsRef<[u8]>, mode: u32) -> Result<(), String> {
-    let temporary = path.with_extension("distro-new");
+    let temporary = path.with_extension("wrath-new");
     fs::write(&temporary, text).map_err(|e| format!("{}: {e}", temporary.display()))?;
     fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))
         .map_err(|e| format!("{}: {e}", temporary.display()))?;
@@ -1409,7 +1409,7 @@ mod tests {
         assert!(error.contains("/boot has room for"), "{error}");
     }
 
-    /// A machine from distro's store, with generations `numbered` by store name, each with its own
+    /// A machine from wrath's store, with generations `numbered` by store name, each with its own
     /// kernel and the same initrd, and `current` the current one.
     fn store_machine(root: &Path, numbered: &[(u32, &str)], current: u32) {
         let store = root.join("store");
@@ -1425,7 +1425,7 @@ mod tests {
             let kernel = if *number == 1 { "k1" } else { "k2" };
             symlink(format!("/store/{kernel}/bzImage"), dir.join("kernel")).unwrap();
             symlink("/store/i1/initrd", dir.join("initrd")).unwrap();
-            fs::write(dir.join("kernel-params"), "root=LABEL=distro-root rw\n").unwrap();
+            fs::write(dir.join("kernel-params"), "root=LABEL=wrath-root rw\n").unwrap();
             symlink(
                 format!("/store/{name}"),
                 generations.join(number.to_string()),
@@ -1445,7 +1445,7 @@ mod tests {
         fs::remove_file(root.join("store/aaa/kernel")).unwrap();
         boot_entries(root, false).unwrap();
         let names = entry_names(root);
-        assert_eq!(names, ["distro-2+3.conf"]);
+        assert_eq!(names, ["wrath-2+3.conf"]);
         // The current one can't be left out.
         fs::remove_file(root.join("store/bbb/kernel")).unwrap();
         assert!(boot_entries(root, false).is_err());
@@ -1458,17 +1458,14 @@ mod tests {
         store_machine(root, &[(1, "aaa"), (2, "bbb")], 2);
         let entries = root.join("boot/loader/entries");
         fs::create_dir_all(&entries).unwrap();
-        fs::write(entries.join("distro-2+0-3.conf"), "old").unwrap();
-        fs::write(entries.join("distro-1+0-3.conf"), "old").unwrap();
+        fs::write(entries.join("wrath-2+0-3.conf"), "old").unwrap();
+        fs::write(entries.join("wrath-1+0-3.conf"), "old").unwrap();
         // Rewriting the entries, as a clean does, keeps the count.
         boot_entries(root, false).unwrap();
-        assert_eq!(
-            entry_names(root),
-            ["distro-1+0-3.conf", "distro-2+0-3.conf"]
-        );
+        assert_eq!(entry_names(root), ["wrath-1+0-3.conf", "wrath-2+0-3.conf"]);
         // Switching to it says to try again, and only it.
         boot_entries(root, true).unwrap();
-        assert_eq!(entry_names(root), ["distro-1+0-3.conf", "distro-2+3.conf"]);
+        assert_eq!(entry_names(root), ["wrath-1+0-3.conf", "wrath-2+3.conf"]);
     }
 
     #[test]
@@ -1476,7 +1473,7 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         let root = work.path();
         store_machine(root, &[(1, "aaa")], 1);
-        let kernels = root.join("boot/EFI/distro");
+        let kernels = root.join("boot/EFI/wrath");
         fs::create_dir_all(&kernels).unwrap();
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
         // A power cut left the copy short.
@@ -1506,7 +1503,7 @@ mod tests {
         // The new system has no activation record, so switching to it fails before any unit.
         let system = root.join("store/bbb");
         assert!(activate(&system, Mode::Switch, root).is_err());
-        assert!(root.join("boot/loader/entries/distro-2+3.conf").exists());
+        assert!(root.join("boot/loader/entries/wrath-2+3.conf").exists());
     }
 
     #[test]
@@ -1514,17 +1511,17 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         let entries = work.path();
         for name in [
-            "distro-10.conf",
-            "distro-2+0-3.conf",
-            "distro-3+x.conf",
+            "wrath-10.conf",
+            "wrath-2+0-3.conf",
+            "wrath-3+x.conf",
             "other-1.conf",
         ] {
             fs::write(entries.join(name), "").unwrap();
         }
         let found = |number| counted_entry(entries, number).unwrap();
-        assert_eq!(found(10).as_deref(), Some("distro-10.conf"));
-        assert_eq!(found(2).as_deref(), Some("distro-2+0-3.conf"));
-        assert_eq!(found(1), None, "distro-10 isn't generation 1");
+        assert_eq!(found(10).as_deref(), Some("wrath-10.conf"));
+        assert_eq!(found(2).as_deref(), Some("wrath-2+0-3.conf"));
+        assert_eq!(found(1), None, "wrath-10 isn't generation 1");
         assert_eq!(found(3), None, "a count that isn't numbers isn't one");
     }
 
@@ -1564,16 +1561,16 @@ mod tests {
         let esp = root.join("boot");
         assert_eq!(
             fs::read_to_string(esp.join("loader/loader.conf")).unwrap(),
-            "default distro-*\ntimeout 3\neditor no\n"
+            "default wrath-*\ntimeout 3\neditor no\n"
         );
-        let entry = fs::read_to_string(esp.join("loader/entries/distro-10+3.conf")).unwrap();
-        assert!(entry.contains("linux /EFI/distro/k2-bzImage\n"), "{entry}");
-        assert!(entry.contains("initrd /EFI/distro/i1-initrd\n"), "{entry}");
+        let entry = fs::read_to_string(esp.join("loader/entries/wrath-10+3.conf")).unwrap();
+        assert!(entry.contains("linux /EFI/wrath/k2-bzImage\n"), "{entry}");
+        assert!(entry.contains("initrd /EFI/wrath/i1-initrd\n"), "{entry}");
         assert!(
-            entry.contains("options root=LABEL=distro-root rw init=/store/ccc/init\n"),
+            entry.contains("options root=LABEL=wrath-root rw init=/store/ccc/init\n"),
             "{entry}"
         );
-        assert_eq!(fs::read_dir(esp.join("EFI/distro")).unwrap().count(), 3);
+        assert_eq!(fs::read_dir(esp.join("EFI/wrath")).unwrap().count(), 3);
     }
 
     #[test]
@@ -1613,11 +1610,11 @@ mod tests {
             )
             .unwrap();
         };
-        system("aaa-distro-system", "k1");
-        system("bbb-distro-system", "k1");
-        system("ccc-distro-system", "k2");
+        system("aaa-wrath-system", "k1");
+        system("bbb-wrath-system", "k1");
+        system("ccc-wrath-system", "k2");
         fs::write(
-            store.join("ccc-distro-system/initrd-secrets"),
+            store.join("ccc-wrath-system/initrd-secrets"),
             "/etc/ssh/initrd_ed25519_key\n",
         )
         .unwrap();
@@ -1627,21 +1624,21 @@ mod tests {
         fs::create_dir_all(&generations).unwrap();
         for (number, name) in [(1, "aaa"), (2, "bbb"), (3, "ccc")] {
             let link = generations.join(number.to_string());
-            symlink(format!("/store/{name}-distro-system"), link).unwrap();
+            symlink(format!("/store/{name}-wrath-system"), link).unwrap();
         }
         symlink("generations/2", root.join(CURRENT)).unwrap();
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
-        fs::write(root.join("boot/loader/entries/distro-9.conf"), "old").unwrap();
+        fs::write(root.join("boot/loader/entries/wrath-9.conf"), "old").unwrap();
         // The boot loader counted down generation 2's tries and 1 was marked good.
-        fs::write(root.join("boot/loader/entries/distro-2+1-2.conf"), "old").unwrap();
-        fs::write(root.join("boot/loader/entries/distro-1.conf"), "old").unwrap();
+        fs::write(root.join("boot/loader/entries/wrath-2+1-2.conf"), "old").unwrap();
+        fs::write(root.join("boot/loader/entries/wrath-1.conf"), "old").unwrap();
 
         boot_entries(root, false).unwrap();
 
         let esp = root.join("boot");
         assert_eq!(
             fs::read_to_string(esp.join("loader/loader.conf")).unwrap(),
-            "default distro-*\ntimeout 3\neditor no\n"
+            "default wrath-*\ntimeout 3\neditor no\n"
         );
         let mut names: Vec<String> = fs::read_dir(esp.join("loader/entries"))
             .unwrap()
@@ -1650,28 +1647,28 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            ["distro-1.conf", "distro-2+1-2.conf", "distro-3+3.conf"]
+            ["wrath-1.conf", "wrath-2+1-2.conf", "wrath-3+3.conf"]
         );
-        let current = fs::read_to_string(esp.join("loader/entries/distro-2+1-2.conf")).unwrap();
-        assert!(current.contains("sort-key distro-current\n"), "{current}");
-        let entry = fs::read_to_string(esp.join("loader/entries/distro-3+3.conf")).unwrap();
-        assert!(entry.contains("sort-key distro-other\n"), "{entry}");
+        let current = fs::read_to_string(esp.join("loader/entries/wrath-2+1-2.conf")).unwrap();
+        assert!(current.contains("sort-key wrath-current\n"), "{current}");
+        let entry = fs::read_to_string(esp.join("loader/entries/wrath-3+3.conf")).unwrap();
+        assert!(entry.contains("sort-key wrath-other\n"), "{entry}");
         assert!(
-            entry.contains("linux /EFI/distro/k2-bzImage-bzImage\n"),
+            entry.contains("linux /EFI/wrath/k2-bzImage-bzImage\n"),
             "{entry}"
         );
         assert!(
-            entry.contains("options init=/store/ccc-distro-system/init\n"),
+            entry.contains("options init=/store/ccc-wrath-system/init\n"),
             "{entry}"
         );
-        assert!(!esp.join("loader/entries/distro-9.conf").exists());
-        let kernels = fs::read_dir(esp.join("EFI/distro")).unwrap().count();
+        assert!(!esp.join("loader/entries/wrath-9.conf").exists());
+        let kernels = fs::read_dir(esp.join("EFI/wrath")).unwrap().count();
         assert_eq!(
             kernels, 5,
             "two kernels and two initrds, each copied once, and the secrets"
         );
         assert_eq!(
-            fs::read_to_string(esp.join("EFI/distro/k1-initrd-initrd")).unwrap(),
+            fs::read_to_string(esp.join("EFI/wrath/k1-initrd-initrd")).unwrap(),
             "initrd"
         );
     }
@@ -1774,7 +1771,7 @@ mod tests {
         let mut model = Model::default();
         model.wrappers.insert(
             "tool".into(),
-            distro_eval::Wrapper {
+            wrath_eval::Wrapper {
                 source: "/run/system/bin/tool".into(),
                 owner: "me".into(),
                 group: "mine".into(),
@@ -1814,7 +1811,7 @@ mod tests {
         for name in ["gone", "tool"] {
             model.wrappers.insert(
                 name.into(),
-                distro_eval::Wrapper {
+                wrath_eval::Wrapper {
                     source: format!("/run/system/bin/{name}"),
                     owner: "me".into(),
                     group: "mine".into(),
@@ -1943,7 +1940,7 @@ mod tests {
     #[test]
     fn a_running_model_in_another_format_starts_whats_new_and_stops_nothing() {
         let unit = |name: &str| Unit {
-            sections: vec![distro_eval::Section {
+            sections: vec![wrath_eval::Section {
                 name: "Service".to_owned(),
                 entries: vec![("ExecStart".to_owned(), name.to_owned())],
             }],
@@ -2086,7 +2083,7 @@ mod tests {
             Path::new("/etc/.system/app")
         );
 
-        // Files distro didn't put there stay, and say why the switch can't go on.
+        // Files wrath didn't put there stay, and say why the switch can't go on.
         switch_etc(&root, Some(&file), &dir).unwrap();
         fs::write(etc.join("app/mine.conf"), "local\n").unwrap();
         let error = switch_etc(&root, Some(&dir), &file).unwrap_err();

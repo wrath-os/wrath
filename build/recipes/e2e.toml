@@ -1,4 +1,4 @@
-# What the `native-web` configuration of distro asks for.
+# What the `native-web` configuration of wrath asks for.
 
 [[package]]
 id = "libmnl"

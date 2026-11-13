@@ -4,9 +4,9 @@
 # Policies, which only a system sets, go in `/etc/<name>/policies/policies.json`, which the
 # browser reads instead of the one it ships with, so the system's file also keeps it from
 # updating itself. Settings, the preferences `about:config` lists, go in `user.js` in a profile
-# distro declares in the browser's `profiles.ini`, which the browser applies each time it starts.
+# wrath declares in the browser's `profiles.ini`, which the browser applies each time it starts.
 # The browser keeps its own profile list unless it starts with `MOZ_LEGACY_PROFILES=1`, as
-# distro's packages of it do.
+# wrath's packages of it do.
 
 load("lib/merge.star", "merge")
 

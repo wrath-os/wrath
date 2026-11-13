@@ -2,5 +2,5 @@ title = "The author's laptop config applies in a VM and boots to a niri session"
 
 [vm]
 config = "fixtures/configs/author-laptop"
-store = "distro"
+store = "wrath"
 wait_for = ["unit:greetd.service", "unit:network-online.target"]

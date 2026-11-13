@@ -1,7 +1,7 @@
 # A host firewall, rendered as an nftables ruleset in a table of its own. Other tables, such as
 # tailscale's, are left alone, and a change replaces this one in a single step.
 
-TABLE = "inet distro"
+TABLE = "inet wrath"
 CONFIG = "/etc/nftables.conf"
 
 # What IPv6 needs to work at all: finding neighbours and routers, and hearing that a packet was too

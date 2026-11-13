@@ -2,7 +2,7 @@ title = "Adding a user package installs it without a reboot"
 
 [vm]
 config = "fixtures/configs/basic"
-store = "distro"
+store = "wrath"
 steps = [
   { apply_config = "fixtures/configs/basic-user-ripgrep" },
   { run_as = "demo", run = "rg --version", stdout_contains = "ripgrep" },

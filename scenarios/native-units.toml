@@ -2,7 +2,7 @@ title = "units written in the configuration run, and a timer's service waits for
 
 [vm]
 config = "fixtures/configs/native"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { apply_config = "scenarios/fixtures/native-units", expect_plan = ["+ backup.service", "+ backup.timer", "+ report.timer"] },

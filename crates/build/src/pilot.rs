@@ -419,7 +419,7 @@ fn tools_only(prepared: &Prepared) -> Result<View, String> {
     Ok(View { dir })
 }
 
-/// One smoke command or test run of a package, from `distro build --check`.
+/// One smoke command or test run of a package, from `wrath build --check`.
 pub struct Checked {
     pub id: String,
     /// The command, or what was being built.

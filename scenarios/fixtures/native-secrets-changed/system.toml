@@ -3,7 +3,7 @@
 
 [system]
 hostname = "native-secrets"
-secret_identities = ["/etc/distro-test/identity.txt"]
+secret_identities = ["/etc/wrath-test/identity.txt"]
 secret_recipients = ["age1752tz55mdpnqrasdfja6pzw76jhqf532f2dhr5jpkngrfhz5ec0sax8ykl"]
 
 [users.john]

@@ -1,4 +1,4 @@
-<!-- Made by `distro dev docs` from the code. Don't edit it by hand. -->
+<!-- Made by `wrath dev docs` from the code. Don't edit it by hand. -->
 
 # Options
 
@@ -18,10 +18,10 @@
 ### base-system
 
 - `journal.persistent`: a boolean, default true. Keep the journal on disk, across boots, rather than in memory.
-- `system.id`: a string, default "distro". The system's id in `/etc/os-release`, lowercase, such as `acme`.
+- `system.id`: a string, default "wrath". The system's id in `/etc/os-release`, lowercase, such as `acme`.
 - `system.keymap`: a string, optional. The keyboard layout on the console, such as `sv-latin1`.
 - `system.locale`: a string, default "C.UTF-8". The machine's language and formats, such as `en_US.UTF-8`.
-- `system.name`: a string, default "distro". What the system calls itself, in the boot menu and `/etc/os-release`.
+- `system.name`: a string, default "wrath". What the system calls itself, in the boot menu and `/etc/os-release`.
 
 ### bluetooth
 
@@ -202,8 +202,8 @@
 ### program-settings
 
 - `programs.alacritty.settings`: any value, optional. Written as toml to `/etc/xdg/alacritty/alacritty.toml`, where alacritty reads it.
-- `programs.chromium.policies`: any value, optional. Written as json to `/etc/chromium/policies/managed/distro.json`, where chromium reads it.
-- `programs.chromium.recommended`: any value, optional. Written as json to `/etc/chromium/policies/recommended/distro.json`, where chromium reads it.
+- `programs.chromium.policies`: any value, optional. Written as json to `/etc/chromium/policies/managed/wrath.json`, where chromium reads it.
+- `programs.chromium.recommended`: any value, optional. Written as json to `/etc/chromium/policies/recommended/wrath.json`, where chromium reads it.
 - `users.<name>.programs.alacritty.settings`: any value, optional. Written as toml to `alacritty/alacritty.toml`, where alacritty reads it.
 
 ### secrets
@@ -214,7 +214,7 @@
 - `secrets.<name>.owner`: a string, default "root".
 - `secrets.<name>.path`: an absolute path or one starting with `~/`, optional. Another place to link the decrypted file from, such as a key in a home directory.
 - `system.secret_identities`: a list of items that are each an absolute path or one starting with `~/`, default ["/etc/ssh/ssh_host_ed25519_key"]. Private keys on the machine that decrypt its secrets.
-- `system.secret_recipients`: a list of items that are each a string, default []. Public keys `distro secret` encrypts to: the machine's host key, and the keys of whoever edits its secrets.
+- `system.secret_recipients`: a list of items that are each a string, default []. Public keys `wrath secret` encrypts to: the machine's host key, and the keys of whoever edits its secrets.
 
 ### session
 
@@ -273,7 +273,7 @@
 
 ### user-services
 
-- `users.<name>.services.<name>.autostart`: a boolean, default true. Whether it starts on its own: with the session for a home, with `distro up` for a project. Otherwise it's started by hand.
+- `users.<name>.services.<name>.autostart`: a boolean, default true. Whether it starts on its own: with the session for a home, with `wrath up` for a project. Otherwise it's started by hand.
 - `users.<name>.services.<name>.command`: a list of items that are each a string, required. The program and its arguments. Programs on PATH need no path.
 - `users.<name>.services.<name>.description`: a string, optional.
 - `users.<name>.services.<name>.environment`: a table whose values are each a string, default {}.
@@ -312,7 +312,7 @@
 - `zram.enable`: a boolean, default false. Whether it's on.
 - `zram.size`: a string, default "ram / 2". How big it is, as an expression of `ram`, in megabytes.
 
-## A project's `distro.toml`
+## A project's `wrath.toml`
 
 ### builds
 
@@ -330,7 +330,7 @@
 
 ### project-services
 
-- `services.<name>.autostart`: a boolean, default true. Whether it starts on its own: with the session for a home, with `distro up` for a project. Otherwise it's started by hand.
+- `services.<name>.autostart`: a boolean, default true. Whether it starts on its own: with the session for a home, with `wrath up` for a project. Otherwise it's started by hand.
 - `services.<name>.command`: a list of items that are each a string, required. The program and its arguments. Programs on PATH need no path.
 - `services.<name>.description`: a string, optional.
 - `services.<name>.environment`: a table whose values are each a string, default {}.

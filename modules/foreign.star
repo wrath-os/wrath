@@ -1,5 +1,5 @@
 # Running programs built for other distributions: a loader at /lib64 that finds their libraries
-# through a cache of its own, which programs distro builds never read (decision 0015).
+# through a cache of its own, which programs wrath builds never read (decision 0015).
 
 USUAL = ["glibc", "gcc", "zlib", "openssl", "curl"]
 

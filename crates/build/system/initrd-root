@@ -1,7 +1,7 @@
 #!@bash@/bin/bash
 # systemd only switches to a root that says what it is, so the root gets the os-release of the
 # system it starts, the directory of the `init=` on the kernel's command line. A root kept on disk
-# has it already, as a link, from the last boot. distro puts the rest of /etc in place once booted.
+# has it already, as a link, from the last boot. wrath puts the rest of /etc in place once booted.
 set -eu
 PATH=@coreutils@/bin:@sed@/bin
 # A path in the new root, following its links as the new root will see them.

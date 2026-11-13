@@ -2,7 +2,7 @@ title = "A minimal system boots under QEMU with UEFI and a TPM, and the guest ag
 
 [vm]
 config = "fixtures/configs/native"
-store = "distro"
+store = "wrath"
 firmware = "uefi"
 tpm = true
 wait_for = ["agent", "unit:multi-user.target"]

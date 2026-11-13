@@ -344,7 +344,7 @@ fn built(lab: &Lab, repository: &Path) -> Result<(Vec<String>, Built), String> {
         if made.is_some() {
             let id = package.id;
             return Err(format!(
-                "{id} isn't built yet: `distro build {id}` builds it",
+                "{id} isn't built yet: `wrath build {id}` builds it",
             ));
         }
         ids.push(package.id);

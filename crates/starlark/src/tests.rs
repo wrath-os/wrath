@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use distro_eval::{
+use wrath_eval::{
     ConfigFs, ConfigKind, DirFs, Evaluation, Input, MemFs, Module, OptionPath, OptionSpec, Output,
     Schema, Sources, Type, describe_outputs, evaluate, explain,
 };
@@ -46,7 +46,7 @@ fn evaluate_with(config: &dyn ConfigFs, names: &[&str]) -> Result<Evaluation, St
             let path = format!("modules/{name}.star");
             let text = std::fs::read_to_string(repo().join(&path)).unwrap();
             load(&mut sources, &path, text, &repo().join("modules"))
-                .unwrap_or_else(|e| panic!("{}", distro_eval::render(&[e], &sources)))
+                .unwrap_or_else(|e| panic!("{}", wrath_eval::render(&[e], &sources)))
         })
         .collect();
     evaluate(Input {
@@ -69,7 +69,7 @@ fn run(source: &str) -> Result<Evaluation, String> {
         source.to_owned(),
         &repo().join("modules"),
     )
-    .map_err(|e| distro_eval::render(&[e], &sources))?;
+    .map_err(|e| wrath_eval::render(&[e], &sources))?;
     evaluate(Input {
         sources,
         config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
@@ -232,14 +232,14 @@ fn networks_and_dns_render_for_networkd_and_resolved() {
     IgnoreCarrierLoss=3s
     LLDP=yes
 
-    /etc/systemd/resolved.conf.d/distro.conf
+    /etc/systemd/resolved.conf.d/wrath.conf
     [Resolve]
     Cache=no-negative
     DNSSEC=no
     FallbackDNS=9.9.9.9 149.112.112.112
 
     reload systemd-networkd.service on {"/etc/systemd/network/10-lan.network"}
-    restart systemd-resolved.service on {"/etc/systemd/resolved.conf.d/distro.conf"}
+    restart systemd-resolved.service on {"/etc/systemd/resolved.conf.d/wrath.conf"}
     "#);
 }
 
@@ -629,21 +629,21 @@ fn environment_reaches_systemd_and_login_shells() {
     let evaluation = evaluate_fixture("home", &HOME_MODULES);
 
     insta::assert_snapshot!(homes_of(&evaluation, "session"), @r#"
-    john ~/.config/distro/session.sh
-    export EDITOR="hx"
-    export GREETING="it's \"quoted\""
-    export PATH="$HOME/bin:${PATH}"
-
-    john ~/.config/environment.d/60-distro.conf
+    john ~/.config/environment.d/60-wrath.conf
     EDITOR=hx
     GREETING=it's "quoted"
     PATH=$HOME/bin:${PATH}
+
+    john ~/.config/wrath/session.sh
+    export EDITOR="hx"
+    export GREETING="it's \"quoted\""
+    export PATH="$HOME/bin:${PATH}"
     "#);
     assert_eq!(
         output_of(&evaluation, "session").next_login,
         [
-            "~john/.config/distro/session.sh".to_owned(),
-            "~john/.config/environment.d/60-distro.conf".to_owned(),
+            "~john/.config/wrath/session.sh".to_owned(),
+            "~john/.config/environment.d/60-wrath.conf".to_owned(),
         ]
         .into(),
     );
@@ -763,7 +763,7 @@ fn load_from(files: &[(&str, &str)], module: &str) -> Result<Evaluation, String>
     }
     let mut sources = Sources::default();
     let module = load(&mut sources, "app.star", module.to_owned(), dir.path())
-        .map_err(|e| distro_eval::render(&[e], &sources))?;
+        .map_err(|e| wrath_eval::render(&[e], &sources))?;
     evaluate(Input {
         sources,
         config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
@@ -857,7 +857,7 @@ fn a_module_says_which_configurations_it_belongs_to() {
         let mut sources = Sources::default();
         load(&mut sources, "m.star", source, &repo().join("modules"))
             .map(|module| module.configurations().to_vec())
-            .map_err(|e| distro_eval::render(&[e], &sources))
+            .map_err(|e| wrath_eval::render(&[e], &sources))
     };
 
     assert_eq!(
@@ -933,7 +933,7 @@ fn storage_of(system: &str) -> Result<String, String> {
     let config = MemFs::new([("system.toml", system)]);
     let evaluation = evaluate_with(&config, &["disks"])?;
     let storage = &output_of(&evaluation, "disks").base["storage"];
-    Ok(distro_eval::formats::json(storage).unwrap())
+    Ok(wrath_eval::formats::json(storage).unwrap())
 }
 
 #[test]
@@ -1340,7 +1340,7 @@ microcode = "amd"
 
     let evaluation = evaluate_with(&config, &["kernel"]).unwrap();
     insta::assert_snapshot!(rendered_by(&evaluation, "kernel"), @r#"
-    /etc/modprobe.d/distro.conf
+    /etc/modprobe.d/wrath.conf
     blacklist pcspkr
     options nbd nbds_max=2
 
@@ -1450,7 +1450,7 @@ fn a_state_path_makes_the_root_memory_and_is_mounted_early() {
     assert!(storage.contains("state = \"/keep\""), "{storage}");
     let state = output_of(&evaluation, "state").base["state"].to_string();
     assert!(
-        state.contains("/etc/distro") && state.contains("/var/lib/distro"),
+        state.contains("/etc/wrath") && state.contains("/var/lib/wrath"),
         "{state}"
     );
 }
@@ -1488,7 +1488,7 @@ fn declared(source: &str) -> std::collections::BTreeMap<String, OptionSpec> {
         source.to_owned(),
         &repo().join("modules"),
     )
-    .unwrap_or_else(|e| panic!("{}", distro_eval::render(&[e], &sources)));
+    .unwrap_or_else(|e| panic!("{}", wrath_eval::render(&[e], &sources)));
     module
         .options()
         .into_iter()
@@ -1510,15 +1510,15 @@ fn lists_sets_and_tables_are_empty_unless_a_default_says_otherwise() {
          }, writes = [], render = lambda ctx: None)",
     );
     let default = |path: &str| options[path].default.clone();
-    assert_eq!(default("a.ports"), Some(distro_eval::Value::List(vec![])));
-    assert_eq!(default("a.args"), Some(distro_eval::Value::List(vec![])));
+    assert_eq!(default("a.ports"), Some(wrath_eval::Value::List(vec![])));
+    assert_eq!(default("a.args"), Some(wrath_eval::Value::List(vec![])));
     assert_eq!(
         default("a.env"),
-        Some(distro_eval::Value::Table(Default::default()))
+        Some(wrath_eval::Value::Table(Default::default()))
     );
     assert_eq!(
         default("a.given"),
-        Some(distro_eval::Value::List(vec![distro_eval::Value::Str(
+        Some(wrath_eval::Value::List(vec![wrath_eval::Value::Str(
             "x".into()
         )]))
     );
@@ -1555,7 +1555,7 @@ fn evaluate_module(source: &str, toml: &str) -> Result<Evaluation, String> {
         source.to_owned(),
         &repo().join("modules"),
     )
-    .map_err(|e| distro_eval::render(&[e], &sources))?;
+    .map_err(|e| wrath_eval::render(&[e], &sources))?;
     let config = format!("[system]\nhostname = \"box\"\n{toml}");
     evaluate(Input {
         sources,
@@ -1610,7 +1610,7 @@ fn a_module_that_can_be_turned_off_renders_only_when_it_is_on() {
     };
     assert_eq!(
         record.fields["enable"].default,
-        Some(distro_eval::Value::Bool(false))
+        Some(wrath_eval::Value::Bool(false))
     );
 }
 
@@ -1627,7 +1627,7 @@ fn a_switch_needs_one_table_of_options_without_its_own() {
     )
     .map(|_| ())
     .unwrap_err();
-    let text = distro_eval::render(&[error], &sources);
+    let text = wrath_eval::render(&[error], &sources);
     assert!(text.contains("one table of options"), "{text}");
 
     let own = SWITCHED.replace("ENABLED", "False").replace(
@@ -1638,7 +1638,7 @@ fn a_switch_needs_one_table_of_options_without_its_own() {
     let error = load(&mut sources, "m.star", own, &repo().join("modules"))
         .map(|_| ())
         .unwrap_err();
-    let text = distro_eval::render(&[error], &sources);
+    let text = wrath_eval::render(&[error], &sources);
     assert!(text.contains("declares `enable` itself"), "{text}");
 }
 

@@ -10,10 +10,10 @@ fn chosen(files: &[(&str, &str)]) -> Result<Platform, String> {
 }
 
 #[test]
-fn a_system_builds_on_distro_unless_its_starting_file_says_otherwise() {
-    assert_eq!(chosen(&[("system.toml", SYSTEM)]), Ok(Platform::Distro));
-    let distro = format!("platform = \"distro\"\n{SYSTEM}");
-    assert_eq!(chosen(&[("system.toml", &distro)]), Ok(Platform::Distro));
+fn a_system_builds_on_wrath_unless_its_starting_file_says_otherwise() {
+    assert_eq!(chosen(&[("system.toml", SYSTEM)]), Ok(Platform::Wrath));
+    let wrath = format!("platform = \"wrath\"\n{SYSTEM}");
+    assert_eq!(chosen(&[("system.toml", &wrath)]), Ok(Platform::Wrath));
     let acme = format!("platform = {{ source = \"acme\" }}\n{SYSTEM}{ACME}");
     let expected = Platform::Source {
         name: "acme".into(),
@@ -39,7 +39,7 @@ fn a_role_chooses_its_own_platform() {
         ("roles/desk.toml", SYSTEM),
     ];
     let config = MemFs::new(files.iter().copied());
-    assert_eq!(platform(&config, Some("desk")), Ok(Platform::Distro));
+    assert_eq!(platform(&config, Some("desk")), Ok(Platform::Wrath));
     assert_eq!(platform(&config, Some("kiosk")).unwrap().name(), "acme");
 }
 
@@ -51,7 +51,7 @@ fn error_a_platform_that_isnt_built_in() {
      --> system.toml:1:12
       |
     1 | platform = "acme"
-      |            ^^^^^^ only `distro` is built in
+      |            ^^^^^^ only `wrath` is built in
       = help: one from a source is `platform = { source = "acme" }`
     "#);
 }
@@ -78,14 +78,14 @@ fn error_a_platform_chosen_anywhere_but_the_starting_file() {
             "system.toml",
             &format!("include = [\"base.toml\"]\n{SYSTEM}"),
         ),
-        ("base.toml", "platform = \"distro\"\n"),
+        ("base.toml", "platform = \"wrath\"\n"),
     ])
     .unwrap_err();
     insta::assert_snapshot!(errors, @r#"
     error: `platform` is chosen in the file the configuration starts from
      --> base.toml:1:1
       |
-    1 | platform = "distro"
+    1 | platform = "wrath"
       | ^^^^^^^^ chosen here
       = help: move it to `system.toml`, or to the role's file
     "#);

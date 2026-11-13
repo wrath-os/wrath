@@ -34,7 +34,7 @@ PACKAGES = [
 ]
 
 def getty(ctx: Context, unit: str, args: str) -> None:
-    ctx.unit(unit + ".d/distro.conf", {
+    ctx.unit(unit + ".d/wrath.conf", {
         "Service": {
             "ExecStart": [
                 "",
@@ -84,7 +84,7 @@ def render(ctx: Context) -> None:
     # Services find the system's programs, as a login shell does.
     path = "PATH=/run/wrappers/bin:%s/bin" % SYSTEM
     locale_variables = locale_environment(ctx)
-    ctx.file("/etc/systemd/system.conf.d/distro.conf", formats.systemd({
+    ctx.file("/etc/systemd/system.conf.d/wrath.conf", formats.systemd({
         "Manager": {
             "ManagerEnvironment": path,
             "DefaultEnvironment": [path, "SSL_CERT_FILE=" + CERTIFICATES] +
@@ -97,15 +97,15 @@ def render(ctx: Context) -> None:
         ctx.file("/etc/vconsole.conf", "KEYMAP=%s\n" % keymap)
         ctx.restart("systemd-vconsole-setup.service", on = ["/etc/vconsole.conf"])
     # Nothing is enabled behind the configuration's back, on a first boot or any other.
-    ctx.file("/etc/systemd/system-preset/00-distro.preset", "ignore *\n")
+    ctx.file("/etc/systemd/system-preset/00-wrath.preset", "ignore *\n")
     # The kernel loads the modules it needs with this.
-    ctx.file("/etc/sysctl.d/50-distro.conf", "kernel.modprobe = %s/bin/modprobe\n" % SYSTEM)
-    ctx.unit("modprobe@.service.d/distro.conf", {
+    ctx.file("/etc/sysctl.d/50-wrath.conf", "kernel.modprobe = %s/bin/modprobe\n" % SYSTEM)
+    ctx.unit("modprobe@.service.d/wrath.conf", {
         "Service": {"ExecSearchPath": SYSTEM + "/bin"},
     })
     # Device nodes for modules not loaded yet, such as /dev/btrfs-control, from the list the
     # booted kernel's modules come with.
-    ctx.unit("kmod-static-nodes.service.d/distro.conf", {
+    ctx.unit("kmod-static-nodes.service.d/wrath.conf", {
         "Unit": {
             "ConditionFileNotEmpty": [
                 "",
@@ -166,8 +166,8 @@ def render(ctx: Context) -> None:
         "/etc/profile",
         "".join(["export %s=%s\n" % (name, value) for name, value in environment]) +
         # What a user's `environment` sets, for login shells; systemd reads environment.d itself.
-        "if [ -r \"$HOME/.config/distro/session.sh\" ]; then\n" +
-        "  . \"$HOME/.config/distro/session.sh\"\n" +
+        "if [ -r \"$HOME/.config/wrath/session.sh\" ]; then\n" +
+        "  . \"$HOME/.config/wrath/session.sh\"\n" +
         "fi\n",
         next_login = True,
     )
@@ -180,7 +180,7 @@ def render(ctx: Context) -> None:
         next_login = True,
     )
     ctx.file(
-        "/etc/environment.d/10-distro.conf",
+        "/etc/environment.d/10-wrath.conf",
         "".join(["%s=%s\n" % (name, value) for name, value in environment]),
         next_login = True,
     )
@@ -208,12 +208,12 @@ module(
         ),
         "system.name": option(
             types.str,
-            default = "distro",
+            default = "wrath",
             doc = "What the system calls itself, in the boot menu and `/etc/os-release`.",
         ),
         "system.id": option(
             types.str,
-            default = "distro",
+            default = "wrath",
             doc = "The system's id in `/etc/os-release`, lowercase, such as `acme`.",
         ),
     },

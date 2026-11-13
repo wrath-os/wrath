@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
-use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
+use wrath_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
 
-use crate::{Change, ChangeKind, DISTRO_SOURCE, File, Lock, Model, Plan, Secret, Source, plan};
+use crate::{Change, ChangeKind, File, Lock, Model, Plan, Secret, Source, WRATH_SOURCE, plan};
 
 fn model(port: i64) -> Model {
     let mut model = Model::default();
@@ -350,15 +350,15 @@ fn source(url: &str, rev: &str) -> Source {
     }
 }
 
-/// A lock that pins distro at `rev`.
+/// A lock that pins wrath at `rev`.
 fn lock(rev: &str) -> Lock {
     Lock {
-        sources: [(DISTRO_SOURCE.to_owned(), source(DISTRO, rev))].into(),
+        sources: [(WRATH_SOURCE.to_owned(), source(WRATH, rev))].into(),
         ..Lock::default()
     }
 }
 
-const DISTRO: &str = "github:johnae/distro";
+const WRATH: &str = "github:johnae/wrath";
 const ACME: &str = "github:acme/recipes";
 
 #[test]
@@ -371,23 +371,23 @@ fn the_model_keeps_the_sources_the_lock_pins() {
 }
 
 #[test]
-fn plan_shows_packages_and_where_distro_moved() {
+fn plan_shows_packages_and_where_wrath_moved() {
     let before = with_packages(&lock("aaaaaaa1"));
     let mut after = with_packages(&lock("bbbbbbb2"));
     after.packages.insert("htop".into());
 
     insta::assert_snapshot!(plan(&before, &after).to_string(), @"
     packages
-      ~ source distro (tier: soft-reboot)
-          github:johnae/distro: aaaaaaa1 -> bbbbbbb2
+      ~ source wrath (tier: soft-reboot)
+          github:johnae/wrath: aaaaaaa1 -> bbbbbbb2
           the base system, such as systemd and D-Bus, runs fully after a soft reboot
       + htop (tier: live)
     2 changes, tier: soft-reboot
     ");
     insta::assert_snapshot!(plan(&Model::default(), &before).to_string(), @"
     packages
-      + source distro (tier: live)
-          github:johnae/distro at aaaaaaa1
+      + source wrath (tier: live)
+          github:johnae/wrath at aaaaaaa1
       + git (for john) (tier: live)
       + ripgrep (tier: live)
     3 changes, tier: live
@@ -487,7 +487,7 @@ fn models_of_another_format_version_are_refused() {
     assert_eq!(
         Model::from_json(&older).unwrap_err(),
         format!(
-            "the model is in format version 1, and this distro reads version {}",
+            "the model is in format version 1, and this wrath reads version {}",
             crate::VERSION
         )
     );
@@ -577,10 +577,10 @@ fn files_read_at_login_change_at_the_next_login() {
             text: text.into(),
         };
         home.files
-            .insert("~/.config/environment.d/60-distro.conf".into(), file);
+            .insert("~/.config/environment.d/60-wrath.conf".into(), file);
         model
             .next_login
-            .insert("~john/.config/environment.d/60-distro.conf".into());
+            .insert("~john/.config/environment.d/60-wrath.conf".into());
         model
     };
 
@@ -588,7 +588,7 @@ fn files_read_at_login_change_at_the_next_login() {
 
     insta::assert_snapshot!(plan.to_string(), @"
     files
-      ~ ~john/.config/environment.d/60-distro.conf (tier: next-login)
+      ~ ~john/.config/environment.d/60-wrath.conf (tier: next-login)
     1 change, tier: next-login
     ");
 }
@@ -669,8 +669,8 @@ fn named_sources_keep_their_pin_while_their_url_is_the_one_locked() {
     let model = with_acme(ACME, &two_sources("bbbbbbb2"));
     assert_eq!(
         model.sources.keys().collect::<Vec<_>>(),
-        ["acme", "distro"],
-        "sources nothing declares are left out, except distro"
+        ["acme", "wrath"],
+        "sources nothing declares are left out, except wrath"
     );
     assert!(model.sources["acme"].is_locked());
     assert!(model.is_locked());
@@ -685,11 +685,11 @@ fn named_sources_keep_their_pin_while_their_url_is_the_one_locked() {
     assert!(!with_acme(ACME, &Lock::default()).is_locked());
     let mut unused = Model::default();
     unused.packages.insert("ripgrep".into());
-    assert!(!unused.is_locked(), "without a lock, distro isn't pinned");
+    assert!(!unused.is_locked(), "without a lock, wrath isn't pinned");
 }
 
 #[test]
-fn plan_shows_each_source_and_only_distro_needs_a_soft_reboot() {
+fn plan_shows_each_source_and_only_wrath_needs_a_soft_reboot() {
     let before = with_acme(ACME, &two_sources("bbbbbbb2"));
     let after = with_acme(ACME, &two_sources("ddddddd4"));
     insta::assert_snapshot!(plan(&before, &after).to_string(), @"
@@ -868,9 +868,7 @@ fn a_drop_in_can_keep_a_package_unit_running() {
         }],
         restart_on: BTreeSet::new(),
     };
-    after
-        .units
-        .insert("dbus.service.d/distro.conf".into(), keep);
+    after.units.insert("dbus.service.d/wrath.conf".into(), keep);
     let mut activation = plan(&Model::default(), &after).activation;
     activation.restart_too(&after, ["dbus.service".into(), "sshd.service".into()]);
     assert_eq!(
@@ -932,7 +930,7 @@ fn a_drop_in_restarts_its_unit_but_not_a_template() {
         .insert("nginx.service.d/limits.conf".into(), unit("a"));
     after
         .units
-        .insert("getty@.service.d/distro.conf".into(), unit("a"));
+        .insert("getty@.service.d/wrath.conf".into(), unit("a"));
     let activation = plan(&Model::default(), &after).activation;
     assert_eq!(
         activation.restart,
@@ -1010,7 +1008,7 @@ fn a_plan_for_a_terminal_is_the_same_text_with_color() {
 }
 
 #[test]
-fn a_newer_distro_rebuilds_what_its_recipes_changed_with_the_tier_each_takes() {
+fn a_newer_wrath_rebuilds_what_its_recipes_changed_with_the_tier_each_takes() {
     use std::collections::BTreeMap;
     let mut model = Model::default();
     let kernel = BTreeMap::from([
@@ -1116,22 +1114,22 @@ fn a_user_unit_wanted_elsewhere_takes_effect_at_the_next_login() {
 }
 
 #[test]
-fn a_platform_from_a_source_is_kept_and_planned_and_distros_changes_no_hash() {
-    let distro = Model::default();
+fn a_platform_from_a_source_is_kept_and_planned_and_wraths_changes_no_hash() {
+    let wrath = Model::default();
     let acme = Model {
         platform: Some("acme".into()),
         ..Model::default()
     };
-    assert!(!distro.canonical().contains("platform"));
-    assert_ne!(acme.hash(), distro.hash());
+    assert!(!wrath.canonical().contains("platform"));
+    assert_ne!(acme.hash(), wrath.hash());
     assert_eq!(
         Model::from_json(&acme.canonical()).unwrap().platform,
         acme.platform
     );
-    insta::assert_snapshot!(plan(&distro, &acme).to_string(), @"
+    insta::assert_snapshot!(plan(&wrath, &acme).to_string(), @"
     base
       ~ platform (tier: live)
-          distro -> acme
+          wrath -> acme
     1 change, tier: live
     ");
     assert!(plan(&acme, &acme).is_empty());

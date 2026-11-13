@@ -21,12 +21,12 @@ built" near the end says how far along it is.
 A command acts on one configuration, its context, found in this order:
 
 1. `-C DIR`, a configuration directory.
-2. The nearest directory upwards with a `distro.toml`, a project.
-3. The system's configuration in `/etc/distro`.
+2. The nearest directory upwards with a `wrath.toml`, a project.
+3. The system's configuration in `/etc/wrath`.
 
 ```console
-$ distro plan
-system /etc/distro (neptune)
+$ wrath plan
+system /etc/wrath (neptune)
 packages
   ~ ripgrep (tier: live)
       14.1.0 -> 15.2.0
@@ -35,12 +35,12 @@ packages
 
 Another machine is managed from where you have a checkout: `plan --host NAME`, `apply --host NAME`
 and `try --host NAME` build here, copy what the machine lacks over SSH, and switch it with the new
-system's own distro. `NAME` is what `ssh NAME` reaches, so `~/.ssh/config` applies, and
-`DISTRO_SSH` replaces the `ssh` command, such as `DISTRO_SSH="ssh -p 2222"`. The login needs
+system's own wrath. `NAME` is what `ssh NAME` reaches, so `~/.ssh/config` applies, and
+`WRATH_SSH` replaces the `ssh` command, such as `WRATH_SSH="ssh -p 2222"`. The login needs
 root, or sudo, which asks for its password once.
 
 ```console
-$ distro apply --host root@framework
+$ wrath apply --host root@framework
 ```
 
 ## Naming a package
@@ -53,37 +53,37 @@ Everywhere a package is named, on the command line and in TOML, it's written the
 
 | You write | You get |
 |---|---|
-| `jq` | jq from the recipes of the distro your lock pins |
-| `jq@1.7` | jq 1.7 from the newest distro revision that had it (planned) |
+| `jq` | jq from the recipes of the wrath your lock pins |
+| `jq@1.7` | jq 1.7 from the newest wrath revision that had it (planned) |
 | `acme#jq` | jq from the recipes in the source you named `acme` (planned) |
 
 ### Which jq is `jq`?
 
-The one your configuration would give you. Recipes live in distro's repository, so the distro
-revision your lock pins decides every package's version and source. `distro run jq` builds that
+The one your configuration would give you. Recipes live in wrath's repository, so the wrath
+revision your lock pins decides every package's version and source. `wrath run jq` builds that
 recipe, or finds it in the store already, and nothing else changes. It never quietly means
 "whatever is newest today".
 
 Every command that picks a package says where it came from, on stderr:
 
 ```console
-$ distro run age -- --version
-age from distro 1d06008, 2026-10-30
+$ wrath run age -- --version
+age from wrath 1d06008, 2026-10-30
 v1.2.1
 ```
 
 ### Versions (planned)
 
-`jq@1.7` means the recipe from the newest distro revision that had jq 1.7, built from that
+`jq@1.7` means the recipe from the newest wrath revision that had jq 1.7, built from that
 revision. The store is content-addressed, so whatever comes out the same as what you have is
 shared, and an older version costs only what differs.
 
 ### Trying, then keeping
 
 ```console
-$ distro run jq -- --version      # runs it, changes nothing
-$ distro shell jq ripgrep         # a shell with both, changes nothing
-$ distro add jq                   # writes it into your TOML
+$ wrath run jq -- --version      # runs it, changes nothing
+$ wrath shell jq ripgrep         # a shell with both, changes nothing
+$ wrath add jq                   # writes it into your TOML
 ```
 
 `add` writes what you typed, `packages = ["jq"]`.
@@ -94,44 +94,44 @@ The machine:
 
 | Command | Does |
 |---|---|
-| `distro status` | What's running, whether it matches the configuration, and anything waiting for a login or reboot |
-| `distro plan` | What would change |
-| `distro apply` | Shows the plan, asks, switches, and says when the change takes full effect. `-y` skips asking. Also takes a system built before: `distro apply PATH` |
-| `distro try` | Like `apply`, but rolls back after five minutes unless you run `distro keep` |
-| `distro history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
-| `distro rollback [N]` | Back one generation, or to generation N |
-| `distro build [PKG...]` | Builds the configuration's system without switching, or the packages named, and prints where each is. `--role` builds another of its roles, `--image` a disk image, and `-o PATH` links the result there, and `--check` runs packages' smoke commands and their own tests |
-| `distro clean` | Removes old generations and what only they used, after showing how much it frees |
+| `wrath status` | What's running, whether it matches the configuration, and anything waiting for a login or reboot |
+| `wrath plan` | What would change |
+| `wrath apply` | Shows the plan, asks, switches, and says when the change takes full effect. `-y` skips asking. Also takes a system built before: `wrath apply PATH` |
+| `wrath try` | Like `apply`, but rolls back after five minutes unless you run `wrath keep` |
+| `wrath history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
+| `wrath rollback [N]` | Back one generation, or to generation N |
+| `wrath build [PKG...]` | Builds the configuration's system without switching, or the packages named, and prints where each is. `--role` builds another of its roles, `--image` a disk image, and `-o PATH` links the result there, and `--check` runs packages' smoke commands and their own tests |
+| `wrath clean` | Removes old generations and what only they used, after showing how much it frees |
 
 Packages:
 
 | Command | Does |
 |---|---|
-| `distro run PKG [-- ARGS]` | Runs a package without installing it |
-| `distro shell [PKG...]` | A shell with those packages; with none in a project, the project's environment |
-| `distro up` | Runs a project's services, in dependency order, until you stop them |
-| `distro add PKG...` | Adds packages to the configuration and locks them; `--home USER` for a user's own |
-| `distro remove PKG...` | Removes them |
-| `distro search TEXT` | Finds packages by name and description |
-| `distro info PKG` | Versions, where each comes from, what's installed and what a change would download |
+| `wrath run PKG [-- ARGS]` | Runs a package without installing it |
+| `wrath shell [PKG...]` | A shell with those packages; with none in a project, the project's environment |
+| `wrath up` | Runs a project's services, in dependency order, until you stop them |
+| `wrath add PKG...` | Adds packages to the configuration and locks them; `--home USER` for a user's own |
+| `wrath remove PKG...` | Removes them |
+| `wrath search TEXT` | Finds packages by name and description |
+| `wrath info PKG` | Versions, where each comes from, what's installed and what a change would download |
 
 The lock:
 
 | Command | Does |
 |---|---|
-| `distro update [SOURCE or PKG...]` | Moves sources, or single packages, to their newest versions |
-| `distro update --list` | Each source with what it follows, where it's pinned and how old that is |
+| `wrath update [SOURCE or PKG...]` | Moves sources, or single packages, to their newest versions |
+| `wrath update --list` | Each source with what it follows, where it's pinned and how old that is |
 
-The lock pins distro too, as the source `distro`: its modules, its evaluator and its recipes.
-`distro update` pins the distro you're running, and `[sources.distro]` says where distro is
-fetched from. A distro other than the one the lock pins says so.
+The lock pins wrath too, as the source `wrath`: its modules, its evaluator and its recipes.
+`wrath update` pins the wrath you're running, and `[sources.wrath]` says where wrath is
+fetched from. A version of wrath other than the one the lock pins says so.
 
-A newer distro can rebuild packages the configuration never mentions, such as a kernel with
+A newer wrath can rebuild packages the configuration never mentions, such as a kernel with
 other options. Each system records which packages it was built from, and `plan` compares that
 with today's recipes, so a rebuilt package shows with the tier it takes:
 
 ```console
-$ distro plan --host framework
+$ wrath plan --host framework
 packages
   ~ linux (tier: reboot)
       rebuilt
@@ -143,14 +143,14 @@ Understanding the configuration:
 
 | Command | Does |
 |---|---|
-| `distro check` | Evaluates the configuration and reports errors, without building, and pins anything new in it. `--locked` fails instead of pinning, for CI |
-| `distro why THING` | Where an option's value, a file such as `/etc/nginx/main.conf`, or a package comes from |
-| `distro options [PREFIX]` | The options there are, with their types, defaults and docs |
+| `wrath check` | Evaluates the configuration and reports errors, without building, and pins anything new in it. `--locked` fails instead of pinning, for CI |
+| `wrath why THING` | Where an option's value, a file such as `/etc/nginx/main.conf`, or a package comes from |
+| `wrath options [PREFIX]` | The options there are, with their types, defaults and docs |
 
-Secrets: `distro secret edit NAME`, `distro secret list`, `distro secret rekey`.
+Secrets: `wrath secret edit NAME`, `wrath secret list`, `wrath secret rekey`.
 
-Setting up a machine: `distro install -C DIR [--disk NAME=/dev/...] [--role NAME] [--name NAME]`,
-from distro's image or a checkout with its builder, lays out the disks the configuration describes with
+Setting up a machine: `wrath install -C DIR [--disk NAME=/dev/...] [--role NAME] [--name NAME]`,
+from wrath's image or a checkout with its builder, lays out the disks the configuration describes with
 systemd-repart, encrypts them with a passphrase it asks for, builds the system onto them and
 records the machine's role and name. It refuses disks that have partitions unless given `--wipe`.
 The machine's SSH host key and initrd key, kept encrypted in `secrets/machines/NAME/`, are
@@ -168,14 +168,14 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 - Exit codes: 0 for success, 1 for errors. `plan --exit-code` returns 2 when there are changes.
 - `apply` asks before switching unless `-y`. Without a terminal, it refuses rather than
   guessing.
-- `distro options --schema` prints the options as a JSON Schema, so an editor completes, checks
+- `wrath options --schema` prints the options as a JSON Schema, so an editor completes, checks
   and explains the TOML as you write it. `--schema users.john` is the one for files in `users/`,
-  and `--project` the one for `distro.toml`. With taplo, in the configuration's `.taplo.toml`:
+  and `--project` the one for `wrath.toml`. With taplo, in the configuration's `.taplo.toml`:
 
   ```toml
   [[rule]]
   include = ["system.toml", "services/*.toml", "roles/*.toml"]
-  schema.path = "./distro.schema.json"
+  schema.path = "./wrath.schema.json"
 
   [[rule]]
   include = ["users/*.toml"]
@@ -187,7 +187,7 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 
 ## For contributors
 
-The commands that only make sense in this repository move under `distro dev`: `dev test`
+The commands that only make sense in this repository move under `wrath dev`: `dev test`
 (running scenarios), `dev acceptance`, `dev bench`. `fill-templates` stays hidden;
 activation runs it, and people don't.
 
@@ -213,9 +213,9 @@ Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `t
 `machines.toml`. `apply` and `try` check `[machine.requires]` first, except for a system built
 elsewhere (`apply PATH`), which shows its plan and asks but whose requirements aren't recorded
 yet. Projects: found from the current directory, with `shell`, `up`, `run`, `add`, `remove`,
-`check`, `update` and `why`, and `distro.local.lock` for what only `distro.local.toml` adds.
+`check`, `update` and `why`, and `wrath.local.lock` for what only `wrath.local.toml` adds.
 
-A home of its own, `home.toml` in `~/.config/distro`, isn't supported for now: a user's
+A home of its own, `home.toml` in `~/.config/wrath`, isn't supported for now: a user's
 packages and files go under `[users.NAME]` in the system's configuration.
 
 Not yet: versions (`jq@1.7`), `search`, `info`, and `--json` elsewhere.
@@ -225,6 +225,6 @@ freed afterwards.
 ## Open questions
 
 - How a machine builds what it needs, or fetches it built, without a checkout.
-- Whether `update PKG` moving one package without moving distro is worth what it costs: that
-  package then comes from a different distro revision than the rest.
+- Whether `update PKG` moving one package without moving wrath is worth what it costs: that
+  package then comes from a different wrath revision than the rest.
 - How long `try` waits by default, and whether it rolls back when the machine loses the network.

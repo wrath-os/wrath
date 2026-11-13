@@ -8,16 +8,16 @@ use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitCode, Stdio};
 
-use distro_build::store::{Lab, StorePath, is_entry};
-use distro_model::Model;
+use wrath_build::store::{Lab, StorePath, is_entry};
+use wrath_model::Model;
 
 use crate::activate::{UNFINISHED, Unfinished};
 use crate::generations::{self, Switch};
 
 /// Where a system keeps its model, on the machine it runs on.
-const RUNNING_MODEL: &str = "/run/system/etc/distro/model.json";
+const RUNNING_MODEL: &str = "/run/system/etc/wrath/model.json";
 
-/// A machine reached with `ssh NAME`, so `~/.ssh/config` and the agent apply. `DISTRO_SSH`
+/// A machine reached with `ssh NAME`, so `~/.ssh/config` and the agent apply. `WRATH_SSH`
 /// replaces `ssh`, with options, such as `ssh -p 2222`. The connections share one, so a password
 /// or a new host key is asked for once.
 pub struct Remote {
@@ -34,7 +34,7 @@ pub struct Remote {
 
 impl Remote {
     pub fn new(name: &str) -> Result<Self, String> {
-        let ssh = std::env::var("DISTRO_SSH")
+        let ssh = std::env::var("WRATH_SSH")
             .ok()
             .filter(|ssh| !ssh.trim().is_empty())
             .unwrap_or_else(|| "ssh".to_owned());
@@ -102,7 +102,7 @@ impl Remote {
         host.split(':').next().unwrap_or(host)
     }
 
-    /// The model the machine runs, or `None` when distro didn't build what it runs.
+    /// The model the machine runs, or `None` when wrath didn't build what it runs.
     pub fn running_model(&self) -> Result<Option<Model>, String> {
         let text = self.output(&format!("cat {RUNNING_MODEL} 2>/dev/null || true"))?;
         if text.trim().is_empty() {
@@ -131,7 +131,7 @@ impl Remote {
             .and_then(|from| from.strip_prefix("/store").ok());
         let from = match entry.and_then(Path::to_str).filter(|name| is_entry(name)) {
             Some(from) => {
-                let path = format!("/store/{from}/etc/distro/model.json");
+                let path = format!("/store/{from}/etc/wrath/model.json");
                 let text = self.output(&format!("cat {path} 2>/dev/null || true"))?;
                 Model::from_json(&text).ok()
             }
@@ -142,7 +142,7 @@ impl Remote {
 
     /// What the system the machine runs says it was built from, when it says.
     pub fn running_built_from(&self) -> Result<Option<String>, String> {
-        let keys = distro_build::graph::PACKAGE_KEYS;
+        let keys = wrath_build::graph::PACKAGE_KEYS;
         let text = self.output(&format!("cat /run/system/{keys} 2>/dev/null || true"))?;
         Ok((!text.trim().is_empty()).then_some(text))
     }
@@ -151,7 +151,7 @@ impl Remote {
     /// and returns that directory, or `None` when it has everything already.
     fn send(&self, lab: &Lab, system: &StorePath) -> Result<Option<String>, String> {
         let have = self.output("ls /store 2>/dev/null || true")?;
-        let closure = distro_build::chain::runtime_closure(lab, system)?;
+        let closure = wrath_build::chain::runtime_closure(lab, system)?;
         let missing = missing(&have, closure.iter().map(StorePath::hash));
         if missing.is_empty() {
             return Ok(None);
@@ -174,7 +174,7 @@ impl Remote {
         let sent = self
             .ssh()
             .arg(
-                "sh -c 'dir=$(mktemp -d /var/tmp/distro.XXXXXX) && \
+                "sh -c 'dir=$(mktemp -d /var/tmp/wrath.XXXXXX) && \
                  cat > $dir/system.tar && echo $dir'",
             )
             .stdin(stream)
@@ -189,7 +189,7 @@ impl Remote {
     }
 
     /// Puts what was sent into the machine's store and switches it to `system` as `how` says,
-    /// with the system's own distro. Asks for a password when sudo wants one.
+    /// with the system's own wrath. Asks for a password when sudo wants one.
     fn switch(&self, sent: Option<&str>, system: &StorePath, how: Switch) -> Result<(), String> {
         if self.run_as_root(&switch_steps(sent, system, how))? {
             Ok(())
@@ -211,13 +211,13 @@ impl Remote {
         self.switch(sent.as_deref(), &system, how)
     }
 
-    /// Runs the running system's `distro` with `args` on the machine as root, as `keep` and
+    /// Runs the running system's `wrath` with `args` on the machine as root, as `keep` and
     /// `rollback`.
-    pub fn distro_as_root(&self, args: &str) -> Result<(), String> {
-        if self.run_as_root(&format!("/run/system/bin/distro {args}"))? {
+    pub fn wrath_as_root(&self, args: &str) -> Result<(), String> {
+        if self.run_as_root(&format!("/run/system/bin/wrath {args}"))? {
             Ok(())
         } else {
-            Err(format!("`distro {args}` on {} failed", self.name))
+            Err(format!("`wrath {args}` on {} failed", self.name))
         }
     }
 
@@ -299,7 +299,7 @@ struct RootShell {
 }
 
 /// What the shell prints after each command, before its exit status.
-const DONE: &str = "\u{1e}distro-done ";
+const DONE: &str = "\u{1e}wrath-done ";
 
 impl RootShell {
     /// Starts `shell` over `ssh`, giving `password` to sudo first when there is one.
@@ -390,8 +390,8 @@ fn missing<'a>(have: &str, closure: impl Iterator<Item = &'a str>) -> Vec<String
 fn switch_steps(sent: Option<&str>, system: &StorePath, how: Switch) -> String {
     let path = system.inside();
     let switch = match how {
-        Switch::Apply => format!("{path}/bin/distro apply --yes {path}"),
-        Switch::Try(seconds) => format!("{path}/bin/distro try --yes --for {seconds}s {path}"),
+        Switch::Apply => format!("{path}/bin/wrath apply --yes {path}"),
+        Switch::Try(seconds) => format!("{path}/bin/wrath try --yes --for {seconds}s {path}"),
     };
     // Unpacked beside the store and renamed in one path at a time, so an interrupted copy
     // never leaves a partial path under a name `send` would take as complete.
@@ -417,7 +417,7 @@ fn as_root(steps: &str, root: bool) -> String {
 /// The directory `send` made on the machine, from what it printed.
 fn sent_dir(printed: &str) -> Result<String, String> {
     let dir = printed.trim_end();
-    let suffix = dir.strip_prefix("/var/tmp/distro.").unwrap_or_default();
+    let suffix = dir.strip_prefix("/var/tmp/wrath.").unwrap_or_default();
     if suffix.is_empty() || !suffix.chars().all(|c| c.is_ascii_alphanumeric()) {
         return Err(format!(
             "the machine made an unexpected directory for the copy: {dir:?}"
@@ -428,7 +428,7 @@ fn sent_dir(printed: &str) -> Result<String, String> {
 
 /// Builds `model` here and switches the machine to it, showing the plan against what the
 /// machine runs and asking first. The machine's requirements and its own values are checked
-/// and filled in on it, by the system's own distro.
+/// and filled in on it, by the system's own wrath.
 pub fn apply(
     root: &Path,
     config: &Path,
@@ -453,13 +453,13 @@ pub fn apply(
         println!("{} runs model {} already", remote.name, &model.hash()[..16]);
         return Ok(ExitCode::SUCCESS);
     }
-    let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
+    let plan = wrath_model::plan(running.as_ref().unwrap_or(&Model::default()), &model);
     let plan = generations::with_rebuilt(plan, rebuilt);
     if running.is_some() {
         crate::print_plan(&plan);
     } else {
         println!(
-            "distro didn't build what {} runs, so all of it is new: {}",
+            "wrath didn't build what {} runs, so all of it is new: {}",
             remote.name,
             plan.summary(5)
         );
@@ -502,22 +502,22 @@ mod tests {
     }
 
     #[test]
-    fn the_machine_switches_with_the_new_systems_distro() {
+    fn the_machine_switches_with_the_new_systems_wrath() {
         let system = StorePath::from_hash("abc");
         assert_eq!(
             as_root(
-                &switch_steps(Some("/var/tmp/distro.Ab12"), &system, Switch::Apply),
+                &switch_steps(Some("/var/tmp/wrath.Ab12"), &system, Switch::Apply),
                 true
             ),
             "sh -c 'staged=$(mktemp -d /store/.incoming.XXXXXX) && \
-             tar -C $staged -xf /var/tmp/distro.Ab12/system.tar && \
+             tar -C $staged -xf /var/tmp/wrath.Ab12/system.tar && \
              for path in $staged/*; do test -e /store/${path##*/} || mv $path /store/ || exit; \
-             done && rm -rf $staged /var/tmp/distro.Ab12 && \
-             /store/abc/bin/distro apply --yes /store/abc'"
+             done && rm -rf $staged /var/tmp/wrath.Ab12 && \
+             /store/abc/bin/wrath apply --yes /store/abc'"
         );
         assert_eq!(
             as_root(&switch_steps(None, &system, Switch::Try(60)), false),
-            "sudo sh -c '/store/abc/bin/distro try --yes --for 60s /store/abc'"
+            "sudo sh -c '/store/abc/bin/wrath try --yes --for 60s /store/abc'"
         );
     }
 
@@ -535,15 +535,15 @@ mod tests {
     #[test]
     fn only_a_fresh_directory_from_mktemp_is_taken_as_what_was_sent() {
         assert_eq!(
-            sent_dir("/var/tmp/distro.Ab12\n"),
-            Ok("/var/tmp/distro.Ab12".to_owned())
+            sent_dir("/var/tmp/wrath.Ab12\n"),
+            Ok("/var/tmp/wrath.Ab12".to_owned())
         );
         for printed in [
             "",
-            "/var/tmp/distro.",
-            "/var/tmp/distro.a b",
+            "/var/tmp/wrath.",
+            "/var/tmp/wrath.a b",
             "/tmp/x",
-            "/var/tmp/distro.a;rm",
+            "/var/tmp/wrath.a;rm",
         ] {
             assert!(sent_dir(printed).is_err(), "{printed:?}");
         }

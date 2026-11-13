@@ -1,4 +1,4 @@
-# A live system that installs others: the tools `distro install` runs.
+# A live system that installs others: the tools `wrath install` runs.
 packages = ["cryptsetup", "btrfs-progs", "dosfstools", "openssh", "age"]
 
 [system]

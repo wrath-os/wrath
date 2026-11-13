@@ -4,9 +4,9 @@
 
 use std::path::Path;
 
-use distro_eval::{Contribution, Evaluation, origin, outputs_of};
-use distro_model::LOCK_FILE;
 use serde_json::{Map, Value, json};
+use wrath_eval::{Contribution, Evaluation, origin, outputs_of};
+use wrath_model::LOCK_FILE;
 
 use crate::project::LOCAL_LOCK;
 

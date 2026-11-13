@@ -1,4 +1,4 @@
-# A project's services, such as its database, which `distro up` runs while you work on it. They're
+# A project's services, such as its database, which `wrath up` runs while you work on it. They're
 # written the way a home's are.
 
 load("lib/service.star", "check_services", "service")

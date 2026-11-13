@@ -4,8 +4,8 @@ Each milestone is defined by the scenarios in its directory. A milestone is done
 scenarios pass. Run them with:
 
 ```sh
-distro status                 # every milestone
-distro status --milestone m2  # one milestone
+wrath status                 # every milestone
+wrath status --milestone m2  # one milestone
 ```
 
 ## Ownership
@@ -23,14 +23,14 @@ milestone starts, they get reviewed and adjusted before the work begins, not aft
 per scenario, and the file name is the scenario ID. Every scenario has a `title`, optional `notes`
 and exactly one runner table.
 
-`[command]` runs a program in the repository root. A program named `distro` is the binary that
+`[command]` runs a program in the repository root. A program named `wrath` is the binary that
 runs `status`.
 
 ```toml
 title = "plan shows the changed value"
 
 [command]
-run = ["distro", "plan", "--config", "fixtures/configs/basic"]
+run = ["wrath", "plan", "--config", "fixtures/configs/basic"]
 exit = 0                      # expected exit code, default 0
 stdout_contains = ["8081"]
 stderr_contains = []

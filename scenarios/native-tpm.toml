@@ -2,22 +2,22 @@ title = "the TPM unlocks an enrolled disk at boot, and the boot loader counts tr
 
 [vm]
 config = "scenarios/fixtures/native-state-installer"
-store = "distro"
+store = "wrath"
 tpm = true
 blank_disks = ["8G"]
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { prepare_build = "scenarios/fixtures/native-tpm" },
-  { run = "cp -r /run/distro-share/configs/native-tpm /tmp/config && printf 'correct horse' > /tmp/passphrase && distro install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name t-01 --system $(cat /run/distro-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { run = "cp -r /run/wrath-share/configs/native-tpm /tmp/config && printf 'correct horse' > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name t-01 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
   # No passphrase: the boot only gets this far if the TPM unlocked the disk.
   { boot_installed = true },
   { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
   { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pcrs":\[[0-9,]*\]' ''', stdout_contains = '"tpm2-pcrs":[7]' },
   # The first boot came up, so its entry lost its count of tries.
-  { run = "ls /boot/loader/entries", stdout_contains = "distro-1.conf" },
+  { run = "ls /boot/loader/entries", stdout_contains = "wrath-1.conf" },
   # An entry out of tries is passed over for a fresh one, which a good boot marks good in turn.
-  { run = '''cd /boot/loader/entries && sed 's/^sort-key .*/sort-key distro-current/; s/^version .*/version generation 99/' distro-1.conf > distro-99+0-3.conf && sed 's/^sort-key .*/sort-key distro-current/; s/^version .*/version generation 50/' distro-1.conf > distro-50+3.conf && sed -i 's/^sort-key .*/sort-key distro-other/' distro-1.conf && sync && echo ready''', stdout_contains = "ready" },
+  { run = '''cd /boot/loader/entries && sed 's/^sort-key .*/sort-key wrath-current/; s/^version .*/version generation 99/' wrath-1.conf > wrath-99+0-3.conf && sed 's/^sort-key .*/sort-key wrath-current/; s/^version .*/version generation 50/' wrath-1.conf > wrath-50+3.conf && sed -i 's/^sort-key .*/sort-key wrath-other/' wrath-1.conf && sync && echo ready''', stdout_contains = "ready" },
   { boot_installed = true },
-  { run = '''tr -cd '[:print:]' < /sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; echo; ls /boot/loader/entries''', stdout_contains = "distro-50+3.conf\ndistro-1.conf\ndistro-50.conf\ndistro-99+0-3.conf" },
+  { run = '''tr -cd '[:print:]' < /sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; echo; ls /boot/loader/entries''', stdout_contains = "wrath-50+3.conf\nwrath-1.conf\nwrath-50.conf\nwrath-99+0-3.conf" },
 ]
 timeout_secs = 1500

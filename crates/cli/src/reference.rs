@@ -1,4 +1,4 @@
-//! `distro dev docs`: the reference pages in `docs/reference/`, made from the code so they say
+//! `wrath dev docs`: the reference pages in `docs/reference/`, made from the code so they say
 //! what the code does: the commands from their definitions, the options from the modules, and
 //! the module API from the Starlark host's doc comments.
 
@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 /// What every generated page starts with.
-const GENERATED: &str = "<!-- Made by `distro dev docs` from the code. Don't edit it by hand. -->";
+const GENERATED: &str = "<!-- Made by `wrath dev docs` from the code. Don't edit it by hand. -->";
 
 /// Writes the reference pages under `root`, or with `check`, fails when one differs from what
 /// the code says.
@@ -23,7 +23,7 @@ pub fn write(
         (
             "module-api.md",
             "The module API",
-            distro_starlark::module_api(),
+            wrath_starlark::module_api(),
         ),
     ];
     let dir = root.join("docs/reference");
@@ -46,7 +46,7 @@ pub fn write(
         return Ok(ExitCode::SUCCESS);
     }
     Err(format!(
-        "{} {} out of date; `distro dev docs` writes them again",
+        "{} {} out of date; `wrath dev docs` writes them again",
         stale.join(", "),
         if stale.len() == 1 { "is" } else { "are" }
     ))
@@ -59,7 +59,7 @@ pub fn commands(cli: &clap::Command) -> String {
     let mut out = String::from("## Options every command takes\n\n");
     options(&mut out, &cli, true);
     for sub in visible(&cli) {
-        command(&mut out, "distro", sub);
+        command(&mut out, "wrath", sub);
     }
     out
 }
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn commands_are_listed_with_their_usage_and_options_but_not_hidden_ones() {
-        let cli = clap::Command::new("distro")
+        let cli = clap::Command::new("wrath")
             .arg(clap::arg!(-C --config <DIR> "The configuration to act on").global(true))
             .subcommand(
                 clap::Command::new("build")
@@ -146,11 +146,11 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("## `distro build`\n\nBuild things\n"),
+            text.contains("## `wrath build`\n\nBuild things\n"),
             "{text}"
         );
         assert!(
-            text.contains("distro build [OPTIONS] [PACKAGES]..."),
+            text.contains("wrath build [OPTIONS] [PACKAGES]..."),
             "{text}"
         );
         assert!(

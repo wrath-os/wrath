@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use distro_eval::{Template, Unit, UnitAction, Value, Wrapper, home_path};
+use wrath_eval::{Template, Unit, UnitAction, Value, Wrapper, home_path};
 
-use crate::{DISTRO_SOURCE, File, Model, Secret, Source};
+use crate::{File, Model, Secret, Source, WRATH_SOURCE};
 
 /// How much applying a change disrupts the running system, least first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -466,12 +466,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
 /// The platform the system builds on, when it changed. The modules it brings and drops show as
 /// the changes they make.
 fn platform(before: &Model, after: &Model) -> Option<Change> {
-    let name = |model: &Model| {
-        model
-            .platform
-            .clone()
-            .unwrap_or_else(|| "distro".to_owned())
-    };
+    let name = |model: &Model| model.platform.clone().unwrap_or_else(|| "wrath".to_owned());
     (before.platform != after.platform).then(|| Change {
         kind: ChangeKind::Changed,
         name: "platform".to_owned(),
@@ -675,7 +670,7 @@ fn source_change(
     let moved = before
         .zip(after)
         .is_some_and(|(old, new)| old.is_locked() && new.is_locked());
-    if moved && name == DISTRO_SOURCE {
+    if moved && name == WRATH_SOURCE {
         let reboot = "the base system, such as systemd and D-Bus, runs fully after a soft reboot";
         (vec![detail, reboot.to_owned()], Some(Tier::SoftReboot))
     } else {
@@ -820,7 +815,7 @@ fn unit_details(before: Option<&Unit>, after: Option<&Unit>) -> Vec<String> {
     removed.chain(added).collect()
 }
 
-/// The packages a newer distro rebuilds: those `before`, the keys a system was built from, has
+/// The packages a newer wrath rebuilds: those `before`, the keys a system was built from, has
 /// with another key in `after`, today's recipes. The kernel, its microcode and firmware take a
 /// reboot, what the base system runs takes a soft reboot, and the rest is live.
 pub fn rebuilt(

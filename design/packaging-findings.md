@@ -173,7 +173,7 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Seen in:** libsecret, libical, noctalia.
 - **What happened:** each time, the options had to be read by hand from the source archive in the
   store.
-- **What would prevent it:** `distro info <package>`, which would list a project's options from
+- **What would prevent it:** `wrath info <package>`, which would list a project's options from
   `meson.options`, `configure --help` or the CMake cache, for whoever writes or updates a recipe.
 - **Belongs in:** the builder's tools.
 - **Status:** open.
@@ -391,7 +391,7 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Seen in:** cliphist, slurp, swayidle, tmux and GTK 4, whose smoke commands used flags the
   programs don't have or needed a display or a locale.
 - **What happened:** only the experiments ran smoke commands, so these were never tried.
-- **What we did:** `distro build PKG --check` runs them, and they were fixed.
+- **What we did:** `wrath build PKG --check` runs them, and they were fixed.
 
 ### A reference to a bare `lib` follows the libraries
 

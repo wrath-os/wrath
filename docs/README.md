@@ -1,11 +1,11 @@
-# distro
+# wrath
 
-distro is a Linux distribution you describe in a few TOML files. You write down what a machine
-should be - packages, users, services, settings - and distro builds that system from source and
+wrath is a Linux distribution you describe in a few TOML files. You write down what a machine
+should be - packages, users, services, settings - and wrath builds that system from source and
 switches the machine to it. Something like:
 
 ```toml
-# /etc/distro/system.toml
+# /etc/wrath/system.toml
 packages = ["git", "jujutsu", "ripgrep"]
 
 [system]
@@ -19,17 +19,17 @@ enable = true
 ```
 
 ```console
-$ distro plan
-system /etc/distro (framework)
+$ wrath plan
+system /etc/wrath (framework)
 packages
   + ripgrep (tier: live)
 1 change, tier: live
-$ distro apply
+$ wrath apply
 ```
 
 Every change shows you a plan first, and says when it takes effect: right away, at your next
 login, or after a reboot. Every system you've switched to is kept as a generation, so going back
-is `distro rollback`.
+is `wrath rollback`.
 
 ## Why
 
@@ -38,7 +38,7 @@ rollback. But I kept running into the same things. The Nix language is hard to r
 debug, an option set in two places merges in ways you have to look up, and most errors point
 somewhere deep in nixpkgs instead of at the line you wrote.
 
-So distro keeps the parts I like and tries to fix the rest:
+So wrath keeps the parts I like and tries to fix the rest:
 
 - You write TOML. Setting the same option to two different values in two files is an error that
   points at both lines, never a silent merge.
@@ -66,7 +66,7 @@ along.
 
 ## Thanks
 
-distro borrows a lot. The store, the generations and rollback come from
+wrath borrows a lot. The store, the generations and rollback come from
 [Nix and NixOS](https://nixos.org), and the full-source bootstrap ideas from
 [Guix](https://guix.gnu.org). Talos and Fedora's bootc shaped how updates and rollback should
 feel, and [Starlark](https://github.com/facebook/starlark-rust) (the Rust implementation, from

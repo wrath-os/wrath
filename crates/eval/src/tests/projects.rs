@@ -1,4 +1,4 @@
-//! Projects: a configuration that starts from `distro.toml`, or `distro.local.toml` over it.
+//! Projects: a configuration that starts from `wrath.toml`, or `wrath.local.toml` over it.
 
 use crate::{ConfigKind, Input, MemFs, Sources, evaluate};
 
@@ -27,9 +27,9 @@ fn starting(evaluation: &crate::Evaluation) -> Vec<&str> {
 }
 
 #[test]
-fn a_project_is_its_distro_toml_and_what_that_includes() {
+fn a_project_is_its_wrath_toml_and_what_that_includes() {
     let evaluation = eval_project(&[
-        ("distro.toml", "include = [\"tools.toml\"]\n"),
+        ("wrath.toml", "include = [\"tools.toml\"]\n"),
         (
             "tools.toml",
             "[system]\ntimezone = \"Europe/Stockholm\"\nhostname = \"dev\"\n",
@@ -40,7 +40,7 @@ fn a_project_is_its_distro_toml_and_what_that_includes() {
     ])
     .unwrap_or_else(|e| panic!("{e}"));
 
-    assert_eq!(starting(&evaluation), ["distro.toml"]);
+    assert_eq!(starting(&evaluation), ["wrath.toml"]);
     insta::assert_snapshot!(why(&evaluation, "system.timezone"), @r#"
     system.timezone = "Europe/Stockholm"
       set at tools.toml:2:12
@@ -52,43 +52,43 @@ fn a_project_is_its_distro_toml_and_what_that_includes() {
 fn a_local_file_starts_the_project_when_there_is_one() {
     let evaluation = eval_project(&[
         (
-            "distro.toml",
+            "wrath.toml",
             "[system]\ntimezone = \"Europe/Stockholm\"\nhostname = \"dev\"\n",
         ),
         (
-            "distro.local.toml",
-            "include = [{ path = \"distro.toml\", as = \"defaults\" }]\n\n\
+            "wrath.local.toml",
+            "include = [{ path = \"wrath.toml\", as = \"defaults\" }]\n\n\
              [system]\ntimezone = \"Europe/Oslo\"\n",
         ),
     ])
     .unwrap_or_else(|e| panic!("{e}"));
 
-    assert_eq!(starting(&evaluation), ["distro.local.toml"]);
+    assert_eq!(starting(&evaluation), ["wrath.local.toml"]);
     insta::assert_snapshot!(why(&evaluation, "system"), @r#"
     system.hostname = "dev"
-      default at distro.toml:3:12
+      default at wrath.toml:3:12
     system.timezone = "Europe/Oslo"
-      set at distro.local.toml:4:12
-      overrides "Europe/Stockholm", default at distro.toml:2:12
+      set at wrath.local.toml:4:12
+      overrides "Europe/Stockholm", default at wrath.toml:2:12
       overrides "UTC", default
     "#);
 }
 
 #[test]
-fn error_a_project_without_distro_toml() {
+fn error_a_project_without_wrath_toml() {
     insta::assert_snapshot!(eval_project(&[("system.toml", "")]).unwrap_err(), @"
-    error: `distro.toml` does not exist
-     = help: a project starts from `distro.toml`
+    error: `wrath.toml` does not exist
+     = help: a project starts from `wrath.toml`
     ");
 }
 
 #[test]
 fn error_a_project_choosing_a_platform() {
-    let errors = eval_project(&[("distro.toml", "platform = \"distro\"\n")]).unwrap_err();
+    let errors = eval_project(&[("wrath.toml", "platform = \"wrath\"\n")]).unwrap_err();
     assert!(
         errors.contains("only a system chooses its platform"),
         "{errors}"
     );
-    let config = MemFs::new([("distro.toml", "platform = { source = \"acme\" }\n")]);
-    assert_eq!(crate::platform(&config, None), Ok(crate::Platform::Distro));
+    let config = MemFs::new([("wrath.toml", "platform = { source = \"acme\" }\n")]);
+    assert_eq!(crate::platform(&config, None), Ok(crate::Platform::Wrath));
 }

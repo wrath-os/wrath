@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
-use distro_model::{Model, Plan};
+use wrath_model::{Model, Plan};
 
 use crate::generations::{self, Switch};
 use crate::host::Remote;
@@ -50,7 +50,7 @@ impl Machine<'_> {
     fn keep(&self) -> Result<(), String> {
         match self {
             Self::Here => generations::keep().map(drop),
-            Self::Remote(remote) => remote.distro_as_root("keep"),
+            Self::Remote(remote) => remote.wrath_as_root("keep"),
         }
     }
 
@@ -58,7 +58,7 @@ impl Machine<'_> {
     fn end(&self) -> Result<(), String> {
         match self {
             Self::Here => generations::rollback(None).map(drop),
-            Self::Remote(remote) => remote.distro_as_root("rollback"),
+            Self::Remote(remote) => remote.wrath_as_root("rollback"),
         }
     }
 }
@@ -129,7 +129,7 @@ impl Watching<'_> {
 
     fn offer(&mut self, model: Model) -> Result<(), String> {
         let model = generations::locked(self.root, self.config, model)?;
-        let plan = distro_model::plan(self.running.as_ref().unwrap_or(&Model::default()), &model);
+        let plan = wrath_model::plan(self.running.as_ref().unwrap_or(&Model::default()), &model);
         if plan.is_empty() {
             println!("nothing to try: it runs this already");
             return Ok(());

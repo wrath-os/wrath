@@ -29,12 +29,6 @@ use std::path::{Component, Path};
 use std::time::{Duration, Instant};
 
 use allocative::Allocative;
-use distro_eval::{
-    Build, ConfigKind, ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge,
-    MACHINE_VALUES, Module, OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart,
-    Secret, Setting, Sources, Span, Template, Type, Unit, UnitAction, Value, Wrapper, formats,
-    home_path,
-};
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
 use starlark::collections::SmallMap;
@@ -51,6 +45,12 @@ use starlark::values::{
     Heap, NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue, ValueLike,
 };
 use starlark_derive::starlark_value;
+use wrath_eval::{
+    Build, ConfigKind, ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge,
+    MACHINE_VALUES, Module, OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart,
+    Secret, Setting, Sources, Span, Template, Type, Unit, UnitAction, Value, Wrapper, formats,
+    home_path,
+};
 
 /// The module variable that holds the render function after `module(...)` runs.
 const RENDER: &str = "module_render";

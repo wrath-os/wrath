@@ -1,4 +1,4 @@
-# Environment variables a project's shell has, from `environment` in `distro.toml`. A home's are
+# Environment variables a project's shell has, from `environment` in `wrath.toml`. A home's are
 # under `environment` in `users/<name>.toml`.
 
 def render(ctx: Context) -> None:

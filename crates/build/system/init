@@ -1,4 +1,4 @@
 #!@bash@/bin/bash
-# PID 1: distro puts this generation in place and starts systemd.
+# PID 1: wrath puts this generation in place and starts systemd.
 self=$(@coreutils@/bin/readlink -f "${0%/init}")
-exec "$self/bin/distro" activate --mode init "$self"
+exec "$self/bin/wrath" activate --mode init "$self"

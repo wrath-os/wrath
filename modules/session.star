@@ -1,6 +1,6 @@
 # Environment variables for each user's sessions, from `environment`: systemd's user manager and
 # graphical sessions read `~/.config/environment.d`, and login shells source
-# `~/.config/distro/session.sh`.
+# `~/.config/wrath/session.sh`.
 
 def check(ctx: Context, user: str, name: str, v: str) -> None:
     where = ["users", user, "environment", name]
@@ -25,13 +25,13 @@ def render(ctx: Context) -> None:
             conf.append("%s=%s" % (name, v))
             sh.append("export %s=%s" % (name, sh_quote(v)))
         ctx.file(
-            "~/.config/environment.d/60-distro.conf",
+            "~/.config/environment.d/60-wrath.conf",
             lines(conf),
             user = user,
             next_login = True,
         )
         ctx.file(
-            "~/.config/distro/session.sh",
+            "~/.config/wrath/session.sh",
             lines(sh),
             user = user,
             next_login = True,

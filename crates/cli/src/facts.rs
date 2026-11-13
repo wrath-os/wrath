@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use distro_eval::{Requirement, Sources};
+use wrath_eval::{Requirement, Sources};
 
 /// The facts requirements are about, by name: each with the values this machine has. A machine
 /// can have several of some, such as GPUs, and none of a fact it can't detect.
@@ -134,21 +134,21 @@ mod tests {
             "roles/gpu-worker.toml",
             "[machine.requires]\ngpu = \"nvidia\"\nmemory_gb = { at_least = 64 }\narch = \"x86_64\"\n",
         );
-        let at = |line_start: usize| distro_eval::Span::new(file, line_start..line_start + 1);
+        let at = |line_start: usize| wrath_eval::Span::new(file, line_start..line_start + 1);
         let requirements = [
             Requirement {
                 fact: "gpu",
-                check: distro_eval::Check::Is("nvidia".into()),
+                check: wrath_eval::Check::Is("nvidia".into()),
                 at: at(19),
             },
             Requirement {
                 fact: "memory_gb",
-                check: distro_eval::Check::AtLeast(64),
+                check: wrath_eval::Check::AtLeast(64),
                 at: at(34),
             },
             Requirement {
                 fact: "arch",
-                check: distro_eval::Check::Is("x86_64".into()),
+                check: wrath_eval::Check::Is("x86_64".into()),
                 at: at(64),
             },
         ];
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn every_fact_a_requirement_can_name_is_detected() {
         let facts = detect();
-        let names: Vec<&str> = distro_eval::FACTS.iter().map(|(name, _)| *name).collect();
+        let names: Vec<&str> = wrath_eval::FACTS.iter().map(|(name, _)| *name).collect();
         assert_eq!(facts.keys().copied().collect::<Vec<_>>(), names);
         assert_eq!(facts["arch"], [std::env::consts::ARCH]);
     }

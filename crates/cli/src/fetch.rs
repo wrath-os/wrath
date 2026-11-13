@@ -7,8 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use distro_eval::{ConfigFs, DirFs};
-use distro_model::{Lock, Source};
+use wrath_eval::{ConfigFs, DirFs};
+use wrath_model::{Lock, Source};
 
 /// Which sources a command may fetch at their newest version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +69,7 @@ impl<F> Sourced<F> {
         match choose(self.lock.as_ref(), fetching, name, url)? {
             Some(source) => crate::trees::fetch(source)
                 .map(|path| (source.clone(), path))
-                .map_err(|message| format!("{message}; `distro update {name}` takes its newest")),
+                .map_err(|message| format!("{message}; `wrath update {name}` takes its newest")),
             None => crate::trees::follow(url),
         }
     }
@@ -95,7 +95,7 @@ fn choose<'l>(
     }
     match (pinned, fetching) {
         (Some(source), _) => Ok(Some(source)),
-        (None, Fetching::Pinned) => Err("it isn't pinned yet; `distro check` pins it".to_owned()),
+        (None, Fetching::Pinned) => Err("it isn't pinned yet; `wrath check` pins it".to_owned()),
         (None, Fetching::Missing | Fetching::Newest(_)) => Ok(None),
     }
 }
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(choose(Some(&moved), &Fetching::Missing), Ok(None));
         assert_eq!(
             choose(Some(&moved), &Fetching::Pinned),
-            Err("it isn't pinned yet; `distro check` pins it".to_owned())
+            Err("it isn't pinned yet; `wrath check` pins it".to_owned())
         );
         assert!(choose(None, &Fetching::Pinned).is_err());
     }

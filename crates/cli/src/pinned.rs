@@ -1,17 +1,17 @@
-//! distro pinned in the lock like a source, so a configuration is built by the distro it was
-//! locked with: its evaluator, modules and recipes. Running another distro than the locked one
-//! needs a builder for it, which only a checkout has so far, so for now a distro that isn't the
+//! wrath pinned in the lock like a source, so a configuration is built by the wrath it was
+//! locked with: its evaluator, modules and recipes. Running another version of wrath than the locked one
+//! needs a builder for it, which only a checkout has so far, so for now a version that isn't the
 //! locked one says so and goes on.
 
 use std::path::Path;
 
-use distro_model::{DISTRO_SOURCE, Lock, Source};
+use wrath_model::{Lock, Source, WRATH_SOURCE};
 
-/// Says where a packaged distro was built from, beside its modules: its `rev`, its
+/// Says where a packaged wrath was built from, beside its modules: its `rev`, its
 /// `hash` and the `url` it lives at, when it has a home.
 const SOURCE_FILE: &str = "source.toml";
 
-/// The running distro as a source, when it was built from a revision. A development build, run
+/// The running wrath as a source, when it was built from a revision. A development build, run
 /// from a checkout or built from changes not yet committed, has none and can't be pinned.
 pub fn running(root: &Path) -> Option<Source> {
     let text = std::fs::read_to_string(root.join(SOURCE_FILE)).ok()?;
@@ -29,9 +29,9 @@ fn parse(text: &str) -> Option<Source> {
     })
 }
 
-/// What the lock pins distro to, given what it pinned (`current`, the configuration's own source
-/// `distro` when it declares one) and the running distro. `moving` is `distro update` taking
-/// distro's newest, which is the running one.
+/// What the lock pins wrath to, given what it pinned (`current`, the configuration's own source
+/// `wrath` when it declares one) and the running wrath. `moving` is `wrath update` taking
+/// wrath's newest, which is the running one.
 pub fn for_lock(running: Option<Source>, current: Option<&Source>, moving: bool) -> Option<Source> {
     let keep = current.filter(|source| source.is_locked()).cloned();
     if keep.is_some() && !moving {
@@ -39,7 +39,7 @@ pub fn for_lock(running: Option<Source>, current: Option<&Source>, moving: bool)
     }
     let Some(running) = running else {
         if moving && keep.is_some() {
-            crate::style::note("this distro is a development build, so the lock keeps its distro");
+            crate::style::note("this wrath is a development build, so the lock keeps its wrath");
         }
         return keep;
     };
@@ -52,35 +52,35 @@ pub fn for_lock(running: Option<Source>, current: Option<&Source>, moving: bool)
     })
 }
 
-/// What to say about the distro `lock` pins, running as `running`: nothing when it's this one.
+/// What to say about the wrath `lock` pins, running as `running`: nothing when it's this one.
 fn note(lock: Option<&Lock>, running: Option<&Source>) -> Option<String> {
     let pinned = lock
-        .and_then(|lock| lock.sources.get(DISTRO_SOURCE))
+        .and_then(|lock| lock.sources.get(WRATH_SOURCE))
         .filter(|source| source.is_locked())?;
     match running {
         Some(running) if running.hash == pinned.hash => None,
         Some(running) => Some(format!(
-            "the lock pins {}, and this is {}; running another distro needs a builder, \
-             so this one goes on, and `distro update distro` pins it",
+            "the lock pins {}, and this is {}; running another version of wrath needs a builder, \
+             so this one goes on, and `wrath update wrath` pins it",
             describe(pinned),
             describe(running)
         )),
         None => Some(format!(
-            "this distro is a development build; the lock pins {}",
+            "this wrath is a development build; the lock pins {}",
             describe(pinned)
         )),
     }
 }
 
-/// A distro version as output names it: its short revision.
+/// A wrath version as output names it: its short revision.
 fn describe(source: &Source) -> String {
     match &source.rev {
-        Some(rev) => format!("distro {}", &rev[..rev.len().min(7)]),
-        None => "another distro".to_owned(),
+        Some(rev) => format!("wrath {}", &rev[..rev.len().min(7)]),
+        None => "another version of wrath".to_owned(),
     }
 }
 
-/// Says on stderr when the distro `lock` pins isn't the one running.
+/// Says on stderr when the wrath `lock` pins isn't the one running.
 pub fn warn_if_other(root: &Path, lock: Option<&Lock>) {
     if let Some(note) = note(lock, running(root).as_ref()) {
         crate::style::note(&note);
@@ -102,18 +102,18 @@ mod tests {
 
     fn lock_with(source: Source) -> Lock {
         let mut lock = Lock::default();
-        lock.sources.insert(DISTRO_SOURCE.to_owned(), source);
+        lock.sources.insert(WRATH_SOURCE.to_owned(), source);
         lock
     }
 
     #[test]
-    fn a_packaged_distro_knows_its_revision_and_a_checkout_doesnt() {
-        let source = parse("url = \"git+https://x/distro\"\nrev = \"abc\"\nhash = \"sha256-h\"\n");
+    fn a_packaged_wrath_knows_its_revision_and_a_checkout_doesnt() {
+        let source = parse("url = \"git+https://x/wrath\"\nrev = \"abc\"\nhash = \"sha256-h\"\n");
         assert_eq!(
             source,
             Some(Source {
                 hash: "sha256-h".into(),
-                ..at("abc", "git+https://x/distro")
+                ..at("abc", "git+https://x/wrath")
             })
         );
         assert_eq!(parse("rev = \"abc\"\nhash = \"h\"\n").unwrap().url, "");
@@ -121,8 +121,8 @@ mod tests {
     }
 
     #[test]
-    fn the_first_lock_pins_the_running_distro_and_later_ones_keep_it() {
-        let old = at("old", "git+https://x/distro");
+    fn the_first_lock_pins_the_running_wrath_and_later_ones_keep_it() {
+        let old = at("old", "git+https://x/wrath");
         let new = at("new", "");
         assert_eq!(for_lock(Some(new.clone()), None, false), Some(new.clone()));
         assert_eq!(
@@ -134,36 +134,36 @@ mod tests {
     }
 
     #[test]
-    fn updating_pins_the_running_distro_where_the_configuration_says_it_lives() {
-        let old = at("old", "git+https://x/distro");
+    fn updating_pins_the_running_wrath_where_the_configuration_says_it_lives() {
+        let old = at("old", "git+https://x/wrath");
         let new = at("new", "");
         assert_eq!(
             for_lock(Some(new.clone()), Some(&old), true),
-            Some(at("new", "git+https://x/distro"))
+            Some(at("new", "git+https://x/wrath"))
         );
         assert_eq!(for_lock(None, Some(&old), true), Some(old));
-        let declared = Source::follow("git+file:///src/distro");
+        let declared = Source::follow("git+file:///src/wrath");
         assert_eq!(
             for_lock(Some(new), Some(&declared), false),
-            Some(at("new", "git+file:///src/distro"))
+            Some(at("new", "git+file:///src/wrath"))
         );
     }
 
     #[test]
-    fn a_distro_that_isnt_the_locked_one_says_so() {
-        let lock = lock_with(at("old", "git+https://x/distro"));
+    fn a_wrath_that_isnt_the_locked_one_says_so() {
+        let lock = lock_with(at("old", "git+https://x/wrath"));
         assert_eq!(note(None, Some(&at("new", ""))), None);
         assert_eq!(note(Some(&lock), Some(&at("old", ""))), None);
         let other = note(Some(&lock), Some(&at("new", ""))).unwrap();
         assert!(
-            other.contains("pins distro old, and this is distro new"),
+            other.contains("pins wrath old, and this is wrath new"),
             "{other}"
         );
         assert_eq!(
             note(Some(&lock), None).unwrap(),
-            "this distro is a development build; the lock pins distro old"
+            "this wrath is a development build; the lock pins wrath old"
         );
-        let unlocked = lock_with(Source::follow("git+https://x/distro"));
+        let unlocked = lock_with(Source::follow("git+https://x/wrath"));
         assert_eq!(note(Some(&unlocked), Some(&at("new", ""))), None);
     }
 }

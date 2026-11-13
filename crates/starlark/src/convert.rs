@@ -3,7 +3,6 @@
 use std::fmt;
 
 use allocative::Allocative;
-use distro_eval::{RuntimePart, Value};
 use starlark::any::ProvidesStaticType;
 use starlark::starlark_simple_value;
 use starlark::values::dict::{AllocDict, DictRef};
@@ -15,6 +14,7 @@ use starlark::values::{
     ValueLike,
 };
 use starlark_derive::starlark_value;
+use wrath_eval::{RuntimePart, Value};
 
 /// A value only known at service start, passed through a module unchanged.
 #[derive(Debug, ProvidesStaticType, NoSerialize, StarlarkPagablePanic, Allocative)]

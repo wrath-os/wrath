@@ -7,8 +7,8 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-fn distro(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_distro"))
+fn wrath(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_wrath"))
         .args(args)
         .output()
         .unwrap()
@@ -23,11 +23,11 @@ fn fixture() -> tempfile::TempDir {
     );
     write(
         &acceptance.join("m1/version.toml"),
-        "title = \"distro reports its version\"\n[command]\nrun = [\"distro\", \"--version\"]\nstdout_contains = [\"distro\"]\n",
+        "title = \"wrath reports its version\"\n[command]\nrun = [\"wrath\", \"--version\"]\nstdout_contains = [\"wrath\"]\n",
     );
     write(
         &acceptance.join("m2/frobnicate.toml"),
-        "title = \"frobnicate exists\"\n[command]\nrun = [\"distro\", \"frobnicate\"]\n",
+        "title = \"frobnicate exists\"\n[command]\nrun = [\"wrath\", \"frobnicate\"]\n",
     );
     dir
 }
@@ -36,7 +36,7 @@ fn fixture() -> tempfile::TempDir {
 fn status_runs_scenarios_and_prints_scoreboard() {
     let dir = fixture();
 
-    let out = distro(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
+    let out = wrath(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
 
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -54,7 +54,7 @@ fn status_runs_scenarios_and_prints_scoreboard() {
 fn status_filters_by_milestone() {
     let dir = fixture();
 
-    let out = distro(&[
+    let out = wrath(&[
         "dev",
         "acceptance",
         "--root",
@@ -73,7 +73,7 @@ fn status_filters_by_milestone() {
 fn status_rejects_unknown_milestone() {
     let dir = fixture();
 
-    let out = distro(&[
+    let out = wrath(&[
         "dev",
         "acceptance",
         "--root",
@@ -97,7 +97,7 @@ fn status_reports_invalid_scenarios() {
         "title = \"no runner\"\n",
     );
 
-    let out = distro(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
+    let out = wrath(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
 
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();

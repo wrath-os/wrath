@@ -4,8 +4,8 @@
 
 load("lib/home.star", "home_of")
 
-ALWAYS_KEPT = ["/etc/distro", "/var/lib/distro"]
-ACCOUNTS = "/var/lib/distro/accounts"
+ALWAYS_KEPT = ["/etc/wrath", "/var/lib/wrath"]
+ACCOUNTS = "/var/lib/wrath/accounts"
 
 kept = types.record(
     directories = option(types.set(types.str)),
@@ -71,11 +71,11 @@ def render(ctx: Context) -> None:
     })
     if "/etc/machine-id" in files:
         # A kept id is a mount, which this service takes for a temporary id to write to disk.
-        ctx.unit("systemd-machine-id-commit.service.d/distro.conf", {
+        ctx.unit("systemd-machine-id-commit.service.d/wrath.conf", {
             "Unit": {"ConditionPathExists": "!/etc/machine-id"},
         })
     # Passwords changed since the last switch are kept too.
-    ctx.unit("distro-save-accounts.service", {
+    ctx.unit("wrath-save-accounts.service", {
         "Unit": {"Description": "Keep users and passwords for the next boot"},
         "Service": {
             "Type": "oneshot",

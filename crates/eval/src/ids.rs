@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use crate::Value;
 
 /// The lock file's name in a configuration directory.
-pub const LOCK_FILE: &str = "distro.lock";
+pub const LOCK_FILE: &str = "wrath.lock";
 
 /// Numbers by user and group name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

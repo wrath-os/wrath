@@ -1,4 +1,4 @@
-//! `distro add` and `distro remove`: editing the packages in a configuration's TOML, keeping its
+//! `wrath add` and `wrath remove`: editing the packages in a configuration's TOML, keeping its
 //! comments and layout, then locking what changed. The TOML stays the only place intent lives.
 
 use std::collections::BTreeMap;
@@ -6,9 +6,9 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use distro_eval::{Evaluation, OptionPath, Site, Value};
-use distro_model::{Model, package_source};
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table};
+use wrath_eval::{Evaluation, OptionPath, Site, Value};
+use wrath_model::{Model, package_source};
 
 use crate::{evaluate, run};
 

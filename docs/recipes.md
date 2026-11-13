@@ -1,6 +1,6 @@
 # Recipes and styles
 
-Every package comes from a recipe in `build/recipes/` in distro's repository. A recipe says where
+Every package comes from a recipe in `build/recipes/` in wrath's repository. A recipe says where
 the source is, what the build needs and how to build it. Most of the time a build style writes
 the build script, so the recipe is mostly a list of what's different about this project.
 
@@ -80,7 +80,7 @@ The current directory is the unpacked source.
 Add the recipe, then build just that package:
 
 ```sh
-distro build grim
+wrath build grim
 ```
 
 On a terminal you get a line per package that keeps updating with its time and latest output.
@@ -98,10 +98,10 @@ error: `grim` Failed after 4 s, see build/work/logs/f/grim.log
 Once it builds:
 
 ```sh
-distro build grim --check  # its smoke commands, and its own tests in a build thrown away
-distro dev lint grim       # dependencies it lists that another one already brings
-distro dev repro grim      # build it again as someone else and compare
-distro dev outdated        # every recipe against upstream's newest release
+wrath build grim --check  # its smoke commands, and its own tests in a build thrown away
+wrath dev lint grim       # dependencies it lists that another one already brings
+wrath dev repro grim      # build it again as someone else and compare
+wrath dev outdated        # every recipe against upstream's newest release
 ```
 
 When packaging goes wrong in a way the tool could have caught, it goes in
@@ -111,5 +111,5 @@ hints above started out there.
 ## What's not there yet
 
 - Python, Node, Ruby and the other language ecosystems don't have styles yet.
-- `distro info <id>` for a project's build options, so you don't have to read `meson.options` by
+- `wrath info <id>` for a project's build options, so you don't have to read `meson.options` by
   hand.

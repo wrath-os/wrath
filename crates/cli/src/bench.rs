@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use distro_model::{Model, plan};
+use wrath_model::{Model, plan};
 
 use crate::system::{self, ModuleOrder};
 
@@ -175,7 +175,7 @@ def render(ctx):
     for service, instances in ctx.read("services").items():
         for instance_name in instances:
             lines.append(service + "." + instance_name)
-    ctx.file("/etc/distro/inventory", "\n".join(lines) + "\n")
+    ctx.file("/etc/wrath/inventory", "\n".join(lines) + "\n")
 
 module(name = "inventory", options = {}, writes = [], render = render)
 "#;

@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-use distro_starlark::style::{self, Style};
+use wrath_starlark::style::{self, Style};
 
 use memchr::memmem;
 use serde::Deserialize;
@@ -540,6 +540,8 @@ impl Package {
         let defaults = self.option_exports(&serde_json::Map::new())?;
         let script = self.script.strip_prefix(&defaults).unwrap_or(&self.script);
         let mut prelude = self.option_exports(options)?;
+        // The marker keeps its name from before wrath (0035) until a change that rebuilds every
+        // package anyway, since it is in the scripts of patched packages such as glibc.
         for (index, patch) in patches.iter().enumerate() {
             let end = if patch.ends_with('\n') { "" } else { "\n" };
             prelude.push_str(&format!(
@@ -658,7 +660,8 @@ fn write_runtime_deps(
     fs::write(&file, text).map_err(with_path(&file))
 }
 
-/// Where a package keeps the store paths of its `runtime_deps`.
+/// Where a package keeps the store paths of its `runtime_deps`. It keeps the name from before
+/// wrath (0035) until a change that rebuilds every package anyway, since every package holds it.
 const RUNTIME_DEPS: &str = "lib/distro/runtime-deps";
 
 /// A listed dependency another one brings, and the one that brings it.

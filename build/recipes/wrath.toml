@@ -1,0 +1,28 @@
+# wrath itself, from this repository, and the agent the VM tests drive a system through.
+
+[[package]]
+id = "wrath"
+scope = "runtime"
+core = true
+extra_deps = ["rust-bin"]
+sources = [{ url = "tree:..", include = ["Cargo.toml", "Cargo.lock", "crates", "modules"] }]
+smoke = ["bin/wrath --version", "bin/wrath-agent --help"]
+
+[package.cargo]
+packages = ["wrath-cli", "wrath-agent"]
+programs = ["wrath", "wrath-agent"]
+install = '''
+mkdir -p $DEST$PREFIX/share/wrath $DEST$PREFIX/lib/systemd/system
+cp -r modules $DEST$PREFIX/share/wrath/
+cat > $DEST$PREFIX/lib/systemd/system/wrath-agent.service <<UNIT
+[Unit]
+Description=wrath test harness agent
+# A switch it runs would end with it.
+X-RestartIfChanged=false
+
+[Service]
+Environment=PATH=/run/wrappers/bin:/run/system/bin
+ExecStart=$PREFIX/bin/wrath-agent
+Restart=always
+UNIT
+'''

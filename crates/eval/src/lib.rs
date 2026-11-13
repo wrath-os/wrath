@@ -34,8 +34,8 @@ pub use ids::{Ids, LOCK_FILE};
 pub use load::{ConfigKind, DeclaredSource, kind_of, roles};
 pub use machines::Machine;
 pub use module::{
-    Build, ConfigReader, DISTRO_SOURCE, File, HOME_SECRETS_DIR, Home, Module, ModuleId, Output,
-    ReadError, RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction,
+    Build, ConfigReader, File, HOME_SECRETS_DIR, Home, Module, ModuleId, Output, ReadError,
+    RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, WRATH_SOURCE,
     Wrapper, home_path, package_source,
 };
 pub use path::OptionPath;

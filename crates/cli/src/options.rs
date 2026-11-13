@@ -1,10 +1,10 @@
-//! `distro options`: the options the modules declare, with their types, defaults and docs.
+//! `wrath options`: the options the modules declare, with their types, defaults and docs.
 
 use std::fmt::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
-use distro_eval::{ConfigKind, EVERY, OptionPath, OptionSpec, Schema, Sources, Type};
+use wrath_eval::{ConfigKind, EVERY, OptionPath, OptionSpec, Schema, Sources, Type};
 
 use crate::system::{self, ModuleOrder};
 
@@ -149,7 +149,7 @@ pub fn markdown(modules: &Path) -> Result<String, String> {
     let mut out = String::new();
     for (kind, heading) in [
         (ConfigKind::System, "A machine's configuration"),
-        (ConfigKind::Project, "A project's `distro.toml`"),
+        (ConfigKind::Project, "A project's `wrath.toml`"),
     ] {
         let _ = writeln!(out, "## {heading}\n");
         for module in modules
@@ -188,7 +188,7 @@ fn describe(ty: &Type) -> String {
 
 #[cfg(test)]
 mod tests {
-    use distro_eval::{ListMerge, Value};
+    use wrath_eval::{ListMerge, Value};
 
     use super::*;
 

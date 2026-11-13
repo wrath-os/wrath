@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use crate::trees::at;
 
-/// Where distro keeps the list of what it linked into each home.
-pub const HOME_RECORDS: &str = "/var/lib/distro/homes";
+/// Where wrath keeps the list of what it linked into each home.
+pub const HOME_RECORDS: &str = "/var/lib/wrath/homes";
 
 /// One user's files to link: where they are in the system on this machine, and where links to
 /// them point, which is the same place through `/run/system`.
@@ -235,7 +235,7 @@ mod tests {
             source: &source,
             through: Path::new("/run/system/users/john/files"),
         };
-        let record = root.join("var/lib/distro/homes/john");
+        let record = root.join("var/lib/wrath/homes/john");
 
         let notes = link(&root, &files, &record).unwrap();
 
@@ -284,7 +284,7 @@ mod tests {
                 "john:x:1000:100::/home/john:/bin/sh\n",
             );
             fs::create_dir_all(root.join("home/john")).unwrap();
-            let record = root.join("var/lib/distro/homes/john");
+            let record = root.join("var/lib/wrath/homes/john");
             let linked = Linked {
                 _dir: dir,
                 root,

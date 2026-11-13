@@ -1,12 +1,12 @@
-//! `distro run` and `distro shell`: packages without installing them. A package is built from the
-//! recipes of the distro that runs, into its store, and nothing in the configuration is written.
+//! `wrath run` and `wrath shell`: packages without installing them. A package is built from the
+//! recipes of the wrath that runs, into its store, and nothing in the configuration is written.
 
 use std::ffi::{OsStr, OsString};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use distro_model::{DISTRO_SOURCE, Model, package_source};
+use wrath_model::{Model, WRATH_SOURCE, package_source};
 
 use crate::project;
 
@@ -60,7 +60,7 @@ pub fn shell(
     let environment = Environment::build(root, &model, &wanted)?;
     let inherited = inherited_path();
     if let Some(dir) = project {
-        keep(&environment.path, &dir.join(".distro/shell"));
+        keep(&environment.path, &dir.join(".wrath/shell"));
         let shadowed = project::shadows(
             &environment.bin(),
             &environment.programs(),
@@ -84,7 +84,7 @@ pub fn shell(
             .command(Path::new(&shell))
             .envs(variables)
             .env("PATH", path)
-            .env("DISTRO_SHELL", names),
+            .env("WRATH_SHELL", names),
     ))
 }
 
@@ -93,7 +93,7 @@ pub fn shell(
 pub fn up(root: &Path, model: Model, project: &Path) -> Result<ExitCode, String> {
     let compose = project::compose(&model)
         .ok_or("the project has no services; add them under `[services]`")?;
-    let state = project.join(".distro");
+    let state = project.join(".wrath");
     std::fs::create_dir_all(&state).map_err(|e| format!("{}: {e}", state.display()))?;
     let file = state.join("process-compose.yaml");
     std::fs::write(&file, compose).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -137,17 +137,17 @@ fn exec(command: &mut Command) -> String {
     format!("cannot run {program}: {}", command.exec())
 }
 
-/// Packages built from distro's recipes, as named, with where each is.
+/// Packages built from wrath's recipes, as named, with where each is.
 pub struct Built {
     /// Each package's name, in the order asked for.
     pub packages: Vec<String>,
     /// Each package's main output, in the same order.
-    pub paths: Vec<distro_build::store::StorePath>,
+    pub paths: Vec<wrath_build::store::StorePath>,
     /// The store they were built into, on this machine.
     pub store: PathBuf,
 }
 
-/// Builds `references`, such as `jq`, from the recipes of the distro under `root`.
+/// Builds `references`, such as `jq`, from the recipes of the wrath under `root`.
 pub fn built(root: &Path, model: &Model, references: &[String]) -> Result<Built, String> {
     let packages = references
         .iter()
@@ -158,7 +158,7 @@ pub fn built(root: &Path, model: &Model, references: &[String]) -> Result<Built,
         .canonicalize()
         .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
     let names: Vec<&str> = packages.iter().map(String::as_str).collect();
-    let paths = distro_build::graph::packages(&repository, &names)?;
+    let paths = wrath_build::graph::packages(&repository, &names)?;
     Ok(Built {
         packages,
         paths,
@@ -179,7 +179,7 @@ struct Environment {
 }
 
 impl Environment {
-    /// Builds `references` from distro's recipes and links their programs into a directory under
+    /// Builds `references` from wrath's recipes and links their programs into a directory under
     /// the user's cache, one for each set of packages.
     fn build(root: &Path, model: &Model, references: &[String]) -> Result<Self, String> {
         let Built {
@@ -286,9 +286,9 @@ fn namespace_args(store: &Path) -> Vec<OsString> {
     args
 }
 
-/// Where packages come from, as `distro 1d06008, 2026-10-30` or `this distro`.
+/// Where packages come from, as `wrath 1d06008, 2026-10-30` or `this wrath`.
 fn describe(model: &Model) -> String {
-    match model.sources.get(DISTRO_SOURCE) {
+    match model.sources.get(WRATH_SOURCE) {
         Some(source) if source.is_locked() => {
             let rev = source.rev.as_deref().map(|rev| &rev[..rev.len().min(7)]);
             let details: Vec<&str> = [rev, source.date.as_deref()]
@@ -296,11 +296,11 @@ fn describe(model: &Model) -> String {
                 .flatten()
                 .collect();
             match details.as_slice() {
-                [] => "distro, as the lock pins it".to_owned(),
-                _ => format!("distro {}", details.join(", ")),
+                [] => "wrath, as the lock pins it".to_owned(),
+                _ => format!("wrath {}", details.join(", ")),
             }
         }
-        _ => "this distro".to_owned(),
+        _ => "this wrath".to_owned(),
     }
 }
 
@@ -313,7 +313,7 @@ fn environment_dir(names: &[String]) -> Result<PathBuf, String> {
     let mut sorted: Vec<&str> = names.iter().map(String::as_str).collect();
     sorted.sort_unstable();
     Ok(cache
-        .join("distro/environments")
+        .join("wrath/environments")
         .join(root_name(&sorted.join(" "))))
 }
 
@@ -353,12 +353,12 @@ fn keep(path: &Path, link: &Path) {
     }
 }
 
-/// The recipe a package the command line names comes from. Packages come from distro's own
+/// The recipe a package the command line names comes from. Packages come from wrath's own
 /// recipes; other sources of packages come later.
 fn package_name(model: &Model, reference: &str) -> Result<String, String> {
     let (source, attribute) = package_source(reference);
     refuse_version(reference, attribute)?;
-    if source == DISTRO_SOURCE {
+    if source == WRATH_SOURCE {
         return Ok(attribute.to_owned());
     }
     if reference.contains('#') && !model.sources.contains_key(source) && !source.contains(':') {
@@ -366,7 +366,7 @@ fn package_name(model: &Model, reference: &str) -> Result<String, String> {
         return Err(no_such_source(source, attribute, known));
     }
     Err(format!(
-        "`{reference}`: packages come from distro's recipes for now, and other sources of \
+        "`{reference}`: packages come from wrath's recipes for now, and other sources of \
          packages come later"
     ))
 }
@@ -388,8 +388,8 @@ pub(crate) fn no_such_source<'a>(
     declared: impl Iterator<Item = &'a str>,
 ) -> String {
     let mut known: Vec<&str> = declared.collect();
-    if !known.contains(&DISTRO_SOURCE) {
-        known.insert(0, DISTRO_SOURCE);
+    if !known.contains(&WRATH_SOURCE) {
+        known.insert(0, WRATH_SOURCE);
     }
     format!(
         "there's no source `{source}`; the configuration has {}, or give a URL such as \
@@ -401,7 +401,7 @@ pub(crate) fn no_such_source<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use distro_model::Source;
+    use wrath_model::Source;
 
     fn with_acme() -> Model {
         let mut model = Model::default();
@@ -412,10 +412,10 @@ mod tests {
     }
 
     #[test]
-    fn packages_come_from_distros_recipes() {
+    fn packages_come_from_wraths_recipes() {
         let model = with_acme();
         assert_eq!(package_name(&model, "jq").unwrap(), "jq");
-        assert_eq!(package_name(&model, "distro#jq").unwrap(), "jq");
+        assert_eq!(package_name(&model, "wrath#jq").unwrap(), "jq");
         for other in ["acme#jq", "github:jqlang/jq#jq"] {
             assert!(
                 package_name(&model, other)
@@ -431,7 +431,7 @@ mod tests {
         let model = with_acme();
         assert_eq!(
             package_name(&model, "acem#jq").unwrap_err(),
-            "there's no source `acem`; the configuration has distro, acme, or give a URL such \
+            "there's no source `acem`; the configuration has wrath, acme, or give a URL such \
              as `github:owner/repo#jq`"
         );
         assert!(
@@ -449,19 +449,19 @@ mod tests {
     }
 
     #[test]
-    fn packages_say_which_distro_they_come_from() {
+    fn packages_say_which_wrath_they_come_from() {
         let mut model = Model::default();
-        assert_eq!(describe(&model), "this distro");
+        assert_eq!(describe(&model), "this wrath");
         model.sources.insert(
-            DISTRO_SOURCE.into(),
+            WRATH_SOURCE.into(),
             Source {
-                url: "github:johnae/distro".into(),
+                url: "github:johnae/wrath".into(),
                 rev: Some("1d060086d60c".into()),
                 hash: "sha256-abc".into(),
                 date: Some("2026-10-30".into()),
             },
         );
-        assert_eq!(describe(&model), "distro 1d06008, 2026-10-30");
+        assert_eq!(describe(&model), "wrath 1d06008, 2026-10-30");
     }
 
     #[test]

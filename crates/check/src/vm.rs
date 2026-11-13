@@ -1,7 +1,7 @@
 //! Running scenarios in QEMU virtual machines.
 //!
-//! A scenario names a configuration, which `distro build` makes into a UEFI-bootable disk image
-//! from distro's own store whose system runs the guest agent. Later systems are copied into the
+//! A scenario names a configuration, which `wrath build` makes into a UEFI-bootable disk image
+//! from wrath's own store whose system runs the guest agent. Later systems are copied into the
 //! guest from the host's store. Each run gets its own directory with a copy-on-write overlay of
 //! the disk, writable UEFI variables, an optional software TPM, logs, and a script that boots the
 //! same VM interactively.
@@ -16,11 +16,11 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use distro_agent::{Client, Request, Response};
-use distro_build::chain;
-use distro_build::store::{Lab, StorePath};
 use serde::Deserialize;
 use vsock::VsockStream;
+use wrath_agent::{Client, Request, Response};
+use wrath_build::chain;
+use wrath_build::store::{Lab, StorePath};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "RawVmSpec")]
@@ -34,7 +34,7 @@ pub struct VmSpec {
     pub expect: Vec<Expect>,
     /// Run in order after the expectations.
     pub steps: Vec<Step>,
-    /// Sizes of empty disks attached to the VM, such as `8G`, for `distro install` to lay out.
+    /// Sizes of empty disks attached to the VM, such as `8G`, for `wrath install` to lay out.
     pub blank_disks: Vec<String>,
     /// Limit for booting and checking. Building the image and systems is not counted.
     pub timeout_secs: u64,
@@ -44,7 +44,7 @@ pub struct VmSpec {
 pub enum Step {
     /// Builds the configuration on the host, copies the system into the VM and switches to it.
     /// The plan from the configuration before must contain each of `expect_plan`.
-    /// With `try_for`, it tries the system for that long instead, as `distro try --for`. With a
+    /// With `try_for`, it tries the system for that long instead, as `wrath try --for`. With a
     /// nonzero `exit`, the switch must fail with it.
     ApplyConfig {
         config: String,
@@ -52,7 +52,7 @@ pub enum Step {
         try_for: Option<String>,
         exit: i32,
     },
-    /// Applies a user's own configuration in the VM as `user`, without root. Distro's own store
+    /// Applies a user's own configuration in the VM as `user`, without root. Wrath's own store
     /// can't do this yet, so the step fails with a reason.
     ApplyHome {
         config: String,
@@ -60,7 +60,7 @@ pub enum Step {
         try_for: Option<String>,
     },
     /// Builds `config` on the host and copies it into the guest's store, leaving its path in
-    /// `/run/distro-share/system` and the configuration in `/run/distro-share/configs/<name>`,
+    /// `/run/wrath-share/system` and the configuration in `/run/wrath-share/configs/<name>`,
     /// for a step that installs it.
     PrepareBuild {
         config: String,
@@ -99,7 +99,7 @@ struct RawVmSpec {
     expect: Vec<Expect>,
     #[serde(default)]
     steps: Vec<RawStep>,
-    /// Accepted for scenarios that still say `store = "distro"`, the only store.
+    /// Accepted for scenarios that still say `store = "wrath"`, the only store.
     #[serde(default, rename = "store")]
     _store: Option<Store>,
     #[serde(default)]
@@ -250,15 +250,15 @@ pub enum Firmware {
     Uefi,
 }
 
-/// The only store a scenario may name: distro's own. The guest boots a disk image from it and
-/// sees the host's store read-only at `/run/distro-store`, from which later systems are copied.
+/// The only store a scenario may name: wrath's own. The guest boots a disk image from it and
+/// sees the host's store read-only at `/run/wrath-store`, from which later systems are copied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Store {
-    Distro,
+    Wrath,
 }
 
-/// What `distro build` is given for `target`: a test generation, which the VM switches to or
+/// What `wrath build` is given for `target`: a test generation, which the VM switches to or
 /// installs, unless it names another of `generation`, `image` or `test-image`.
 fn build_flags(target: Option<&str>) -> Result<&'static [&'static str], String> {
     match target.unwrap_or("test-generation") {
@@ -275,7 +275,7 @@ fn build_flags(target: Option<&str>) -> Result<&'static [&'static str], String> 
 enum Boot {
     /// The raw disk image the configuration was built into, with UEFI.
     Image,
-    /// What `distro install` put on the VM's blank disks, with UEFI.
+    /// What `wrath install` put on the VM's blank disks, with UEFI.
     Installed,
 }
 
@@ -360,16 +360,16 @@ pub struct VmRun<'a> {
 /// Where host-side steps run.
 #[derive(Debug, Clone, Copy)]
 pub struct Host<'a> {
-    /// The `distro` binary that builds and plans configurations.
-    pub distro: &'a Path,
+    /// The `wrath` binary that builds and plans configurations.
+    pub wrath: &'a Path,
     /// The repository root, which configuration paths are relative to.
     pub workdir: &'a Path,
 }
 
-/// Builds the disk image that boots a configuration, with `distro build`.
+/// Builds the disk image that boots a configuration, with `wrath build`.
 pub fn build_config_image(host: Host<'_>, config: &str) -> Result<PathBuf, String> {
     let out = PathBuf::from(
-        host.distro(&["build", "--config", config, "--image", "--test"])?
+        host.wrath(&["build", "--config", config, "--image", "--test"])?
             .trim(),
     );
     check_image(&out)?;
@@ -508,7 +508,7 @@ impl VmRun<'_> {
             "-serial",
             "file:console.log",
             "-virtfs",
-            "local,path=share,mount_tag=distro-share,security_model=none,readonly=on",
+            "local,path=share,mount_tag=wrath-share,security_model=none,readonly=on",
         ]
         .map(str::to_owned)
         .into();
@@ -525,7 +525,7 @@ impl VmRun<'_> {
                 argv.extend([
                     "-virtfs".into(),
                     format!(
-                        "local,path={},mount_tag=distro-store,security_model=none,readonly=on",
+                        "local,path={},mount_tag=wrath-store,security_model=none,readonly=on",
                         store.display()
                     ),
                 ]);
@@ -623,8 +623,7 @@ impl VmRun<'_> {
                     None => format!("QEMU exited early ({status})"),
                 });
             }
-            if let Ok(stream) = VsockStream::connect_with_cid_port(cid, distro_agent::DEFAULT_PORT)
-            {
+            if let Ok(stream) = VsockStream::connect_with_cid_port(cid, wrath_agent::DEFAULT_PORT) {
                 let mut client = Client::new(stream);
                 if request(&mut client, &Request::Ping, deadline).is_ok() {
                     return Ok(client);
@@ -703,7 +702,7 @@ struct Unlock<'a> {
 /// The port the initrd's SSH listens on, as `unlock.ssh.port` defaults to.
 const INITRD_SSH: u16 = 2222;
 
-/// The directory in a run that the guest mounts read-only at `/run/distro-share`.
+/// The directory in a run that the guest mounts read-only at `/run/wrath-share`.
 const SHARE: &str = "share";
 
 impl VmRun<'_> {
@@ -734,7 +733,7 @@ impl VmRun<'_> {
                     current = config;
                 }
                 Step::ApplyHome { .. } => {
-                    return Err("homes in the guest don't work with distro's own store yet".into());
+                    return Err("homes in the guest don't work with wrath's own store yet".into());
                 }
                 Step::PrepareBuild { config, target } => {
                     self.prepare_build(agent, config, target.as_deref(), deadline)?;
@@ -780,7 +779,7 @@ impl VmRun<'_> {
     ) -> Result<(), String> {
         let plan = self
             .host
-            .distro(&["plan", "--config", config, "--against", current])?;
+            .wrath(&["plan", "--config", config, "--against", current])?;
         if let Some(missing) = expect_plan
             .iter()
             .find(|needle| !plan.contains(needle.as_str()))
@@ -793,8 +792,8 @@ impl VmRun<'_> {
         let system = format!("/store/{name}");
         let system = system.as_str();
         let switch = match try_for {
-            Some(duration) => argv(&["distro", "try", "-y", "--for", duration, system]),
-            None => argv(&["distro", "apply", "-y", system]),
+            Some(duration) => argv(&["wrath", "try", "-y", "--for", duration, system]),
+            None => argv(&["wrath", "apply", "-y", system]),
         };
         let (code, _, stderr) = run_shell(agent, switch, deadline)?;
         match code {
@@ -807,7 +806,7 @@ impl VmRun<'_> {
         }
     }
 
-    /// Stops the VM and boots its blank disks, onto which `distro install` put a system, typing
+    /// Stops the VM and boots its blank disks, onto which `wrath install` put a system, typing
     /// `passphrase` on the console when the disks ask for it.
     fn boot_installed(
         &self,
@@ -927,8 +926,8 @@ impl VmRun<'_> {
     }
 
     /// Builds `config` on the host as `target`, a test generation unless said, copies it into the
-    /// guest's store and leaves its path in `/run/distro-share/system` and the configuration in
-    /// `/run/distro-share/configs/<name>`, for a step that installs it.
+    /// guest's store and leaves its path in `/run/wrath-share/system` and the configuration in
+    /// `/run/wrath-share/configs/<name>`, for a step that installs it.
     fn prepare_build(
         &self,
         agent: &mut Client<VsockStream>,
@@ -960,7 +959,7 @@ impl VmRun<'_> {
     ) -> Result<String, String> {
         let mut args = vec!["build", "--config", config];
         args.extend(build_flags(target)?);
-        let built = self.host.distro(&args)?;
+        let built = self.host.wrath(&args)?;
         let name = Path::new(built.trim())
             .file_name()
             .ok_or("a generation has a name")?
@@ -1006,11 +1005,11 @@ fn copy_command(have: &str, closure: &[&str]) -> Option<String> {
     (!missing.is_empty()).then(|| format!("cp -a {} /store/", missing.join(" ")))
 }
 
-/// Where the guest sees the host's store, from distro's own builder.
-const GUEST_STORE: &str = "/run/distro-store";
+/// Where the guest sees the host's store, from wrath's own builder.
+const GUEST_STORE: &str = "/run/wrath-store";
 
 impl Host<'_> {
-    /// Where distro's own builder keeps its store on the host.
+    /// Where wrath's own builder keeps its store on the host.
     fn work(&self) -> PathBuf {
         self.workdir.join("build/work")
     }
@@ -1022,10 +1021,10 @@ impl Host<'_> {
             .map_err(|e| format!("{}: {e}", store.display()))
     }
 
-    /// Runs `distro` on the host and returns its output.
-    fn distro(&self, args: &[&str]) -> Result<String, String> {
+    /// Runs `wrath` on the host and returns its output.
+    fn wrath(&self, args: &[&str]) -> Result<String, String> {
         host_command(
-            Command::new(self.distro)
+            Command::new(self.wrath)
                 .args(args)
                 .current_dir(self.workdir),
         )
@@ -1334,9 +1333,9 @@ mod tests {
     }
 
     #[test]
-    fn distro_is_the_only_store_a_scenario_may_name() {
+    fn wrath_is_the_only_store_a_scenario_may_name() {
         assert_eq!(
-            spec("config = \"x\"\nstore = \"distro\"\n").unwrap().config,
+            spec("config = \"x\"\nstore = \"wrath\"\n").unwrap().config,
             "x"
         );
 
@@ -1365,12 +1364,12 @@ mod tests {
     }
 
     #[test]
-    fn a_system_in_distros_store_is_copied_in_by_what_the_guest_lacks() {
+    fn a_system_in_wraths_store_is_copied_in_by_what_the_guest_lacks() {
         let have = "aaa\nbbb\n";
         let closure = ["aaa", "ccc", "bbb", "ddd"];
         assert_eq!(
             copy_command(have, &closure),
-            Some("cp -a /run/distro-store/ccc /run/distro-store/ddd /store/".to_owned())
+            Some("cp -a /run/wrath-store/ccc /run/wrath-store/ddd /store/".to_owned())
         );
         assert_eq!(copy_command("aaa\nccc\nbbb\nddd\n", &closure), None);
     }

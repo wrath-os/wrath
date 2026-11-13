@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
+use wrath_eval::{RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper};
 
 use crate::{Build, File, Home, Model, Secret, Source, VERSION};
 
@@ -18,7 +18,7 @@ impl Model {
             Some(Value::Int(VERSION)) => {}
             Some(Value::Int(other)) => {
                 return Err(format!(
-                    "the model is in format version {other}, and this distro reads version \
+                    "the model is in format version {other}, and this wrath reads version \
                      {VERSION}"
                 ));
             }

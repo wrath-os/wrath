@@ -75,7 +75,7 @@ pub enum Runner {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandSpec {
-    /// Program and arguments. A program named `distro` resolves to the running `distro` binary.
+    /// Program and arguments. A program named `wrath` resolves to the running `wrath` binary.
     pub run: Vec<String>,
     /// Expected exit code.
     #[serde(default)]
@@ -175,7 +175,7 @@ pub fn parse_scenario(
     })
 }
 
-/// Why a `[vm]` table can't run now that distro builds without Nix, if it can't: it names a Nix
+/// Why a `[vm]` table can't run now that wrath builds without Nix, if it can't: it names a Nix
 /// image, the host's Nix store, or no store, which meant a prebuilt Nix image.
 fn needs_nix(table: &toml::Table) -> Option<String> {
     let store = table.get("store");
@@ -184,12 +184,12 @@ fn needs_nix(table: &toml::Table) -> Option<String> {
     } else if store.and_then(toml::Value::as_str) == Some("host") {
         "`store = \"host\"`"
     } else if store.is_none() {
-        "a `[vm]` without `store = \"distro\"`"
+        "a `[vm]` without `store = \"wrath\"`"
     } else {
         return None;
     };
     Some(format!(
-        "{what} needs the Nix store, which distro no longer uses"
+        "{what} needs the Nix store, which wrath no longer uses"
     ))
 }
 
@@ -312,7 +312,7 @@ mod tests {
             r#"
             title = "Runs"
             [command]
-            run = ["distro", "plan"]
+            run = ["wrath", "plan"]
             "#,
         )
         .unwrap();
@@ -323,7 +323,7 @@ mod tests {
         let Runner::Command(spec) = scenario.runner else {
             panic!("expected a command runner");
         };
-        assert_eq!(spec.run, ["distro", "plan"]);
+        assert_eq!(spec.run, ["wrath", "plan"]);
         assert_eq!(spec.exit, 0);
         assert!(spec.stdout_contains.is_empty());
         assert_eq!(spec.timeout(), Duration::from_secs(60));
@@ -349,9 +349,9 @@ mod tests {
     }
 
     #[test]
-    fn vm_on_distros_store_gets_the_vm_runner_and_nspawn_is_pending() {
+    fn vm_on_wraths_store_gets_the_vm_runner_and_nspawn_is_pending() {
         let vm =
-            parse("title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"distro\"\nsteps = []\n").unwrap();
+            parse("title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"wrath\"\nsteps = []\n").unwrap();
         let Runner::Vm(spec) = vm.runner else {
             panic!("expected a vm runner");
         };
@@ -372,16 +372,16 @@ mod tests {
         let cases = [
             (
                 "image = \"factory/nix#fixture\"\n",
-                "a Nix image needs the Nix store, which distro no longer uses",
+                "a Nix image needs the Nix store, which wrath no longer uses",
             ),
             (
                 "config = \"x\"\nstore = \"host\"\nsteps = [{ run = \"a\" }]\n",
-                "`store = \"host\"` needs the Nix store, which distro no longer uses",
+                "`store = \"host\"` needs the Nix store, which wrath no longer uses",
             ),
             (
                 "config = \"x\"\n",
-                "a `[vm]` without `store = \"distro\"` needs the Nix store, \
-                 which distro no longer uses",
+                "a `[vm]` without `store = \"wrath\"` needs the Nix store, \
+                 which wrath no longer uses",
             ),
         ];
         for (vm, reason) in cases {
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn vm_steps_no_runner_supports_yet_are_pending() {
         let vm = parse(
-            "title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"distro\"\nsteps = [{ run = \"a\" }, \
+            "title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"wrath\"\nsteps = [{ run = \"a\" }, \
              { apply_user_config = \"y\", user = \"demo\" }]\n",
         )
         .unwrap();
@@ -443,7 +443,7 @@ mod tests {
             ("missing_title", "[manual]\nconfirm = \"x\"\n"),
             (
                 "vm_unknown_key",
-                "title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"distro\"\nram = 4\n",
+                "title = \"t\"\n[vm]\nconfig = \"x\"\nstore = \"wrath\"\nram = 4\n",
             ),
         ];
         for (name, text) in cases {

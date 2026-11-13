@@ -1,11 +1,11 @@
 # Installing
 
-There are two ways onto a machine right now: boot a USB stick with distro on it and install onto
+There are two ways onto a machine right now: boot a USB stick with wrath on it and install onto
 the machine's disks, or run it in a VM. Both start the same way, with a configuration describing
 the machine, its disks included.
 
 Fair warning: installing onto disks is tested in VMs, encrypted disks, TPM unlock and all, but I
-haven't done it on real hardware yet. My desktop runs distro from a USB stick for now. Expect
+haven't done it on real hardware yet. My desktop runs wrath from a USB stick for now. Expect
 rough edges, and don't point it at a disk with anything on it you care about.
 
 ## Describe the disks
@@ -26,7 +26,7 @@ subvolumes."@home" = { mount = "/home" }
 ```
 
 The disk is described by what it should hold, not by its device path, so the same description
-works on machines with different hardware. `distro install` matches the machine's disks to it,
+works on machines with different hardware. `wrath install` matches the machine's disks to it,
 and refuses to guess when more than one would fit. Two disks with btrfs RAID 1 across them works
 too:
 
@@ -43,7 +43,7 @@ it instead:
 tpm2 = true
 ```
 
-Of note: the TPM unlock only checks the Secure Boot state right now (PCR 7), and distro doesn't
+Of note: the TPM unlock only checks the Secure Boot state right now (PCR 7), and wrath doesn't
 do Secure Boot yet. So anyone with the machine in their hands can boot something else and get the
 key. Fine for a desktop at home, not fine for a laptop you travel with. A passphrase doesn't have
 that problem.
@@ -53,7 +53,7 @@ that problem.
 Build an image of the machine's configuration, with the configuration inside it:
 
 ```sh
-./target/release/distro -C ~/framework build --image --with-configuration -o framework.img
+./target/release/wrath -C ~/framework build --image --with-configuration -o framework.img
 ```
 
 Write it to a USB stick (this erases the stick, so double check the device):
@@ -66,7 +66,7 @@ Boot the machine from it and log in. The stick runs the exact system you describ
 quickest install is to put that same system onto the disks:
 
 ```sh
-sudo distro install -C /etc/distro --disk /dev/nvme0n1 --system "$(readlink /run/system)"
+sudo wrath install -C /etc/wrath --disk /dev/nvme0n1 --system "$(readlink /run/system)"
 ```
 
 That lays out the disks with systemd-repart, asks for a passphrase for the encrypted parts,
@@ -84,27 +84,27 @@ is known before it ever boots.
 [Getting started](getting-started.md) has the details. In short:
 
 ```sh
-./target/release/distro -C ~/my-machine build --image -o vm.img
+./target/release/wrath -C ~/my-machine build --image -o vm.img
 qemu-system-x86_64 -enable-kvm -m 2G -bios "$OVMF" \
   -drive file=vm.img,format=raw,if=virtio -snapshot -nographic
 ```
 
 ## Managing it from somewhere else
 
-Once a machine runs distro you can change it from wherever you have the configuration:
+Once a machine runs wrath you can change it from wherever you have the configuration:
 
 ```sh
-distro plan --host root@framework
-distro apply --host root@framework
+wrath plan --host root@framework
+wrath apply --host root@framework
 ```
 
 That builds the new system locally, copies over what the machine doesn't have yet over SSH, and
-switches it with the new system's own distro. `NAME` is whatever `ssh NAME` reaches, so your
+switches it with the new system's own wrath. `NAME` is whatever `ssh NAME` reaches, so your
 `~/.ssh/config` applies. The login needs root, or sudo, which asks for its password once.
 
 ## What's missing
 
 - A proper live installer image you can download. Today you build your own.
-- Installing a system other than the one on the stick, which needs distro's builder and recipes
+- Installing a system other than the one on the stick, which needs wrath's builder and recipes
   on the stick too.
 - Secure Boot, and with it a TPM unlock that's actually hard to get around.

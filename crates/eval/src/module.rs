@@ -76,14 +76,14 @@ pub enum RenderError {
     Error(Diagnostic),
 }
 
-/// The source distro itself comes from, pinned in the lock like the others. Packages come from
+/// The source wrath itself comes from, pinned in the lock like the others. Packages come from
 /// it when their name doesn't say otherwise, and so does the base system.
-pub const DISTRO_SOURCE: &str = "distro";
+pub const WRATH_SOURCE: &str = "wrath";
 
 /// The source a package comes from and its name there: `stable#git` is `git` from `stable`, and
-/// a name without a source comes from [`DISTRO_SOURCE`].
+/// a name without a source comes from [`WRATH_SOURCE`].
 pub fn package_source(name: &str) -> (&str, &str) {
-    name.split_once('#').unwrap_or((DISTRO_SOURCE, name))
+    name.split_once('#').unwrap_or((WRATH_SOURCE, name))
 }
 
 /// What a module contributes.
@@ -180,7 +180,7 @@ pub fn home_path(user: &str, path: &str) -> String {
 pub const SECRETS_DIR: &str = "/run/secrets";
 
 /// Where a home of its own decrypts its secrets, which the user can do without root.
-pub const HOME_SECRETS_DIR: &str = "~/.local/state/distro/secrets";
+pub const HOME_SECRETS_DIR: &str = "~/.local/state/wrath/secrets";
 
 /// A secret kept encrypted in the configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]

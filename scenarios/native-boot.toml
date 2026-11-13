@@ -2,11 +2,11 @@ title = "a system boots, and the agent answers"
 
 [vm]
 config = "fixtures/configs/native"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
-  { run = "cat /etc/os-release; uname -n", stdout_contains = "ID=distro\nPRETTY_NAME=\"distro\"\nnative" },
-  { run = "grep -h ^title /boot/loader/entries/*.conf | sort -u", stdout_contains = "title distro\n" },
+  { run = "cat /etc/os-release; uname -n", stdout_contains = "ID=wrath\nPRETTY_NAME=\"wrath\"\nnative" },
+  { run = "grep -h ^title /boot/loader/entries/*.conf | sort -u", stdout_contains = "title wrath\n" },
   { run = "id -un john; id -nG john", stdout_contains = "john\nusers wheel" },
   { run = "stat -c '%a %U' /run/wrappers/bin/sudo; su john -c 'id -un; sudo -n true 2>&1 | head -1'", stdout_contains = "4755 root\njohn\nsudo: a password is required" },
   { run = "busctl call org.freedesktop.PolicyKit1 /org/freedesktop/PolicyKit1/Authority org.freedesktop.DBus.Properties Get ss org.freedesktop.PolicyKit1.Authority BackendName", stdout_contains = "js" },

@@ -17,8 +17,8 @@ lock and commands:
 
 | Size | Where | Describes |
 |---|---|---|
-| system | `/etc/distro` | the machine, and the homes of the users on it |
-| project | `distro.toml` in a project | the packages, environment and (planned) services a project needs |
+| system | `/etc/wrath` | the machine, and the homes of the users on it |
+| project | `wrath.toml` in a project | the packages, environment and (planned) services a project needs |
 
 The configuration a command acts on is its **context**: `-C DIR`, or the nearest project, or
 the system. Output always says which one it is.
@@ -30,7 +30,7 @@ same system; commands pick one with `--role`, and `check` and `lock` cover every
 ## Describing what you want
 
 An **option** is one typed setting with a dotted name, such as `services.nginx.main.port`. It
-has one value. Two files setting it differently is an error, never a silent override. `distro why`
+has one value. Two files setting it differently is an error, never a silent override. `wrath why`
 says where each value comes from.
 
 A **default** is a value others may change, written `{ default = "Europe/Stockholm" }`. Every
@@ -38,7 +38,7 @@ value in a file included with `{ path = "common.toml", as = "defaults" }` is a d
 value beats a default, and when two defaults disagree, the file that includes the other wins.
 
 The **starting file** is the file a configuration starts from, such as `system.toml`, a role's
-file, or (planned) a project's `distro.toml`. It owns the configuration: included files can't
+file, or (planned) a project's `wrath.toml`. It owns the configuration: included files can't
 change it, and `add` writes to it.
 
 A **module** declares options and turns their values into packages, files, services and settings.
@@ -55,10 +55,10 @@ its build options or with patches: `[builds.rescue-nano]` with `package = "nano"
 default. The name goes in `packages` like any other. Only that package changes.
 
 A **source** is where packages, or files to include, come from: a name and the URL it follows,
-pinned in the lock. `distro` is the default: its recipes build every package and the base
+pinned in the lock. `wrath` is the default: its recipes build every package and the base
 system. A file from a source is included as `{ source = "acme", path = "rust-service.toml" }`.
 
-A **platform** is the set of modules a system builds on: `distro`'s built-in ones, or a
+A **platform** is the set of modules a system builds on: `wrath`'s built-in ones, or a
 source's, listed in its `platform.toml` with the built-in ones it keeps. The starting file
 chooses it with `platform = { source = "acme" }` (0030).
 
@@ -74,7 +74,7 @@ A **service** is a program that's kept running, or a task run once. A machine's 
 operating system's own: on Linux, systemd **units**, from modules or written under `[units]`
 with systemd's own sections. A home's or a project's services are written the same way
 everywhere, with a command, environment, restart policy, readiness and the services they need
-(projects run them with `distro up`).
+(projects run them with `wrath up`).
 
 A **home** is what a configuration puts in one user's home directory: files, packages, services
 and environment variables.
@@ -91,8 +91,8 @@ Values other than the name are declared in `[machine.values]`, as `zone = { type
 
 ## Making it so
 
-The **lock** pins every source, distro's own among them, so the same configuration always
-means the same software. It lives next to the configuration as `distro.lock`. It also keeps
+The **lock** pins every source, wrath's own among them, so the same configuration always
+means the same software. It lives next to the configuration as `wrath.lock`. It also keeps
 each user's uid and each group's gid, so they stay put as others come and go.
 
 The **model** is the configuration fully resolved: every option's value and everything modules
@@ -110,7 +110,7 @@ configuration. Each change has a **tier**, saying when it takes full effect:
 
 A **generation** is a built configuration that can be switched to. `apply` makes a new one,
 `rollback` goes back to an earlier one, and `history` lists them. The generation being switched to
-does the switching with its own distro, so a newer or older distro on either side doesn't matter.
+does the switching with its own wrath, so a newer or older wrath on either side doesn't matter.
 When it can't read the running generation, it only starts what's new, and the rest takes effect at
 the next boot.
 

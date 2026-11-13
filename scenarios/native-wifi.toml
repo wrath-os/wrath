@@ -2,12 +2,12 @@ title = "a system joins a wifi network with iwd, under its country's radio rules
 
 [vm]
 config = "scenarios/fixtures/native-wifi"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target", "unit:iwd.service"]
 steps = [
   { run = "cat /sys/module/cfg80211/parameters/ieee80211_regdom; iwctl device list | grep -c wlan", stdout_contains = "SE\n2" },
-  { run = "iwctl device wlan1 set-property Mode ap && iwctl ap wlan1 start distro-test passphrase123 && echo started", stdout_contains = "started" },
-  { run = "iwctl station wlan0 scan; sleep 3; iwctl --passphrase passphrase123 station wlan0 connect distro-test; sleep 3; iwctl station wlan0 show", stdout_contains = "connected" },
+  { run = "iwctl device wlan1 set-property Mode ap && iwctl ap wlan1 start wrath-test passphrase123 && echo started", stdout_contains = "started" },
+  { run = "iwctl station wlan0 scan; sleep 3; iwctl --passphrase passphrase123 station wlan0 connect wrath-test; sleep 3; iwctl station wlan0 show", stdout_contains = "connected" },
   { run = "test -z \"$(systemctl --failed --no-legend)\" && echo none failed", stdout_contains = "none failed" },
 ]
 timeout_secs = 900

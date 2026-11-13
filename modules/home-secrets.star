@@ -1,5 +1,5 @@
 # Secrets for a home of its own, kept encrypted with age next to its configuration and decrypted
-# by the user when the home switches, to `~/.local/state/distro/secrets/<name>`. A system's secrets
+# by the user when the home switches, to `~/.local/state/wrath/secrets/<name>`. A system's secrets
 # are under `secrets` in the system configuration instead.
 
 secret = types.record(
@@ -44,7 +44,7 @@ module(
         ),
         "secret_recipients": option(
             types.list(types.str),
-            doc = "Public keys `distro secret` encrypts to: yours, and any other key that " +
+            doc = "Public keys `wrath secret` encrypts to: yours, and any other key that " +
                   "should decrypt this home's secrets.",
         ),
     },

@@ -1,9 +1,9 @@
-//! The modules a configuration builds on: distro's own, or those a platform from a source lists in
+//! The modules a configuration builds on: wrath's own, or those a platform from a source lists in
 //! its `platform.toml`.
 
 use std::path::{Component, Path, PathBuf};
 
-use distro_eval::{ConfigFs, Module, Platform, Sources};
+use wrath_eval::{ConfigFs, Module, Platform, Sources};
 
 use crate::system::{ModuleOrder, load_modules};
 
@@ -12,21 +12,21 @@ use crate::system::{ModuleOrder, load_modules};
 struct Listed {
     /// Directories of the platform's own modules, relative to the file.
     modules: Vec<String>,
-    /// Distro's modules the platform keeps, by name.
-    from_distro: Vec<String>,
+    /// Wrath's modules the platform keeps, by name.
+    from_wrath: Vec<String>,
 }
 
-/// The modules for `config`, as the platform its starting file for `role` chooses, with distro's
-/// own modules in `distro`.
+/// The modules for `config`, as the platform its starting file for `role` chooses, with wrath's
+/// own modules in `wrath`.
 pub fn modules(
     config: &dyn ConfigFs,
     role: Option<&str>,
-    distro: &Path,
+    wrath: &Path,
     sources: &mut Sources,
     order: ModuleOrder,
 ) -> Result<Vec<Box<dyn Module>>, String> {
-    let Platform::Source { name, url, path } = distro_eval::platform(config, role)? else {
-        return load_modules(distro, sources, order);
+    let Platform::Source { name, url, path } = wrath_eval::platform(config, role)? else {
+        return load_modules(wrath, sources, order);
     };
     let tree = config
         .source(&name, &url)
@@ -48,13 +48,13 @@ pub fn modules(
         })?;
         modules.extend(load_modules(&dir, sources, order)?);
     }
-    modules.extend(from_distro(distro, &listed.from_distro, sources, order)?);
+    modules.extend(from_wrath(wrath, &listed.from_wrath, sources, order)?);
     Ok(modules)
 }
 
-/// Distro's modules named in `names`.
-fn from_distro(
-    distro: &Path,
+/// Wrath's modules named in `names`.
+fn from_wrath(
+    wrath: &Path,
     names: &[String],
     sources: &mut Sources,
     order: ModuleOrder,
@@ -62,13 +62,13 @@ fn from_distro(
     if names.is_empty() {
         return Ok(Vec::new());
     }
-    let all = load_modules(distro, sources, order)?;
+    let all = load_modules(wrath, sources, order)?;
     let known: Vec<&str> = all.iter().map(|module| module.name()).collect();
     if let Some(unknown) = names.iter().find(|name| !known.contains(&name.as_str())) {
-        let hint = distro_eval::closest(unknown, known.iter().copied())
+        let hint = wrath_eval::closest(unknown, known.iter().copied())
             .map(|close| format!("; did you mean `{close}`?"))
             .unwrap_or_default();
-        return Err(format!("distro has no module `{unknown}`{hint}"));
+        return Err(format!("wrath has no module `{unknown}`{hint}"));
     }
     Ok(all
         .into_iter()
@@ -81,10 +81,10 @@ fn listed(text: &str) -> Result<Listed, String> {
     let document: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
     if let Some((key, _)) = document
         .iter()
-        .find(|(key, _)| !["modules", "from-distro"].contains(key))
+        .find(|(key, _)| !["modules", "from-wrath"].contains(key))
     {
         return Err(format!(
-            "unknown key `{key}`; a platform has `modules` and `from-distro`"
+            "unknown key `{key}`; a platform has `modules` and `from-wrath`"
         ));
     }
     let strings = |key: &str| -> Result<Vec<String>, String> {
@@ -105,7 +105,7 @@ fn listed(text: &str) -> Result<Listed, String> {
     };
     Ok(Listed {
         modules: strings("modules")?,
-        from_distro: strings("from-distro")?,
+        from_wrath: strings("from-wrath")?,
     })
 }
 
@@ -123,13 +123,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_platform_lists_its_own_module_directories_and_distro_modules_by_name() {
-        let text = "modules = [\"modules\"]\nfrom-distro = [\"dbus\", \"users\"]\n";
+    fn a_platform_lists_its_own_module_directories_and_wrath_modules_by_name() {
+        let text = "modules = [\"modules\"]\nfrom-wrath = [\"dbus\", \"users\"]\n";
         assert_eq!(
             listed(text).unwrap(),
             Listed {
                 modules: vec!["modules".into()],
-                from_distro: vec!["dbus".into(), "users".into()],
+                from_wrath: vec!["dbus".into(), "users".into()],
             }
         );
         assert_eq!(listed("").unwrap().modules, Vec::<String>::new());
@@ -149,11 +149,11 @@ mod tests {
         );
     }
 
-    /// A system on acme's platform: acme's own `motd` module and distro's `users`, with the
+    /// A system on acme's platform: acme's own `motd` module and wrath's `users`, with the
     /// lock pinning acme. Gives the configuration's directory and acme's.
-    fn on_acme(from_distro: &str) -> (tempfile::TempDir, tempfile::TempDir) {
+    fn on_acme(from_wrath: &str) -> (tempfile::TempDir, tempfile::TempDir) {
         let acme = tempfile::tempdir().unwrap();
-        let platform = format!("modules = [\"modules\"]\nfrom-distro = [{from_distro}]\n");
+        let platform = format!("modules = [\"modules\"]\nfrom-wrath = [{from_wrath}]\n");
         std::fs::write(acme.path().join("platform.toml"), platform).unwrap();
         std::fs::create_dir(acme.path().join("modules")).unwrap();
         let motd = "def render(ctx: Context) -> None:\n    \
@@ -171,48 +171,40 @@ mod tests {
         );
         std::fs::write(config.path().join("system.toml"), system).unwrap();
         let (source, _) = crate::trees::follow(&url).unwrap();
-        let mut lock = distro_model::Lock::default();
+        let mut lock = wrath_model::Lock::default();
         lock.sources.insert("acme".into(), source);
-        std::fs::write(config.path().join("distro.lock"), lock.to_toml()).unwrap();
+        std::fs::write(config.path().join("wrath.lock"), lock.to_toml()).unwrap();
         (config, acme)
     }
 
-    fn distro_modules() -> PathBuf {
+    fn wrath_modules() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules")
     }
 
     #[test]
-    fn a_system_on_a_platform_has_its_modules_and_the_distro_ones_it_keeps() {
+    fn a_system_on_a_platform_has_its_modules_and_the_wrath_ones_it_keeps() {
         let (config, _acme) = on_acme("\"users\"");
-        let evaluation = crate::system::evaluate_dir(
-            config.path(),
-            &distro_modules(),
-            ModuleOrder::Sorted,
-            None,
-        )
-        .unwrap();
+        let evaluation =
+            crate::system::evaluate_dir(config.path(), &wrath_modules(), ModuleOrder::Sorted, None)
+                .unwrap();
         let names: Vec<&str> = evaluation
             .modules()
             .iter()
             .map(|m| m.name.as_str())
             .collect();
         assert_eq!(names, ["motd", "users"]);
-        let model = distro_model::Model::from_evaluation(&evaluation);
+        let model = wrath_model::Model::from_evaluation(&evaluation);
         assert_eq!(model.files["/etc/motd"].text, "hello\n");
         assert_eq!(model.platform.as_deref(), Some("acme"));
     }
 
     #[test]
-    fn error_a_platform_keeping_a_module_distro_doesnt_have() {
+    fn error_a_platform_keeping_a_module_wrath_doesnt_have() {
         let (config, _acme) = on_acme("\"userz\"");
-        let error = crate::system::evaluate_dir(
-            config.path(),
-            &distro_modules(),
-            ModuleOrder::Sorted,
-            None,
-        )
-        .unwrap_err();
-        assert_eq!(error, "distro has no module `userz`; did you mean `users`?");
+        let error =
+            crate::system::evaluate_dir(config.path(), &wrath_modules(), ModuleOrder::Sorted, None)
+                .unwrap_err();
+        assert_eq!(error, "wrath has no module `userz`; did you mean `users`?");
     }
 
     #[test]

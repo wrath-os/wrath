@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Where a machine keeps the role and values it was given.
-pub(crate) const MACHINE_FILE: &str = "/var/lib/distro/machine.toml";
+pub(crate) const MACHINE_FILE: &str = "/var/lib/wrath/machine.toml";
 const MACHINES: &str = "machines.toml";
 const ROLE: &str = "role";
 const NAME: &str = "name";

@@ -24,7 +24,7 @@ def render(ctx: Context) -> None:
         ctx.restart("systemd-modules-load.service", on = [MODULES])
     modprobe = modprobe_config(kernel)
     if modprobe:
-        ctx.file("/etc/modprobe.d/distro.conf", modprobe)
+        ctx.file("/etc/modprobe.d/wrath.conf", modprobe)
     # Taking effect takes a boot, so these are for the backend to build into it.
     settings = {
         "package": kernel["package"],

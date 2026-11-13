@@ -5,7 +5,7 @@ Description=nftables firewall
 [Service]
 ExecReload=nft -f /etc/nftables.conf
 ExecStart=nft -f /etc/nftables.conf
-ExecStop=nft delete table inet distro
+ExecStop=nft delete table inet wrath
 RemainAfterExit=yes
 Type=oneshot
 

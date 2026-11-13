@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use distro_build::sandbox::{self, Limits, Outcome, Status, Step, View};
-use distro_build::seed;
-use distro_build::store::{Lab, StorePath};
-use distro_build::view;
+use wrath_build::sandbox::{self, Limits, Outcome, Status, Step, View};
+use wrath_build::seed;
+use wrath_build::store::{Lab, StorePath};
+use wrath_build::view;
 
 fn lab() -> Lab {
     Lab::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/work"))

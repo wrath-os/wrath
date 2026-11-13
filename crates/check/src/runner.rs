@@ -53,8 +53,8 @@ impl From<&str> for Failure {
 pub struct RunContext {
     /// Working directory for commands and image builds, normally the repository root.
     pub workdir: PathBuf,
-    /// The binary that `distro` in a command scenario resolves to.
-    pub distro_exe: PathBuf,
+    /// The binary that `wrath` in a command scenario resolves to.
+    pub wrath_exe: PathBuf,
     /// Directory holding `<milestone>-<id>.toml` sign-off files for manual scenarios.
     pub signoff_dir: PathBuf,
     /// Parent directory for VM run directories.
@@ -83,7 +83,7 @@ pub fn run(scenario: &Scenario, ctx: &RunContext) -> Outcome {
 
 fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
     let host = Host {
-        distro: &ctx.distro_exe,
+        wrath: &ctx.wrath_exe,
         workdir: &ctx.workdir,
     };
     let built = match &ctx.image_override {
@@ -115,7 +115,7 @@ fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
                     .to_path_buf()
             };
             let command = format!(
-                "distro dev test {} --image {}",
+                "wrath dev test {} --image {}",
                 relative(&scenario.source).display(),
                 image.display()
             );
@@ -134,8 +134,8 @@ fn run_command(spec: &CommandSpec, ctx: &RunContext) -> Outcome {
     let Some((program, args)) = spec.run.split_first() else {
         return fail("`command.run` is empty");
     };
-    let program = if program == "distro" {
-        ctx.distro_exe.clone()
+    let program = if program == "wrath" {
+        ctx.wrath_exe.clone()
     } else {
         PathBuf::from(program)
     };
@@ -226,7 +226,7 @@ mod tests {
     fn ctx(signoff_dir: PathBuf) -> RunContext {
         RunContext {
             workdir: std::env::temp_dir(),
-            distro_exe: PathBuf::from("/bin/sh"),
+            wrath_exe: PathBuf::from("/bin/sh"),
             signoff_dir,
             run_root: PathBuf::from("/nonexistent"),
             image_override: None,
@@ -335,8 +335,8 @@ mod tests {
     }
 
     #[test]
-    fn distro_resolves_to_the_running_binary() {
-        let mut spec = command(&["distro", "-c", "echo resolved"]);
+    fn wrath_resolves_to_the_running_binary() {
+        let mut spec = command(&["wrath", "-c", "echo resolved"]);
         spec.stdout_contains = vec!["resolved".into()];
 
         assert_eq!(run_spec(spec), Outcome::Pass);
@@ -376,18 +376,18 @@ mod tests {
     fn vm_scenario_fails_with_the_build_error_when_the_image_cannot_be_built() {
         let workdir = tempfile::tempdir().unwrap();
         let vm = scenario(Runner::Vm(
-            toml::from_str("config = \"configs/x\"\nstore = \"distro\"\n").unwrap(),
+            toml::from_str("config = \"configs/x\"\nstore = \"wrath\"\n").unwrap(),
         ));
         let mut ctx = ctx(PathBuf::from("/nonexistent"));
         ctx.workdir = workdir.path().to_path_buf();
-        ctx.distro_exe = PathBuf::from("/nonexistent/distro");
+        ctx.wrath_exe = PathBuf::from("/nonexistent/wrath");
 
         let Outcome::Fail(failure) = run(&vm, &ctx) else {
             panic!("expected a failure");
         };
         assert!(
             failure.reason.starts_with(
-                "could not run `/nonexistent/distro build --config configs/x --image --test`"
+                "could not run `/nonexistent/wrath build --config configs/x --image --test`"
             ),
             "{}",
             failure.reason

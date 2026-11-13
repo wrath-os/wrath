@@ -1,4 +1,4 @@
-//! Which platform a system builds on: distro's own modules, or a platform from a source, chosen
+//! Which platform a system builds on: wrath's own modules, or a platform from a source, chosen
 //! with `platform` in the starting file.
 
 use std::collections::BTreeMap;
@@ -21,9 +21,9 @@ const PLATFORM_FILE: &str = "platform.toml";
 /// The platform a configuration builds on.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Platform {
-    /// Distro's own modules.
+    /// Wrath's own modules.
     #[default]
-    Distro,
+    Wrath,
     /// The platform in a source: its name, the URL it follows, and the platform's file in it.
     Source {
         name: String,
@@ -33,33 +33,33 @@ pub enum Platform {
 }
 
 impl Platform {
-    /// How the plan and the model name it: `distro`, or the source's name.
+    /// How the plan and the model name it: `wrath`, or the source's name.
     pub fn name(&self) -> &str {
         match self {
-            Self::Distro => "distro",
+            Self::Wrath => "wrath",
             Self::Source { name, .. } => name,
         }
     }
 }
 
 /// The platform `fs` builds on, as the starting file for `role` chooses it, read before the
-/// modules are loaded. Only a system chooses one; projects and homes use distro's.
+/// modules are loaded. Only a system chooses one; projects and homes use wrath's.
 pub fn platform(fs: &dyn ConfigFs, role: Option<&str>) -> Result<Platform, String> {
     if load::kind_of(fs) != ConfigKind::System {
-        return Ok(Platform::Distro);
+        return Ok(Platform::Wrath);
     }
     let mut sources = Sources::default();
     let path = load::starting_file(fs, role).map_err(|d| render(&[d], &sources))?;
     let Ok(text) = fs.read(&path) else {
         // Loading the configuration says what's missing.
-        return Ok(Platform::Distro);
+        return Ok(Platform::Wrath);
     };
     let file = sources.add(fs.display(&path), text);
     let Ok(table) = DeTable::parse(sources.text(file)) else {
-        return Ok(Platform::Distro);
+        return Ok(Platform::Wrath);
     };
     let Some(value) = table.get_ref().get(PLATFORM) else {
-        return Ok(Platform::Distro);
+        return Ok(Platform::Wrath);
     };
     let mut declared = BTreeMap::new();
     if let Some(DeValue::Table(listed)) = table.get_ref().get(SOURCES).map(Spanned::get_ref) {
@@ -80,9 +80,9 @@ pub(crate) fn parse(
 ) -> Result<Platform, Diagnostic> {
     let span = Span::new(file, value.span());
     match value.get_ref() {
-        DeValue::String(name) if name == "distro" => Ok(Platform::Distro),
+        DeValue::String(name) if name == "wrath" => Ok(Platform::Wrath),
         DeValue::String(name) => Err(Diagnostic::error(format!("there's no platform `{name}`"))
-            .label(span, "only `distro` is built in")
+            .label(span, "only `wrath` is built in")
             .note(format!(
                 "help: one from a source is `platform = {{ source = \"{name}\" }}`"
             ))),
@@ -115,9 +115,9 @@ pub(crate) fn parse(
             })
         }
         other => Err(Diagnostic::error(format!(
-            "`platform` is `\"distro\"` or a table naming a source, found {}",
+            "`platform` is `\"wrath\"` or a table naming a source, found {}",
             other.type_str()
         ))
-        .label(span, "expected `\"distro\"` or `{ source = \"NAME\" }`")),
+        .label(span, "expected `\"wrath\"` or `{ source = \"NAME\" }`")),
     }
 }

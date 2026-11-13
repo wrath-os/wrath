@@ -4,7 +4,7 @@
    fprintf (out, _("Usage: %s [OPTION]...\n"), program_name);
    /* TRANSLATORS: --help output 2 (brief description)
       no-wrap */
-+  fputs ("Built by distro.\n", out);
++  fputs ("Built by wrath.\n", out);
    fputs (_("Print a friendly, customizable greeting.\n"), out);
    fputs ("\n", out);
    /* TRANSLATORS: --help output 3: options

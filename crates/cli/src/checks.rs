@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use distro_model::Model;
+use wrath_model::Model;
 
 use crate::system::{self, ModuleOrder};
 

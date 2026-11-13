@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use allocative::Allocative;
-use distro_eval::{OptionSpec, Value};
 use starlark::any::ProvidesStaticType;
 use starlark::collections::SmallMap;
 use starlark::environment::{
@@ -29,6 +28,7 @@ use starlark::values::{
     Heap, NoSerialize, StarlarkPagablePanic, StarlarkValue, Value as StarValue,
 };
 use starlark_derive::starlark_value;
+use wrath_eval::{OptionSpec, Value};
 
 use crate::{base_globals, convert, parse, set_time_limit, spec_of, strings};
 

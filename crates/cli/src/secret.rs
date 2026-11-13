@@ -1,4 +1,4 @@
-//! `distro secret`: editing secrets and encrypting them to the configuration's recipients with
+//! `wrath secret`: editing secrets and encrypting them to the configuration's recipients with
 //! `age`. Decrypted contents only ever exist in memory and in the file the editor opens, which is
 //! in a private temporary directory, preferably on the user's runtime tmpfs.
 
@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
-use distro_eval::{ConfigFs, DirFs, Value};
+use wrath_eval::{ConfigFs, DirFs, Value};
 
 use crate::fetch::Sourced;
 use crate::system;

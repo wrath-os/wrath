@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
-use distro_eval::Value;
-use distro_model::Model;
+use wrath_eval::Value;
+use wrath_model::Model;
 
 use crate::{generations, machine};
 
@@ -68,7 +68,7 @@ pub fn repart_definitions(
                 let bytes = bytes(&partition.size);
                 text.push_str(&format!("SizeMinBytes={bytes}\nSizeMaxBytes={bytes}\n"));
             }
-            // repart encrypts only what it formats; distro encrypts the partitions a filesystem
+            // repart encrypts only what it formats; wrath encrypts the partitions a filesystem
             // spans itself, before creating the filesystem across them.
             if !partition.format.is_empty() {
                 if partition.encrypt {
@@ -94,7 +94,7 @@ fn bytes(size: &str) -> u64 {
     number.parse::<u64>().unwrap_or(0) << shift
 }
 
-/// How `distro install` was asked to install.
+/// How `wrath install` was asked to install.
 pub struct Install<'a> {
     pub config: &'a Path,
     /// Each disk of the layout with its devices, in order.
@@ -601,7 +601,7 @@ fn record(how: &Install) -> Result<(), String> {
     run(Command::new("cp")
         .arg("-rT")
         .arg(how.config)
-        .arg(etc.join("distro")))
+        .arg(etc.join("wrath")))
 }
 
 /// A disk's name in `/dev/disk/by-id`, which stays the same across boots and other disks coming
@@ -708,7 +708,7 @@ fn run_within(command: &mut Command, timeout: Duration) -> Result<(), String> {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
-                "`{shown}` didn't finish within {} seconds, so distro stopped it",
+                "`{shown}` didn't finish within {} seconds, so wrath stopped it",
                 timeout.as_secs()
             ));
         }
@@ -733,7 +733,7 @@ mod tests {
         let err = run_within(Command::new("sleep").arg("30"), Duration::from_secs(1)).unwrap_err();
         assert_eq!(
             err,
-            "`sleep 30` didn't finish within 1 seconds, so distro stopped it"
+            "`sleep 30` didn't finish within 1 seconds, so wrath stopped it"
         );
         assert!(started.elapsed() < Duration::from_secs(10));
         // A process the tool leaves running doesn't hold up the install.

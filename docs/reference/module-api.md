@@ -1,4 +1,4 @@
-<!-- Made by `distro dev docs` from the code. Don't edit it by hand. -->
+<!-- Made by `wrath dev docs` from the code. Don't edit it by hand. -->
 
 # The module API
 

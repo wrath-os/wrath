@@ -2,6 +2,6 @@ title = "A warm plan after a one-line change finishes within budget with about 1
 notes = "The budget is provisional until spike S1 reports measurements."
 
 [command]
-run = ["distro", "dev", "test", "scenarios/plan-budget.toml"]
+run = ["wrath", "dev", "test", "scenarios/plan-budget.toml"]
 stdout_contains = ["PASS"]
 timeout_secs = 300

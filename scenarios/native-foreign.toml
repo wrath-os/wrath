@@ -2,7 +2,7 @@ title = "programs built for other distributions run once the system allows them"
 
 [vm]
 config = "scenarios/fixtures/native-foreign"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { run = "foreign-hello >/dev/null 2>&1 || echo refused; test -e /lib64 || echo no lib64", stdout_contains = "refused\nno lib64" },

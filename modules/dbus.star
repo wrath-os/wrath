@@ -5,6 +5,6 @@ def render(ctx: Context) -> None:
     # Services that lose the bus don't all find it again: logind doesn't, and then nobody can log
     # in. A new bus waits for the next boot.
     for unit in ["dbus.service", "dbus.socket"]:
-        ctx.unit(unit + ".d/distro.conf", {"Unit": {"X-RestartIfChanged": "false"}})
+        ctx.unit(unit + ".d/wrath.conf", {"Unit": {"X-RestartIfChanged": "false"}})
 
 module(name = "dbus", options = {}, writes = [], render = render)

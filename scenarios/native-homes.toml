@@ -2,7 +2,7 @@ title = "a user's packages, files and units reach their home, and leave it with 
 
 [vm]
 config = "scenarios/fixtures/native-homes"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { run_as = "john", run = "cat ~/.config/app/config; jq --version", stdout_contains = "greeting = hello\njq-1.8.1" },

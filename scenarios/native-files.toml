@@ -2,11 +2,11 @@ title = "files written from settings restart what reads them, and udev rules joi
 
 [vm]
 config = "fixtures/configs/native"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { apply_config = "scenarios/fixtures/native-files", expect_plan = ["+ /etc/app.toml", "+ app.service"] },
-  { run = "cat /etc/app.toml; systemctl show -p MainPID --value app > /tmp/pid; ls /etc/udev/rules.d | grep -c 99-systemd; udevadm trigger --settle --action=add --name-match=/dev/null; test -L /dev/distro-null && echo linked", stdout_contains = "port = 1\n1\nlinked" },
+  { run = "cat /etc/app.toml; systemctl show -p MainPID --value app > /tmp/pid; ls /etc/udev/rules.d | grep -c 99-systemd; udevadm trigger --settle --action=add --name-match=/dev/null; test -L /dev/wrath-null && echo linked", stdout_contains = "port = 1\n1\nlinked" },
   { apply_config = "scenarios/fixtures/native-files-changed", expect_plan = ["~ /etc/app.toml"] },
   { run = "cat /etc/app.toml; test \"$(systemctl show -p MainPID --value app)\" != \"$(cat /tmp/pid)\" && echo restarted", stdout_contains = "port = 2\nrestarted" },
 ]

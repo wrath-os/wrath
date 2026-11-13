@@ -8,10 +8,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use distro_model::Source;
 use sha2::{Digest, Sha256};
+use wrath_model::Source;
 
-/// How a source's hash is written, so a hash from before distro fetched sources itself, which
+/// How a source's hash is written, so a hash from before wrath fetched sources itself, which
 /// was Nix's, is told apart.
 const HASH_PREFIX: &str = "sha256-";
 
@@ -101,7 +101,7 @@ pub fn origin(url: &str) -> Result<Origin, String> {
         return Ok(Origin::Archive(url.to_owned()));
     }
     Err(format!(
-        "distro can't fetch `{url}` yet: it fetches `github:owner/repo`, `https://` archives \
+        "wrath can't fetch `{url}` yet: it fetches `github:owner/repo`, `https://` archives \
          and `path:` directories"
     ))
 }
@@ -125,7 +125,7 @@ fn cache() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
         .unwrap_or_else(|| PathBuf::from("/var/cache"));
-    base.join("distro/sources")
+    base.join("wrath/sources")
 }
 
 fn curl(url: &str, output: &Path) -> Result<(), String> {
@@ -240,7 +240,7 @@ pub fn follow(url: &str) -> Result<(Source, PathBuf), String> {
 }
 
 /// The tree `source` pins, from the cache when it's there already. A source pinned before
-/// distro fetched sources itself is pinned by its revision, and its files are taken from it.
+/// wrath fetched sources itself is pinned by its revision, and its files are taken from it.
 pub fn fetch(source: &Source) -> Result<PathBuf, String> {
     let origin = origin(&source.url)?;
     if let Origin::Path(dir) = &origin {
@@ -299,18 +299,18 @@ mod tests {
     #[test]
     fn urls_say_where_a_source_comes_from() {
         assert_eq!(
-            origin("github:johnae/distro-machines").unwrap(),
+            origin("github:johnae/wrath-machines").unwrap(),
             Origin::GitHub {
                 owner: "johnae".into(),
-                repo: "distro-machines".into(),
+                repo: "wrath-machines".into(),
                 reference: None,
             }
         );
         assert_eq!(
-            origin("github:johnae/distro/v1").unwrap(),
+            origin("github:johnae/wrath/v1").unwrap(),
             Origin::GitHub {
                 owner: "johnae".into(),
-                repo: "distro".into(),
+                repo: "wrath".into(),
                 reference: Some("v1".into()),
             }
         );

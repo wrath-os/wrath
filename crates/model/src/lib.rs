@@ -10,11 +10,11 @@ mod read;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use distro_eval::{
+use wrath_eval::{
     Evaluation, RuntimePart, Section, Template, Unit, UnitAction, Value, Wrapper, formats,
 };
 
-pub use lock::{DISTRO_SOURCE, Ids, LOCK_FILE, Lock, Source, package_source};
+pub use lock::{Ids, LOCK_FILE, Lock, Source, WRATH_SOURCE, package_source};
 pub use plan::{Activation, Change, ChangeKind, Plan, Tier, plan, rebuilt};
 
 /// The version of the model format, part of the hash.
@@ -58,7 +58,7 @@ pub struct Model {
     pub wrappers: BTreeMap<String, Wrapper>,
     /// Packages built differently from how their source builds them, by the name they go by.
     pub builds: BTreeMap<String, Build>,
-    /// The source of the platform the system builds on, or `None` for distro's own modules.
+    /// The source of the platform the system builds on, or `None` for wrath's own modules.
     pub platform: Option<String>,
 }
 
@@ -160,8 +160,8 @@ impl Model {
                 .map(|(name, source)| (name.clone(), Source::follow(&source.url)))
                 .collect(),
             platform: match evaluation.platform() {
-                distro_eval::Platform::Distro => None,
-                distro_eval::Platform::Source { name, .. } => Some(name.clone()),
+                wrath_eval::Platform::Wrath => None,
+                wrath_eval::Platform::Source { name, .. } => Some(name.clone()),
             },
             ..Self::default()
         };
@@ -255,12 +255,12 @@ impl Model {
 
     /// The model with the sources `lock` pins. A source the configuration names gets the lock's
     /// pin while its URL is the one locked; a different URL stays unpinned until it's locked
-    /// again. Distro's own source, which the configuration needn't name, keeps the lock's pin.
+    /// again. Wrath's own source, which the configuration needn't name, keeps the lock's pin.
     pub fn with_lock(mut self, lock: &Lock) -> Self {
         for (name, locked) in &lock.sources {
             match self.sources.get_mut(name) {
                 Some(source) if source.url == locked.url => *source = locked.clone(),
-                None if name == DISTRO_SOURCE => {
+                None if name == WRATH_SOURCE => {
                     self.sources.insert(name.clone(), locked.clone());
                 }
                 _ => {}
@@ -269,10 +269,10 @@ impl Model {
         self
     }
 
-    /// Whether distro and every source the configuration names are pinned, so nothing needs
+    /// Whether wrath and every source the configuration names are pinned, so nothing needs
     /// fetching.
     pub fn is_locked(&self) -> bool {
-        self.sources.contains_key(DISTRO_SOURCE) && self.sources.values().all(Source::is_locked)
+        self.sources.contains_key(WRATH_SOURCE) && self.sources.values().all(Source::is_locked)
     }
 
     /// The uids and gids the accounts were given, for the lock to keep, as a module recorded them
@@ -402,7 +402,7 @@ impl Model {
                 Value::List(self.machine.iter().cloned().map(Value::Str).collect()),
             ),
         ]);
-        // Settings, and a platform other than distro's, are only written when there are any, so
+        // Settings, and a platform other than wrath's, are only written when there are any, so
         // models built before them keep their hash.
         if !self.setting_files.is_empty()
             && let Value::Table(fields) = &mut model
@@ -421,7 +421,7 @@ impl Model {
     pub fn secrets_of(&self, unit: &Unit) -> BTreeSet<&str> {
         let text = unit.text();
         let mentioned = self.secrets.keys().filter(|name| {
-            let path = format!("{}/{name}", distro_eval::SECRETS_DIR);
+            let path = format!("{}/{name}", wrath_eval::SECRETS_DIR);
             text.match_indices(&path).any(|(at, _)| {
                 !text[at + path.len()..]
                     .starts_with(|c: char| c.is_alphanumeric() || "-_.".contains(c))
@@ -455,7 +455,7 @@ impl Model {
 }
 
 fn files_of(
-    files: &BTreeMap<String, distro_eval::File>,
+    files: &BTreeMap<String, wrath_eval::File>,
 ) -> impl Iterator<Item = (String, File)> + '_ {
     files.iter().map(|(path, file)| {
         let file = File {

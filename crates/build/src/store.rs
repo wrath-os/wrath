@@ -130,7 +130,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         // The umask is the whole process's, and other tests make files whose modes their
         // addresses cover, so this runs again in a process of its own.
-        const ALONE: &str = "DISTRO_TEST_UMASK_ALONE";
+        const ALONE: &str = "WRATH_TEST_UMASK_ALONE";
         if std::env::var_os(ALONE).is_none() {
             let status = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "--quiet"])

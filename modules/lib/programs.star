@@ -18,11 +18,11 @@ SETTINGS = {
     # lets each user change. It has no file of settings a user could own.
     "chromium": {
         "policies": {
-            "system": "/etc/chromium/policies/managed/distro.json",
+            "system": "/etc/chromium/policies/managed/wrath.json",
             "format": "json",
         },
         "recommended": {
-            "system": "/etc/chromium/policies/recommended/distro.json",
+            "system": "/etc/chromium/policies/recommended/wrath.json",
             "format": "json",
         },
     },

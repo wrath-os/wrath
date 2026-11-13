@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model, Source, Tier};
+use wrath_model::{LOCK_FILE, Lock, Model, Source, Tier, WRATH_SOURCE};
 
 use crate::switching::{self as here, Generation};
 
@@ -70,14 +70,14 @@ fn encrypted_secrets(model: &Model) -> Result<BTreeMap<String, Vec<u8>>, String>
         .collect()
 }
 
-/// Builds `model` into a generation with distro's own builder, from the recipes in `build/` under
+/// Builds `model` into a generation with wrath's own builder, from the recipes in `build/` under
 /// `root`, and returns where it is. Packages without a recipe are left out, with a warning.
 pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBuf, String> {
     let repository = root
         .join("build")
         .canonicalize()
         .map_err(|e| format!("cannot find the recipes in {}: {e}", root.display()))?;
-    let kept = distro_build::graph::Kept {
+    let kept = wrath_build::graph::Kept {
         text: model.canonical(),
         hash: model.hash(),
         secrets: encrypted_secrets(model)?,
@@ -86,7 +86,7 @@ pub fn build_generation(root: &Path, model: &Model, test: bool) -> Result<PathBu
     if test {
         add_test_layer(&mut model);
     }
-    let system = distro_build::graph::system(&repository, &model, &kept)?;
+    let system = wrath_build::graph::system(&repository, &model, &kept)?;
     match missing(&system.skipped, &system.unfound) {
         Some(message) => Err(message),
         None => Ok(system.path),
@@ -114,7 +114,7 @@ fn missing(packages: &[String], units: &[String]) -> Option<String> {
 /// plans and switches don't see them.
 fn add_test_layer(model: &mut serde_json::Value) {
     use serde_json::json;
-    model["enabled"]["distro-agent.service"] = json!(["multi-user.target"]);
+    model["enabled"]["wrath-agent.service"] = json!(["multi-user.target"]);
     for param in ["console=ttyS0", "systemd.journald.forward_to_console=1"] {
         if let Some(params) = model["base"]["boot"]["kernel_params"].as_array_mut() {
             params.push(json!(param));
@@ -124,14 +124,14 @@ fn add_test_layer(model: &mut serde_json::Value) {
     }
     for (unit, tag, at) in [
         (
-            "run-distro\\x2dshare.mount",
-            "distro-share",
-            "/run/distro-share",
+            "run-wrath\\x2dshare.mount",
+            "wrath-share",
+            "/run/wrath-share",
         ),
         (
-            "run-distro\\x2dstore.mount",
-            "distro-store",
-            "/run/distro-store",
+            "run-wrath\\x2dstore.mount",
+            "wrath-store",
+            "/run/wrath-store",
         ),
     ] {
         model["units"][unit] = json!({"sections": [
@@ -153,7 +153,7 @@ fn add_test_layer(model: &mut serde_json::Value) {
 
 /// The kernel options an image gets when it's given none: a shell when the initrd can't find the
 /// root, and the console on the screen with the serial port as well.
-const IMAGE_OPTIONS: &str = "distro.rescue console=ttyS0,115200 console=tty0";
+const IMAGE_OPTIONS: &str = "wrath.rescue console=ttyS0,115200 console=tty0";
 
 /// Builds `model` into a generation and a disk image that boots it, with `options` added to the
 /// kernel's own and, when given, `config`, the configuration it's from, as the system's own.
@@ -181,9 +181,9 @@ pub fn build_image(
     } else {
         options.join(" ")
     };
-    distro_build::image::image(
-        &distro_build::store::Lab::new(&work),
-        &distro_build::store::StorePath::from_hash(&name),
+    wrath_build::image::image(
+        &wrath_build::store::Lab::new(&work),
+        &wrath_build::store::StorePath::from_hash(&name),
         config,
         &options,
         &work.join("image"),
@@ -193,28 +193,28 @@ pub fn build_image(
 }
 
 /// What today's recipes rebuild in a system built from `built_from`, the text of its
-/// [`distro_build::graph::PACKAGE_KEYS`], as changes for a plan. `None`, with a note saying why,
+/// [`wrath_build::graph::PACKAGE_KEYS`], as changes for a plan. `None`, with a note saying why,
 /// when that can't be told: the system doesn't say what it was built from, or there are no
 /// recipes here to compare with.
 pub(crate) fn rebuilt(
     root: &Path,
     model: &Model,
     built_from: Option<&str>,
-) -> Option<Vec<distro_model::Change>> {
+) -> Option<Vec<wrath_model::Change>> {
     let Some(before) = built_from.and_then(|text| serde_json::from_str(text).ok()) else {
         crate::style::note(
             "what runs doesn't say which packages it was built from, so the plan can't show \
-             what a newer distro rebuilds",
+             what a newer wrath rebuilds",
         );
         return None;
     };
     let repository = root.join("build").canonicalize().ok()?;
     let value = serde_json::from_str(&model.canonical()).ok()?;
-    match distro_build::graph::package_keys(&repository, &value) {
-        Ok(after) => Some(distro_model::rebuilt(model, &before, &after)),
+    match wrath_build::graph::package_keys(&repository, &value) {
+        Ok(after) => Some(wrath_model::rebuilt(model, &before, &after)),
         Err(message) => {
             crate::style::warning(&format!(
-                "cannot tell what a newer distro rebuilds: {message}"
+                "cannot tell what a newer wrath rebuilds: {message}"
             ));
             None
         }
@@ -223,9 +223,9 @@ pub(crate) fn rebuilt(
 
 /// `plan` with the packages `rebuilt` lists, leaving out those the plan adds or removes.
 pub(crate) fn with_rebuilt(
-    mut plan: distro_model::Plan,
-    rebuilt: Option<Vec<distro_model::Change>>,
-) -> distro_model::Plan {
+    mut plan: wrath_model::Plan,
+    rebuilt: Option<Vec<wrath_model::Change>>,
+) -> wrath_model::Plan {
     for change in rebuilt.into_iter().flatten() {
         if !plan.packages.iter().any(|known| known.name == change.name) {
             plan.packages.push(change);
@@ -309,11 +309,11 @@ fn already_there(hash: &str, running: Option<&str>, current: Option<&str>, tryin
 
 /// Switches to `system`, built before, after showing the plan from the running system to it and
 /// asking, as `apply` does for a configuration. With `yes` it switches without a plan: whoever
-/// built it, such as `apply --host`, showed the whole plan already, including what a newer distro
+/// built it, such as `apply --host`, showed the whole plan already, including what a newer wrath
 /// rebuilt, which the machine can't tell.
 pub fn apply_built(system: &Path, how: Switch, yes: bool) -> Result<ExitCode, String> {
-    let model = crate::read_model(&system.join("etc/distro/model.json"))
-        .map_err(|e| format!("{} isn't a system distro built: {e}", system.display()))?;
+    let model = crate::read_model(&system.join("etc/wrath/model.json"))
+        .map_err(|e| format!("{} isn't a system wrath built: {e}", system.display()))?;
     if yes {
         return switched(system, how, None);
     }
@@ -328,16 +328,16 @@ pub fn apply_built(system: &Path, how: Switch, yes: bool) -> Result<ExitCode, St
 /// to say when the switch takes full effect, or `None` when the answer is no.
 fn planned(
     model: &Model,
-    rebuilt: Option<Vec<distro_model::Change>>,
+    rebuilt: Option<Vec<wrath_model::Change>>,
     yes: bool,
 ) -> Result<Option<Option<Tier>>, String> {
     let running = here::switching_from_model().and_then(|path| crate::read_model(&path).ok());
-    let plan = distro_model::plan(running.as_ref().unwrap_or(&Model::default()), model);
+    let plan = wrath_model::plan(running.as_ref().unwrap_or(&Model::default()), model);
     let plan = with_rebuilt(plan, rebuilt);
     match &running {
         Some(_) => crate::print_plan(&plan),
         None => println!(
-            "distro didn't build the running system, so all of it is new: {}",
+            "wrath didn't build the running system, so all of it is new: {}",
             plan.summary(5)
         ),
     }
@@ -356,14 +356,14 @@ fn switched(system: &Path, how: Switch, tier: Option<Tier>) -> Result<ExitCode, 
 }
 
 /// Whether the lock next to `config` lacks something `model` needs pinned: a source, or a uid or
-/// gid. Distro itself is only pinned by a distro that knows where it came from, which one built
+/// gid. wrath itself is only pinned by a build of it that knows where it came from, which one built
 /// from a checkout doesn't.
 pub(crate) fn needs_locking(root: &Path, config: &Path, model: &Model) -> Result<bool, String> {
     let kept = crate::read_lock(config)?.unwrap_or_default().ids;
-    let distro_unpinned =
-        !model.sources.contains_key(DISTRO_SOURCE) && crate::pinned::running(root).is_some();
+    let wrath_unpinned =
+        !model.sources.contains_key(WRATH_SOURCE) && crate::pinned::running(root).is_some();
     let unpinned = model.sources.values().any(|source| !source.is_locked());
-    Ok(distro_unpinned || unpinned || kept.merged(&model.ids())? != kept)
+    Ok(wrath_unpinned || unpinned || kept.merged(&model.ids())? != kept)
 }
 
 /// `model` with its sources pinned: pins what the lock next to `config` doesn't have yet, so the
@@ -375,9 +375,9 @@ pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, 
         crate::fetch::record(config)?;
         return Ok(model);
     }
-    let distro = crate::pinned::for_lock(
+    let wrath = crate::pinned::for_lock(
         crate::pinned::running(root),
-        model.sources.get(DISTRO_SOURCE),
+        model.sources.get(WRATH_SOURCE),
         false,
     );
     let mut lock = Lock {
@@ -385,19 +385,19 @@ pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, 
         ids,
     };
     lock.sources
-        .extend(distro.map(|d| (DISTRO_SOURCE.to_owned(), d)));
+        .extend(wrath.map(|d| (WRATH_SOURCE.to_owned(), d)));
     write_lock(config, &lock)?;
     Ok(model.with_lock(&lock))
 }
 
-/// The pin of each source `model` names besides distro: the version files were read from, the one
+/// The pin of each source `model` names besides wrath: the version files were read from, the one
 /// it has, or the newest for a source nothing was read from yet.
 fn pins(model: &Model) -> Result<BTreeMap<String, Source>, String> {
     let fetched = crate::fetch::fetched();
     model
         .sources
         .iter()
-        .filter(|(name, _)| name.as_str() != DISTRO_SOURCE)
+        .filter(|(name, _)| name.as_str() != WRATH_SOURCE)
         .map(|(name, source)| {
             let pinned = match fetched.get(name) {
                 Some(read) => read.clone(),
@@ -491,7 +491,7 @@ pub fn history_json() -> Result<serde_json::Value, String> {
         let changes = before
             .as_ref()
             .zip(model.as_ref())
-            .map(|(before, after)| distro_model::plan(before, after).summary(usize::MAX));
+            .map(|(before, after)| wrath_model::plan(before, after).summary(usize::MAX));
         generations.push(serde_json::json!({
             "number": generation.number,
             "created": generation.created,
@@ -512,7 +512,7 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
     if here::trying() {
         println!(
             "trying a system that isn't a generation yet; it switches back on its own, \
-             `distro keep` keeps it and `distro rollback` switches back now"
+             `wrath keep` keeps it and `wrath rollback` switches back now"
         );
     } else if let Some(generation) = &current {
         println!(
@@ -528,7 +528,7 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
         println!("{note}");
     }
     if !model.is_locked() {
-        println!("the lock doesn't pin every source yet; `distro apply` pins them first");
+        println!("the lock doesn't pin every source yet; `wrath apply` pins them first");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -542,7 +542,7 @@ pub fn warn_degraded() {
 }
 
 /// Where the boot leaves a note for each filesystem it mounted with a disk missing.
-const DEGRADED: &str = "/run/distro";
+const DEGRADED: &str = "/run/wrath";
 
 /// What the notes in `dir` say: each filesystem running without some of its disks, and what to do
 /// about it.
@@ -572,8 +572,8 @@ fn degraded(dir: &Path) -> Vec<String> {
 fn matching(running: Option<&str>, model: &Model) -> &'static str {
     match running {
         Some(hash) if hash == model.hash() => "it matches the configuration",
-        Some(_) => "the configuration differs from it; `distro plan` shows how",
-        None => "distro didn't build it; `distro plan` shows the whole configuration as new",
+        Some(_) => "the configuration differs from it; `wrath plan` shows how",
+        None => "wrath didn't build it; `wrath plan` shows the whole configuration as new",
     }
 }
 
@@ -585,7 +585,7 @@ fn switch_to(system: &Path, how: Switch) -> Result<ExitCode, String> {
             here::try_system(system, seconds)?;
             println!("trying {}", system.display());
             println!(
-                "it switches back in {} unless you run `distro keep`; `distro rollback` switches \
+                "it switches back in {} unless you run `wrath keep`; `wrath rollback` switches \
                  back now",
                 duration(seconds)
             );
@@ -672,7 +672,7 @@ fn to_remove(generations: &[Generation], keep: usize) -> Vec<u32> {
 
 pub fn activate(system: &Path) -> Result<ExitCode, String> {
     let switched = here::activate(system);
-    if distro_build::progress::verbose() {
+    if wrath_build::progress::verbose() {
         let steps = Path::new("/").join(crate::activate::SWITCH_STEPS);
         for line in std::fs::read_to_string(steps).unwrap_or_default().lines() {
             eprintln!("  {line}");
@@ -690,7 +690,7 @@ pub fn history() -> Result<ExitCode, String> {
         println!("{generation}");
         let model = generation_model(generation.number).ok();
         if let (Some(before), Some(after)) = (&before, &model) {
-            println!("      {}", distro_model::plan(before, after).summary(4));
+            println!("      {}", wrath_model::plan(before, after).summary(4));
         }
         before = model;
     }
@@ -712,7 +712,7 @@ pub fn changes_in(number: u32) -> Result<ExitCode, String> {
 pub fn diff(from: u32, to: u32) -> Result<ExitCode, String> {
     let (before, after) = (generation_model(from)?, generation_model(to)?);
     println!("generation {from} -> {to}");
-    print!("{}", distro_model::plan(&before, &after));
+    print!("{}", wrath_model::plan(&before, &after));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -720,7 +720,7 @@ fn generation_model(number: u32) -> Result<Model, String> {
     let path = here::generation_model(number)?;
     if !path.exists() {
         return Err(format!(
-            "generation {number} has no model; it doesn't exist, or distro didn't build it"
+            "generation {number} has no model; it doesn't exist, or wrath didn't build it"
         ));
     }
     crate::read_model(&path)
@@ -729,7 +729,7 @@ fn generation_model(number: u32) -> Result<Model, String> {
 pub fn rollback(to: Option<u32>) -> Result<ExitCode, String> {
     if here::trying() {
         if to.is_some() {
-            return Err("a system is being tried; `distro rollback` stops trying first".into());
+            return Err("a system is being tried; `wrath rollback` stops trying first".into());
         }
         let number = here::end_trial()?;
         println!("stopped trying; back to generation {number}");
@@ -745,7 +745,7 @@ pub fn rollback(to: Option<u32>) -> Result<ExitCode, String> {
 /// so every role runs the same software. With `update`, those sources move to their newest
 /// version first, or every source when it names none. A configuration of one machine has a
 /// single role, `None`. A project with a local file passes `shared`, the project without it:
-/// what that uses goes in `distro.lock`, and the rest in `distro.local.lock`.
+/// what that uses goes in `wrath.lock`, and the rest in `wrath.local.lock`.
 pub fn lock(
     root: &Path,
     config: &Path,
@@ -753,12 +753,12 @@ pub fn lock(
     update: Option<&[String]>,
     shared: Option<&Model>,
 ) -> Result<ExitCode, String> {
-    let distro = crate::pinned::for_lock(
+    let wrath = crate::pinned::for_lock(
         crate::pinned::running(root),
         models
             .first()
-            .and_then(|(_, model)| model.sources.get(DISTRO_SOURCE)),
-        update.is_some_and(|names| names.is_empty() || names.iter().any(|n| n == DISTRO_SOURCE)),
+            .and_then(|(_, model)| model.sources.get(WRATH_SOURCE)),
+        update.is_some_and(|names| names.is_empty() || names.iter().any(|n| n == WRATH_SOURCE)),
     );
     let models = match update {
         Some(names) => follow_newest(models, names)?,
@@ -773,7 +773,7 @@ pub fn lock(
         lock.ids = lock.ids.merged(&model.ids())?;
     }
     lock.sources
-        .extend(distro.map(|d| (DISTRO_SOURCE.to_owned(), d)));
+        .extend(wrath.map(|d| (WRATH_SOURCE.to_owned(), d)));
     match shared {
         Some(shared) => {
             let (ours, local) = crate::project::split_lock(lock.clone(), shared);
@@ -784,11 +784,11 @@ pub fn lock(
     }
     let sources: Vec<&str> = lock.sources.keys().map(String::as_str).collect();
     match sources.as_slice() {
-        [] => println!("there's nothing to pin: this distro was built from a checkout"),
+        [] => println!("there's nothing to pin: this wrath was built from a checkout"),
         _ => println!("pinned {}", sources.join(", ")),
     }
     for (role, model) in &models {
-        let plan = distro_model::plan(model, &model.clone().with_lock(&lock));
+        let plan = wrath_model::plan(model, &model.clone().with_lock(&lock));
         if plan.is_empty() {
             continue;
         }
@@ -810,7 +810,7 @@ fn follow_newest(
     let known: BTreeSet<&str> = models
         .iter()
         .flat_map(|(_, model)| model.sources.keys().map(String::as_str))
-        .chain([DISTRO_SOURCE])
+        .chain([WRATH_SOURCE])
         .collect();
     if let Some(unknown) = names.iter().find(|name| !known.contains(name.as_str())) {
         let known: Vec<&str> = known.into_iter().collect();
@@ -871,10 +871,10 @@ fn sources_table(model: &Model, today: i64) -> String {
         .iter()
         .map(|(name, source)| [name.clone(), source.url.clone(), pin(source, today)])
         .collect();
-    if !model.sources.contains_key(DISTRO_SOURCE) {
+    if !model.sources.contains_key(WRATH_SOURCE) {
         let running = [
-            DISTRO_SOURCE.to_owned(),
-            "the running distro's".to_owned(),
+            WRATH_SOURCE.to_owned(),
+            "the running wrath's".to_owned(),
             String::new(),
         ];
         rows.insert(0, running);
@@ -940,7 +940,7 @@ mod tests {
     #[test]
     fn a_machine_has_a_model_only_when_it_runs_and_boots_it_and_isnt_trying_another() {
         assert!(already_there("m", Some("m"), Some("m"), false));
-        // A machine that was never installed by distro has no generations to compare.
+        // A machine that was never installed by wrath has no generations to compare.
         assert!(already_there("m", Some("m"), None, false));
         assert!(!already_there("m", Some("m"), Some("m"), true), "trying it");
         assert!(
@@ -1017,7 +1017,7 @@ mod tests {
         });
         add_test_layer(&mut model);
         assert_eq!(
-            model["enabled"]["distro-agent.service"],
+            model["enabled"]["wrath-agent.service"],
             serde_json::json!(["multi-user.target"])
         );
         assert_eq!(model["enabled"]["sshd.service"], serde_json::json!([]));
@@ -1031,14 +1031,14 @@ mod tests {
         );
         for (unit, tag, at) in [
             (
-                "run-distro\\x2dshare.mount",
-                "distro-share",
-                "/run/distro-share",
+                "run-wrath\\x2dshare.mount",
+                "wrath-share",
+                "/run/wrath-share",
             ),
             (
-                "run-distro\\x2dstore.mount",
-                "distro-store",
-                "/run/distro-store",
+                "run-wrath\\x2dstore.mount",
+                "wrath-store",
+                "/run/wrath-store",
             ),
         ] {
             let text = model["units"][unit].to_string();
@@ -1101,7 +1101,7 @@ mod tests {
             .insert("jq".into(), Source::follow("github:jqlang/jq"));
 
         insta::assert_snapshot!(sources_table(&model, today), @"
-        distro  the running distro's
+        wrath   the running wrath's
         jq      github:jqlang/jq                  not locked yet
         stable  github:NixOS/nixpkgs/nixos-25.11  b6018f8, 2026-10-30, 7 days old
         ");
@@ -1189,7 +1189,7 @@ mod tests {
         let unknown = follow(&["stabel".into()]).unwrap_err();
         assert_eq!(
             unknown,
-            "there's no source `stabel`; the configuration has acme, distro, edge, stable"
+            "there's no source `stabel`; the configuration has acme, edge, stable, wrath"
         );
     }
 

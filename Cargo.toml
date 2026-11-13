@@ -24,12 +24,12 @@ toml = "0.9"
 toml_edit = "0.23"
 vsock = "0.5"
 
-distro-agent = { path = "crates/agent" }
-distro-build = { path = "crates/build" }
-distro-check = { path = "crates/check" }
-distro-eval = { path = "crates/eval" }
-distro-model = { path = "crates/model" }
-distro-starlark = { path = "crates/starlark" }
+wrath-agent = { path = "crates/agent" }
+wrath-build = { path = "crates/build" }
+wrath-check = { path = "crates/check" }
+wrath-eval = { path = "crates/eval" }
+wrath-model = { path = "crates/model" }
+wrath-starlark = { path = "crates/starlark" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

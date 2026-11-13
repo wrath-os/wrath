@@ -1,4 +1,4 @@
-//! Step 15: a distro model lowered into actions, each with two keys. An unresolved key names what
+//! Step 15: a wrath model lowered into actions, each with two keys. An unresolved key names what
 //! an action depends on by those actions' keys, and is known before anything runs. A resolved key
 //! names what they really produced. Where an action came from is kept beside it, unhashed.
 
@@ -549,7 +549,7 @@ fn run_index(
     Ok(entries)
 }
 
-/// What every system has whatever its platform, since the mechanism needs it: distro, which
+/// What every system has whatever its platform, since the mechanism needs it: wrath, which
 /// switches; bash and coreutils, which its scripts run; systemd, which starts everything, and
 /// util-linux and kmod, which it mounts with and loads modules with; and D-Bus. The rest of a
 /// base system is what the platform's modules add.
@@ -557,14 +557,14 @@ const MECHANISM_PACKAGES: &[&str] = &[
     "bash",
     "coreutils",
     "dbus",
-    "distro",
+    "wrath",
     "kmod",
     "systemd",
     "util-linux",
 ];
 
 /// What makes a user's home, under `users/NAME` in the generation: links to the programs of
-/// their packages in `bin`, and their files, units among them, in `files`, which distro on the
+/// their packages in `bin`, and their files, units among them, in `files`, which wrath on the
 /// machine links into the home. Packages no recipe builds join `skipped`.
 fn home_actions<'a>(
     lab: &'a Lab,
@@ -847,9 +847,9 @@ const INITRD_ROOT: &str = include_str!("../system/initrd-root");
 const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
 
 /// The label of the file system a system's root is on.
-pub const ROOT_LABEL: &str = "distro-root";
+pub const ROOT_LABEL: &str = "wrath-root";
 
-/// What a generation keeps of its model, so distro on the machine knows what it runs: distro's
+/// What a generation keeps of its model, so wrath on the machine knows what it runs: wrath's
 /// canonical text of it, and that text's hash.
 pub struct Kept {
     pub text: String,
@@ -861,7 +861,7 @@ pub struct Kept {
 
 #[cfg(test)]
 impl Kept {
-    /// For a test model that didn't come from distro.
+    /// For a test model that didn't come from wrath.
     pub fn plain(model: &Value) -> Self {
         let text = format!("{model}\n");
         Self {
@@ -879,7 +879,7 @@ const SECRET_FILES: &str = "secrets";
 const TEMPLATES_SPEC: &str = "templates.json";
 
 /// Where activation fills in files with secrets or machine values.
-const FILLED: &str = "/run/distro/templates";
+const FILLED: &str = "/run/wrath/templates";
 
 /// A filled-in file's name in [`FILLED`], from its path.
 fn filled_name(path: &str) -> String {
@@ -904,7 +904,7 @@ fn owner_and_mode(entry: &Value) -> (String, String) {
     (owner, format!("{mode:04o}"))
 }
 
-/// What distro on the machine reads at every boot and switch: files under /etc with a mode of
+/// What wrath on the machine reads at every boot and switch: files under /etc with a mode of
 /// their own, which are copied instead of linked, the homes whose files it links, and the work it
 /// does itself: secrets to decrypt, with what and with which keys, files to fill in with them or
 /// with the machine's values, and whether the hostname is one of those.
@@ -1102,13 +1102,13 @@ fn lower<'a>(
         (service_dirs("system-services"), service_dirs("services"));
     let hostname = str_field(&model["base"]["system"]["hostname"], "hostname")?;
     let mut actions = Vec::new();
-    // What a system calls itself, unless its modules say, as distro's `base-system` does.
+    // What a system calls itself, unless its modules say, as wrath's `base-system` does.
     if model["files"].get("/etc/os-release").is_none() {
         actions.push(text(
             base,
             "etc/os-release",
             0o644,
-            "NAME=distro\nID=distro\nPRETTY_NAME=distro\n".into(),
+            "NAME=wrath\nID=wrath\nPRETTY_NAME=wrath\n".into(),
             &[],
             packages,
         )?);
@@ -1116,7 +1116,7 @@ fn lower<'a>(
     actions.extend([
         text(
             "base.users",
-            "etc/tmpfiles.d/distro-homes.conf",
+            "etc/tmpfiles.d/wrath-homes.conf",
             0o644,
             homes(model)?,
             &[],
@@ -1164,7 +1164,7 @@ fn lower<'a>(
         )?,
         text(
             "model",
-            "etc/distro/model.json",
+            "etc/wrath/model.json",
             0o644,
             kept.text.clone(),
             &[],
@@ -1172,7 +1172,7 @@ fn lower<'a>(
         )?,
         text(
             "model",
-            "etc/distro/model-hash",
+            "etc/wrath/model-hash",
             0o644,
             kept.hash.clone(),
             &[],
@@ -1285,7 +1285,7 @@ fn lower<'a>(
     }
     actions.push(text(
         "files",
-        "etc/tmpfiles.d/distro-files.conf",
+        "etc/tmpfiles.d/wrath-files.conf",
         0o644,
         outside,
         &[],
@@ -1436,8 +1436,8 @@ fn installed_into(unit: &str) -> Vec<String> {
 
 /// Where a generation says what it was built from: the key each package it uses has before
 /// anything is built, by package. A plan compares them with today's recipes to say what a newer
-/// distro rebuilds.
-pub const PACKAGE_KEYS: &str = "etc/distro/packages.json";
+/// wrath rebuilds.
+pub const PACKAGE_KEYS: &str = "etc/wrath/packages.json";
 
 /// The packages `actions` use, with their keys, as [`PACKAGE_KEYS`] holds them.
 fn built_from(actions: &[Action<'_>], packages: &Packages) -> String {
@@ -1498,7 +1498,7 @@ const INITRD_PACKAGES: [&str; 9] = [
 /// device-mapper's udev rules, which name unlocked containers so they can be mounted.
 const DM_RULES: [&str; 3] = ["10-dm.rules", "13-dm-disk.rules", "95-dm-notify.rules"];
 
-const INITRD_RELEASE: &str = "NAME=distro\nID=distro\nPRETTY_NAME=\"distro (initrd)\"\n";
+const INITRD_RELEASE: &str = "NAME=wrath\nID=wrath\nPRETTY_NAME=\"wrath (initrd)\"\n";
 
 /// The initrd's own files, by path, where `@id@` stands for package `id`'s path: systemd's
 /// configuration, accounts, how to unlock and mount the disks, and the service that readies the
@@ -1511,7 +1511,7 @@ fn initrd_files(
     let unit = "[Unit]\nDescription=Ready the root to switch to\nDefaultDependencies=no\n\
         RequiresMountsFor=/sysroot /sysroot/store\nAfter=initrd-fs.target\n\
         Before=initrd.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n\
-        ExecStart=/etc/distro-root\n";
+        ExecStart=/etc/wrath-root\n";
     // A shell on the console when the root can't be reached, so the machine can be fixed. The
     // initrd's root has no password, and only the console reaches it.
     let force_shell = "[Service]\nExecStart=\nExecStart=-/bin/sh\n";
@@ -1535,21 +1535,21 @@ fn initrd_files(
         file("etc/os-release", 0o644, INITRD_RELEASE.to_owned()),
         file("etc/systemd/system.conf", 0o644, system_conf.to_owned()),
         file(
-            "etc/systemd/system/distro-root.service",
+            "etc/systemd/system/wrath-root.service",
             0o644,
             unit.to_owned(),
         ),
         file(
-            "etc/systemd/system/emergency.service.d/distro.conf",
+            "etc/systemd/system/emergency.service.d/wrath.conf",
             0o644,
             force_shell.to_owned(),
         ),
         file(
-            "etc/systemd/system/rescue.service.d/distro.conf",
+            "etc/systemd/system/rescue.service.d/wrath.conf",
             0o644,
             force_shell.to_owned(),
         ),
-        file("etc/distro-root", 0o755, INITRD_ROOT.to_owned()),
+        file("etc/wrath-root", 0o755, INITRD_ROOT.to_owned()),
         file("etc/fstab", 0o644, disks.initrd_fstab.clone()),
         file("etc/crypttab", 0o644, disks.crypttab.clone()),
         file(
@@ -1559,7 +1559,7 @@ fn initrd_files(
         ),
         file("etc/group", 0o644, format!("root:x:0:\n{groups}")),
         file("etc/shadow", 0o600, "root:*:::::::\n".to_owned()),
-        file("etc/modules-load.d/distro.conf", 0o644, modules),
+        file("etc/modules-load.d/wrath.conf", 0o644, modules),
     ];
     if !hostname.is_empty() {
         files.push(file("etc/hostname", 0o644, format!("{hostname}\n")));
@@ -1567,7 +1567,7 @@ fn initrd_files(
     // Options for modules, which those loaded in the initrd need too.
     if !modprobe.is_empty() {
         files.push(file(
-            "etc/modprobe.d/distro.conf",
+            "etc/modprobe.d/wrath.conf",
             0o644,
             modprobe.to_owned(),
         ));
@@ -1822,8 +1822,8 @@ fn boot_files<'a>(
             );
             initrd::insert(
                 &mut nodes,
-                "etc/systemd/system/initrd.target.requires/distro-root.service",
-                link("../distro-root.service".to_owned()),
+                "etc/systemd/system/initrd.target.requires/wrath-root.service",
+                link("../wrath-root.service".to_owned()),
             );
             for (path, mode, template) in &files {
                 let bytes = fill(template, &ids, packages)?.into_bytes();
@@ -1888,7 +1888,7 @@ fn boot_files<'a>(
             let bytes = loaded.into_bytes();
             initrd::insert(
                 &mut nodes,
-                "etc/modules-load.d/distro.conf",
+                "etc/modules-load.d/wrath.conf",
                 initrd::Node::File { mode: 0o644, bytes },
             );
             let bytes = initrd_deny_list(&modules, &disks.modules).into_bytes();
@@ -1941,9 +1941,9 @@ const LINKED: [&str; 2] = ["systemd", "linux"];
 /// Links every system has, where `@id@` stands for the path of package `id`, one of [`LINKED`].
 /// They're part of the action's key, so changing one changes the action.
 const FIXED_LINKS: [(&str, &str); 6] = [
-    // distro starts systemd from here at boot.
+    // wrath starts systemd from here at boot.
     ("systemd", "@systemd@"),
-    // The modules of the kernel, which distro links at /lib/modules when the system boots.
+    // The modules of the kernel, which wrath links at /lib/modules when the system boots.
     ("kernel-modules", "@linux@"),
     (
         "etc/systemd/system/sockets.target.wants/dbus.socket",
@@ -2519,7 +2519,7 @@ mod tests {
         {
             let programs: &[&str] = match *id {
                 "web" => &["web"],
-                "distro" => &["distro"],
+                "wrath" => &["wrath"],
                 _ => &[],
             };
             packages.insert((*id).to_owned(), fake(&lab, id, programs));
@@ -2593,7 +2593,7 @@ mod tests {
             .filter(|(path, made)| second.made[path.as_str()]["action"] != made["action"])
             .map(|(path, _)| path.as_str())
             .collect();
-        assert_eq!(changed, ["etc/distro/model-hash", "etc/distro/model.json"]);
+        assert_eq!(changed, ["etc/wrath/model-hash", "etc/wrath/model.json"]);
         assert_eq!(second.ran, 3);
     }
 
@@ -2720,25 +2720,25 @@ mod tests {
     fn a_unit_from_a_package_every_system_has_can_be_enabled() {
         let (_dir, lab, packages) = setup();
         let units = lab
-            .on_host(&packages["distro"].path)
+            .on_host(&packages["wrath"].path)
             .join("lib/systemd/system");
         fs::create_dir_all(&units).unwrap();
-        fs::write(units.join("distro-agent.service"), "[Service]\n").unwrap();
+        fs::write(units.join("wrath-agent.service"), "[Service]\n").unwrap();
         let mut model = model(80, false);
-        model["enabled"] = json!({"distro-agent.service": ["multi-user.target"]});
+        model["enabled"] = json!({"wrath-agent.service": ["multi-user.target"]});
         let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
         assert!(lowered.unfound.is_empty(), "{:?}", lowered.unfound);
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let outcome = realise(&lab, &mut db, lowered.actions).unwrap();
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
-        let wants = root.join("etc/systemd/system/multi-user.target.wants/distro-agent.service");
+        let wants = root.join("etc/systemd/system/multi-user.target.wants/wrath-agent.service");
         assert!(fs::symlink_metadata(wants).is_ok());
         // systemd finds a wanted unit by its name, on its own search path.
-        let unit = fs::read_link(root.join("etc/systemd/system/distro-agent.service")).unwrap();
-        let distro = packages["distro"].path.inside();
+        let unit = fs::read_link(root.join("etc/systemd/system/wrath-agent.service")).unwrap();
+        let wrath = packages["wrath"].path.inside();
         assert_eq!(
             unit,
-            Path::new(&format!("{distro}/lib/systemd/system/distro-agent.service"))
+            Path::new(&format!("{wrath}/lib/systemd/system/wrath-agent.service"))
         );
     }
 
@@ -2758,12 +2758,12 @@ mod tests {
                 .collect();
         assert_eq!(files["etc/crypttab"], disks.crypttab);
         assert_eq!(files["etc/fstab"], disks.initrd_fstab);
-        assert_eq!(files["etc/modules-load.d/distro.conf"], "dm_crypt\nbtrfs\n");
+        assert_eq!(files["etc/modules-load.d/wrath.conf"], "dm_crypt\nbtrfs\n");
         assert_eq!(files["etc/hostname"], "w-01\n");
-        assert!(files["etc/initrd-release"].contains("ID=distro\n"));
-        let root = &files["etc/systemd/system/distro-root.service"];
-        assert!(root.contains("ExecStart=/etc/distro-root\n"), "{root}");
-        assert!(files["etc/distro-root"].contains("os-release"));
+        assert!(files["etc/initrd-release"].contains("ID=wrath\n"));
+        let root = &files["etc/systemd/system/wrath-root.service"];
+        assert!(root.contains("ExecStart=/etc/wrath-root\n"), "{root}");
+        assert!(files["etc/wrath-root"].contains("os-release"));
     }
 
     #[test]
@@ -2822,11 +2822,11 @@ mod tests {
         );
         assert_eq!(
             fs::read_link(root.join("etc/web/env")).unwrap(),
-            Path::new("/run/distro/templates/etc_web_env")
+            Path::new("/run/wrath/templates/etc_web_env")
         );
         assert_eq!(
             fs::read_link(root.join("etc/hostname")).unwrap(),
-            Path::new("/run/distro/templates/etc_hostname")
+            Path::new("/run/wrath/templates/etc_hostname")
         );
         let activation: Value = serde_json::from_str(&read("activation.json")).unwrap();
         assert_eq!(
@@ -3375,13 +3375,13 @@ mod tests {
     }
 
     #[test]
-    fn a_system_calls_itself_distro() {
+    fn a_system_calls_itself_wrath() {
         let (_dir, lab, packages) = setup();
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let outcome = realised(&lab, &mut db, &packages, &model(80, false));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let release = fs::read_to_string(root.join("etc/os-release")).unwrap();
-        assert_eq!(release, "NAME=distro\nID=distro\nPRETTY_NAME=distro\n");
+        assert_eq!(release, "NAME=wrath\nID=wrath\nPRETTY_NAME=wrath\n");
     }
 
     #[test]
@@ -3399,7 +3399,7 @@ mod tests {
         );
         assert_eq!(crate::image::release_name(named), "Acme OS");
         assert_eq!(crate::image::release_name("NAME=Acme\n"), "Acme");
-        assert_eq!(crate::image::release_name(""), "distro");
+        assert_eq!(crate::image::release_name(""), "wrath");
     }
 
     #[test]
@@ -3411,8 +3411,8 @@ mod tests {
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let kept = Kept::plain(&model);
         let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
-        assert_eq!(read("etc/distro/model.json"), kept.text);
-        assert_eq!(read("etc/distro/model-hash"), kept.hash);
+        assert_eq!(read("etc/wrath/model.json"), kept.text);
+        assert_eq!(read("etc/wrath/model-hash"), kept.hash);
         let built_from: BTreeMap<String, String> =
             serde_json::from_str(&read(PACKAGE_KEYS)).unwrap();
         assert_eq!(
@@ -3424,19 +3424,19 @@ mod tests {
     }
 
     #[test]
-    fn a_generation_boots_and_switches_through_distro() {
+    fn a_generation_boots_and_switches_through_wrath() {
         let (_dir, lab, packages) = setup();
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let outcome = realised(&lab, &mut db, &packages, &model(80, false));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
-        assert!(read("init").contains("/bin/distro\" activate --mode init \"$self\""));
+        assert!(read("init").contains("/bin/wrath\" activate --mode init \"$self\""));
         let switch = read("bin/switch-to-configuration");
-        assert!(switch.contains("/bin/distro\" activate --mode \"$1\" \"$self\""));
-        let distro = packages["distro"].path.inside();
+        assert!(switch.contains("/bin/wrath\" activate --mode \"$1\" \"$self\""));
+        let wrath = packages["wrath"].path.inside();
         assert_eq!(
-            fs::read_link(root.join("bin/distro")).unwrap(),
-            Path::new(&format!("{distro}/bin/distro"))
+            fs::read_link(root.join("bin/wrath")).unwrap(),
+            Path::new(&format!("{wrath}/bin/wrath"))
         );
         let systemd = packages["systemd"].path.inside();
         assert_eq!(

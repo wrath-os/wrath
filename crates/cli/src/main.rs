@@ -4,12 +4,12 @@ use std::process::ExitCode;
 use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
-use distro_build::seed_pack;
-use distro_build::store::Lab;
-use distro_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
-use distro_eval::{ConfigKind, Evaluation, OptionPath, Value};
-use distro_model::{DISTRO_SOURCE, LOCK_FILE, Lock, Model};
 use generations::Switch;
+use wrath_build::seed_pack;
+use wrath_build::store::Lab;
+use wrath_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
+use wrath_eval::{ConfigKind, Evaluation, OptionPath, Value};
+use wrath_model::{LOCK_FILE, Lock, Model, WRATH_SOURCE};
 
 mod activate;
 mod apply_record;
@@ -45,12 +45,12 @@ mod watch;
 const DETERMINISM_RUNS: u64 = 5;
 
 /// The system's configuration, which commands act on unless told otherwise.
-const SYSTEM_CONFIG: &str = "/etc/distro";
+const SYSTEM_CONFIG: &str = "/etc/wrath";
 
 #[derive(Parser)]
-#[command(name = "distro", version, about = "Declarative system configuration")]
+#[command(name = "wrath", version, about = "Declarative system configuration")]
 struct Cli {
-    /// The configuration to act on [default: the system's, in /etc/distro]
+    /// The configuration to act on [default: the system's, in /etc/wrath]
     #[arg(short = 'C', long = "config", global = true, value_name = "DIR")]
     config: Option<PathBuf>,
     /// The role to act as, for a configuration with kinds of machines in `roles/`
@@ -102,7 +102,7 @@ enum Command {
         #[arg(long, conflicts_with_all = ["system", "yes"])]
         watch: bool,
     },
-    /// Switch to the configuration for a while, then back unless you `distro keep` it
+    /// Switch to the configuration for a while, then back unless you `wrath keep` it
     Try {
         /// A system that is already built
         system: Option<PathBuf>,
@@ -138,7 +138,7 @@ enum Command {
         /// A kernel option for an image's boot entry, instead of the screen and serial consoles
         #[arg(long = "kernel-option", requires = "image")]
         kernel_options: Vec<String>,
-        /// Put the configuration in the image's /etc/distro, so distro on it can plan
+        /// Put the configuration in the image's /etc/wrath, so wrath on it can plan
         #[arg(long, requires = "image")]
         with_configuration: bool,
     },
@@ -159,7 +159,7 @@ enum Command {
     },
     /// Switch back to the previous generation, or to generation N
     Rollback {
-        /// The generation, as `distro history` numbers it
+        /// The generation, as `wrath history` numbers it
         #[arg(value_name = "N")]
         generation: Option<u32>,
     },
@@ -228,7 +228,7 @@ enum Command {
     },
     /// Move sources to their newest versions and lock them
     Update {
-        /// Sources to update, such as `distro` [default: all of them]
+        /// Sources to update, such as `wrath` [default: all of them]
         sources: Vec<String>,
         /// Only show each source: what it follows, where it's pinned and how old that is
         #[arg(long, conflicts_with = "sources")]
@@ -248,7 +248,7 @@ enum Command {
         /// options start at the prefix, such as `users.john` for `users/john.toml`
         #[arg(long)]
         schema: bool,
-        /// The schema of a project, `distro.toml`, instead of a system
+        /// The schema of a project, `wrath.toml`, instead of a system
         #[arg(long, requires = "schema")]
         project: bool,
     },
@@ -265,7 +265,7 @@ enum Command {
         #[command(subcommand)]
         command: secret::SecretCommand,
     },
-    /// Commands for working on distro itself
+    /// Commands for working on wrath itself
     Dev {
         #[command(subcommand)]
         command: DevCommand,
@@ -390,7 +390,7 @@ struct TestOptions {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     ROLE.set(cli.role.clone()).expect("the role is set once");
-    distro_build::progress::set(distro_build::progress::chosen(
+    wrath_build::progress::set(wrath_build::progress::chosen(
         cli.verbose,
         std::io::IsTerminal::is_terminal(&std::io::stderr()),
     ));
@@ -419,9 +419,9 @@ fn main() -> ExitCode {
         style::error("--json works with plan, status, history and update --list so far");
         return ExitCode::FAILURE;
     }
-    // A distro told where its files are is being developed, and runs as it is.
+    // A wrath told where its files are is being developed, and runs as it is.
     let developing = cli.root.is_some() || cli.modules.is_some();
-    let root = find_root(cli.root, std::env::var_os("DISTRO_ROOT").map(PathBuf::from));
+    let root = find_root(cli.root, std::env::var_os("WRATH_ROOT").map(PathBuf::from));
     if !developing
         && runs_pinned(&cli.command)
         && let Ok(config) = find_config(cli.config.as_deref())
@@ -501,7 +501,7 @@ fn main() -> ExitCode {
                     return Ok(code);
                 }
                 let ids: Vec<&str> = built.packages.iter().map(String::as_str).collect();
-                show_checked(&distro_build::pilot::check_packages(
+                show_checked(&wrath_build::pilot::check_packages(
                     &root.join("build"),
                     &ids,
                 )?)
@@ -541,7 +541,7 @@ fn main() -> ExitCode {
         Command::Up => {
             package_context(cli.config.as_deref(), &modules).and_then(|(model, project)| {
                 let project =
-                    project.ok_or("only a project has services to run; `distro up` runs in one")?;
+                    project.ok_or("only a project has services to run; `wrath up` runs in one")?;
                 run::up(root, model, &project)
             })
         }
@@ -628,7 +628,7 @@ fn main() -> ExitCode {
             DevCommand::Repro { packages } => {
                 let only: Vec<&str> = packages.iter().map(String::as_str).collect();
                 let (lab, repository) = builder(root);
-                distro_build::experiments::reproduce(&lab, &repository, &only)
+                wrath_build::experiments::reproduce(&lab, &repository, &only)
                     .map(|()| ExitCode::SUCCESS)
             }
             DevCommand::Seed { command } => {
@@ -674,7 +674,7 @@ fn main() -> ExitCode {
 
 /// The role given with `--role`, set once when the command line is read.
 static ROLE: OnceLock<Option<String>> = OnceLock::new();
-/// The repository distro runs from, whose recipes name the packages there are.
+/// The repository wrath runs from, whose recipes name the packages there are.
 static REPOSITORY: OnceLock<PathBuf> = OnceLock::new();
 /// The role this machine runs, looked up the first time a command needs it.
 static MACHINE_ROLE: OnceLock<Option<String>> = OnceLock::new();
@@ -706,12 +706,12 @@ fn machine_role(config: &Path) -> Option<String> {
     Some(role)
 }
 
-/// Whether `command` reads the configuration, so it says when the lock pins another distro.
-/// Commands on built generations, and updates that move distro's own pin, don't.
+/// Whether `command` reads the configuration, so it says when the lock pins another version of wrath.
+/// Commands on built generations, and updates that move wrath's own pin, don't.
 fn runs_pinned(command: &Command) -> bool {
     match command {
         Command::Update { sources, list } => {
-            *list || (!sources.is_empty() && !sources.iter().any(|name| name == DISTRO_SOURCE))
+            *list || (!sources.is_empty() && !sources.iter().any(|name| name == WRATH_SOURCE))
         }
         Command::Status
         | Command::Plan { .. }
@@ -782,7 +782,7 @@ fn find_config(given: Option<&Path>) -> Result<PathBuf, String> {
 }
 
 fn is_home(config: &Path) -> bool {
-    distro_eval::kind_of(&distro_eval::DirFs::new(config)) == distro_eval::ConfigKind::Home
+    wrath_eval::kind_of(&wrath_eval::DirFs::new(config)) == wrath_eval::ConfigKind::Home
 }
 
 fn current_project() -> Option<PathBuf> {
@@ -792,19 +792,19 @@ fn current_project() -> Option<PathBuf> {
 }
 
 fn is_project(config: &Path) -> bool {
-    distro_eval::kind_of(&distro_eval::DirFs::new(config)) == distro_eval::ConfigKind::Project
+    wrath_eval::kind_of(&wrath_eval::DirFs::new(config)) == wrath_eval::ConfigKind::Project
 }
 
 /// Refuses a project for commands about the machine and its generations.
 fn refuse_project(config: &Path) -> Result<(), String> {
     if is_project(config) {
-        return Err("a project has no generations to switch; `distro shell` enters it".into());
+        return Err("a project has no generations to switch; `wrath shell` enters it".into());
     }
     Ok(())
 }
 
 /// The model packages come from for `run` and `shell`, and the project when the context is one:
-/// the configuration's, or with none, an empty one, whose packages come from this distro.
+/// the configuration's, or with none, an empty one, whose packages come from this wrath.
 fn package_context(
     given: Option<&Path>,
     modules: &Path,
@@ -866,7 +866,7 @@ fn check_config(
     match (unpinned, locked) {
         (false, _) => Ok(ExitCode::SUCCESS),
         (true, true) => Err(
-            "the lock doesn't pin everything the configuration uses; `distro check` pins it".into(),
+            "the lock doesn't pin everything the configuration uses; `wrath check` pins it".into(),
         ),
         (true, false) => lock(root, config, modules, None),
     }
@@ -877,10 +877,10 @@ fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model
     let model = model_as(config, modules, role)?;
     let packages = model.all_packages().count();
     let all_pinned = model.sources.values().all(|source| source.is_locked());
-    let pinned = match (model.sources.contains_key(DISTRO_SOURCE), all_pinned) {
+    let pinned = match (model.sources.contains_key(WRATH_SOURCE), all_pinned) {
         (_, false) => "sources not pinned yet",
         (true, true) => "sources pinned",
-        (false, true) => "distro unpinned, since it was built from a checkout",
+        (false, true) => "wrath unpinned, since it was built from a checkout",
     };
     println!(
         "no errors: {} options, {packages} packages, {pinned}, model {}",
@@ -917,16 +917,16 @@ fn dev_test(
 fn context(root: &Path, image_override: Option<PathBuf>) -> Result<RunContext, String> {
     Ok(RunContext {
         workdir: root.to_path_buf(),
-        distro_exe: std::env::current_exe()
-            .map_err(|e| format!("cannot locate the distro binary: {e}"))?,
+        wrath_exe: std::env::current_exe()
+            .map_err(|e| format!("cannot locate the wrath binary: {e}"))?,
         signoff_dir: root.join("acceptance").join(SIGNOFF_DIR),
-        run_root: root.join("target/distro-check/runs"),
+        run_root: root.join("target/wrath-check/runs"),
         image_override,
     })
 }
 
 /// Prints each check `build --check` ran, and fails when any did.
-fn show_checked(checked: &[distro_build::pilot::Checked]) -> Result<ExitCode, String> {
+fn show_checked(checked: &[wrath_build::pilot::Checked]) -> Result<ExitCode, String> {
     if checked.is_empty() {
         println!("nothing to check: these recipes have no smoke commands or tests");
     }
@@ -955,7 +955,7 @@ fn builder(root: &Path) -> (Lab, PathBuf) {
 /// Prints each recipe's needless dependencies, and fails when there are any.
 fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
     let only: Vec<&str> = packages.iter().map(String::as_str).collect();
-    let found = distro_build::graph::redundant(&root.join("build"), &only)?;
+    let found = wrath_build::graph::redundant(&root.join("build"), &only)?;
     if found.is_empty() {
         println!("nothing to point out");
         return Ok(ExitCode::SUCCESS);
@@ -967,7 +967,7 @@ fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
 /// Prints the recipes upstream has released something newer of, and those it couldn't check.
 fn outdated(root: &Path, all: bool) -> Result<ExitCode, String> {
     let reports =
-        distro_build::upstream::outdated(&root.join("build"), &distro_build::upstream::run)?;
+        wrath_build::upstream::outdated(&root.join("build"), &wrath_build::upstream::run)?;
     let width = reports.iter().map(|r| r.id.len()).max().unwrap_or(0);
     let (mut newer, mut held, mut unchecked) = (0, 0, Vec::new());
     for report in &reports {
@@ -1031,10 +1031,10 @@ fn status(root: &Path, milestone: Option<&str>) -> Result<ExitCode, String> {
         .scenarios
         .iter()
         .filter(|s| milestone.is_none_or(|id| s.milestone == id))
-        .map(|s| (s, distro_check::run(s, &ctx)))
+        .map(|s| (s, wrath_check::run(s, &ctx)))
         .collect();
 
-    print!("{}", distro_check::render(&suite.milestones, &results));
+    print!("{}", wrath_check::render(&suite.milestones, &results));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1060,11 +1060,11 @@ fn check(
     }
     let ctx = context(root, image)?;
     for scenario in &scenarios {
-        let outcome = distro_check::run(scenario, &ctx);
+        let outcome = wrath_check::run(scenario, &ctx);
         all_passed &= outcome.is_pass();
         print!(
             "{}",
-            distro_check::render_list(&[(scenario, outcome.clone())])
+            wrath_check::render_list(&[(scenario, outcome.clone())])
         );
         if run_reproduction && let Outcome::Fail(failure) = &outcome {
             println!("        {}", reproduce(scenario, failure, &ctx));
@@ -1090,17 +1090,17 @@ fn under_root(root: &Path, path: &Path) -> PathBuf {
         .unwrap_or(joined)
 }
 
-/// The directory with distro's own files for the binary at `exe`: the checkout it was built in,
-/// or the `share/distro` beside it in the store.
+/// The directory with wrath's own files for the binary at `exe`: the checkout it was built in,
+/// or the `share/wrath` beside it in the store.
 fn files_beside(exe: &Path) -> Option<PathBuf> {
     exe.ancestors()
-        .flat_map(|dir| [dir.to_path_buf(), dir.join("share/distro")])
+        .flat_map(|dir| [dir.to_path_buf(), dir.join("share/wrath")])
         .find(|dir| dir.join("modules").is_dir())
 }
 
 /// Reruns a failed scenario against the image of the failed run and reports whether it fails
 /// with the same reason.
-fn reproduce(scenario: &Scenario, failure: &distro_check::Failure, ctx: &RunContext) -> String {
+fn reproduce(scenario: &Scenario, failure: &wrath_check::Failure, ctx: &RunContext) -> String {
     let Some(reproduction) = &failure.reproduction else {
         return "reproduced: no reproduction available for this scenario".into();
     };
@@ -1108,7 +1108,7 @@ fn reproduce(scenario: &Scenario, failure: &distro_check::Failure, ctx: &RunCont
         image_override: Some(reproduction.image.clone()),
         ..ctx.clone()
     };
-    match distro_check::run(scenario, &ctx) {
+    match wrath_check::run(scenario, &ctx) {
         Outcome::Fail(again) if again.reason == failure.reason => "reproduced: yes".into(),
         Outcome::Fail(again) => format!("reproduced: no, it failed differently: {}", again.reason),
         Outcome::Pass => "reproduced: no, it passed".into(),
@@ -1130,7 +1130,7 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
         .and_then(Path::file_name)
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    distro_check::parse_scenario(&path, &id, &milestone, &text).map_err(|e| e.to_string())
+    wrath_check::parse_scenario(&path, &id, &milestone, &text).map_err(|e| e.to_string())
 }
 
 fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
@@ -1151,7 +1151,7 @@ fn evaluate_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Eval
 
 /// Every role of a configuration, or `[None]` for one that describes one machine.
 pub(crate) fn all_roles(config: &Path) -> Result<Vec<Option<String>>, String> {
-    let roles = distro_eval::roles(&distro_eval::DirFs::new(config))
+    let roles = wrath_eval::roles(&wrath_eval::DirFs::new(config))
         .map_err(|e| format!("cannot list the roles in {}: {e}", config.display()))?;
     Ok(if roles.is_empty() {
         vec![None]
@@ -1187,7 +1187,7 @@ fn packages_known(evaluation: &Evaluation, model: &Model) -> bool {
     };
     let unknown = known::unknown(evaluation, model, &names);
     if !unknown.is_empty() {
-        let text = distro_eval::render(&unknown, evaluation.sources());
+        let text = wrath_eval::render(&unknown, evaluation.sources());
         style::print_report(&ending_a_line(&text));
     }
     unknown.is_empty()
@@ -1270,7 +1270,7 @@ enum Against {
     Nothing,
     /// A configuration directory, or a model as `model.json`.
     Path(PathBuf),
-    /// The running system's model, or nothing when distro didn't build it.
+    /// The running system's model, or nothing when wrath didn't build it.
     Running,
     /// What another machine runs.
     Host(String),
@@ -1323,7 +1323,7 @@ fn plan(
         },
     };
     let rebuilt = built_from.and_then(|text| generations::rebuilt(root, &after, text.as_deref()));
-    let plan = generations::with_rebuilt(distro_model::plan(&before, &after), rebuilt);
+    let plan = generations::with_rebuilt(wrath_model::plan(&before, &after), rebuilt);
     if json {
         let Value::Table(mut fields) = plan.to_value() else {
             unreachable!("a plan is a table")
@@ -1353,12 +1353,12 @@ fn why(config: &Path, modules: &Path, thing: Option<&str>) -> Result<ExitCode, S
         return Ok(ExitCode::FAILURE);
     };
     let Some(thing) = thing else {
-        print!("{}", distro_eval::explain(&evaluation, None)?);
+        print!("{}", wrath_eval::explain(&evaluation, None)?);
         return Ok(ExitCode::SUCCESS);
     };
-    let as_option = OptionPath::parse(thing)
-        .and_then(|option| distro_eval::explain(&evaluation, Some(&option)));
-    match (as_option, distro_eval::explain_output(&evaluation, thing)) {
+    let as_option =
+        OptionPath::parse(thing).and_then(|option| wrath_eval::explain(&evaluation, Some(&option)));
+    match (as_option, wrath_eval::explain_output(&evaluation, thing)) {
         (Ok(explained), _) | (Err(_), Some(explained)) => print!("{explained}"),
         (Err(_), None) if thing.starts_with(['/', '~']) => {
             return Err(format!("no module writes `{thing}`"));
@@ -1372,9 +1372,9 @@ fn why(config: &Path, modules: &Path, thing: Option<&str>) -> Result<ExitCode, S
     Ok(ExitCode::SUCCESS)
 }
 
-/// Where distro's own files are: `modules`, and in a checkout `build` and `acceptance` too.
-/// It's `--root`, else `$DISTRO_ROOT`, else the checkout the running binary was built in or the
-/// copy an installed binary keeps in `share/distro`, else the current directory. Inside that
+/// Where wrath's own files are: `modules`, and in a checkout `build` and `acceptance` too.
+/// It's `--root`, else `$WRATH_ROOT`, else the checkout the running binary was built in or the
+/// copy an installed binary keeps in `share/wrath`, else the current directory. Inside that
 /// checkout it's `.`, so paths in messages stay short.
 fn find_root(given: Option<PathBuf>, from_env: Option<PathBuf>) -> PathBuf {
     if let Some(root) = given.or(from_env) {
@@ -1500,13 +1500,13 @@ fn remote_role(config: &Path, remote: &host::Remote) -> Result<Option<String>, S
 }
 
 /// Prints `plan`, in color on a terminal.
-pub(crate) fn print_plan(plan: &distro_model::Plan) {
+pub(crate) fn print_plan(plan: &wrath_model::Plan) {
     print!("{}", plan.styled(style::stdout()));
 }
 
 /// Prints `value` as JSON, for `--json`.
 fn print_json(value: &Value) -> Result<ExitCode, String> {
-    print!("{}", distro_eval::formats::json(value)?);
+    print!("{}", wrath_eval::formats::json(value)?);
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1535,21 +1535,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let package = dir.path().join("store/abc");
         fs::create_dir_all(package.join("bin")).unwrap();
-        fs::create_dir_all(package.join("share/distro/modules")).unwrap();
+        fs::create_dir_all(package.join("share/wrath/modules")).unwrap();
         assert_eq!(
-            files_beside(&package.join("bin/distro")),
-            Some(package.join("share/distro"))
+            files_beside(&package.join("bin/wrath")),
+            Some(package.join("share/wrath"))
         );
     }
 
     #[test]
     fn a_binary_built_in_a_checkout_finds_the_checkouts_modules() {
         let dir = tempfile::tempdir().unwrap();
-        let checkout = dir.path().join("distro");
+        let checkout = dir.path().join("wrath");
         fs::create_dir_all(checkout.join("target/release")).unwrap();
         fs::create_dir_all(checkout.join("modules")).unwrap();
         assert_eq!(
-            files_beside(&checkout.join("target/release/distro")),
+            files_beside(&checkout.join("target/release/wrath")),
             Some(checkout)
         );
     }

@@ -1,6 +1,6 @@
 title = "A scenario that should pass is reported as passing"
 
 [command]
-run = ["distro", "dev", "test", "scenarios/fixtures/always-passes.toml"]
+run = ["wrath", "dev", "test", "scenarios/fixtures/always-passes.toml"]
 stdout_contains = ["PASS"]
 timeout_secs = 600

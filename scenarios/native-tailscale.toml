@@ -2,7 +2,7 @@ title = "a system runs the Tailscale agent, waiting to be logged in"
 
 [vm]
 config = "scenarios/fixtures/native-tailscale"
-store = "distro"
+store = "wrath"
 wait_for = ["agent", "unit:multi-user.target", "unit:tailscaled.service"]
 steps = [
   { run = "tailscale status 2>&1; true", stdout_contains = "Logged out" },

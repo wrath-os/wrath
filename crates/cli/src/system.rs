@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use distro_eval::{ConfigFs, DirFs, Evaluation, Input, Module, Schema, Sources, render};
+use wrath_eval::{ConfigFs, DirFs, Evaluation, Input, Module, Schema, Sources, render};
 
 /// The order modules are loaded and run in. The result must not depend on it.
 #[derive(Debug, Clone, Copy)]
@@ -24,7 +24,7 @@ pub fn evaluate_dir(
     evaluate_with(&crate::fetch::Sourced::dir(config), modules, order, role)
 }
 
-/// Evaluates the project at `config` as everyone else has it, without `distro.local.toml`.
+/// Evaluates the project at `config` as everyone else has it, without `wrath.local.toml`.
 pub fn evaluate_shared(config: &Path, modules: &Path) -> Result<Evaluation, String> {
     let shared = crate::fetch::Sourced::new(crate::project::Shared(DirFs::new(config)), config);
     evaluate_with(&shared, modules, ModuleOrder::Sorted, None)
@@ -46,12 +46,12 @@ fn evaluate_with(
     role: Option<&str>,
 ) -> Result<Evaluation, String> {
     let mut sources = Sources::default();
-    let kind = distro_eval::kind_of(config);
+    let kind = wrath_eval::kind_of(config);
     let mut modules = crate::platforms::modules(config, role, modules, &mut sources, order)?;
     modules.retain(|module| module.configurations().contains(&kind));
     // A home belongs to whoever runs the command.
     let user = std::env::var("USER").ok();
-    distro_eval::evaluate(Input {
+    wrath_eval::evaluate(Input {
         sources,
         config,
         kind,
@@ -87,7 +87,7 @@ pub fn load_modules(
             continue;
         }
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        match distro_starlark::load(sources, &path.display().to_string(), text, dir) {
+        match wrath_starlark::load(sources, &path.display().to_string(), text, dir) {
             Ok(module) => modules.push(module),
             Err(diagnostic) => errors.push(diagnostic),
         }

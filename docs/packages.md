@@ -1,7 +1,7 @@
 # Packages
 
-Every package distro installs is built from a recipe in distro's own repository, from source.
-The distro revision your lock pins decides which recipes you get, so it decides every package's
+Every package wrath installs is built from a recipe in wrath's own repository, from source.
+The wrath revision your lock pins decides which recipes you get, so it decides every package's
 version too. Around 350 build today, which covers a desktop, development tools and the usual
 command line things.
 
@@ -13,27 +13,27 @@ Add it to `packages` and apply:
 packages = ["ripgrep", "jq", "helix"]
 ```
 
-Or let distro write it for you:
+Or let wrath write it for you:
 
 ```console
-$ distro add jq
-$ distro apply
+$ wrath add jq
+$ wrath apply
 ```
 
 `add` writes the name into the configuration's starting file, exactly as you typed it, and pins
 anything new. A name no recipe has is refused before anything's written, with the closest one
 there is, and `check` and `plan` catch one written by hand the same way.
 
-`distro add --home john lazygit` adds it to john's packages instead, which only end up on their
-`PATH`. `distro remove jq` takes it out again.
+`wrath add --home john lazygit` adds it to john's packages instead, which only end up on their
+`PATH`. `wrath remove jq` takes it out again.
 
 ## Trying one without installing it
 
 ```console
-$ distro run jq -- --version
-jq from distro 1d06008, 2026-10-30
+$ wrath run jq -- --version
+jq from wrath 1d06008, 2026-10-30
 jq-1.8.1
-$ distro shell jq ripgrep
+$ wrath shell jq ripgrep
 ```
 
 `run` runs a package's program and `shell` starts a shell with the packages on its `PATH`.
@@ -46,8 +46,8 @@ the one your configuration would give you, never whatever happens to be newest t
 ## Building one
 
 ```sh
-distro build jq ripgrep        # prints where each one is
-distro build jq -o ./jq        # and links it there
+wrath build jq ripgrep        # prints where each one is
+wrath build jq -o ./jq        # and links it there
 ```
 
 That's mostly useful while working on recipes. There's no `./result` link by default. If you
@@ -55,13 +55,13 @@ want a link, `-o` says where.
 
 ## Updating
 
-Packages move when the distro revision does:
+Packages move when the wrath revision does:
 
 ```console
-$ distro update --list
-distro  github:johnae/distro  1d06008, 2026-10-30, 13 days old
-$ distro update
-$ distro plan
+$ wrath update --list
+wrath  github:johnae/wrath  1d06008, 2026-10-30, 13 days old
+$ wrath update
+$ wrath plan
 packages
   ~ ripgrep (tier: live)
       rebuilt
@@ -69,8 +69,8 @@ packages
 
 The plan says a package was rebuilt, not yet which versions it went between. That's coming.
 
-`update` moves every source to its newest version, `distro update distro` just that one. Nothing
-changes on the machine until you apply. A newer distro can also rebuild packages your
+`update` moves every source to its newest version, `wrath update wrath` just that one. Nothing
+changes on the machine until you apply. A newer wrath can also rebuild packages your
 configuration never mentions (a kernel with other options, say), and the plan shows those as
 "rebuilt", with the tier they need.
 
@@ -97,7 +97,7 @@ lives next to your configuration.
 ## Programs from elsewhere
 
 Programs downloaded for other distributions expect their libraries in `/lib64` and the like,
-which distro doesn't have. Turn this on and they find a set of common libraries there:
+which wrath doesn't have. Turn this on and they find a set of common libraries there:
 
 ```toml
 [programs.foreign]
@@ -106,7 +106,7 @@ enable = true
 
 ## What's not there yet
 
-- Versions: `jq@1.7` for an older jq from an older distro revision is planned, but not built.
-- `distro search` and `distro info`, for finding packages and seeing what's in one.
-- Recipes from sources other than distro. `acme#jq` is how it'll be written.
+- Versions: `jq@1.7` for an older jq from an older wrath revision is planned, but not built.
+- `wrath search` and `wrath info`, for finding packages and seeing what's in one.
+- Recipes from sources other than wrath. `acme#jq` is how it'll be written.
 - A binary cache, so everything builds on your machine.

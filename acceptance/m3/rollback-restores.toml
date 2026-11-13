@@ -1,10 +1,10 @@
 title = "rollback returns the VM to the previous generation"
 
 [vm]
-store = "distro"
+store = "wrath"
 config = "fixtures/configs/basic"
 steps = [
   { apply_config = "fixtures/configs/basic-changed" },
-  { run = "distro rollback" },
+  { run = "wrath rollback" },
   { run = "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080", stdout_contains = "200" },
 ]

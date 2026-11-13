@@ -10,7 +10,7 @@ def render(ctx: Context) -> None:
     ctx.enable("polkit-agent-helper.socket")
     ctx.wrapper("pkexec", source = "/run/system/bin/pkexec")
     ctx.file(
-        "/etc/polkit-1/rules.d/50-distro.rules",
+        "/etc/polkit-1/rules.d/50-wrath.rules",
         "polkit.addAdminRule(function (action, subject) {\n" +
         "  return [\"unix-group:wheel\"];\n" +
         "});\n",

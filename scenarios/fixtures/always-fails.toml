@@ -3,6 +3,6 @@ notes = "Used to prove that failures are reported with logs and a working reprod
 
 [vm]
 config = "fixtures/configs/native"
-store = "distro"
+store = "wrath"
 wait_for = ["agent"]
 expect = [{ run = "echo hello", stdout_contains = "text the guest never prints" }]

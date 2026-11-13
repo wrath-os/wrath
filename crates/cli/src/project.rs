@@ -4,15 +4,15 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use distro_eval::{ConfigFs, DirFs, Value};
-use distro_model::{DISTRO_SOURCE, Lock, Model};
+use wrath_eval::{ConfigFs, DirFs, Value};
+use wrath_model::{Lock, Model, WRATH_SOURCE};
 
-const PROJECT: &str = "distro.toml";
-const PROJECT_LOCAL: &str = "distro.local.toml";
-/// The lock of what only `distro.local.toml` adds.
-pub const LOCAL_LOCK: &str = "distro.local.lock";
+const PROJECT: &str = "wrath.toml";
+const PROJECT_LOCAL: &str = "wrath.local.toml";
+/// The lock of what only `wrath.local.toml` adds.
+pub const LOCAL_LOCK: &str = "wrath.local.lock";
 
-/// The nearest directory from `start` upwards with a `distro.toml` or `distro.local.toml`.
+/// The nearest directory from `start` upwards with a `wrath.toml` or `wrath.local.toml`.
 pub fn find(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
@@ -21,7 +21,7 @@ pub fn find(start: &Path) -> Option<PathBuf> {
 }
 
 /// The first line of a command's output in the project at `dir`: its name, and which file it
-/// starts from when that isn't `distro.toml`.
+/// starts from when that isn't `wrath.toml`.
 pub fn header(dir: &Path) -> String {
     let name = dir.file_name().map_or_else(
         || dir.display().to_string(),
@@ -147,7 +147,7 @@ fn store_version(path: &Path) -> Option<String> {
     Some(version.to_owned())
 }
 
-/// A project as everyone else has it: without `distro.local.toml`.
+/// A project as everyone else has it: without `wrath.local.toml`.
 pub struct Shared(pub DirFs);
 
 impl ConfigFs for Shared {
@@ -182,7 +182,7 @@ pub fn split_lock(lock: Lock, shared: &Model) -> (Lock, Lock) {
     let (sources, local) = lock
         .sources
         .into_iter()
-        .partition(|(name, _)| shared.sources.contains_key(name) || name == DISTRO_SOURCE);
+        .partition(|(name, _)| shared.sources.contains_key(name) || name == WRATH_SOURCE);
     (
         Lock {
             sources,
@@ -195,7 +195,7 @@ pub fn split_lock(lock: Lock, shared: &Model) -> (Lock, Lock) {
     )
 }
 
-/// process-compose's configuration for the project's services in `model`, which `distro up`
+/// process-compose's configuration for the project's services in `model`, which `wrath up`
 /// runs, or `None` when it has none. Commands run as written, without a shell, and every string
 /// is YAML single-quoted, the one form process-compose reads without changing backslashes.
 pub fn compose(model: &Model) -> Option<String> {
@@ -329,7 +329,7 @@ mod tests {
         std::fs::write(project.join(PROJECT_LOCAL), "").unwrap();
         assert_eq!(
             header(&project),
-            "project myapp: distro.local.toml over distro.toml"
+            "project myapp: wrath.local.toml over wrath.toml"
         );
     }
 
@@ -403,18 +403,18 @@ mod tests {
     #[test]
     fn what_only_the_local_file_adds_is_locked_apart() {
         let mut lock = Lock::default();
-        for name in ["distro", "acme", "mine"] {
+        for name in ["wrath", "acme", "mine"] {
             lock.sources
-                .insert(name.into(), distro_model::Source::follow(name));
+                .insert(name.into(), wrath_model::Source::follow(name));
         }
         let mut shared = Model::default();
         shared.packages.insert("jq".into());
         shared
             .sources
-            .insert("acme".into(), distro_model::Source::follow("acme"));
+            .insert("acme".into(), wrath_model::Source::follow("acme"));
 
         let (ours, local) = split_lock(lock, &shared);
-        assert_eq!(ours.sources.keys().collect::<Vec<_>>(), ["acme", "distro"]);
+        assert_eq!(ours.sources.keys().collect::<Vec<_>>(), ["acme", "wrath"]);
         assert_eq!(local.sources.keys().collect::<Vec<_>>(), ["mine"]);
     }
 

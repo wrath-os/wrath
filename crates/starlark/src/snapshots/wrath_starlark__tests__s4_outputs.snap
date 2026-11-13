@@ -5,9 +5,9 @@ expression: describe_outputs(&evaluation)
 packages: curl fprintd helix (for john) jq nftables nginx ripgrep (for john) syncthing tzdata
 
 file /etc/nftables.conf (mode 644, from firewall)
-table inet distro
-flush table inet distro
-table inet distro {
+table inet wrath
+flush table inet wrath
+table inet wrath {
   chain input {
     type filter hook input priority 0; policy drop;
     ct state established,related accept
@@ -159,7 +159,7 @@ Description=nftables firewall
 [Service]
 ExecReload=nft -f /etc/nftables.conf
 ExecStart=nft -f /etc/nftables.conf
-ExecStop=nft delete table inet distro
+ExecStop=nft delete table inet wrath
 RemainAfterExit=yes
 Type=oneshot
 

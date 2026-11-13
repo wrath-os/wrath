@@ -91,7 +91,7 @@ pub(crate) fn load(
         diagnostics: Vec::new(),
         kind,
         starting: None,
-        platform: Platform::Distro,
+        platform: Platform::Wrath,
     };
     let start = match kind {
         ConfigKind::System => starting_file(fs, role_given),
@@ -541,15 +541,15 @@ fn mark_defaults(files: &mut [LoadedFile], sources: &Sources) -> Vec<Diagnostic>
 pub enum ConfigKind {
     /// A machine: `system.toml` or a role, with `services/` and `users/`.
     System,
-    /// A project's development environment: `distro.toml`, or `distro.local.toml` over it.
+    /// A project's development environment: `wrath.toml`, or `wrath.local.toml` over it.
     Project,
     /// One user's own home: `home.toml`, configuring their entry in `users`.
     Home,
 }
 
-const PROJECT: &str = "distro.toml";
+const PROJECT: &str = "wrath.toml";
 const HOME: &str = "home.toml";
-const PROJECT_LOCAL: &str = "distro.local.toml";
+const PROJECT_LOCAL: &str = "wrath.local.toml";
 
 /// The file a project starts from: the local file when there is one, so its owner can change
 /// anything in the project.
@@ -562,7 +562,7 @@ fn project_file(fs: &dyn ConfigFs) -> Result<String, Diagnostic> {
     }
     Err(
         Diagnostic::error(format!("`{}` does not exist", fs.display(PROJECT)))
-            .note("help: a project starts from `distro.toml`"),
+            .note("help: a project starts from `wrath.toml`"),
     )
 }
 
@@ -583,7 +583,7 @@ fn home_file(fs: &dyn ConfigFs, user: Option<&str>) -> Result<String, Diagnostic
 }
 
 /// The kind of configuration in `fs`: a system when it has `system.toml` or roles, a project when
-/// it has `distro.toml` or `distro.local.toml`, a home when it has `home.toml`, otherwise a system.
+/// it has `wrath.toml` or `wrath.local.toml`, a home when it has `home.toml`, otherwise a system.
 pub fn kind_of(fs: &dyn ConfigFs) -> ConfigKind {
     let project = [PROJECT, PROJECT_LOCAL]
         .iter()

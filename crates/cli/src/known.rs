@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use distro_eval::{Diagnostic, Evaluation, Site, Value, closest};
-use distro_model::{DISTRO_SOURCE, Model, package_source};
+use wrath_eval::{Diagnostic, Evaluation, Site, Value, closest};
+use wrath_model::{Model, WRATH_SOURCE, package_source};
 
 /// The names packages can have: every recipe's id and every build the configuration declares.
 pub fn names(root: &Path, model: &Model) -> Result<BTreeSet<String>, String> {
@@ -13,7 +13,7 @@ pub fn names(root: &Path, model: &Model) -> Result<BTreeSet<String>, String> {
     if !repository.join("recipes").is_dir() {
         return Err(NO_RECIPES.to_owned());
     }
-    let mut names = distro_build::graph::recipe_ids(&repository)?;
+    let mut names = wrath_build::graph::recipe_ids(&repository)?;
     names.extend(model.builds.keys().cloned());
     Ok(names)
 }
@@ -51,14 +51,14 @@ pub fn missing<'a>(
     names: &'a BTreeSet<String>,
 ) -> Option<(&'a str, Option<&'a str>)> {
     let (source, name) = package_source(reference);
-    if source != DISTRO_SOURCE || names.contains(name) {
+    if source != WRATH_SOURCE || names.contains(name) {
         return None;
     }
     Some((name, closest(name, names.iter().map(String::as_str))))
 }
 
 /// Where the configuration writes `reference` in a list of packages, the system's or a user's.
-fn written_at(evaluation: &Evaluation, reference: &str) -> Option<distro_eval::Span> {
+fn written_at(evaluation: &Evaluation, reference: &str) -> Option<wrath_eval::Span> {
     evaluation
         .options()
         .iter()
@@ -82,9 +82,9 @@ fn written_at(evaluation: &Evaluation, reference: &str) -> Option<distro_eval::S
         })
 }
 
-/// What a distro without recipes says, such as the one a machine runs, which was built elsewhere.
-const NO_RECIPES: &str = "this distro has no recipes, so it can't plan or build here; plan and \
-                          apply from a checkout of distro, such as with `distro apply --host` \
+/// What a wrath without recipes says, such as the one a machine runs, which was built elsewhere.
+const NO_RECIPES: &str = "this wrath has no recipes, so it can't plan or build here; plan and \
+                          apply from a checkout of wrath, such as with `wrath apply --host` \
                           from another machine";
 
 #[cfg(test)]
@@ -92,9 +92,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_distro_without_recipes_says_where_to_plan_from() {
+    fn a_wrath_without_recipes_says_where_to_plan_from() {
         let dir = tempfile::tempdir().unwrap();
         let error = names(dir.path(), &Model::default()).unwrap_err();
-        assert!(error.contains("distro apply --host"), "{error}");
+        assert!(error.contains("wrath apply --host"), "{error}");
     }
 }

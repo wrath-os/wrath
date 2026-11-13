@@ -26,7 +26,7 @@ service = types.record(
     autostart = option(
         types.bool,
         default = True,
-        doc = "Whether it starts on its own: with the session for a home, with `distro up` for " +
+        doc = "Whether it starts on its own: with the session for a home, with `wrath up` for " +
               "a project. Otherwise it's started by hand.",
     ),
     systemd = option(

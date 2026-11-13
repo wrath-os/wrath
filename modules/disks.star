@@ -1,5 +1,5 @@
 # A machine's disks: their partitions, which are encrypted, and the filesystems on them, laid out
-# by `distro install`. The booted system unlocks and mounts them by name: each partition is
+# by `wrath install`. The booted system unlocks and mounts them by name: each partition is
 # labelled `<disk><n>-<partition>`, such as `nvme0-system`, and an encrypted one opens under the
 # same name.
 

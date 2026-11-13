@@ -6,10 +6,10 @@ Everything you set in TOML is read by some module. `[services.ssh]` is the ssh m
 
 Modules are written in [Starlark](https://github.com/bazelbuild/starlark), which is basically a
 small, deterministic Python: no imports beyond `load`, no I/O, no clocks. Modules also have type
-annotations, and distro checks them when it loads them, so a typo in a module shows up as an
+annotations, and wrath checks them when it loads them, so a typo in a module shows up as an
 error with a line number instead of a mystery later.
 
-The built-in modules live in distro's own repository, in `modules/`. To bring your own, or to
+The built-in modules live in wrath's own repository, in `modules/`. To bring your own, or to
 build something quite different, a system builds on a platform of your own (see Platforms below).
 
 ## A small one
@@ -74,7 +74,7 @@ only runs when it's on. A module that should always run leaves `enable` out.
 
 The type decides how values from several files combine. Two files setting a `str` to different
 values is an error, a `set` gets both files' items, and so on. `doc` shows up in
-`distro options`, so write one for anything that isn't obvious from its name.
+`wrath options`, so write one for anything that isn't obvious from its name.
 
 `user_options` declares options every user has, under `users.<name>`. The ssh module uses it for
 `authorized_keys`.
@@ -98,7 +98,7 @@ values is an error, a `set` gets both files' items, and so on. `doc` shows up in
 `formats.json`, `formats.toml` and `formats.systemd` turn a dict into a file's text, and
 `lines([...])` joins lines with a newline after each.
 
-Every option a module sets with `ctx.set` has to be listed in its `writes`. That's how distro
+Every option a module sets with `ctx.set` has to be listed in its `writes`. That's how wrath
 knows to run the ssh module before the firewall module reads `allowed_tcp_ports`, and it means
 there's never a question of which module ran first.
 
@@ -115,7 +115,7 @@ line in their TOML:
 
 ```text
 error: an empty message of the day: turn `motd` off instead
- --> /etc/distro/system.toml:6:8
+ --> /etc/wrath/system.toml:6:8
   |
 6 | text = "  "
   |        ^^^^ `motd.text` is set here
@@ -136,31 +136,31 @@ modules/tests/motd/
 Run it, look at what it says, and bless it when it's right:
 
 ```console
-$ distro dev test modules/tests
+$ wrath dev test modules/tests
 FAIL  motd: etc/motd differs
       expected:
       actual:
         Welcome to box
         Be nice.
-$ distro dev test modules/tests --bless
-$ distro dev test modules/tests
+$ wrath dev test modules/tests --bless
+$ wrath dev test modules/tests
 PASS  motd
 ```
 
 Units go under `expected/etc/systemd/system/`, and a user's files under `expected/home/NAME/`.
 Bad configurations work the same way, with an `expected-error.txt` instead, and
-`distro dev test fixtures/bad-configs` checks that each still fails with the same error.
+`wrath dev test fixtures/bad-configs` checks that each still fails with the same error.
 
 ## Platforms
 
-Every system builds on a platform, a set of modules. Unless it says otherwise, that's `distro`:
+Every system builds on a platform, a set of modules. Unless it says otherwise, that's `wrath`:
 the built-in modules. A platform of your own lives in a source, with a `platform.toml` that lists
 its modules:
 
 ```toml
 # platform.toml, in the acme source
 modules = ["modules"]                       # acme's own, in modules/
-from-distro = ["dbus", "polkit", "users"]   # the built-in modules acme keeps
+from-wrath = ["dbus", "polkit", "users"]   # the built-in modules acme keeps
 ```
 
 A system chooses it in the file it starts from, `system.toml` or a role's file:

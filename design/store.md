@@ -1,6 +1,6 @@
 # The store
 
-How distro builds and stores systems, as the experiments that led to it support it. They ran in a
+How wrath builds and stores systems, as the experiments that led to it support it. They ran in a
 separate repository, usrview, whose `results/` hold the evidence; the step numbers below refer to
 them. This is a working design: any part of it can change if something better turns up. Each
 section says how firm it is.
@@ -135,7 +135,7 @@ A file, a unit and a generation are actions with records and outputs, the same a
 in-process. Each action has an unresolved key, known before anything runs, and a resolved key.
 Where it came from is stored beside it and never hashed, so a worker needs only the record.
 
-A one-line change to a real distro configuration reran 2 of 27 actions and took about 90 ms apart
+A one-line change to a real wrath configuration reran 2 of 27 actions and took about 90 ms apart
 from an unoptimized package lookup (step 15). Records live in SQLite.
 
 ## Speed
@@ -146,18 +146,18 @@ from an unoptimized package lookup (step 15). Records live in SQLite.
 | A plan after a one-line change, 124 modules | 25 ms |
 | A live generation switch | 70 ms |
 
-Recipes stay fast only if they are separate files read on demand and close to plain data. distro's
+Recipes stay fast only if they are separate files read on demand and close to plain data. wrath's
 evaluator is a little superlinear above 2,000 modules, after a fix to a quadratic lookup (step 13). Building
 and fetching take most of the real time, and neither has been optimized or measured here.
 
 ## An apply is the unit of history
 
 This is the design. The builder's experiment that recorded applies, diffed them and rolled them
-back went with the old `lab` harness; nothing records applies yet, and `distro dev apply-record`
+back went with the old `lab` harness; nothing records applies yet, and `wrath dev apply-record`
 prints what one would keep.
 
 One row per apply or rollback: who (the uid and its name, the person behind `sudo` when root ran
-it, and an agent's name from `DISTRO_AGENT`), when, the model hash, the generation, the apply
+it, and an agent's name from `WRATH_AGENT`), when, the model hash, the generation, the apply
 before it, and digests of the configuration's TOML, its lock and an explanation. The explanation
 says which action and part of the model made each path, where each option's value was set, and
 what each module read.

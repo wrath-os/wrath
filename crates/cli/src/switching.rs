@@ -1,4 +1,4 @@
-//! A machine's generations in distro's store: each one a link in `/store/.system/generations`
+//! A machine's generations in wrath's store: each one a link in `/store/.system/generations`
 //! named by its number, `/store/.system/current` naming the current one, and the systems
 //! themselves in `/store`. The records live with the store, so a root erased at every boot keeps
 //! them.
@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use distro_build::store::{Lab, StorePath, is_entry};
+use wrath_build::store::{Lab, StorePath, is_entry};
 
 use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, Unfinished, generations};
 
-/// The root of the machine distro runs on.
+/// The root of the machine wrath runs on.
 const ROOT: &str = "/";
 
-/// Whether this machine's generations are in distro's store, which its first `apply` starts.
+/// Whether this machine's generations are in wrath's store, which its first `apply` starts.
 fn here_in_store() -> bool {
     Path::new(ROOT).join(GENERATIONS).is_dir()
 }
@@ -30,7 +30,7 @@ fn require_generations() -> Result<(), String> {
         Ok(())
     } else {
         Err(
-            "this machine has no generations in distro's store yet; `distro apply` makes the first"
+            "this machine has no generations in wrath's store yet; `wrath apply` makes the first"
                 .into(),
         )
     }
@@ -48,7 +48,7 @@ const LOCK: &str = "store/.system/lock";
 const GRACE: Duration = Duration::from_secs(3600);
 
 /// The timer that switches back from a system being tried.
-const TRY_TIMER: &str = "distro-try";
+const TRY_TIMER: &str = "wrath-try";
 
 /// Waits for any other change to the generations of the machine at `root`, then holds them until
 /// the returned file is dropped.
@@ -90,7 +90,7 @@ impl std::fmt::Display for Generation {
         let hash = self
             .model_hash
             .as_deref()
-            .map_or("not built by distro", |hash| &hash[..hash.len().min(12)]);
+            .map_or("not built by wrath", |hash| &hash[..hash.len().min(12)]);
         write!(f, "{:>4}  {}  model {hash}", self.number, self.created)?;
         if self.current {
             write!(f, "  (current)")?;
@@ -99,12 +99,12 @@ impl std::fmt::Display for Generation {
     }
 }
 
-/// The hash of the running system's model, when distro built the running system.
+/// The hash of the running system's model, when wrath built the running system.
 pub fn running_model_hash() -> Option<String> {
     fs::read_to_string(Path::new(ROOT).join(RUNNING).join(MODEL_HASH)).ok()
 }
 
-/// The running system's model file, when distro built the running system.
+/// The running system's model file, when wrath built the running system.
 pub fn running_model() -> Option<PathBuf> {
     let path = Path::new(ROOT).join(RUNNING).join(MODEL);
     path.exists().then_some(path)
@@ -130,13 +130,13 @@ pub fn switching_from_model() -> Option<PathBuf> {
 
 /// What the running system says it was built from, when it says.
 pub fn running_built_from() -> Option<String> {
-    let keys = distro_build::graph::PACKAGE_KEYS;
+    let keys = wrath_build::graph::PACKAGE_KEYS;
     fs::read_to_string(Path::new(ROOT).join(RUNNING).join(keys)).ok()
 }
 
 /// Where a system keeps its model and the model's hash.
-const MODEL: &str = "etc/distro/model.json";
-const MODEL_HASH: &str = "etc/distro/model-hash";
+const MODEL: &str = "etc/wrath/model.json";
+const MODEL_HASH: &str = "etc/wrath/model-hash";
 
 /// Every generation of this machine, oldest first.
 pub fn history() -> Result<Vec<Generation>, String> {
@@ -240,7 +240,7 @@ fn rollback_target(root: &Path, to: Option<u32>) -> Result<u32, String> {
         Ok(to)
     } else {
         Err(format!(
-            "there's no generation {to}; `distro history` lists them"
+            "there's no generation {to}; `wrath history` lists them"
         ))
     }
 }
@@ -249,8 +249,8 @@ fn rollback_target(root: &Path, to: Option<u32>) -> Result<u32, String> {
 /// boot default. `previous` is where a plain rollback goes, when it's worth saying.
 fn switch_failed(number: u32, previous: Option<u32>, error: String) -> String {
     let next = match previous {
-        Some(previous) => format!("`distro rollback` goes back to {previous}"),
-        None => format!("`distro rollback {number}` tries it again"),
+        Some(previous) => format!("`wrath rollback` goes back to {previous}"),
+        None => format!("`wrath rollback {number}` tries it again"),
     };
     format!(
         "{error}\ngeneration {number} is current and boots next, but switching to it failed \
@@ -300,7 +300,7 @@ pub fn try_system(system: &Path, seconds: u64) -> Result<(), String> {
         .arg(format!("--on-active={seconds}s"))
         .args([
             "--timer-property=AccuracySec=1s",
-            "--description=distro: end a try",
+            "--description=wrath: end a try",
         ])
         .arg(root.join(CURRENT).join("bin/switch-to-configuration"))
         .arg("switch"))
@@ -373,7 +373,7 @@ pub fn remove(root: &Path, numbers: &[u32], grace: Duration) -> Result<usize, St
             continue;
         };
         if let Some(path) = store_path(&target) {
-            used.extend(distro_build::chain::runtime_closure(&lab, &path)?);
+            used.extend(wrath_build::chain::runtime_closure(&lab, &path)?);
         }
     }
     let store = root.join("store");
@@ -446,16 +446,16 @@ pub fn clean(numbers: &[u32]) -> Result<String, String> {
 
 /// Installs `system`, already built and in this machine's store, onto the filesystems mounted at
 /// `target`: copies what it needs into their store, makes it their first generation, and has its
-/// own distro put the boot loader and its entries in place. Needs root.
+/// own wrath put the boot loader and its entries in place. Needs root.
 pub fn install(system: &Path, target: &Path) -> Result<(), String> {
     if !system.starts_with("/store") {
         return Err(format!(
-            "{} isn't in /store; build it with distro first",
+            "{} isn't in /store; build it with wrath first",
             system.display()
         ));
     }
     copy_onto(Path::new(ROOT), system, target)?;
-    run(Command::new(system.join("bin/distro"))
+    run(Command::new(system.join("bin/wrath"))
         .args(["activate", "--mode", "install", "--root"])
         .arg(target)
         .arg(system))
@@ -469,7 +469,7 @@ fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
     let store = target.join("store");
     fs::create_dir_all(&store).map_err(|e| format!("{}: {e}", store.display()))?;
     let lab = Lab::new(from);
-    for path in distro_build::chain::runtime_closure(&lab, &generation)? {
+    for path in wrath_build::chain::runtime_closure(&lab, &generation)? {
         if store.join(path.hash()).exists() {
             continue;
         }
@@ -553,8 +553,8 @@ mod tests {
         fs::create_dir_all(root.join(GENERATIONS)).unwrap();
         for (n, name) in systems.iter().enumerate() {
             let system = root.join("store").join(name);
-            fs::create_dir_all(system.join("etc/distro")).unwrap();
-            fs::write(system.join("etc/distro/model-hash"), format!("hash-{name}")).unwrap();
+            fs::create_dir_all(system.join("etc/wrath")).unwrap();
+            fs::write(system.join("etc/wrath/model-hash"), format!("hash-{name}")).unwrap();
             let link = root.join(GENERATIONS).join((n + 1).to_string());
             symlink(format!("/store/{name}"), link).unwrap();
         }
@@ -631,12 +631,12 @@ mod tests {
             "{after_apply}"
         );
         assert!(
-            after_apply.contains("`distro rollback` goes back to 3"),
+            after_apply.contains("`wrath rollback` goes back to 3"),
             "{after_apply}"
         );
         let after_rollback = switch_failed(2, None, "nginx.service failed".into());
         assert!(
-            after_rollback.contains("`distro rollback 2`"),
+            after_rollback.contains("`wrath rollback 2`"),
             "{after_rollback}"
         );
     }
@@ -716,12 +716,7 @@ mod tests {
         let inside = PathBuf::from(format!("/store/{}", hash('a')));
         copy_onto(from, &inside, target.path()).unwrap();
         let store = target.path().join("store");
-        assert!(
-            store
-                .join(hash('a'))
-                .join("etc/distro/model-hash")
-                .is_file()
-        );
+        assert!(store.join(hash('a')).join("etc/wrath/model-hash").is_file());
         assert!(store.join(hash('b')).is_dir());
         assert!(!store.join(hash('c')).exists(), "nothing uses c");
         let (listed, current) = generations(target.path()).unwrap();

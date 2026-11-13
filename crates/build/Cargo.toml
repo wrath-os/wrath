@@ -1,5 +1,5 @@
 [package]
-name = "distro-build"
+name = "wrath-build"
 description = "The store, the sandbox, the seed and the action graph systems are built with"
 version.workspace = true
 edition.workspace = true
@@ -7,10 +7,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [lib]
-name = "distro_build"
+name = "wrath_build"
 
 [dependencies]
-distro-starlark.workspace = true
+wrath-starlark.workspace = true
 memchr = "2"
 rustix = { version = "1.1", features = ["fs", "process", "termios"] }
 rusqlite = { version = "0.32", features = ["bundled"] }

@@ -1,7 +1,7 @@
 # How it works
 
 This page walks through what happens between editing a TOML file and the machine running it, and
-why things are laid out the way they are. You don't need any of it to use distro, but it helps
+why things are laid out the way they are. You don't need any of it to use wrath, but it helps
 when something surprises you.
 
 The short version:
@@ -13,22 +13,22 @@ TOML files ──> model ──> plan ──> build ──> generation ──> s
 
 ## The configuration and the model
 
-A configuration is a directory of TOML files. On a machine it's `/etc/distro`, and anywhere else
+A configuration is a directory of TOML files. On a machine it's `/etc/wrath`, and anywhere else
 you point at one with `-C DIR`. It usually looks something like this:
 
 ```text
-/etc/distro/
+/etc/wrath/
 ├── system.toml        # where it starts
 ├── services/web.toml  # anything it includes
 ├── users/john.toml
 ├── secrets/           # encrypted with age
-└── distro.lock        # pins, written for you
+└── wrath.lock        # pins, written for you
 ```
 
-distro reads every file into one set of options. Each option has a type and exactly one value.
+wrath reads every file into one set of options. Each option has a type and exactly one value.
 If two files set `system.hostname` differently you get an error pointing at both, so there's
 never a question of which one won. A value can also be a default, `{ default = "..." }`, which
-anything else may override. `distro why system.hostname` tells you where a value came from.
+anything else may override. `wrath why system.hostname` tells you where a value came from.
 
 Modules turn options into what a system is made of: packages, files in `/etc`, systemd units,
 users. They're written in Starlark, which is basically a small Python without the parts that make
@@ -41,18 +41,18 @@ the same model hash run the same thing.
 
 ## The lock
 
-`distro.lock` sits next to the configuration and pins everything that could otherwise change
+`wrath.lock` sits next to the configuration and pins everything that could otherwise change
 under you:
 
-- the distro revision, which decides every package's recipe and the modules
+- the wrath revision, which decides every package's recipe and the modules
 - any other source you pull files or recipes from
 - each user's uid and each group's gid, so adding a user never renumbers the others
 
-`check`, `apply` and `add` pin anything new. Only `distro update` moves a pin forward.
+`check`, `apply` and `add` pin anything new. Only `wrath update` moves a pin forward.
 
 ## The plan
 
-`distro plan` compares the model you'd get from your TOML with the model of the running system.
+`wrath plan` compares the model you'd get from your TOML with the model of the running system.
 Each change gets a tier, which says when it takes effect:
 
 | Tier | Takes effect |
@@ -66,7 +66,7 @@ Each change gets a tier, which says when it takes effect:
 
 ## Building
 
-Every package is built from source by distro's own builder. A recipe says where the source is and
+Every package is built from source by wrath's own builder. A recipe says where the source is and
 how to build it, and most recipes just name a build style (meson, cmake, autotools, cargo, go)
 and let it write the script:
 
@@ -90,7 +90,7 @@ from exactly the dependencies the recipe lists. So a build can't quietly pick up
 happens to be installed, which is the most common way builds stop being reproducible. If a
 dependency is missing, the build fails and the hint says which recipe has it.
 
-Builds start from a seed: a small, pinned set of prebuilt compilers. From there distro builds its
+Builds start from a seed: a small, pinned set of prebuilt compilers. From there wrath builds its
 own gcc, glibc and binutils, and everything else builds with those. Rust and Go are still
 prebuilt for now, which I'd like to fix at some point.
 
@@ -129,12 +129,12 @@ machine needs.
 ```
 
 Generations are numbered in `/store/.system/generations`, and `current` points at the one the
-machine boots by default. `distro history` lists them, `distro history 7` shows what changed in
-generation 7, and `distro rollback` goes back one.
+machine boots by default. `wrath history` lists them, `wrath history 7` shows what changed in
+generation 7, and `wrath rollback` goes back one.
 
 ## Where things live on a running machine
 
-A conventional distribution keeps everything in `/usr` and changes files there in place. distro
+A conventional distribution keeps everything in `/usr` and changes files there in place. wrath
 keeps everything in `/store`, which nothing changes after the fact, and points at it from a few
 well-known places:
 
@@ -147,7 +147,7 @@ well-known places:
 | `/run/wrappers/bin` | setuid copies of `sudo`, `su` and friends, made at boot, since nothing in the store is setuid |
 | `/etc` | real files where a program needs to write, and links through `/etc/.system` for the rest |
 | `/bin/sh`, `/usr/bin/env` | the only two paths outside the store that scripts get to assume |
-| `/var`, `/home` | your data, which distro leaves alone |
+| `/var`, `/home` | your data, which wrath leaves alone |
 
 `PATH` is `/run/wrappers/bin:/run/system/bin`, and units name programs as
 `/run/system/bin/sshd`. `/run/system` is in `/run` on purpose: it's per boot, so after a crash it
@@ -158,7 +158,7 @@ to find things, and builds would start depending on it again.
 
 ## Switching
 
-Switching to a generation is done by that generation's own copy of distro, so an older distro
+Switching to a generation is done by that generation's own copy of wrath, so an older wrath
 never has to understand a newer system or the other way round. It goes roughly like this:
 
 1. Compare the old and new generation's units, and also the packages behind them, so a service
@@ -173,8 +173,8 @@ A few things are never restarted by a switch. Mounts and swap would disappear, a
 would take your session with it. Those take effect at the next boot, and the plan says so. A unit
 can ask for the same treatment with `X-RestartIfChanged=false`.
 
-`distro try` switches without making the new system the default and switches back by itself after
-five minutes, unless you run `distro keep`. That's for changes that could lock you out, such as
+`wrath try` switches without making the new system the default and switches back by itself after
+five minutes, unless you run `wrath keep`. That's for changes that could lock you out, such as
 network or SSH settings on a remote machine.
 
 ## Booting
@@ -186,7 +186,7 @@ so the oldest generations lose their entries first.
 
 ## What it doesn't manage
 
-distro manages the system and leaves your data alone: `/home`, `/var` and anything a service
+wrath manages the system and leaves your data alone: `/home`, `/var` and anything a service
 keeps in `/var/lib`. That also means a rollback doesn't roll back data. If a service migrated
 its database when it upgraded, going back to the old version won't undo that. NixOS has the same
 gap, and I haven't solved it yet.
