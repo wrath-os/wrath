@@ -488,6 +488,27 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Belongs in:** the `prebuilt` style and the builder.
 - **Status:** fixed.
 
+### A package's own path, split by the compiler, defeats content addresses
+
+- **Seen in:** glibc, after a comment in its patch changed: everything above it rebuilt.
+- **What happened:** a package is built at a temporary path named by its key, and its address is
+  a hash with that path zeroed, so the same content gets the same address. In `ld.so`, `ldconfig`,
+  `sln` and `libc.a` the compiler turned a `memcmp` against glibc's own path, in
+  `is_trusted_path_normalize`, into 8-byte immediates (`/store/8`, `af5d2d72`), which the builder
+  neither zeroes nor rewrites. A new key gave a new temporary path, new immediates and a new
+  address, so nothing above glibc was a cache hit. The immediates also keep the temporary path
+  after the move, so `ld.so` checks trusted directories against a path that doesn't exist, which
+  matters to setuid programs' preloads.
+- **What we did:** put the comment back, so glibc's key and output stay as they were.
+- **What would prevent it:** building every package at a temporary path named by the package
+  alone (`/store/000…0-glibc-2.42`), never by its key, so unchanged content keeps its address
+  whatever changed the key; a check that finds 8-byte or longer pieces of the temporary path that
+  aren't the whole of it, and names the file; and glibc's trusted-path check built without the
+  `memcmp` builtin.
+- **Belongs in:** the builder, and glibc's recipe, together with the next change that rebuilds
+  everything.
+- **Status:** known.
+
 ### A change to the builder doesn't rebuild what it made
 
 - **Seen in:** the run-path trimming change above.
