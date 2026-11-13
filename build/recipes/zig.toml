@@ -38,6 +38,8 @@ smoke = ["bin/ghostty --version"]
 args = [
   "-fno-sys=oniguruma", "-fno-sys=simdutf", "-fno-sys=spirv-cross", "-Dgtk-x11=false",
   "-Demit-docs=false", "-Dinstalled-exe-path=$PREFIX/bin/ghostty",
+  # Without git it calls itself a development build; its own version is in its package list.
+  "-Dversion-string=$(sed -n 's/^ *\\.version = \"\\(.*\\)\",$/\\1/p' build.zig.zon)",
 ]
 # bzip2 ships no pkg-config file, which Ghostty asks for it by when it links freetype from the
 # system.
