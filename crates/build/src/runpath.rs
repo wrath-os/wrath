@@ -41,6 +41,9 @@ struct Dynamic {
     needed: Vec<String>,
     runpath_at: usize,
     runpath: String,
+    /// Whether it's an old-style run path (DT_RPATH) without a new one, which the loader also
+    /// uses for every library the program loads that has none of its own.
+    inherited: bool,
 }
 
 /// The parts of a 64-bit little-endian ELF file that matter here, if it has a run path.
@@ -90,6 +93,7 @@ fn parse(bytes: &[u8]) -> Option<Dynamic> {
             .collect::<Option<_>>()?,
         runpath_at,
         runpath: string_at(bytes, runpath_at)?,
+        inherited: runpath.is_none(),
     })
 }
 
@@ -145,13 +149,14 @@ fn keep<'a>(
         .collect()
 }
 
-/// The new contents, if the run path gets shorter.
+/// The new contents, if the run path gets shorter. An old-style run path stays whole: what the
+/// file needs says nothing about what the libraries it loads need from it.
 fn shrink(
     bytes: &[u8],
     own: &str,
     provides: &mut impl FnMut(&str) -> BTreeSet<String>,
 ) -> Option<(Vec<u8>, Shrunk)> {
-    let dynamic = parse(bytes)?;
+    let dynamic = parse(bytes).filter(|dynamic| !dynamic.inherited)?;
     let mut wanted = named_libraries(bytes);
     wanted.extend(dynamic.needed.iter().cloned());
     let kept = keep(&dynamic.runpath, own, &wanted, provides);
@@ -243,8 +248,13 @@ pub fn shrink_files(
 mod tests {
     use super::*;
 
-    /// A minimal ELF file: one load segment at address 0, a dynamic section and a string table.
     fn elf(runpath: &str, needed: &[&str], extra: &[u8]) -> (Vec<u8>, usize) {
+        elf_with(DT_RUNPATH, runpath, needed, extra)
+    }
+
+    /// A minimal ELF file: one load segment at address 0, a dynamic section and a string table,
+    /// with its run path under `tag`.
+    fn elf_with(tag: u64, runpath: &str, needed: &[&str], extra: &[u8]) -> (Vec<u8>, usize) {
         let mut strings = vec![0u8];
         let runpath_index = strings.len();
         strings.extend_from_slice(runpath.as_bytes());
@@ -283,7 +293,7 @@ mod tests {
             push(DT_NEEDED, at as u64);
         }
         push(DT_STRTAB, strtab as u64);
-        push(DT_RUNPATH, runpath_index as u64);
+        push(tag, runpath_index as u64);
         push(0, 0);
         bytes.extend_from_slice(&strings);
         bytes.extend_from_slice(extra);
@@ -312,6 +322,14 @@ mod tests {
         assert_eq!(runpath_of(&new, at), "/store/a/lib:/store/b/lib");
         assert_eq!((shrunk.entries_before, shrunk.entries_after), (3, 2));
         assert_eq!(new.len(), bytes.len());
+    }
+
+    #[test]
+    fn leaves_an_old_style_run_path_whole_since_what_the_program_loads_uses_it_too() {
+        let path = "/store/a/lib:/store/b/lib:/store/c/lib";
+        let (bytes, at) = elf_with(DT_RPATH, path, &["libz.so.1"], b"");
+        assert!(shrink(&bytes, "/store/self/", &mut provider).is_none());
+        assert_eq!(runpath_of(&bytes, at), path);
     }
 
     #[test]
