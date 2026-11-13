@@ -145,7 +145,13 @@ pub fn load_modules(
             continue;
         }
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        match wrath_starlark::load(sources, &path.display().to_string(), text, dir) {
+        // Named inside its set, such as `modules/accounts.star`, wherever the set is on disk, so
+        // errors read the same from a checkout of grapes or a copy its lock fetched.
+        let shown = match (dir.file_name(), path.file_name()) {
+            (Some(set_dir), Some(file)) => Path::new(set_dir).join(file).display().to_string(),
+            _ => path.display().to_string(),
+        };
+        match wrath_starlark::load(sources, &shown, text, dir) {
             Ok(module) => modules.push(module),
             Err(diagnostic) => errors.push(diagnostic),
         }
