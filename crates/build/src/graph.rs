@@ -1575,10 +1575,11 @@ fn initrd_files(
     files
 }
 
-/// A modprobe deny-list for the initrd: the modules in `tree` that read firmware and `wanted`
-/// doesn't need. Its udev would otherwise load them for devices it finds before the root, which
-/// holds the firmware, is mounted. Other drivers, such as the root disk's, still load for their
-/// devices, and loading a module by name, as for `wanted`, still works.
+/// A modprobe deny-list for the initrd: the modules in `tree` that read firmware, themselves or
+/// through a module they depend on, and `wanted` doesn't need. Its udev would otherwise load them
+/// for devices it finds before the root, which holds the firmware, is mounted, and a driver that
+/// fails to set up its device there doesn't try again. Other drivers, such as the root disk's,
+/// still load for their devices, and loading a module by name, as for `wanted`, still works.
 fn initrd_deny_list(tree: &Path, wanted: &[String]) -> String {
     let name = |path: &str| {
         let file = path.rsplit('/').next().unwrap_or_default();
@@ -1601,16 +1602,22 @@ fn initrd_deny_list(tree: &Path, wanted: &[String]) -> String {
             deps.insert(module, needs.split_whitespace().map(name).collect());
         }
     }
-    let mut needed = BTreeSet::new();
-    let mut pending: Vec<String> = wanted.iter().map(|m| m.replace('-', "_")).collect();
-    while let Some(module) = pending.pop() {
-        if needed.insert(module.clone()) {
-            pending.extend(deps.get(&module).into_iter().flatten().cloned());
+    let closure = |start: Vec<String>| {
+        let mut seen = BTreeSet::new();
+        let mut pending = start;
+        while let Some(module) = pending.pop() {
+            if seen.insert(module.clone()) {
+                pending.extend(deps.get(&module).into_iter().flatten().cloned());
+            }
         }
-    }
-    firmware
-        .iter()
+        seen
+    };
+    let needed = closure(wanted.iter().map(|m| m.replace('-', "_")).collect());
+    // A module whose dependencies read firmware reads it too: blocking only the one that names it
+    // doesn't stop it loading as a dependency.
+    deps.keys()
         .filter(|module| !needed.contains(*module))
+        .filter(|module| !closure(vec![(*module).clone()]).is_disjoint(&firmware))
         .map(|module| format!("blacklist {module}\n"))
         .collect()
 }
@@ -2971,6 +2978,51 @@ mod tests {
         assert_eq!(
             initrd_deny_list(dir.path(), &wanted),
             "blacklist cfg80211\nblacklist mt7925e\n"
+        );
+    }
+
+    #[test]
+    fn the_initrd_keeps_drivers_whose_dependencies_read_firmware_from_loading_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let version = dir.path().join("7.3.4");
+        // btusb loads btmtk, which asks for the radio's firmware as btusb sets it up; blocking
+        // btmtk alone doesn't stop it loading as btusb's dependency.
+        let modules = [
+            (
+                "kernel/drivers/bluetooth/btmtk.ko",
+                "firmware=mt7925.bin",
+                "",
+            ),
+            (
+                "kernel/drivers/bluetooth/btusb.ko",
+                "",
+                "kernel/drivers/bluetooth/btmtk.ko",
+            ),
+            (
+                "kernel/drivers/scsi/qla2xxx.ko",
+                "",
+                "kernel/drivers/scsi/qla_fw.ko",
+            ),
+            (
+                "kernel/drivers/scsi/qla_fw.ko",
+                "firmware=ql2500_fw.bin",
+                "",
+            ),
+            ("kernel/drivers/block/nvme.ko", "", ""),
+        ];
+        let mut dep = String::new();
+        for (path, info, needs) in modules {
+            let file = version.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, format!("\x7fELF\0license=GPL\0{info}\0")).unwrap();
+            dep.push_str(&format!("{path}: {needs}\n"));
+        }
+        fs::write(version.join("modules.dep"), dep).unwrap();
+        let wanted = ["qla2xxx"].map(String::from);
+        assert_eq!(
+            initrd_deny_list(dir.path(), &wanted),
+            "blacklist btmtk\nblacklist btusb\n",
+            "what a wanted module needs still loads"
         );
     }
 
