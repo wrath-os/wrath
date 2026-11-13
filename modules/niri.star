@@ -51,12 +51,14 @@ def shaped(settings: dict[str, typing.Any], in_rule: bool = False) -> dict[str, 
             for properties in (value if type(value) == "list" else [value]):
                 nodes[with_properties(name, properties)] = True
         elif name == "binds" and type(value) == "dict":
-            binds = {}
-            for keys, bind in value.items():
-                properties = {k: v for k, v in bind.items() if k in BIND_PROPERTIES}
-                action = {k: v for k, v in bind.items() if k not in BIND_PROPERTIES}
-                binds[with_properties(keys, properties)] = action
-            nodes[name] = binds
+            nodes[name] = {
+                with_properties(keys, {k: v for k, v in bind.items() if k in BIND_PROPERTIES}): {
+                    k: v
+                    for k, v in bind.items()
+                    if k not in BIND_PROPERTIES
+                }
+                for keys, bind in value.items()
+            }
         elif type(value) == "dict":
             nodes[name] = shaped(value, in_rule)
         elif type(value) == "list" and name in RULES:
