@@ -1,0 +1,23 @@
+# CUPS' client library alone, which programs that print link, such as Chromium's build from its
+# project. Without the scheduler, drivers or a printing service.
+[[package]]
+id = "libcups"
+version = "2.4.20"
+scope = "runtime"
+core = true
+extra_deps = ["pkgconf", "openssl", "zlib", "perl"]
+sources = [{ url = "https://github.com/OpenPrinting/cups/releases/download/v{version}/cups-{version}-source.tar.gz" }]
+probes = ["cups"]
+
+[package.autotools]
+args = [
+  "--with-components=libcups", "--with-tls=openssl", "--disable-static", "--disable-gssapi",
+  "--disable-dbus", "--with-dnssd=no", "--disable-libpaper", "--disable-libusb",
+  "--disable-acl", "--disable-pam", "--without-systemd", "--without-rcdir",
+]
+# Without DNS-SD, listing printers keeps local queues in fields only the DNS-SD variant of its
+# data has, so the other variant gets them too.
+prepare = '''
+perl -0pi -e 's/(  cups_dest_t\t\*dests;\t\t\t\/\* Destinations \*\/\n)/$1  int\t\tnum_local;\n  cups_dest_t\t*local_dests;\n/' cups/dest.c
+grep -q 'local_dests;$' cups/dest.c
+'''
