@@ -350,14 +350,15 @@ scope = "runtime"
 core = true
 extra_deps = [
   "meson", "ninja", "pkgconf", "python3", "pixman", "fontconfig",
-  "glib",
+  "glib", "libX11", "libXext", "libXrender",
 ]
 sources = [{ url = "https://cairographics.org/releases/cairo-{version}.tar.xz" }]
 probes = ["cairo"]
 
+# With Xlib, which GTK 3's X11 backend draws through.
 [package.meson]
 args = [
-  "-D xlib=disabled", "-D xcb=disabled", "-D lzo=disabled", "-D tests=disabled",
+  "-D xlib=enabled", "-D xcb=disabled", "-D lzo=disabled", "-D tests=disabled",
   "-D spectre=disabled", "-D symbol-lookup=disabled", "-D glib=enabled", "-D png=enabled",
   "-D freetype=enabled", "-D fontconfig=enabled",
 ]
@@ -822,13 +823,14 @@ id = "libepoxy"
 version = "1.5.10"
 scope = "runtime"
 core = true
-extra_deps = ["meson", "ninja", "pkgconf", "python3", "mesa"]
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "mesa", "libX11"]
 sources = [{ url = "https://github.com/anholt/libepoxy/archive/{version}/libepoxy-{version}.tar.gz" }]
 probes = ["epoxy"]
 
-# OpenGL function loading over EGL, without GLX.
+# OpenGL function loading over EGL, and GLX for GTK 3's X11 backend, which loads libGL only if a
+# program draws through it.
 [package.meson]
-args = ["-D glx=no", "-D x11=false", "-D egl=yes", "-D tests=false", "-D docs=false"]
+args = ["-D glx=yes", "-D x11=true", "-D egl=yes", "-D tests=false", "-D docs=false"]
 
 [[package]]
 id = "xwayland"
@@ -1004,14 +1006,17 @@ extra_deps = [
   "pango",
   "gdk-pixbuf", "libepoxy", "at-spi2-core",
   "wayland", "wayland-protocols", "libxkbcommon", "gettext",
+  "libX11", "libXext", "libXrender", "libXi", "libXrandr", "libXcursor", "libXdamage",
+  "libXfixes", "libXcomposite",
 ]
 sources = [{ url = "https://download.gnome.org/sources/gtk/{series}/gtk-{version}.tar.xz" }]
 probes = ["gtk+-3.0"]
 
-# Wayland only, printing to files only.
+# Wayland, and X11 alongside it: programs built elsewhere, such as browsers from their projects,
+# link GDK's X11 functions even when they run on Wayland. Printing to files only.
 [package.meson]
 args = [
-  "-D x11_backend=false", "-D wayland_backend=true", "-D broadway_backend=false",
+  "-D x11_backend=true", "-D xinerama=no", "-D wayland_backend=true", "-D broadway_backend=false",
   "-D print_backends=file", "-D introspection=false", "-D gtk_doc=false", "-D man=false",
   "-D demos=false", "-D examples=false", "-D tests=false", "-D installed_tests=false",
   "-D colord=no", "-D cloudproviders=false", "-D tracker3=false",
@@ -1279,3 +1284,21 @@ smoke = ["bin/fuzzel --version"]
 # The launcher: it lists the programs with a .desktop file and starts the one picked.
 [package.meson]
 args = ["-D enable-cairo=disabled", "-D png-backend=libpng", "-D svg-backend=nanosvg"]
+
+# PulseAudio's client library alone, which programs that play sound through PulseAudio load, such
+# as browsers from their projects. PipeWire's PulseAudio server answers them, so there's no daemon.
+[[package]]
+id = "libpulse"
+version = "17.0"
+scope = "runtime"
+core = true
+extra_deps = ["meson", "ninja", "pkgconf", "python3", "m4-final", "libsndfile"]
+sources = [{ url = "https://www.freedesktop.org/software/pulseaudio/releases/pulseaudio-{version}.tar.xz" }]
+probes = ["libpulse"]
+
+[package.meson]
+args = [
+  "-D auto_features=disabled", "-D daemon=false", "-D client=true", "-D doxygen=false",
+  "-D man=false", "-D tests=false", "-D database=simple", "-D bashcompletiondir=no",
+  "-D zshcompletiondir=no",
+]

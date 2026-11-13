@@ -461,6 +461,20 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Belongs in:** the builder.
 - **Status:** known.
 
+### Prebuilt programs need every library and function they link, used or not
+
+- **Seen in:** Zen's build from its project, on a Wayland-only GTK 3.
+- **What happened:** its libraries are linked with `BIND_NOW` against GDK's X11 functions and
+  eight X11 extension libraries, so it can't start on a GTK 3 without its X11 backend, even on
+  Wayland. GTK 3's X11 backend then needed cairo with Xlib and libepoxy with GLX.
+- **What we did:** the X11 libraries, and GTK 3, cairo and libepoxy built with X11 beside Wayland,
+  which rebuilt what's above cairo once.
+- **What would prevent it:** a check that a prebuilt recipe's every needed library resolves and
+  every undefined function is defined by one, at build time, so a missing one is an error
+  naming it rather than a program that won't start on the machine.
+- **Belongs in:** the builder, for recipes that patch prebuilt programs.
+- **Status:** checked by hand for Zen.
+
 ## Working on recipes
 
 - Don't edit `build/` while a build is running from it. Styles load once per process, so a build
