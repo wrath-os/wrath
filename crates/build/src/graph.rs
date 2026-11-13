@@ -2243,6 +2243,46 @@ pub(crate) fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
 
 /// Each system recipe's listed dependencies that another dependency it lists already brings,
 /// one line per recipe, after building what isn't built yet.
+/// Lines of recipes and styles under `repository` that write a target's name, such as `x86_64`,
+/// where a placeholder or variable says it for whichever target builds (0032): `{arch}`,
+/// `{triple}`, `$LAB_ARCH`, `$LAB_TRIPLE` or `$LAB_LOADER`. Comments don't count.
+pub fn targets_written(repository: &Path) -> Result<String, String> {
+    const NAMES: [&str; 2] = ["x86_64", "aarch64"];
+    let mut files = Vec::new();
+    for dir in ["recipes", "styles"] {
+        let Ok(entries) = std::fs::read_dir(repository.join(dir)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "toml" || e == "star") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    let mut lines = String::new();
+    for path in files {
+        let text = std::fs::read_to_string(&path).map_err(crate::store::with_path(&path))?;
+        for (n, line) in text.lines().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with('#') {
+                continue;
+            }
+            if let Some(name) = NAMES.iter().find(|name| code.contains(*name)) {
+                let file = path.strip_prefix(repository).unwrap_or(&path);
+                lines.push_str(&format!(
+                    "{}:{}: names the target `{name}`; write {{arch}} or {{triple}} in a source, \
+                     $LAB_ARCH, $LAB_TRIPLE or $LAB_LOADER in a script\n",
+                    file.display(),
+                    n + 1
+                ));
+            }
+        }
+    }
+    Ok(lines)
+}
+
 pub fn redundant(repository: &Path, only: &[&str]) -> Result<String, String> {
     let lab = Lab::new(repository.join("work"));
     let wanted = (!only.is_empty()).then_some(only);
@@ -2470,6 +2510,24 @@ pub fn packages(repository: &Path, names: &[&str]) -> Result<Vec<StorePath>, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recipes_that_write_a_targets_name_are_pointed_out() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("recipes")).unwrap();
+        fs::write(
+            dir.path().join("recipes/a.toml"),
+            "# x86_64 in a comment is fine\nsources = [{ url = \"zig-{arch}-{os}.tar.xz\" }]\n\
+             script = 'make x86_64_defconfig'\n",
+        )
+        .unwrap();
+        let found = targets_written(dir.path()).unwrap();
+        assert!(
+            found.starts_with("recipes/a.toml:3: names the target `x86_64`"),
+            "{found}"
+        );
+        assert_eq!(found.lines().count(), 1, "{found}");
+    }
 
     #[test]
     fn a_system_builds_what_it_uses_and_nothing_else() {

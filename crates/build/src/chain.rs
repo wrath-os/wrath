@@ -1462,9 +1462,13 @@ fn top_files(archive: &Path) -> Result<Vec<String>, String> {
 }
 
 /// `url` with `{version}`, `{series}` and `{underscored}`, the version with underscores for dots
-/// as some projects tag releases (`NSS_3_133_RTM`), filled in.
+/// as some projects tag releases (`NSS_3_133_RTM`), and the target's names, filled in.
 fn expand(url: &str, version: &str) -> String {
     url.replace("{version}", version)
+        .replace("{arch}", ARCH)
+        .replace("{os}", OS)
+        .replace("{target}", &format!("{ARCH}-{OS}"))
+        .replace("{triple}", TRIPLE)
         .replace("{series}", &series(version))
         .replace("{underscored}", &version.replace('.', "_"))
 }
@@ -1507,6 +1511,15 @@ mod series_tests {
         assert_eq!(
             super::expand(url, "3.133"),
             "https://example.org/3.133/NSS_3_133_RTM/nss-3.133.tar.gz"
+        );
+    }
+
+    #[test]
+    fn a_url_names_the_target_as_projects_spell_it() {
+        let url = "https://example.org/{os}/{arch}/x-{version}-{triple}.tar.xz?for={target}";
+        assert_eq!(
+            super::expand(url, "1.0"),
+            "https://example.org/linux/x86_64/x-1.0-x86_64-unknown-linux-gnu.tar.xz?for=x86_64-linux"
         );
     }
 }
@@ -1794,6 +1807,13 @@ const BUILD_RULES: &str = "11";
 
 /// The machines packages are built for, which every key has, so another one's never match.
 const TARGET: &str = "x86_64-linux-gnu";
+
+/// The target as recipes name it (0032): in sources as `{arch}`, `{os}`, `{target}` and
+/// `{triple}`, and in scripts as `$LAB_ARCH`, `$LAB_OS` and `$LAB_TRIPLE`. One target for now;
+/// these become the toolset's once there are more.
+const ARCH: &str = "x86_64";
+const OS: &str = "linux";
+const TRIPLE: &str = "x86_64-unknown-linux-gnu";
 
 /// What goes into a package's key from its recipe, before any dependency.
 fn recipe_parts(
@@ -2095,6 +2115,9 @@ fn build_package(
         ("LAB_ARM".to_owned(), ARM.to_owned()),
         ("LAB_SEED".to_owned(), seed.inside()),
         ("LAB_REAL_BIN".to_owned(), real_bin.to_owned()),
+        ("LAB_ARCH".to_owned(), ARCH.to_owned()),
+        ("LAB_OS".to_owned(), OS.to_owned()),
+        ("LAB_TRIPLE".to_owned(), TRIPLE.to_owned()),
     ]);
     for dep in &deps {
         let name = dep.id.replace('-', "_");
@@ -2104,6 +2127,9 @@ fn build_package(
             built.library_path(&dep.id).inside(),
         );
     }
+    // The loader programs built here run with, for recipes that set one themselves, such as for
+    // programs a project built elsewhere.
+    env.insert("LAB_LOADER".to_owned(), interpreter.clone());
     let path_var = if package.wrap {
         let wrapper = built
             .paths

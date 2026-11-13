@@ -7,12 +7,12 @@ scope = "runtime"
 # rustc finds its standard library relative to librustc_driver.
 whole = true
 core = true
-sources = [{ url = "https://static.rust-lang.org/dist/rust-{version}-x86_64-unknown-linux-gnu.tar.xz" }]
+sources = [{ url = "https://static.rust-lang.org/dist/rust-{version}-{triple}.tar.xz" }]
 script = '''
 sh install.sh --prefix=$PREFIX --destdir=$DEST --disable-ldconfig \
-    --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu
+    --components=rustc,cargo,rust-std-$LAB_TRIPLE
 # These were linked for a system with /lib64, so each is pointed at our loader and libraries.
-loader=$LAB_LIB_glibc/lib/ld-linux-x86-64.so.2
+loader=$LAB_LOADER
 find $DEST$PREFIX/bin $DEST$PREFIX/lib -type f | while read -r file; do
     case "$file" in *.o|*.a|*.rlib|*.rmeta) continue ;; esac
     [ "$(head -c 4 "$file" | od -An -c | tr -d ' ')" = '177ELF' ] || continue

@@ -9,7 +9,7 @@ extra_deps = ["flex", "bison-final", "m4-final", "bc", "elfutils", "perl", "pkgc
 sources = [{ url = "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-{version}.tar.xz" }]
 script = '''
 export KBUILD_BUILD_TIMESTAMP=@1 KBUILD_BUILD_USER=lab KBUILD_BUILD_HOST=lab
-make x86_64_defconfig
+make ${LAB_ARCH}_defconfig
 make kvm_guest.config
 scripts/config --enable DEVTMPFS --enable DEVTMPFS_MOUNT --enable EXT4_FS --enable VIRTIO_BLK \
     --enable VIRTIO_PCI --enable AUTOFS_FS --enable FHANDLE --enable CGROUPS --enable CGROUP_BPF \
@@ -133,8 +133,8 @@ sources = [{ url = "https://www.sudo.ws/dist/sudo-{version}.tar.gz" }]
 script = '''
 # configure looks for a compiler named after the host, which our toolchain doesn't have.
 mkdir -p /build/bin
-printf '#!/bin/sh\nexec gcc "$@"\n' > /build/bin/x86_64-pc-linux-gnu-gcc
-chmod +x /build/bin/x86_64-pc-linux-gnu-gcc
+printf '#!/bin/sh\nexec gcc "$@"\n' > /build/bin/$LAB_ARCH-pc-linux-gnu-gcc
+chmod +x /build/bin/$LAB_ARCH-pc-linux-gnu-gcc
 export PATH=/build/bin:$PATH
 ./configure --prefix=$PREFIX --sbindir=$PREFIX/bin --libexecdir=$PREFIX/libexec \
     --sysconfdir=/etc --with-rundir=/run/sudo --with-vardir=/var/db/sudo \

@@ -23,7 +23,11 @@ args = ["--with-oniguruma=builtin", "--disable-docs", "--disable-static"]
 What the fields mean:
 
 - `id` is the package's name, what people write in `packages`. `version` goes into its store path
-  and into URLs as `{version}`.
+  and into URLs as `{version}`, and as `{series}` (`2.84` of `2.84.4`, as GNOME names its
+  directories) and `{underscored}` (`3_133`, as some projects tag releases).
+- A URL names the machine it's built for as `{arch}` (`x86_64`), `{os}` (`linux`), `{target}`
+  (`x86_64-linux`) or `{triple}` (`x86_64-unknown-linux-gnu`), never by writing it out, so the
+  recipe works for any target. `wrath dev lint` points out a target written out.
 - `scope` is `runtime` for anything that ends up on a machine, `tool` for things only builds use
   and `boot` for the toolchain itself.
 - `core = true` builds with the usual tools around (coreutils, sed, grep, make, bash and so on).
@@ -72,6 +76,8 @@ A build runs in a sandbox with no network. Its script gets:
 | `$DEST` | where to install to, so `make install DESTDIR=$DEST` |
 | `$NPROC` | how many jobs to run |
 | `$LAB_DEP_<id>` | where a dependency is, such as `$LAB_DEP_gettext` |
+| `$LAB_ARCH`, `$LAB_OS`, `$LAB_TRIPLE` | the target, as in URLs above |
+| `$LAB_LOADER` | the loader the package's programs run with, for a program built elsewhere |
 
 The current directory is the unpacked source.
 

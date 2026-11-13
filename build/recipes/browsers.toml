@@ -16,7 +16,7 @@ extra_deps = [
   "libXrandr", "libXcursor", "libXdamage", "libXfixes", "libXcomposite", "mesa", "libdrm",
   "wayland", "libxkbcommon", "ffmpeg", "pipewire",
 ]
-sources = [{ url = "https://github.com/zen-browser/desktop/releases/download/{version}/zen.linux-x86_64.tar.xz" }]
+sources = [{ url = "https://github.com/zen-browser/desktop/releases/download/{version}/zen.linux-{arch}.tar.xz" }]
 smoke = ["bin/zen --version"]
 
 # It can't update itself in the store; a new version is a new recipe.
@@ -61,7 +61,7 @@ extra_deps = [
   "libXrandr", "libXcursor", "libXdamage", "libXfixes", "libXcomposite", "mesa", "libdrm",
   "wayland", "libxkbcommon", "ffmpeg", "pipewire",
 ]
-sources = [{ url = "https://download-installer.cdn.mozilla.net/pub/firefox/releases/{version}/linux-x86_64/en-US/firefox-{version}.tar.xz" }]
+sources = [{ url = "https://download-installer.cdn.mozilla.net/pub/firefox/releases/{version}/{os}-{arch}/en-US/firefox-{version}.tar.xz" }]
 smoke = ["bin/firefox --version"]
 
 [package.prebuilt]
@@ -109,7 +109,7 @@ extra_deps = [
   "libX11", "libxcb", "libXcomposite", "libXdamage", "libXext", "libXfixes", "libXrandr",
   "libxkbcommon", "pango", "cairo", "gtk3", "alsa-lib", "libpulse", "pipewire", "wayland",
 ]
-sources = [{ url = "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/{version}/ungoogled-chromium-{version}-x86_64_linux.tar.xz" }]
+sources = [{ url = "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/{version}/ungoogled-chromium-{version}-{arch}_{os}.tar.xz" }]
 smoke = ["bin/chromium --version"]
 
 [package.prebuilt]

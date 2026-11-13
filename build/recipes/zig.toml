@@ -8,7 +8,7 @@ version = "0.17.1"
 scope = "runtime"
 whole = true
 core = true
-sources = [{ url = "https://ziglang.org/download/{version}/zig-x86_64-linux-{version}.tar.xz" }]
+sources = [{ url = "https://ziglang.org/download/{version}/zig-{arch}-{os}-{version}.tar.xz" }]
 script = '''
 mkdir -p $DEST$PREFIX/lib/zig $DEST$PREFIX/bin
 cp -r zig lib $DEST$PREFIX/lib/zig/

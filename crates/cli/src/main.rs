@@ -984,7 +984,8 @@ fn builder(root: &Path) -> (Lab, PathBuf) {
 /// Prints each recipe's needless dependencies, and fails when there are any.
 fn lint(root: &Path, packages: &[String]) -> Result<ExitCode, String> {
     let only: Vec<&str> = packages.iter().map(String::as_str).collect();
-    let found = wrath_build::graph::redundant(&root.join("build"), &only)?;
+    let mut found = wrath_build::graph::targets_written(&root.join("build"))?;
+    found.push_str(&wrath_build::graph::redundant(&root.join("build"), &only)?);
     if found.is_empty() {
         println!("nothing to point out");
         return Ok(ExitCode::SUCCESS);
