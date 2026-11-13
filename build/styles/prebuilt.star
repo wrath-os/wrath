@@ -23,8 +23,19 @@ def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.An
     lines = ["app=$DEST$PREFIX/lib/" + lib, "mkdir -p $app $DEST$PREFIX/bin", "cp -r . $app/"]
     lines += ["rm -rf $app/" + path for path in options["remove"]]
     script = "".join([line + "\n" for line in lines]) + PATCH
+    exports = "".join(["export %s=%s\n" % item for item in sorted(options["env"].items())])
     for name, path in sorted(options["programs"].items()):
-        script += "ln -s ../lib/%s/%s $DEST$PREFIX/bin/%s\n" % (lib, path, name)
+        bin = "$DEST$PREFIX/bin/" + name
+        if exports:
+            script += "printf '#!/bin/sh\\n%sexec %%s \"$@\"\\n' \"$PREFIX/lib/%s/%s\" > %s\n" % (
+                exports.replace("\n", "\\n"),
+                lib,
+                path,
+                bin,
+            )
+            script += "chmod +x %s\n" % bin
+        else:
+            script += "ln -s ../lib/%s/%s %s\n" % (lib, path, bin)
     return {"script": script + options["install"], "deps": ["patchelf"]}
 
 style(
@@ -40,6 +51,12 @@ style(
             default = {},
             doc = "Commands to put in `bin`, each the path of its program in the build, such " +
                   "as `{ zen = \"zen\" }`.",
+        ),
+        "env": option(
+            types.map(types.str),
+            default = {},
+            doc = "Variables each command starts its program with, which makes the commands " +
+                  "small scripts instead of links.",
         ),
         "remove": option(
             types.list(types.str),

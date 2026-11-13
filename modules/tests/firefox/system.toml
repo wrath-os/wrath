@@ -1,0 +1,14 @@
+[system]
+hostname = "box"
+
+[programs.firefox.policies]
+DisableTelemetry = true
+
+[programs.firefox.settings]
+browser.startup.homepage = "https://example.org"
+"browser.ctrlTab.sortByRecentlyUsed" = true
+browser.tabs.warnOnClose = false
+
+[users.ann]
+
+[users.bob]

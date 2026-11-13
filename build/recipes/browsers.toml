@@ -23,6 +23,8 @@ smoke = ["bin/zen --version"]
 [package.prebuilt]
 dir = "zen"
 programs = { zen = "zen" }
+# distro declares the profile its settings go in (`programs.zen`), which Zen keeps only with this.
+env = { MOZ_LEGACY_PROFILES = "1" }
 remove = ["updater", "updater.ini", "update-settings.ini"]
 install = '''
 mkdir -p $app/distribution
@@ -64,6 +66,9 @@ smoke = ["bin/firefox --version"]
 
 [package.prebuilt]
 programs = { firefox = "firefox" }
+# distro declares the profile its settings go in (`programs.firefox`), which Firefox keeps only
+# with this.
+env = { MOZ_LEGACY_PROFILES = "1" }
 remove = [
   "updater", "updater.ini", "update-settings.ini", "crashreporter", "crashhelper", "firefox.sig",
   "firefox-bin.sig", "libxul.so.sig",

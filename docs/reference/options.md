@@ -78,6 +78,12 @@
 - `users.<name>.files.<name>.source`: a file in the configuration, such as `wezterm/wezterm.lua`, optional. The file whose text this is.
 - `users.<name>.files.<name>.text`: a string, optional.
 
+### firefox
+
+- `programs.firefox.policies`: any value, default {}. Firefox's enterprise policies, such as `DisableTelemetry = true` or `ExtensionSettings`, for every user. Updating itself stays off.
+- `programs.firefox.settings`: any value, default {}. Firefox's preferences, as `about:config` names them, such as `"browser.startup.homepage" = "https://example.org"`, applied each time it starts. The system's are every user's, and a user's own go over them.
+- `users.<name>.programs.firefox.settings`: any value, default {}. Firefox's preferences, as `about:config` names them, such as `"browser.startup.homepage" = "https://example.org"`, applied each time it starts. The system's are every user's, and a user's own go over them.
+
 ### firewall
 
 - `networking.firewall.allow_ping`: a boolean, default true. Answer pings, over IPv4 and IPv6.
@@ -196,6 +202,8 @@
 ### program-settings
 
 - `programs.alacritty.settings`: any value, optional. Written as toml to `/etc/xdg/alacritty/alacritty.toml`, where alacritty reads it.
+- `programs.chromium.policies`: any value, optional. Written as json to `/etc/chromium/policies/managed/distro.json`, where chromium reads it.
+- `programs.chromium.recommended`: any value, optional. Written as json to `/etc/chromium/policies/recommended/distro.json`, where chromium reads it.
 - `users.<name>.programs.alacritty.settings`: any value, optional. Written as toml to `alacritty/alacritty.toml`, where alacritty reads it.
 
 ### secrets
@@ -291,6 +299,12 @@
 
 - `networking.wireless.country`: a string, optional. The country whose radio rules apply, such as `SE`.
 - `networking.wireless.enable`: a boolean, default false. Whether it's on.
+
+### zen
+
+- `programs.zen.policies`: any value, default {}. Zen's enterprise policies, such as `DisableTelemetry = true` or `ExtensionSettings`, for every user. Updating itself stays off.
+- `programs.zen.settings`: any value, default {}. Zen's preferences, as `about:config` names them, such as `"browser.startup.homepage" = "https://example.org"`, applied each time it starts. The system's are every user's, and a user's own go over them.
+- `users.<name>.programs.zen.settings`: any value, default {}. Zen's preferences, as `about:config` names them, such as `"browser.startup.homepage" = "https://example.org"`, applied each time it starts. The system's are every user's, and a user's own go over them.
 
 ### zram
 

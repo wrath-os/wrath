@@ -1,0 +1,4 @@
+[programs.firefox.settings]
+browser.startup.homepage = "https://bob.example"
+layout.css.devPixelsPerPx = "1.25"
+general.smoothScroll = false

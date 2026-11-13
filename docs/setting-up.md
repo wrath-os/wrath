@@ -139,6 +139,38 @@ itself, so an apply that only changes its settings shows up within a second.
 `[programs.niri.settings]`, without a user, is for everyone, and a user's own go over it. A file
 of your own where distro would put one is left alone, and the apply says so.
 
+### Browsers
+
+Firefox and Zen take preferences, as `about:config` names them, for everyone or for a user, and
+enterprise policies for everyone. Preferences are applied each time the browser starts, so a
+change you make in the browser lasts until it restarts:
+
+```toml
+[programs.firefox.policies]
+DisableTelemetry = true
+DisablePocket = true
+
+[users.john.programs.zen.settings]
+browser.startup.homepage = "https://example.org"
+"zen.view.compact" = true
+```
+
+They go in a profile called `default`, in `~/.config/mozilla/firefox` and `~/.config/zen`. A
+`~/.mozilla/firefox` or `~/.zen` from before takes precedence, and the browser then doesn't read
+distro's: move it aside, or copy what you want to keep into the new profile.
+
+Chromium keeps no settings file of its own a user could own, so it takes policies only, for
+everyone: `policies` it enforces, and `recommended` it starts from and lets each user change.
+
+```toml
+[programs.chromium.policies]
+BrowserSignin = 0
+ExtensionInstallForcelist = ["cjpalhdlnbpafiamejdnhcphjbkeiagm"]
+
+[programs.chromium.recommended]
+HomepageLocation = "https://example.org"
+```
+
 ## The firewall
 
 A firewall is on by default. It drops what comes in unless it's a reply, a ping, the bits IPv6

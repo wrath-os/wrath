@@ -11,6 +11,13 @@ SYSTEM_WIDE = {
     if any(["system" in f for f in files.values()])
 }
 
+# The programs that read a file in each home, which a user's configuration sets.
+PER_USER = {
+    program: files
+    for program, files in SETTINGS.items()
+    if any(["file" in f for f in files.values()])
+}
+
 def render_file(format: str, settings: dict[str, typing.Any]) -> str:
     if format == "toml":
         return formats.toml(settings)
@@ -37,6 +44,8 @@ def render(ctx: Context) -> None:
             if name in system:
                 ctx.file(f["system"], render_file(f["format"], system[name]), setting = True)
                 ctx.package(program)
+        if program not in PER_USER:
+            continue
         for user, u in ctx.read("users").items():
             own = u["programs"][program]
             for name, f in files.items():
@@ -53,7 +62,7 @@ module(
     },
     user_options = {
         "programs." + program: options_of(program, files, "file")
-        for program, files in SETTINGS.items()
+        for program, files in PER_USER.items()
     },
     writes = [],
     render = render,
