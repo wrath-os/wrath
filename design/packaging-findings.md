@@ -475,6 +475,31 @@ style (Starlark), the builder (Rust), or the recipe.
 - **Belongs in:** the builder, for recipes that patch prebuilt programs.
 - **Status:** checked by hand for Zen.
 
+### Mozilla's libraries break when a tool rewrites them
+
+- **Seen in:** Firefox's build from Mozilla; Zen's isn't affected.
+- **What happened:** giving every library a run path with patchelf made `libnspr4.so` crash in
+  its initializer: Mozilla packs relocations with code of its own ("elfhack") that expects its
+  sections where they were.
+- **What we did:** the `prebuilt` style changes only programs, giving each an old-style run path
+  (DT_RPATH), which the loader also uses for the libraries the program loads. The builder then
+  trimmed that to what the launcher itself links, so it now leaves DT_RPATH whole.
+- **What would prevent it:** what we did, for every prebuilt recipe.
+- **Belongs in:** the `prebuilt` style and the builder.
+- **Status:** fixed.
+
+### A change to the builder doesn't rebuild what it made
+
+- **Seen in:** the run-path trimming change above.
+- **What happened:** a build's key covers its recipe, style and dependencies, but not the
+  builder's own steps after it, such as trimming run paths. Firefox's broken output was reused
+  after the builder was fixed, and rust-bin keeps run paths a fresh build no longer trims.
+- **What we did:** removed the two records by hand so they built again.
+- **What would prevent it:** a version for the builder's post-build steps in every key, bumped
+  when they change what they write, which rebuilds everything at once.
+- **Belongs in:** the builder, together with the next change that rebuilds everything.
+- **Status:** known.
+
 ## Working on recipes
 
 - Don't edit `build/` while a build is running from it. Styles load once per process, so a build

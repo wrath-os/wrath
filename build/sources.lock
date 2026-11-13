@@ -67,6 +67,7 @@ a2ff488a244301f4e59469a5232aad6869b01acc50f7d7ed2647c029a57d4b3b  https://deps.f
 c7d268d7c0dcecfeb209d0ccf2b04364d1541722c5e53e4c5bbd3eaa481847a4  https://deps.files.ghostty.org/zig_wayland-27dda01712ddf3cb46ebd93380d88b01a7c828f8.tar.gz
 17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c  https://deps.files.ghostty.org/zlib-1220fed0c74e1019b3ee29edae2051788b080cd96e90d56836eea857b0b966742efb.tar.gz
 cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243  https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
+fde774e9757c8878534c05ec210db592bf6a1b244c57941ffb2e364c04f35fcd  https://download-installer.cdn.mozilla.net/pub/firefox/releases/160.0/linux-x86_64/en-US/firefox-160.0.tar.xz
 92893c8188355264ba639ca3d27943437b26ef069971ea9faa4b20de40595b9a  https://download.gnome.org/sources/at-spi2-core/2.60/at-spi2-core-2.60.7.tar.xz
 ae449192a582a2582a95e0602b15d792bbd639e836339b81ef916aa87540ac5c  https://download.gnome.org/sources/atkmm/2.28/atkmm-2.28.5.tar.xz
 bad10f3c553a0e1854649ab59c5b2434da22ca1a54ae6138f1f53961567e1ab7  https://download.gnome.org/sources/gcr/3.41/gcr-3.41.2.tar.xz
