@@ -31,7 +31,7 @@ pub use eval::{
 };
 pub use fs::{ConfigFs, DirFs, MemFs};
 pub use ids::{Ids, LOCK_FILE};
-pub use load::{ConfigKind, DeclaredSource, kind_of, roles};
+pub use load::{ConfigKind, DeclaredSource, kind_of, roles, starting_file};
 pub use machines::Machine;
 pub use module::{
     Build, ConfigReader, File, HOME_SECRETS_DIR, Home, Module, ModuleId, Output, ReadError,

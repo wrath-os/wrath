@@ -53,6 +53,7 @@
 - `filesystems.<name>.raid`: one of "single", "raid1", default "single".
 - `filesystems.<name>.subvolumes.<name>.mount`: an absolute path or one starting with `~/`, optional.
 - `filesystems.<name>.subvolumes.<name>.options`: a list of items that are each a string, default [].
+- `image.live`: a boolean, default false. Whether this is the system an image boots: from the image's own root, without the disks, filesystems and kept state the configuration describes, which `wrath install` puts the configured system on. `wrath build --image` sets it.
 - `state.path`: an absolute path or one starting with `~/`, optional. A mount to keep things in. With this, `/` is erased at every boot.
 - `state.root_size`: a string, default "25%". How much memory `/` can use, as a size or a share of memory.
 - `unlock.pcrs`: a list of items that are each an integer, default [7]. The TPM measurements unlocking depends on; 7 is the Secure Boot state.

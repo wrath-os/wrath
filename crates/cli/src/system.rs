@@ -24,6 +24,64 @@ pub fn evaluate_dir(
     evaluate_with(&crate::fetch::Sourced::dir(config), modules, order, role)
 }
 
+/// Evaluates the configuration at `config` as the system an image of it boots: with
+/// `image.live = true`, from the image's own root and without the disks it describes, which
+/// that image installs the configured system on.
+pub fn evaluate_live(
+    config: &Path,
+    modules: &Path,
+    role: Option<&str>,
+) -> Result<Evaluation, String> {
+    let sourced = crate::fetch::Sourced::dir(config);
+    let start = wrath_eval::starting_file(&sourced, role).map_err(|e| e.message)?;
+    let live = LiveImage {
+        inner: &sourced,
+        start,
+    };
+    evaluate_with(&live, modules, ModuleOrder::Sorted, role)
+}
+
+/// A configuration with `image.live = true` added at the end of its starting file, as its author
+/// could write it, so errors still point at its own lines.
+struct LiveImage<'a> {
+    inner: &'a dyn ConfigFs,
+    start: String,
+}
+
+/// What the starting file of [`LiveImage`] ends with.
+const LIVE: &str = "\n[image]\nlive = true\n";
+
+impl ConfigFs for LiveImage<'_> {
+    fn read(&self, path: &str) -> std::io::Result<String> {
+        let text = self.inner.read(path)?;
+        Ok(if path == self.start {
+            text + LIVE
+        } else {
+            text
+        })
+    }
+
+    fn read_bytes(&self, path: &str) -> std::io::Result<Vec<u8>> {
+        self.inner.read_bytes(path)
+    }
+
+    fn toml_files(&self, dir: &str) -> std::io::Result<Vec<String>> {
+        self.inner.toml_files(dir)
+    }
+
+    fn display(&self, path: &str) -> String {
+        self.inner.display(path)
+    }
+
+    fn source(&self, name: &str, url: &str) -> Result<Box<dyn ConfigFs>, String> {
+        self.inner.source(name, url)
+    }
+
+    fn dir(&self) -> Option<&Path> {
+        self.inner.dir()
+    }
+}
+
 /// Evaluates the project at `config` as everyone else has it, without `wrath.local.toml`.
 pub fn evaluate_shared(config: &Path, modules: &Path) -> Result<Evaluation, String> {
     let shared = crate::fetch::Sourced::new(crate::project::Shared(DirFs::new(config)), config);
@@ -115,7 +173,78 @@ fn shuffle<T>(items: &mut [T], seed: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::shuffle;
+    use std::path::{Path, PathBuf};
+
+    use wrath_eval::Value;
+    use wrath_model::Model;
+
+    use super::{ModuleOrder, evaluate_dir, evaluate_live, shuffle};
+
+    fn repository() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// A configuration with an encrypted disk and a root erased at every boot, as installed and as
+    /// the system an image of it boots.
+    fn installed_and_live() -> (Model, Model) {
+        let config = repository().join("scenarios/fixtures/native-state");
+        let modules = repository().join("modules");
+        let installed = evaluate_dir(&config, &modules, ModuleOrder::Sorted, None).unwrap();
+        let live = evaluate_live(&config, &modules, None).unwrap();
+        (
+            Model::from_evaluation(&installed),
+            Model::from_evaluation(&live),
+        )
+    }
+
+    fn kernel_params(model: &Model) -> Vec<String> {
+        let Value::Table(boot) = &model.base["boot"] else {
+            panic!("boot is a table");
+        };
+        let Some(Value::List(params)) = boot.get("kernel_params") else {
+            panic!("the kernel's command line is a list");
+        };
+        params
+            .iter()
+            .map(|param| match param {
+                Value::Str(text) => text.clone(),
+                other => panic!("{other:?} isn't a string"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_installed_system_unlocks_and_mounts_its_disks_and_keeps_its_state() {
+        let (installed, _) = installed_and_live();
+        assert!(installed.base.contains_key("storage"));
+        assert!(installed.base.contains_key("state"));
+        let params = kernel_params(&installed);
+        assert!(!params.iter().any(|p| p.starts_with("root=")), "{params:?}");
+        assert!(!installed.files.contains_key("/etc/grow-root/50-root.conf"));
+    }
+
+    #[test]
+    fn the_system_an_image_boots_has_only_the_images_root() {
+        let (_, live) = installed_and_live();
+        assert!(!live.base.contains_key("storage"), "no disks to wait for");
+        assert!(
+            !live.base.contains_key("state"),
+            "nothing kept on disks it doesn't have"
+        );
+        assert_eq!(kernel_params(&live)[..2], ["root=LABEL=wrath-root", "rw"]);
+        assert!(live.files.contains_key("/etc/grow-root/50-root.conf"));
+    }
+
+    #[test]
+    fn the_system_an_image_boots_is_otherwise_the_configured_one() {
+        let (installed, live) = installed_and_live();
+        assert_eq!(
+            live.packages, installed.packages,
+            "the tools to install with are there"
+        );
+        assert_eq!(live.base["system"], installed.base["system"]);
+        assert_eq!(live.base["users"], installed.base["users"]);
+    }
 
     #[test]
     fn shuffles_are_permutations_that_depend_on_the_seed() {

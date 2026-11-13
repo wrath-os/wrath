@@ -1,0 +1,15 @@
+# A configuration with an encrypted disk, as the system an image of it boots: the image's root,
+# grown to fill the stick, and no disks to wait for.
+[system]
+hostname = "box"
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest", encrypt = true }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+
+[image]
+live = true

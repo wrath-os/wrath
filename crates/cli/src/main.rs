@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 
 use clap::{Parser, Subcommand};
 use generations::Switch;
+use wrath_build::image::INSTALL;
 use wrath_build::seed_pack;
 use wrath_build::store::Lab;
 use wrath_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
@@ -219,7 +220,8 @@ enum Command {
         /// Erase disks that have partitions already
         #[arg(long)]
         wipe: bool,
-        /// A system already built and in /store, to install instead of building one
+        /// A system already built and in /store, to install instead of building one [default:
+        /// the one an image of a configuration with disks carries to install]
         #[arg(long, value_name = "PATH")]
         system: Option<PathBuf>,
         /// Go ahead without asking
@@ -518,7 +520,29 @@ fn main() -> ExitCode {
                 let name = role(&config).unwrap_or("system");
                 let built = if image {
                     let keep = with_configuration.then_some(config.as_path());
-                    let path = generations::build_image(root, keep, &model, &kernel_options, test)?;
+                    // A system with disks waits for them as it boots, and they're only there once
+                    // it's installed: the image boots the configuration without them and carries
+                    // the configured system to install.
+                    let live = if model.base.contains_key("storage") {
+                        let Some(live) = live_model(&config, &modules) else {
+                            return Ok(ExitCode::FAILURE);
+                        };
+                        Some(live)
+                    } else {
+                        None
+                    };
+                    let (boots, install) = match &live {
+                        Some(live) => (live, Some(&model)),
+                        None => (&model, None),
+                    };
+                    let path = generations::build_image(
+                        root,
+                        keep,
+                        boots,
+                        install,
+                        &kernel_options,
+                        test,
+                    )?;
                     (format!("{name}.img"), path)
                 } else {
                     let path = generations::build_generation(root, &model, test)?;
@@ -561,13 +585,18 @@ fn main() -> ExitCode {
             yes,
             system,
         } => machine().and_then(|config| {
-            let Some(model) = model(&config, &modules) else {
-                return Ok(ExitCode::FAILURE);
-            };
-            // A system built already is installed as it is, with nothing left to lock.
+            let system = system.or_else(|| fs::read_link(Path::new("/").join(INSTALL)).ok());
+            // A system built already is installed as it is: its packages are built, so there's
+            // nothing to lock, and no recipes to check their names against, as on an image.
             let model = match system {
-                Some(_) => model,
-                None => generations::locked(root, &config, model)?,
+                Some(_) => evaluate(&config, &modules)
+                    .and_then(|evaluation| with_lock(&config, Model::from_evaluation(&evaluation))),
+                None => model(&config, &modules)
+                    .map(|model| generations::locked(root, &config, model))
+                    .transpose()?,
+            };
+            let Some(model) = model else {
+                return Ok(ExitCode::FAILURE);
             };
             install::install(
                 root,
@@ -1167,7 +1196,19 @@ fn model(config: &Path, modules: &Path) -> Option<Model> {
 }
 
 fn model_as(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
-    let evaluation = evaluate_as(config, modules, role)?;
+    model_of(config, evaluate_as(config, modules, role)?)
+}
+
+/// The model of the system an image of the configuration boots, without its disks
+/// (`image.live`), or prints why there's none and returns `None`.
+fn live_model(config: &Path, modules: &Path) -> Option<Model> {
+    let evaluation = system::evaluate_live(config, modules, role(config))
+        .inspect_err(|errors| style::print_report(&ending_a_line(errors)))
+        .ok()?;
+    model_of(config, evaluation)
+}
+
+fn model_of(config: &Path, evaluation: Evaluation) -> Option<Model> {
     let model = with_lock(config, Model::from_evaluation(&evaluation))?;
     packages_known(&evaluation, &model).then_some(model)
 }

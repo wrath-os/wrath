@@ -615,7 +615,7 @@ const SYSTEM: &str = "system.toml";
 
 /// The file the configuration starts from: `system.toml`, or `roles/<role>.toml` when it has
 /// roles. A configuration with one role starts from it without being given its name.
-pub(crate) fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagnostic> {
+pub fn starting_file(fs: &dyn ConfigFs, role: Option<&str>) -> Result<String, Diagnostic> {
     let roles = roles(fs)
         .map_err(|e| Diagnostic::error(format!("cannot list `{}`: {e}", fs.display(ROLES))))?;
     let role = match (role, roles.as_slice()) {

@@ -1,0 +1,11 @@
+[Unit]
+ConditionVirtualization=!container
+Description=Grow the root to fill its disk
+
+[Service]
+ExecStart=-/run/system/systemd/bin/systemd-repart --dry-run=no --definitions=/etc/grow-root
+ExecStart=/run/system/systemd/lib/systemd/systemd-growfs /
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target

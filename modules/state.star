@@ -36,6 +36,10 @@ def check_identities(ctx: Context, directories: list[str], files: list[str]) -> 
             ctx.error("state.files", "secrets are decrypted with `%s`, which isn't kept" % identity)
 
 def render(ctx: Context) -> None:
+    # The system an image boots keeps nothing: what it would keep is on disks it doesn't have.
+    # The configured system, which the image installs, still checks it all.
+    if ctx.read("image.live"):
+        return
     state = ctx.read("state")
     users = ctx.read("users")
     directories = sorted(state["directories"])

@@ -11,9 +11,10 @@ FIRMWARE = "/run/system-booted/firmware"
 
 def kernel_params(ctx: Context, boot: dict[str, typing.Any]) -> list[str]:
     """The kernel's command line. With disks of its own, the initrd mounts the root from them, so
-    it isn't named; without, it's the image's root filesystem, by its label."""
+    it isn't named; without, or as the system an image boots, it's the image's root filesystem,
+    by its label."""
     params = []
-    if not ctx.read("disks") and not ctx.read("filesystems"):
+    if ctx.read("image.live") or (not ctx.read("disks") and not ctx.read("filesystems")):
         params = ["root=LABEL=" + ROOT_LABEL, "rw"]
     params += boot["kernel_params"]
     if ctx.read("hardware")["firmware"]:

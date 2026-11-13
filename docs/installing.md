@@ -62,11 +62,11 @@ Write it to a USB stick (this erases the stick, so double check the device):
 sudo dd if=framework.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
-Boot the machine from it and log in. The stick runs the exact system you described, so the
-quickest install is to put that same system onto the disks:
+Boot the machine from it and log in. The stick runs the system you described, without its disks,
+which aren't there yet, and carries the system with them, built and ready to put on the disks:
 
 ```sh
-sudo wrath install -C /etc/wrath --disk /dev/nvme0n1 --system "$(readlink /run/system)"
+sudo wrath install -C /etc/wrath --disk /dev/nvme0n1
 ```
 
 That lays out the disks with systemd-repart, asks for a passphrase for the encrypted parts,

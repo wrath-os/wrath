@@ -261,6 +261,11 @@ def render(ctx: Context) -> None:
         ctx.package("btrfs-progs")
     if "vfat" in formats_used:
         ctx.package("dosfstools")
+    # The system an image boots has only the image's root. It still has the tools above, which
+    # `wrath install` lays the disks out with, and the checks above, as the configured system.
+    if ctx.read("image.live"):
+        grow_root(ctx)
+        return
     ctx.base("storage", {
         "unlock": ctx.read("unlock"),
         "disks": {
@@ -284,6 +289,13 @@ module(
         "disks": types.map(disk),
         "filesystems": types.map(filesystem),
         "unlock": option(unlock, default = {}),
+        "image.live": option(
+            types.bool,
+            default = False,
+            doc = "Whether this is the system an image boots: from the image's own root, without " +
+                  "the disks, filesystems and kept state the configuration describes, which " +
+                  "`wrath install` puts the configured system on. `wrath build --image` sets it.",
+        ),
         "state.path": option(
             types.path,
             optional = True,

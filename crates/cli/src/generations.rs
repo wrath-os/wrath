@@ -156,25 +156,32 @@ fn add_test_layer(model: &mut serde_json::Value) {
 const IMAGE_OPTIONS: &str = "wrath.rescue console=ttyS0,115200 console=tty0";
 
 /// Builds `model` into a generation and a disk image that boots it, with `options` added to the
-/// kernel's own and, when given, `config`, the configuration it's from, as the system's own.
-/// Returns where the image is: in `build/work/images`, named by the generation.
+/// kernel's own and, when given, `config`, the configuration it's from, as the system's own, and
+/// `install`, the system `wrath install` puts on the disks, built and in its store. Returns where
+/// the image is: in `build/work/images`, named by the generation.
 pub fn build_image(
     root: &Path,
     config: Option<&Path>,
     model: &Model,
+    install: Option<&Model>,
     options: &[String],
     test: bool,
 ) -> Result<PathBuf, String> {
     let generation = build_generation(root, model, test)?;
-    let name = generation
-        .file_name()
-        .ok_or("a generation has a name")?
-        .to_string_lossy()
-        .into_owned();
+    let install = install
+        .map(|install| build_generation(root, install, test))
+        .transpose()?;
+    let store_path = |path: &Path| {
+        path.file_name()
+            .map(|name| wrath_build::store::StorePath::from_hash(&name.to_string_lossy()))
+            .ok_or("a generation has a name")
+    };
+    let generation = store_path(&generation)?;
+    let install = install.as_deref().map(store_path).transpose()?;
     let work = std::path::absolute(root.join("build/work")).map_err(|e| e.to_string())?;
     let images = work.join("images");
     std::fs::create_dir_all(&images).map_err(|e| format!("{}: {e}", images.display()))?;
-    let out = images.join(format!("{name}.img"));
+    let out = images.join(format!("{}.img", generation.hash()));
     // A test system has its console on the serial port, where the harness reads it.
     let options = if options.is_empty() && !test {
         IMAGE_OPTIONS.to_owned()
@@ -183,8 +190,9 @@ pub fn build_image(
     };
     wrath_build::image::image(
         &wrath_build::store::Lab::new(&work),
-        &wrath_build::store::StorePath::from_hash(&name),
+        &generation,
         config,
+        install.as_ref(),
         &options,
         &work.join("image"),
         &out,

@@ -21,11 +21,13 @@ const ROOM_MIB: u64 = 2048;
 
 /// Makes `out` a disk image that boots `generation`, with `options` added to the kernel's own,
 /// such as where its console is, and, when given, the `configuration` it was built from in
-/// `/etc/wrath`, so wrath on it can plan. `work` holds what's put together on the way.
+/// `/etc/wrath`, so wrath on it can plan, and the system `wrath install` puts on the disks when
+/// that isn't the one it boots. `work` holds what's put together on the way.
 pub fn image(
     lab: &Lab,
     generation: &StorePath,
     configuration: Option<&Path>,
+    install: Option<&StorePath>,
     options: &str,
     work: &Path,
     out: &Path,
@@ -34,6 +36,9 @@ pub fn image(
     let root = work.join("root");
     let esp = work.join("esp");
     root_tree(lab, generation, &root)?;
+    if let Some(install) = install {
+        add_install(lab, install, &root)?;
+    }
     if let Some(configuration) = configuration {
         keep_configuration(configuration, &root)?;
     }
@@ -71,6 +76,34 @@ pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), S
         fs::create_dir_all(root.join(dir)).map_err(with_path(root))?;
     }
     Ok(())
+}
+
+/// Where an image names the system `wrath install` puts on the disks, under its root.
+pub const INSTALL: &str = "store/.system/install";
+
+/// Adds `system`, and what it needs that the root doesn't have yet, to an image's store, named as
+/// [`INSTALL`]. An image of a configuration with disks boots a system without them, which can't
+/// wait for disks that aren't there yet, and installs this one.
+pub fn add_install(lab: &Lab, system: &StorePath, root: &Path) -> Result<(), String> {
+    let store = root.join("store");
+    for path in runtime_closure(lab, system)? {
+        let host = lab.on_host(&path);
+        if host
+            .file_name()
+            .is_some_and(|name| store.join(name).exists())
+        {
+            continue;
+        }
+        run(
+            Command::new("cp")
+                .args(["-a", "--reflink=auto"])
+                .arg(&host)
+                .arg(&store),
+            &format!("copying {}", path.inside()),
+        )?;
+    }
+    let link = root.join(INSTALL);
+    symlink(system.inside(), &link).map_err(with_path(&link))
 }
 
 /// Copies `configuration` into the root as the system's own, in `/etc/wrath`, leaving out what
@@ -274,6 +307,8 @@ fn join(esp: &Path, root: &Path, root_mib: u64, out: &Path) -> Result<(), String
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     /// A store with a generation whose kernel, initrd and systemd are packages of their own, and
@@ -324,6 +359,38 @@ mod tests {
         );
         assert!(root.join("var/lib").is_dir());
         assert!(!root.join("usr").exists());
+    }
+
+    #[test]
+    fn a_system_to_install_comes_along_with_what_it_needs_and_is_named() {
+        let (dir, lab, generation) = store();
+        let root = dir.path().join("root");
+        root_tree(&lab, &generation, &root).unwrap();
+        // The system to install shares the live one's packages and has one of its own.
+        let installed = StorePath::from_hash(&"f".repeat(40));
+        let own = StorePath::from_hash(&"9".repeat(40));
+        fs::create_dir_all(lab.on_host(&own)).unwrap();
+        let host = lab.on_host(&installed);
+        fs::create_dir_all(&host).unwrap();
+        symlink(own.inside(), host.join("extra")).unwrap();
+        let shared = lab.on_host(&generation).join("kernel");
+        symlink(fs::read_link(shared).unwrap(), host.join("kernel")).unwrap();
+
+        add_install(&lab, &installed, &root).unwrap();
+
+        let stored: BTreeSet<String> = fs::read_dir(root.join("store"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy()[..1].to_owned())
+            .filter(|name| name != ".")
+            .collect();
+        assert_eq!(
+            stored,
+            BTreeSet::from(["9", "a", "b", "c", "d", "f"].map(String::from))
+        );
+        assert_eq!(
+            fs::read_link(root.join(INSTALL)).unwrap(),
+            Path::new(&installed.inside())
+        );
     }
 
     #[test]

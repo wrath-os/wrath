@@ -1,0 +1,24 @@
+title = "an image of a configuration with disks boots from its own root and installs the configured system"
+notes = "The image boots the configuration as `image.live`, without its disks, and carries the configured system, which `wrath install` puts on the disks without being told which."
+
+[vm]
+config = "scenarios/fixtures/native-tpm"
+store = "wrath"
+tpm = true
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  # The image's own root, with nothing to unlock: it got this far without waiting for the disk.
+  { run = "cat /proc/cmdline", stdout_contains = "root=LABEL=wrath-root" },
+  { run = "test -e /etc/crypttab && echo waits || echo no-disks", stdout_contains = "no-disks" },
+  { run = "command -v cryptsetup mkfs.btrfs mkfs.vfat | wc -l", stdout_contains = "3" },
+  # What it carries is the configured system, as a build of the configuration makes it.
+  { prepare_build = "scenarios/fixtures/native-tpm" },
+  { run = '[ "$(readlink /store/.system/install)" = "$(cat /run/wrath-share/system)" ] && echo carried', stdout_contains = "carried" },
+  { run = "cp -r /run/wrath-share/configs/native-tpm /tmp/config && printf 'correct horse' > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  # No passphrase typed: the TPM unlocked the disk the image installed.
+  { boot_installed = true },
+  { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+  { run = "grep -q root=LABEL=wrath-root /proc/cmdline && echo image || echo installed", stdout_contains = "installed" },
+]
+timeout_secs = 1500
