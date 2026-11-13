@@ -309,6 +309,7 @@ e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  https://github
 12f01e127081c485a3e3056b6d30f54d003101689ff815adac6f1ef2b19af6ab  https://github.com/ximion/appstream/archive/v1.2.3/appstream-1.2.3.tar.gz
 acc4d5f7c3cbba5f9f8d08d8bdbeede84ecede46792f47929aa9321873385528  https://github.com/xkbcommon/libxkbcommon/archive/xkbcommon-1.13.2/libxkbcommon-xkbcommon-1.13.2.tar.gz
 2dfa237fea447f3cc98954e81b0097b9d25841010036720e11f67880fe7861f0  https://github.com/zellij-org/zellij/archive/v0.46.0/zellij-0.46.0.tar.gz
+bcf7e43160ecfe5f29953ed2a984e7a8028a58f2ec0e3114d36bb904d5f5ce80  https://github.com/zen-browser/desktop/releases/download/1.24.2b/zen.linux-x86_64.tar.xz
 513a53cbc42ca1f4ea06af2bab1f5283524a3848266b1d162416f8033afc4985  https://gitlab.com/OldManProgrammer/unix-tree/-/archive/2.3.2/unix-tree-2.3.2.tar.gz
 9f5cae93f4fffc1fbc05ae99cdfc708cd60dfd6612ffc0512827025c026fa541  https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/2.17.1/fontconfig-2.17.1.tar.xz
 4f7b554a38cdf78c033f666c8871f3749e14a094f65a07f630c91ed0b43d35e3  https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/2.18.3/fontconfig-2.18.3.tar.xz
@@ -5784,6 +5785,7 @@ f740db7f488255944ffd4428416ee3390a96742856916433df468c281436480e  https://www.al
 70136203540c884e89ce1c9edfb6369b9953937f6cd596d97c78c9758a5d48db  https://www.cairographics.org/releases/cairomm-1.14.5.tar.xz
 73cf6cc1ea2b2b1c110a18c14bbbc73a362073003893ffcedc26d22ebdbdd0c3  https://www.cpan.org/src/5.0/perl-5.42.0.tar.xz
 5a0966c7110648665983848bad696c7acba614a2160d2865d535397101007332  https://www.freedesktop.org/software/libevdev/libevdev-1.14.0.tar.xz
+053794d6671a3e397d849e478a80b82a63cb9d8ca296bd35b73317bb5ceb87b5  https://www.freedesktop.org/software/pulseaudio/releases/pulseaudio-17.0.tar.xz
 9b68820c34fa8a0af6b0e01b74f0298bcdd40a0489c61649b47058908a153d78  https://www.greenwoodsoftware.com/less/less-679.tar.gz
 6952c39eb5f8b0ee712cc50ab3bcff03be17c410dd97ca640f4849d9a1653ba3  https://www.kernel.org/pub/linux/bluetooth/bluez-5.88.tar.xz
 a1ada76ef35e5af9c2fbd063754dc9e37a8d989417c6eb1ecebb089b1383ae9e  https://www.kernel.org/pub/linux/bluetooth/sbc-2.2.tar.xz
@@ -5812,8 +5814,16 @@ ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269  https://www.so
 2ac31f26600776db6d9cd79b3fcd272263faebac7eb85fb2f33c7141b8486060  https://www.x.org/archive/individual/app/xkbcomp-1.5.0.tar.xz
 bbc78c46217174655c2b32b138ad119f3ac15f50808b4d0b3a2677a4b1afc950  https://www.x.org/archive/individual/lib/libX11-1.8.14.tar.xz
 74d0e4dfa3d39ad8939e99bda37f5967aba528211076828464d2777d477fc0fb  https://www.x.org/archive/individual/lib/libXau-1.0.12.tar.xz
+8bdf310967f484503fa51714cf97bff0723d9b673e0eecbf92b3f97c060c8ccb  https://www.x.org/archive/individual/lib/libXcomposite-0.4.7.tar.xz
+fde9402dd4cfe79da71e2d96bb980afc5e6ff4f8a7d74c159e1966afb2b2c2c0  https://www.x.org/archive/individual/lib/libXcursor-1.2.3.tar.xz
+127067f521d3ee467b97bcb145aeba1078e2454d448e8748eb984d5b397bde24  https://www.x.org/archive/individual/lib/libXdamage-1.1.7.tar.xz
 d8a5222828c3adab70adf69a5583f1d32eb5ece04304f7f8392b6a353aa2228c  https://www.x.org/archive/individual/lib/libXdmcp-1.1.5.tar.xz
+6c643c7035cdacf67afd68f25d01b90ef889d546c9fcd7c0adf7c2cf91e3a32d  https://www.x.org/archive/individual/lib/libXext-1.3.7.tar.xz
+39f115d72d9c5f8111e4684164d3d68cc1fd21f9b27ff2401b08fddfc0f409ba  https://www.x.org/archive/individual/lib/libXfixes-6.0.2.tar.xz
 f042a370666815e7b941e9b7019024755bd1c6c2954afbfa515af378251799e2  https://www.x.org/archive/individual/lib/libXfont2-2.0.9.tar.xz
+ddd6057b89a91903bc2f884d55c8467440906945e482c36547260dff28661afc  https://www.x.org/archive/individual/lib/libXi-1.8.4.tar.xz
+72b922c2e765434e9e9f0960148070bd4504b288263e2868a4ccce1b7cf2767a  https://www.x.org/archive/individual/lib/libXrandr-1.5.5.tar.xz
+3fe88c609df6782e1e7af2e4de36b2563d70cd70ff7dcb1cda561ad64912bb64  https://www.x.org/archive/individual/lib/libXrender-0.9.13.tar.xz
 9d8392705cb10803d5fe1d27d236cbab3f664e26841ce01916bbbe430cf273e2  https://www.x.org/archive/individual/lib/libfontenc-1.1.9.tar.xz
 599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55  https://www.x.org/archive/individual/lib/libxcb-1.17.0.tar.xz
 a929998a8767de7dfa36d6da4751cdbeef34ed630714f2f4a767b351f2442e01  https://www.x.org/archive/individual/lib/libxcvt-0.1.3.tar.xz
