@@ -57,6 +57,7 @@ impl Fixture {
                 silence: Duration::from_secs(60),
             },
             links: Vec::new(),
+            at: None,
         }
     }
 

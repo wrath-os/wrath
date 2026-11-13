@@ -55,6 +55,19 @@ pub struct Step {
     pub limits: Limits,
     /// Links to make in the sandbox, as (where it points, the link).
     pub links: Vec<(String, String)>,
+    /// A path the step sees somewhere else, as (the path, where it's mounted): a package being
+    /// built, at the path its build saw, as an output and when its tests read it.
+    pub at: Option<(StorePath, StorePath)>,
+}
+
+impl Step {
+    /// Where the step sees `path`.
+    fn inside(&self, path: &StorePath) -> String {
+        match &self.at {
+            Some((from, to)) if from == path => to.inside(),
+            _ => path.inside(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,13 +192,13 @@ fn bwrap_args(lab: &Lab, step: &Step, etc: &Path) -> Vec<String> {
     for input in &step.inputs {
         arg(
             &mut args,
-            &["--ro-bind", &host(&lab.on_host(input)), &input.inside()],
+            &["--ro-bind", &host(&lab.on_host(input)), &step.inside(input)],
         );
     }
     if let Some(output) = &step.output {
         arg(
             &mut args,
-            &["--bind", &host(&lab.on_host(output)), &output.inside()],
+            &["--bind", &host(&lab.on_host(output)), &step.inside(output)],
         );
     }
     if let Some(view) = &step.view {

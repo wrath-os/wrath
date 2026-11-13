@@ -1,5 +1,8 @@
 //! Cuts each ELF file's run path down to the directories it can load from.
 //!
+//! Changing what this writes into packages needs `BUILD_RULES` bumped in `chain.rs`, or builds
+//! made before the change are kept.
+//!
 //! The compiler wrapper gives every program a run path entry per declared dependency, and each
 //! entry counts as a run-time reference. The string is overwritten in place, always with something
 //! shorter, so no section has to grow and nothing like `patchelf` is needed.

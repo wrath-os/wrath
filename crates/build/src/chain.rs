@@ -540,12 +540,10 @@ impl Package {
         let defaults = self.option_exports(&serde_json::Map::new())?;
         let script = self.script.strip_prefix(&defaults).unwrap_or(&self.script);
         let mut prelude = self.option_exports(options)?;
-        // The marker keeps its name from before wrath (0035) until a change that rebuilds every
-        // package anyway, since it is in the scripts of patched packages such as glibc.
         for (index, patch) in patches.iter().enumerate() {
             let end = if patch.ends_with('\n') { "" } else { "\n" };
             prelude.push_str(&format!(
-                "patch -p1 <<'DISTRO_PATCH_{index}'\n{patch}{end}DISTRO_PATCH_{index}\n"
+                "patch -p1 <<'WRATH_PATCH_{index}'\n{patch}{end}WRATH_PATCH_{index}\n"
             ));
         }
         let mut extra_deps = self.extra_deps.clone();
@@ -660,9 +658,8 @@ fn write_runtime_deps(
     fs::write(&file, text).map_err(with_path(&file))
 }
 
-/// Where a package keeps the store paths of its `runtime_deps`. It keeps the name from before
-/// wrath (0035) until a change that rebuilds every package anyway, since every package holds it.
-const RUNTIME_DEPS: &str = "lib/distro/runtime-deps";
+/// Where a package keeps the store paths of its `runtime_deps`.
+const RUNTIME_DEPS: &str = "lib/wrath/runtime-deps";
 
 /// A listed dependency another one brings, and the one that brings it.
 pub(crate) type Redundant = (String, String);
@@ -1691,10 +1688,14 @@ pub(crate) fn place_outputs(
     package: &Package,
     out: &StorePath,
 ) -> Result<(split::Outputs, Option<String>), String> {
+    let pieces = crate::content::split_pieces(&lab.on_host(out), out.temporary().hash())?;
+    if !pieces.is_empty() {
+        note_pieces(lab, package, out, &pieces)?;
+    }
     if package.whole {
-        split::keep_whole(lab, out, "the recipe asks".to_owned())
+        split::keep_whole(lab, out, &out.temporary(), "the recipe asks".to_owned())
     } else {
-        split::split_package(lab, out)
+        split::split_package(lab, out, &out.temporary())
     }
 }
 
@@ -1720,6 +1721,38 @@ fn note_whole(lab: &Lab, package: &Package, reason: &str) -> Result<(), String> 
         .open(&path)
         .map_err(with_path(&path))?;
     writeln!(file, "{} {reason}", package.id).map_err(with_path(&path))
+}
+
+/// Says which of a package's files hold pieces of the path its build saw, which keep naming that
+/// path once it's moved, and records them for the packaging findings.
+fn note_pieces(
+    lab: &Lab,
+    package: &Package,
+    out: &StorePath,
+    files: &[PathBuf],
+) -> Result<(), String> {
+    let root = lab.on_host(out);
+    let names: Vec<String> = files
+        .iter()
+        .map(|file| {
+            file.strip_prefix(&root)
+                .unwrap_or(file)
+                .display()
+                .to_string()
+        })
+        .collect();
+    eprintln!(
+        "warning: `{}` keeps pieces of its build's path in {}, which can't be rewritten",
+        package.id,
+        names.join(", ")
+    );
+    let path = logs_dir(lab).join("split-pieces.txt");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(with_path(&path))?;
+    writeln!(file, "{} {}", package.id, names.join(" ")).map_err(with_path(&path))
 }
 
 /// Builds every package of `recipes`, reusing what's already built.
@@ -1757,7 +1790,7 @@ pub(crate) struct Prepared {
 
 /// The version of what the builder does to every package beside its recipe, such as fixing up
 /// run paths. Every package's key has it, so changing it rebuilds everything.
-const BUILD_RULES: &str = "10";
+const BUILD_RULES: &str = "11";
 
 /// The machines packages are built for, which every key has, so another one's never match.
 const TARGET: &str = "x86_64-linux-gnu";
@@ -2027,7 +2060,7 @@ fn build_package(
     view::compose_skipping(lab, &view_dir, &in_view)?;
 
     let usr_prefix = package.scope != Scope::Runtime;
-    let inside = out.inside();
+    let inside = out.temporary().inside();
     let (prefix, dest) = if usr_prefix {
         ("/usr".to_owned(), inside.clone())
     } else {
@@ -2120,6 +2153,7 @@ fn build_package(
             env: env.clone(),
             limits,
             links: Vec::new(),
+            at: Some((out.clone(), out.temporary())),
         },
         Some(("build", "built")),
     )?;
@@ -2396,6 +2430,7 @@ pub fn run_alone(
             env: BTreeMap::new(),
             limits: Limits::DEFAULT,
             links: Vec::new(),
+            at: None,
         },
     )?;
     let text = fs::read_to_string(&log).map_err(with_path(&log))?;
@@ -2573,8 +2608,8 @@ mod requirement_tests {
                 .hash()
                 .to_owned()
         };
-        assert_eq!(key("runtime"), "8405c3dfa89766db1f73ad2b70120d9df2bd72bc");
-        assert_eq!(key("boot"), "b9dc9e7323545d68d9666468796b9ca700b167b7");
+        assert_eq!(key("runtime"), "5f7af7bfd64e09e410932eb7638a4b8009ff7587");
+        assert_eq!(key("boot"), "6ceae1c5b2cd11c950b7a01a2d3ee13e2d6473a2");
     }
 
     #[test]
@@ -3245,8 +3280,8 @@ mod variant_tests {
             .unwrap();
         assert_eq!(
             variant.script,
-            "patch -p1 <<'DISTRO_PATCH_0'\n--- a/x\n+++ b/x\nDISTRO_PATCH_0\n\
-             patch -p1 <<'DISTRO_PATCH_1'\nsecond\nDISTRO_PATCH_1\n\
+            "patch -p1 <<'WRATH_PATCH_0'\n--- a/x\n+++ b/x\nWRATH_PATCH_0\n\
+             patch -p1 <<'WRATH_PATCH_1'\nsecond\nWRATH_PATCH_1\n\
              make\n"
         );
         assert!(variant.dep_ids().unwrap().contains(&"patch".to_owned()));
@@ -3880,7 +3915,7 @@ style(name = "cargo", locks = ["Cargo.lock"],
             "{script}"
         );
         assert!(
-            script.ends_with("DISTRO_PATCH_0\ncargo build a\n"),
+            script.ends_with("WRATH_PATCH_0\ncargo build a\n"),
             "{script}"
         );
     }

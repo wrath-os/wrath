@@ -420,9 +420,9 @@ style (Starlark), the builder (Rust), or the recipe.
 ### Two packages with runtime dependencies couldn't share a build
 
 - **Seen in:** Ghostty, which builds with gtk4 and blueprint-compiler.
-- **What happened:** each package with `runtime_deps` records them in `lib/distro/runtime-deps`,
+- **What happened:** each package with `runtime_deps` records them in `lib/wrath/runtime-deps`,
   so a build view with two of them had one file from two packages, which is an error.
-- **What we did:** views leave out `lib/distro`, which builds have no use for.
+- **What we did:** views leave out `lib/wrath`, which builds have no use for.
 - **What would prevent it:** nothing more; the view test covers it.
 - **Belongs in:** the builder.
 - **Status:** fixed.
@@ -512,14 +512,15 @@ style (Starlark), the builder (Rust), or the recipe.
 ### A change to the builder doesn't rebuild what it made
 
 - **Seen in:** the run-path trimming change above.
-- **What happened:** a build's key covers its recipe, style and dependencies, but not the
-  builder's own steps after it, such as trimming run paths. Firefox's broken output was reused
-  after the builder was fixed, and rust-bin keeps run paths a fresh build no longer trims.
-- **What we did:** removed the two records by hand so they built again.
-- **What would prevent it:** a version for the builder's post-build steps in every key, bumped
-  when they change what they write, which rebuilds everything at once.
-- **Belongs in:** the builder, together with the next change that rebuilds everything.
-- **Status:** known.
+- **What happened:** every key has `BUILD_RULES`, the version of what the builder does beside
+  a recipe, but the run-path change didn't bump it. Firefox's broken output was reused after
+  the builder was fixed, and rust-bin kept run paths a fresh build no longer trims.
+- **What we did:** removed the two records by hand so they built again, then bumped
+  `BUILD_RULES` to 11 with the next change that rebuilds everything.
+- **What would prevent it:** the modules that change what a build writes after its recipe
+  (run paths, splitting, addressing, fix-ups) saying at their top that a change needs a bump.
+- **Belongs in:** the builder.
+- **Status:** fixed by the bump; the reminder is in those modules.
 
 ## Working on recipes
 

@@ -100,7 +100,7 @@ fn merge<'n>(
 
 /// What a package keeps for wrath itself, such as the store paths of its runtime dependencies,
 /// which builds have no use for and every package names the same.
-const OWN: &str = "lib/distro";
+const OWN: &str = "lib/wrath";
 
 fn conflict(path: &Path, first: &str, second: &str) -> String {
     format!(
@@ -160,14 +160,14 @@ mod tests {
     fn what_packages_keep_for_wrath_itself_stays_out_of_views() {
         let dir = tempfile::tempdir().unwrap();
         let lab = Lab::new(dir.path());
-        let a = dependency(&lab, "a", &["bin/a", "lib/distro/runtime-deps"]);
-        let b = dependency(&lab, "b", &["lib/distro/runtime-deps"]);
+        let a = dependency(&lab, "a", &["bin/a", "lib/wrath/runtime-deps"]);
+        let b = dependency(&lab, "b", &["lib/wrath/runtime-deps"]);
         let view = dir.path().join("view");
 
         compose(&lab, &view, &[("a", &a), ("b", &b)]).unwrap();
 
         assert!(fs::read_link(view.join("bin/a")).is_ok());
-        assert!(!view.join("lib/distro").exists());
+        assert!(!view.join("lib/wrath").exists());
     }
 
     #[test]

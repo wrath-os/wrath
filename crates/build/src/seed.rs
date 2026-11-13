@@ -167,6 +167,7 @@ pub fn prepare(lab: &Lab) -> Result<StorePath, String> {
             env: BTreeMap::from([("out".to_owned(), inside)]),
             limits: Limits::DEFAULT,
             links: Vec::new(),
+            at: None,
         },
     )?;
     if outcome.status != Status::Passed {

@@ -513,6 +513,7 @@ fn run_index(
             env: BTreeMap::new(),
             limits: sandbox::Limits::DEFAULT,
             links: Vec::new(),
+            at: None,
         },
     )?;
     if outcome.status != sandbox::Status::Passed {
@@ -1747,6 +1748,7 @@ fn foreign_files<'a>(
                     env: BTreeMap::new(),
                     limits: sandbox::Limits::DEFAULT,
                     links: Vec::new(),
+                    at: None,
                 },
             )?;
             if outcome.status != sandbox::Status::Passed {

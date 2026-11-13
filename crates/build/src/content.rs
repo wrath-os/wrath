@@ -1,5 +1,8 @@
 //! Names a built package by what it contains.
 //!
+//! Changing what this writes into packages needs `BUILD_RULES` bumped in `chain.rs`, or builds
+//! made before the change are kept.
+//!
 //! A package builds at a temporary store path. Its address is a hash of its contents with that
 //! path masked, so the same contents get the same address wherever they were built. Then every
 //! mention of the temporary path, in contents, links and file names, becomes the final one, which
@@ -97,6 +100,35 @@ fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
     })
 }
 
+/// The files under `root` holding a piece of `own`'s hash, eight bytes or more, that isn't part of
+/// `own` written whole: where a compiler turned the path into pieces, such as the immediates of
+/// a `memcmp` it inlined. Nothing can rewrite those, so they keep naming the path the build saw.
+pub fn split_pieces(root: &Path, own: &str) -> Result<Vec<PathBuf>, String> {
+    let digest = own.get(..HASH_LENGTH).unwrap_or(own).as_bytes();
+    let windows: Vec<&[u8]> = digest.windows(8).collect();
+    let mut found = Vec::new();
+    for file in sorted_entries(root)? {
+        let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
+        if !meta.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&file).map_err(with_path(&file))?;
+        let whole: Vec<usize> = memmem::find_iter(&bytes, own.as_bytes()).collect();
+        let inside_whole = |at: usize| {
+            whole
+                .iter()
+                .any(|&start| at >= start && at < start + own.len())
+        };
+        let split = windows
+            .iter()
+            .any(|window| memmem::find_iter(&bytes, window).any(|at| !inside_whole(at)));
+        if split {
+            found.push(file);
+        }
+    }
+    Ok(found)
+}
+
 pub(crate) fn rewrite_contents(root: &Path, own: &str, new: &str) -> Result<(), String> {
     for file in files_under(root)? {
         let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
@@ -119,7 +151,7 @@ pub(crate) fn rewrite_contents(root: &Path, own: &str, new: &str) -> Result<(), 
 }
 
 /// Renames anything under `root` with `own` in its name, shallowest first.
-fn rewrite_names(root: &Path, own: &str, new: &str) -> Result<(), String> {
+pub(crate) fn rewrite_names(root: &Path, own: &str, new: &str) -> Result<(), String> {
     loop {
         let mut target = None;
         for file in files_under(root)? {
@@ -159,6 +191,29 @@ pub fn address(lab: &Lab, out: &StorePath) -> Result<StorePath, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pieces_of_a_packages_own_path_a_compiler_split_apart_are_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = format!(
+            "{}-glibc-2.42",
+            "0123456789abcdef".repeat(3)[..40].to_owned()
+        );
+        let whole = format!("/store/{own}/lib");
+        let digest = &own[..40];
+        // As `movabs` immediates: eight bytes of the path at a time, with code in between.
+        let mut ld = format!("{whole}\0").into_bytes();
+        ld.extend_from_slice(&[0x48, 0xb8]);
+        ld.extend_from_slice(format!("/store/{}", &digest[..1]).as_bytes());
+        ld.extend_from_slice(&[0x49, 0x33, 0x48, 0xba]);
+        ld.extend_from_slice(&digest.as_bytes()[1..9]);
+        fs::write(dir.path().join("ld.so"), ld).unwrap();
+        fs::write(dir.path().join("libc.so"), format!("{whole}\0{whole}\0")).unwrap();
+
+        let found = split_pieces(dir.path(), &own).unwrap();
+
+        assert_eq!(found, [dir.path().join("ld.so")]);
+    }
 
     fn built_at(lab: &Lab, seed: &[u8], text: &str) -> StorePath {
         let out = StorePath::derive("test", &[seed]);

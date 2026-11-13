@@ -1,5 +1,8 @@
 //! Splits built packages into outputs by file class, on a copy of the store or as they're built.
 //!
+//! Changing what this writes into packages needs `BUILD_RULES` bumped in `chain.rs`, or builds
+//! made before the change are kept.
+//!
 //! Each package's run-time libraries, development files and documentation go to store paths of
 //! their own, of the same length, so references can be rewritten in place. Whatever needs only a
 //! package's libraries then stops pulling in the rest of it.
@@ -131,7 +134,14 @@ struct Plan {
 }
 
 impl Plan {
-    fn add(&mut self, package: &StorePath, files: impl Iterator<Item = Class>) {
+    /// The outputs of `package`, the host's path of a build that saw itself as `seen_as`, by the
+    /// name its files use.
+    fn add(
+        &mut self,
+        seen_as: &StorePath,
+        package: &StorePath,
+        files: impl Iterator<Item = Class>,
+    ) {
         let mut outputs: BTreeMap<Class, (StorePath, bool)> = CLASSES
             .into_iter()
             .map(|class| {
@@ -147,7 +157,7 @@ impl Plan {
                 output.1 = true;
             }
         }
-        self.outputs.insert(package.hash().to_owned(), outputs);
+        self.outputs.insert(seen_as.hash().to_owned(), outputs);
     }
 
     /// The output of `package` that `class` files live in, falling back on the main one.
@@ -465,17 +475,28 @@ impl Placement {
 pub fn keep_whole(
     lab: &Lab,
     package: &StorePath,
+    seen_as: &StorePath,
     reason: String,
 ) -> Result<(Outputs, Option<String>), String> {
+    if seen_as != package {
+        let root = lab.on_host(package);
+        crate::content::rewrite_contents(&root, seen_as.hash(), package.hash())?;
+        crate::content::rewrite_names(&root, seen_as.hash(), package.hash())?;
+    }
     let address = crate::content::address(lab, package)?;
     Ok((BTreeMap::from([(Class::Out, address)]), Some(reason)))
 }
 
 /// Splits a built package in place, into content-addressed outputs. Returns them and, if the
 /// package had to stay whole, why.
-pub fn split_package(lab: &Lab, package: &StorePath) -> Result<(Outputs, Option<String>), String> {
+/// `seen_as` is where the build saw itself, which its files name: [`StorePath::temporary`].
+pub fn split_package(
+    lab: &Lab,
+    package: &StorePath,
+    seen_as: &StorePath,
+) -> Result<(Outputs, Option<String>), String> {
     let root = lab.on_host(package);
-    let own = package.hash();
+    let own = seen_as.hash();
     let mut entries = Vec::new();
     for file in files_under(&root)? {
         let relative = relative_of(&root, &file)?;
@@ -509,11 +530,11 @@ pub fn split_package(lab: &Lab, package: &StorePath) -> Result<(Outputs, Option<
             .collect(),
     );
     if let Some(reason) = placement.settle(&references) {
-        return keep_whole(lab, package, reason);
+        return keep_whole(lab, package, seen_as, reason);
     }
 
     let mut plan = Plan::default();
-    plan.add(package, placement.class.values().copied());
+    plan.add(seen_as, package, placement.class.values().copied());
 
     for (file, relative, _) in &entries {
         let class = placement.class[relative];
@@ -705,7 +726,7 @@ mod in_place {
     fn files_go_to_their_outputs_and_references_point_at_them() {
         let (_dir, lab) = lab();
         let package = package_with(&lab, |_| "library\n".to_owned());
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         assert!(
             lab.on_host(&outputs[&Class::Lib])
@@ -753,7 +774,7 @@ mod in_place {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
-        let (outputs, _) = split_package(&lab, &package).unwrap();
+        let (outputs, _) = split_package(&lab, &package, &package).unwrap();
         for output in outputs.values() {
             assert_eq!(output.name(), Some("zlib-1.3.1"), "{output:?}");
         }
@@ -770,7 +791,7 @@ mod in_place {
     fn a_library_keeps_the_data_it_names() {
         let (_dir, lab) = lab();
         let package = package_with(&lab, |own| format!("uses {own}/share/x\n"));
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let lib = lab.on_host(&outputs[&Class::Lib]);
         assert!(lib.join("share/x").exists());
@@ -796,7 +817,7 @@ mod in_place {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let lib = lab.on_host(&outputs[&Class::Lib]);
         assert!(lib.join("share/a").exists());
@@ -819,7 +840,7 @@ mod in_place {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
-        let (outputs, _) = split_package(&lab, &package).unwrap();
+        let (outputs, _) = split_package(&lab, &package, &package).unwrap();
         let lib = lab.on_host(&outputs[&Class::Lib]);
         assert!(lib.join("share/d/one").exists());
         assert!(lib.join("share/d/two/three").exists());
@@ -830,7 +851,7 @@ mod in_place {
     fn a_library_naming_something_missing_points_at_itself() {
         let (_dir, lab) = lab();
         let package = package_with(&lab, |own| format!("reads {own}/etc/none.conf\n"));
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let library = lab.on_host(&outputs[&Class::Lib]).join("lib/libz.so.1");
         let text = fs::read_to_string(library).unwrap();
@@ -842,7 +863,7 @@ mod in_place {
     fn a_library_naming_the_bare_package_keeps_it_whole() {
         let (_dir, lab) = lab();
         let package = package_with(&lab, |own| format!("prefix {own}\n"));
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(outputs.len(), 1);
         assert!(whole.unwrap().contains("whole package"));
         assert!(
@@ -865,7 +886,7 @@ mod in_place {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(outputs.len(), 1);
         assert!(whole.unwrap().contains("names a program"));
         let out = lab.on_host(&outputs[&Class::Out]);
@@ -887,7 +908,7 @@ mod in_place {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let lib = lab.on_host(&outputs[&Class::Lib]);
         assert!(lib.join("share/misc/magic.mgc").exists());
@@ -911,7 +932,7 @@ mod in_place {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let dev = lab.on_host(&outputs[&Class::Dev]);
         assert!(dev.join("include/z.h").exists());
@@ -933,7 +954,7 @@ mod in_place {
         let link = lab.on_host(&package).join("lib/libz.so.1");
         fs::create_dir_all(link.parent().unwrap()).unwrap();
         symlink("../share/real", &link).unwrap();
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let lib = lab.on_host(&outputs[&Class::Lib]);
         assert!(lib.join("share/real").exists());
@@ -958,7 +979,7 @@ mod in_place {
         let header = lab.on_host(&package).join("include/z.h");
         fs::create_dir_all(header.parent().unwrap()).unwrap();
         fs::write(header, "// z\n").unwrap();
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let dev = lab.on_host(&outputs[&Class::Dev]);
         let text = fs::read_to_string(dev.join("lib/pkgconfig/z.pc")).unwrap();
@@ -991,7 +1012,7 @@ mod in_place {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
-        let (outputs, _) = split_package(&lab, &package).unwrap();
+        let (outputs, _) = split_package(&lab, &package, &package).unwrap();
         let dev = lab.on_host(&outputs[&Class::Dev]);
         let text = fs::read_to_string(dev.join("lib/pkgconfig/glib.pc")).unwrap();
         let out = outputs[&Class::Out].inside();
@@ -1008,7 +1029,7 @@ mod in_place {
     fn a_library_only_package_has_an_empty_out_and_a_lib() {
         let (_dir, lab) = lab();
         let package = built(&lab, &[("lib/libq.so.1", "library\n".to_owned())]);
-        let (outputs, whole) = split_package(&lab, &package).unwrap();
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         assert_eq!(
             fs::read_dir(lab.on_host(&outputs[&Class::Out]))
@@ -1041,8 +1062,8 @@ mod in_place {
             ],
         );
         assert_ne!(one, two);
-        let (first, _) = split_package(&lab, &one).unwrap();
-        let (second, _) = split_package(&lab, &two).unwrap();
+        let (first, _) = split_package(&lab, &one, &one).unwrap();
+        let (second, _) = split_package(&lab, &two, &two).unwrap();
         assert_eq!(first[&Class::Lib], second[&Class::Lib]);
         assert_ne!(first[&Class::Out], second[&Class::Out]);
     }

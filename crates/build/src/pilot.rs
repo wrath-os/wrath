@@ -179,7 +179,7 @@ pub(crate) fn fix_up(
     leaks: &mut Leaks,
 ) -> Result<(), String> {
     let out = lab.on_host(&prepared.out);
-    let inside = prepared.out.inside();
+    let inside = prepared.out.temporary().inside();
     let view = &prepared.view.dir;
     for file in files_under(&out)? {
         let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
@@ -198,7 +198,12 @@ pub(crate) fn fix_up(
             fixups.shebangs += 1;
         }
     }
-    runpath::shrink_files(lab, &prepared.out, &files_under(&out)?, replace_contents)?;
+    runpath::shrink_files(
+        lab,
+        &prepared.out.temporary(),
+        &files_under(&out)?,
+        replace_contents,
+    )?;
     crate::split::strip(lab, &BTreeSet::from([prepared.out.clone()]))?;
     Ok(())
 }
@@ -238,6 +243,7 @@ fn run_final(
             env: BTreeMap::from([("PATH".to_owned(), bins), ("OUT".to_owned(), out.inside())]),
             limits: Limits::DEFAULT,
             links: vec![(format!("{}/bin/bash", seed.inside()), "/bin/sh".to_owned())],
+            at: None,
         },
     )?;
     Ok(Check {
@@ -302,6 +308,7 @@ fn run_check(
                 env: prepared.env.clone(),
                 limits: prepared.limits,
                 links: Vec::new(),
+                at: Some((prepared.out.clone(), prepared.out.temporary())),
             },
         )?;
         if outcome.status != Status::Passed {
@@ -333,6 +340,7 @@ fn run_check(
                 env: prepared.env.clone(),
                 limits: prepared.limits,
                 links: Vec::new(),
+                at: None,
             },
         )?;
         if outcome.status != Status::Passed {
@@ -349,7 +357,7 @@ fn run_check(
     let view = if in_view {
         prepared.view.clone()
     } else {
-        let mut bins = vec![format!("{}/bin", prepared.out.inside())];
+        let mut bins = vec![format!("{}/bin", prepared.out.temporary().inside())];
         bins.extend(extra_paths);
         for dep in &prepared.dep_paths {
             if lab.on_host(dep).join("bin").is_dir() {
@@ -379,6 +387,7 @@ fn run_check(
             env,
             limits: prepared.limits,
             links: Vec::new(),
+            at: Some((prepared.out.clone(), prepared.out.temporary())),
         },
     )?;
     Ok(Some(Check {

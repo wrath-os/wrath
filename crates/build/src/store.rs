@@ -68,6 +68,20 @@ impl StorePath {
     pub fn inside(&self) -> String {
         format!("/store/{}", self.0)
     }
+
+    /// Where a build of the package at `self` sees itself: a path named by the package's name
+    /// alone, as long as its own. What the build writes then doesn't depend on its key, even
+    /// pieces of the path a compiler splits apart, which nothing could find to rewrite, so a
+    /// build that makes the same files gets the same address whatever changed its key.
+    pub fn temporary(&self) -> Self {
+        let name = self.0.get(HASH_LENGTH + 1..).unwrap_or_default();
+        let path = Self::derive("temporary", &[name.as_bytes()]);
+        if name.is_empty() {
+            path
+        } else {
+            path.named(name)
+        }
+    }
 }
 
 /// The length of the store entry `bytes` start with: a hash, and a name after it when there is
@@ -123,6 +137,22 @@ impl Lab {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_sees_itself_at_a_path_named_by_the_package_alone() {
+        let one = StorePath::derive("build", &[b"key one"]).named("glibc-2.42");
+        let two = StorePath::derive("build", &[b"key two"]).named("glibc-2.42");
+        assert_ne!(one, two);
+        assert_eq!(
+            one.temporary(),
+            two.temporary(),
+            "the same whatever the key"
+        );
+        assert_eq!(one.temporary().hash().len(), one.hash().len());
+        assert!(one.temporary().hash().ends_with("-glibc-2.42"));
+        let other = StorePath::derive("build", &[b"key one"]).named("zlib-1.3");
+        assert_ne!(one.temporary(), other.temporary());
+    }
 
     #[test]
     fn files_are_made_with_the_usual_permissions_whatever_the_hosts() {
