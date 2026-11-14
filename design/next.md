@@ -216,6 +216,38 @@ never "base" alone. Keep **grapes** as the repository's name, and say "package s
 and `scope` overlap; one option is camelCase. 0034 already plans one file per recipe and a
 per-recipe lock. Cleaning up at 385 recipes is cheap; at thousands it isn't.
 
+Done with 0037, 2026-11-15, with parallel builds and fix-ups as their own step.
+
+## 12. The second round of reviews, 2026-11-15
+
+The same four looked again after 0037. All four were happier: planning reads no source, a change
+to the builder no longer rebuilds the world, search paths are data, the format debt is gone. What
+they still want, most asked first:
+
+- **A binary cache** (all four). Unchanged, and now the thing between this and anyone else's
+  machine. The keys it needs are in place.
+- **Scheduling.** A fixed number of builds with a fixed `NPROC` each; no jobserver, no memory or
+  pressure gating, no longest path first (section 2's recommendation, not built).
+- **`strip` from the host** is outside every key. It should come from the seed, which means
+  running it in the sandbox.
+- **`replaces` and the other escape hatches** (section 6 and 7). Patching openssl for everything
+  still means forking grapes.
+- **Variants are copy-paste.** gtk4-gir repeats gtk4's recipe to flip one option and builds GTK
+  twice; a build of a styled recipe also styles at plan time, fetching its source.
+- **`--locked` per command.** Only `check` and `dev lint` have it; one flag for every command
+  that could write a lock.
+- **Plans write locks in a checkout.** Said per recipe now, but a CI wants it refused by default.
+- **The unresolved key** misses search paths that requirement-brought dependencies declare, so a
+  plan can say nothing rebuilds when something does.
+- **Smaller:** `syncthing` has a module and no recipe (`fixtures/configs/secrets` fails to check);
+  a typo'd group still becomes a new group; `tier` and `platform` keep their names; grapes has
+  no CI to run `dev lint --locked`.
+
+Fixed from the review the same night: a build's key now has what it runs with (the wrapper's flags,
+the script around the recipe's, the sandbox's setup), which `BUILD_RULES` covered by hand; boot
+packages' keys have the settle step's digest; the newcomer's gaps in the recipes guide and the
+first apply after installing; an unknown package a module adds names the module.
+
 ## Order
 
 Each step leaves something usable, and the format changes land in one world rebuild:
