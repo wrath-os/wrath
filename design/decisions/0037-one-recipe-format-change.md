@@ -1,6 +1,6 @@
 # 0037: One change to the recipe format, and one rebuild
 
-Status: proposed, 2026-11-14.
+Status: accepted, 2026-11-14.
 
 ## Context
 
@@ -46,6 +46,7 @@ A recipe's lock pins its sources, as now, and also what its style produced from 
 # gh/ripgrep.lock
 [ripgrep]
 record = "blake3-..."           # the style's result: script, sources it added, dependencies
+from = "blake3-..."             # what produced it: the style's code, the recipe, source hashes
 deps = ["rust-bin"]             # dependencies the style added
 
 [[ripgrep.sources]]
@@ -54,12 +55,17 @@ hash = "sha256-..."
 # ... and every crate the Cargo.lock names, as now
 ```
 
-- Keys are computed from the recipe and its lock: planning reads files in grapes and never a
-  tarball.
-- A build fetches the source, runs the style again, and refuses to go on if the record differs
-  from the lock's ("`ripgrep`'s style or source changed; `wrath update ripgrep` takes it").
-- `wrath update` and the first pin write the record, as they write source hashes now. A user's
-  machine never writes it: it comes with the pinned grapes.
+- Keys are computed from the recipe and its `record`: planning reads files in grapes and never
+  a tarball. A style refactor that produces the same script rebuilds nothing.
+- Planning compares `from` with what would produce the record now, which needs no tarball
+  either. A style edit is seen at once, before anything is called done.
+- A stale or mismatched record, from planning or from the build's own rerun of the style:
+  - In a checkout of grapes, it's rewritten (fetching that one source and running the style),
+    and the command says which locks changed. `--locked` makes it an error instead, as in
+    `check --locked`. Editing a style used by 400 packages then needs no 400 updates.
+  - With a pinned grapes, it's an error: that commit of grapes is broken, and a user's machine
+    never writes a lock it was given. Grapes' CI builds with `--locked` to catch such commits.
+- `wrath update` and the first pin write the record, as they write source hashes now.
 
 Bazel does the same with module extensions and `MODULE.bazel.lock`.
 
@@ -97,7 +103,10 @@ builds, are what this replaces without copying.
 - Changing a fix-up rule reruns fix-ups, seconds per package, and content addresses stop
   everything whose output didn't change. A comment in the builder reruns fix-ups, never
   compiles. `BUILD_RULES` goes.
-- Raw outputs are kept until the next `wrath clean`, so a fix-up change never needs a compile.
+- Raw outputs are a cache: losing one only means a fix-up change recompiles that package. Each is
+  kept compressed, as `raw/<build key>.tar.zst` outside the store, since only fix-up reads it.
+  `clean` removes it with the last final output made from it, and `clean --raw` removes them all.
+  A machine that takes packages from a cache has none.
 - The golden test of placing (`split.rs`) stays, as a check that a change in output is meant.
 
 ### The format, cleaned up
@@ -140,10 +149,3 @@ another question than what it builds with.
 - Hash the whole builder into every key. No bumps, but every commit to wrath rebuilds the world.
 - Search paths as code (Spack, Nix setup hooks). More power, and the opacity that made setup
   hooks the thing to avoid.
-
-## Open
-
-- Where raw outputs live and when `clean` removes them: one generation's worth, or all until
-  asked.
-- Whether a record mismatch at build time should offer to update the lock in a checkout of
-  grapes, where updating is what the author wants anyway.
