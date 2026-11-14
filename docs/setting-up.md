@@ -108,7 +108,8 @@ else. Set `uid` yourself if you need a particular one.
 `shell` is `bash` (the default), `zsh`, `fish` or `nushell`; the system gets the shell and lists
 it in `/etc/shells`. `programs.zsh` and `programs.nushell` write the user's own settings for
 zsh and Nushell: aliases, lines to run at start, and for Nushell `settings` from its
-`$env.config`, such as `show_banner = false`.
+`$env.config`, such as `show_banner = false`. A user's `environment` reaches whichever shell they
+use, fish and Nushell included, since it's only names and values, written for each.
 
 A user's `packages` end up on their own `PATH` only.
 
