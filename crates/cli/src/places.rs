@@ -102,12 +102,15 @@ enum Origin {
 fn origin(given: Option<&Path>, config: Option<&Path>) -> Origin {
     match (given, config) {
         (Some(dir), _) => Origin::Given(dir.to_path_buf()),
-        (None, Some(config)) => Origin::Configured(
-            wrath_eval::declared_source(&wrath_eval::DirFs::new(config), None, GRAPES_SOURCE)
-                .unwrap_or_else(|| GRAPES_URL.to_owned()),
-        ),
+        (None, Some(config)) => Origin::Configured(grapes_url(config)),
         (None, None) => Origin::Here,
     }
+}
+
+/// The URL the configuration at `config` follows grapes at: the one it declares, or grapes' own.
+pub fn grapes_url(config: &Path) -> String {
+    wrath_eval::declared_source(&wrath_eval::DirFs::new(config), None, GRAPES_SOURCE)
+        .unwrap_or_else(|| GRAPES_URL.to_owned())
 }
 
 fn resolve(given: Option<&Path>, config: Option<&Path>) -> Result<PathBuf, String> {

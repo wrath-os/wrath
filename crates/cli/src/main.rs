@@ -10,7 +10,7 @@ use wrath_build::seed_pack;
 use wrath_build::store::Lab;
 use wrath_check::{Outcome, RunContext, SIGNOFF_DIR, Scenario, Suite};
 use wrath_eval::{ConfigKind, Evaluation, OptionPath, Value};
-use wrath_model::{LOCK_FILE, Lock, Model, WRATH_SOURCE};
+use wrath_model::{LOCK_FILE, Lock, Model, Source, WRATH_SOURCE};
 
 mod activate;
 mod apply_record;
@@ -650,13 +650,22 @@ fn main() -> ExitCode {
             sources,
             list: false,
         } => config().and_then(|config| lock(root, &config, &modules, Some(&sources))),
-        Command::Update { list: true, .. } => {
-            config().and_then(|config| match model(&config, &modules) {
-                Some(model) if json => print_serde(&generations::sources_json(&model)),
-                Some(model) => generations::sources(&model),
-                None => Ok(ExitCode::FAILURE),
-            })
-        }
+        // What the lock pins, read without evaluating or fetching anything.
+        Command::Update { list: true, .. } => config().and_then(|config| {
+            let mut model = Model {
+                sources: read_lock(&config)?.unwrap_or_default().sources,
+                ..Model::default()
+            };
+            model
+                .sources
+                .entry(places::GRAPES_SOURCE.to_owned())
+                .or_insert_with(|| Source::follow(&places::grapes_url(&config)));
+            if json {
+                print_serde(&generations::sources_json(&model))
+            } else {
+                generations::sources(&model)
+            }
+        }),
         Command::Check { locked } => {
             config().and_then(|config| check_config(root, &config, &modules, locked))
         }
