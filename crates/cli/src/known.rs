@@ -82,7 +82,20 @@ fn written_at(evaluation: &Evaluation, reference: &str) -> Option<wrath_eval::Sp
             items
                 .iter()
                 .any(|item| matches!(item, Value::Str(text) if text == reference))
-                .then_some(span)
+                .then(|| item_in(evaluation.sources().text(span.file), span, reference))
+        })
+}
+
+/// The span of the string `item` inside the list at `list` in `text`, or the list's when it isn't
+/// written there as a plain string.
+fn item_in(text: &str, list: wrath_eval::Span, item: &str) -> wrath_eval::Span {
+    let written = text.get(list.start..list.end).unwrap_or_default();
+    ["\"", "'"]
+        .iter()
+        .find_map(|quote| written.find(&format!("{quote}{item}{quote}")))
+        .map_or(list, |at| {
+            let start = list.start + at;
+            wrath_eval::Span::new(list.file, start..start + item.len() + 2)
         })
 }
 
@@ -95,6 +108,20 @@ pub(crate) const NO_RECIPES: &str = concat!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unknown_package_is_pointed_at_in_its_list() {
+        let text = "packages = [\"git\", \"neovim\", 'jq']\n";
+        let file = wrath_eval::Sources::default().add("system.toml", text);
+        let list = wrath_eval::Span::new(file, 11..text.len() - 1);
+        let at = |item: &str| {
+            let span = item_in(text, list, item);
+            &text[span.start..span.end]
+        };
+        assert_eq!(at("neovim"), "\"neovim\"");
+        assert_eq!(at("jq"), "'jq'");
+        assert_eq!(at("vim"), "[\"git\", \"neovim\", 'jq']");
+    }
 
     #[test]
     fn a_wrath_without_recipes_says_where_to_plan_from() {
