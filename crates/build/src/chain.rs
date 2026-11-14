@@ -2119,7 +2119,9 @@ pub(crate) fn rebuild_one(
     build_package(lab, repository, package, seed, sources, built, true)
 }
 
-fn build_package(
+/// Works out how to build `package`: its key, sources and view, recorded in `built`. Says when
+/// it's built already, by this process or another.
+pub(crate) fn begin(
     lab: &Lab,
     repository: &Path,
     package: &Package,
@@ -2127,7 +2129,7 @@ fn build_package(
     sources: &mut Sources,
     built: &mut Built,
     again: bool,
-) -> Result<Option<Prepared>, String> {
+) -> Result<Begun, String> {
     let listed = package.all_deps()?;
     let deps = with_requirements(lab, package, &listed, built)?;
     let mut closure = BTreeSet::from([seed.clone()]);
@@ -2196,13 +2198,13 @@ fn build_package(
     // Read once the key is ours: a build that waited finds what the other one made.
     if done.exists() && !again {
         if !content_addressed(package) {
-            return Ok(None);
+            return Ok(Begun::Built);
         }
         let address = fs::read_to_string(&done).map_err(with_path(&done))?;
         // An empty record means the build stopped before the package was moved.
         if !address.is_empty() {
             remember_outputs(built, package, &address);
-            return Ok(None);
+            return Ok(Begun::Built);
         }
     }
     let build_dir = lab.work.join("build").join(out.hash());
@@ -2355,25 +2357,92 @@ fn build_package(
     };
     let log = logs_dir(lab).join(format!("{}.log", package.id));
     let view = View { dir: view_dir };
-    let outcome = sandbox::run_shown(
-        lab,
-        &Step {
-            name: package.id.clone(),
-            argv: vec!["/bin/sh".to_owned(), "-euc".to_owned(), script],
-            inputs: closure.iter().cloned().collect(),
-            output: Some(out.clone()),
-            view: Some(view.clone()),
-            build_dir: build_dir.clone(),
-            log: log.clone(),
-            env: env.clone(),
-            limits,
-            links: Vec::new(),
-            at: Some((out.clone(), out.temporary())),
-        },
-        Some(("build", "built")),
-    )?;
+    let step = Step {
+        name: package.id.clone(),
+        argv: vec!["/bin/sh".to_owned(), "-euc".to_owned(), script],
+        inputs: closure.iter().cloned().collect(),
+        output: Some(out.clone()),
+        view: Some(view.clone()),
+        build_dir: build_dir.clone(),
+        log,
+        env,
+        limits,
+        links: Vec::new(),
+        at: Some((out.clone(), out.temporary())),
+    };
+    Ok(Begun::Run(Box::new(Pending {
+        step,
+        out,
+        closure,
+        view,
+        build_dir,
+        done: (!again).then_some(done),
+        dep_paths: deps
+            .iter()
+            .map(|dep| built.paths[&dep.id].clone())
+            .collect(),
+        lock,
+    })))
+}
+
+/// A build worked out and ready for its sandbox, which needs nothing shared to run.
+pub(crate) struct Pending {
+    pub(crate) step: Step,
+    out: StorePath,
+    closure: BTreeSet<StorePath>,
+    view: View,
+    build_dir: PathBuf,
+    /// Its record, written once it's built, unless it's built again only to be looked at.
+    done: Option<PathBuf>,
+    dep_paths: Vec<StorePath>,
+    lock: fs::File,
+}
+
+/// What working out a build found: that it's built already, or what to run.
+pub(crate) enum Begun {
+    Built,
+    Run(Box<Pending>),
+}
+
+/// Builds `package`: works it out, runs its sandbox, and checks what it made.
+fn build_package(
+    lab: &Lab,
+    repository: &Path,
+    package: &Package,
+    seed: &StorePath,
+    sources: &mut Sources,
+    built: &mut Built,
+    again: bool,
+) -> Result<Option<Prepared>, String> {
+    match begin(lab, repository, package, seed, sources, built, again)? {
+        Begun::Built => Ok(None),
+        Begun::Run(pending) => {
+            let outcome = sandbox::run_shown(lab, &pending.step, Some(("build", "built")))?;
+            end(lab, package, *pending, &outcome, built).map(Some)
+        }
+    }
+}
+
+/// Checks what the sandbox of `pending` made, and readies it to be placed.
+pub(crate) fn end(
+    lab: &Lab,
+    package: &Package,
+    pending: Pending,
+    outcome: &sandbox::Outcome,
+    built: &Built,
+) -> Result<Prepared, String> {
+    let Pending {
+        step,
+        out,
+        closure,
+        view,
+        build_dir,
+        done,
+        dep_paths,
+        lock,
+    } = pending;
     if outcome.status != Status::Passed {
-        let hint = fs::read_to_string(&log)
+        let hint = fs::read_to_string(&step.log)
             .ok()
             .and_then(|text| missing_in(&text))
             .map(|missing| format!("\n  hint: {}", failure_hint(lab, built, &missing)))
@@ -2383,7 +2452,7 @@ fn build_package(
             package.id,
             outcome.status,
             outcome.milliseconds / 1000,
-            log.display()
+            step.log.display()
         ));
     }
     settle_modes(&lab.on_host(&out)).map_err(|e| format!("`{}` installed {e}", package.id))?;
@@ -2396,23 +2465,22 @@ fn build_package(
         ));
     }
     write_runtime_deps(lab, package, &out, built)?;
-    if !again {
-        fs::create_dir_all(&done_dir).map_err(with_path(&done_dir))?;
+    if let Some(done) = done {
+        if let Some(dir) = done.parent() {
+            fs::create_dir_all(dir).map_err(with_path(dir))?;
+        }
         fs::write(&done, "").map_err(with_path(&done))?;
     }
-    Ok(Some(Prepared {
+    Ok(Prepared {
         out,
         closure,
         view,
-        env,
-        limits,
+        env: step.env,
+        limits: step.limits,
         build_dir,
-        dep_paths: deps
-            .iter()
-            .map(|dep| built.paths[&dep.id].clone())
-            .collect(),
+        dep_paths,
         _lock: lock,
-    }))
+    })
 }
 
 /// The lock on building `out`, waiting for another build of it to finish first. Two builds of one
