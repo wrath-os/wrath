@@ -9,7 +9,7 @@ use memchr::memmem;
 use sha2::{Digest, Sha256};
 
 use crate::chain::{self, Built, Package, Prepared, Sources};
-use crate::pilot::{self, Fixups, Leaks};
+use crate::fixup::{self, Fixups, Leaks};
 use crate::sandbox::Identity;
 use crate::seed;
 use crate::split::{Class, Outputs};
@@ -38,7 +38,7 @@ pub fn mask_references(bytes: &[u8]) -> Vec<u8> {
 fn tree(dir: &Path) -> Result<BTreeMap<String, String>, String> {
     let digest = |bytes: &[u8]| hex(&Sha256::digest(bytes));
     let mut found = BTreeMap::new();
-    for file in pilot::files_under(dir)? {
+    for file in fixup::files_under(dir)? {
         let relative = file
             .strip_prefix(dir)
             .unwrap_or(&file)
@@ -74,7 +74,7 @@ pub(crate) fn all_packages(lab: &Lab, repository: &Path) -> Result<Vec<Package>,
 fn fix_up_if_needed(lab: &Lab, package: &Package, prepared: &Prepared) -> Result<(), String> {
     if package.fixed_up() {
         let (mut fixups, mut leaks) = (Fixups::default(), Leaks::default());
-        pilot::fix_up(lab, prepared, &mut fixups, &mut leaks)?;
+        fixup::fix_up(lab, prepared, &mut fixups, &mut leaks)?;
     }
     Ok(())
 }
@@ -147,7 +147,7 @@ fn compare_rebuild(
     let rebuilt = elsewhere(|| chain::build_one(lab, repository, package, seed, sources, built));
     let outcome = match rebuilt {
         Ok(Some(prepared)) => fix_up_if_needed(lab, package, &prepared)
-            .and_then(|()| chain::place_outputs(lab, package, &prepared.out))
+            .and_then(|()| fixup::place_outputs(lab, package, &prepared.out))
             .and_then(|(second, _)| {
                 record_differences(lab, &mut result, &first, &second)?;
                 chain::remove(&prepared.build_dir)

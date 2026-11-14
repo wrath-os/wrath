@@ -271,7 +271,7 @@ pub fn unbrought_headers(lab: &Lab, built: &mut Built, id: &str) -> Result<Vec<S
         if !include.is_dir() {
             continue;
         }
-        for file in crate::pilot::files_under(&include)? {
+        for file in crate::fixup::files_under(&include)? {
             let Ok(text) = fs::read_to_string(&file) else {
                 continue;
             };

@@ -4,6 +4,7 @@ pub mod chain;
 pub mod content;
 pub mod early;
 pub mod experiments;
+pub mod fixup;
 pub mod graph;
 pub mod image;
 pub mod initrd;

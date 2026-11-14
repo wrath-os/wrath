@@ -3,210 +3,21 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::symlink;
+use std::path::Path;
 use std::sync::Mutex;
 
 use crate::chain::{self, Built, Package, Prepared, Sources};
-use crate::runpath;
+use crate::fixup::{Fixups, Leaks, fix_up};
 use crate::sandbox::{self, Limits, Status, Step, View};
 use crate::seed;
 use crate::store::{Lab, StorePath, with_path};
-
-#[derive(Debug, Default)]
-pub(crate) struct Leaks {
-    unresolved_shebangs: usize,
-    samples: Vec<String>,
-}
-
-impl Leaks {
-    fn sample(&mut self, text: String) {
-        if self.samples.len() < 20 {
-            self.samples.push(text);
-        }
-    }
-}
 
 #[derive(Debug)]
 struct Check {
     what: String,
     status: Status,
     log: String,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct Fixups {
-    la_removed: usize,
-    shebangs: usize,
-}
-
-pub(crate) fn files_under(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut found = Vec::new();
-    for entry in fs::read_dir(dir).map_err(with_path(dir))? {
-        let entry = entry.map_err(with_path(dir))?;
-        let kind = entry.file_type().map_err(with_path(&entry.path()))?;
-        if kind.is_dir() {
-            found.extend(files_under(&entry.path())?);
-        } else {
-            found.push(entry.path());
-        }
-    }
-    Ok(found)
-}
-
-/// Writes `bytes` to a file that may be read-only, keeping its mode.
-pub(crate) fn replace_contents(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mode = fs::metadata(path)
-        .map_err(with_path(path))?
-        .permissions()
-        .mode();
-    fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o200)).map_err(with_path(path))?;
-    fs::write(path, bytes).map_err(with_path(path))?;
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(with_path(path))
-}
-
-pub(crate) fn path_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || b"._+/-".contains(&byte)
-}
-
-/// Where `relative`, a path in the view, really is in the store, if some dependency provides it.
-fn owner_of(view: &Path, relative: &str) -> Option<String> {
-    let target = fs::read_link(view.join(relative)).ok()?;
-    target.to_str().map(str::to_owned)
-}
-
-/// Where a script's interpreter really is, or `None` when nothing provides it.
-fn real_interpreter(
-    path: &str,
-    prefix: &str,
-    out_host: &Path,
-    out_inside: &str,
-    view: &Path,
-) -> Option<String> {
-    let rest = path.strip_prefix(prefix)?.trim_start_matches('/');
-    if let Some(real) = owner_of(view, rest) {
-        return Some(real);
-    }
-    out_host
-        .join(rest)
-        .exists()
-        .then(|| format!("{out_inside}/{rest}"))
-}
-
-/// Points a script's first line at the store. Returns whether it changed.
-fn fix_shebang(
-    file: &Path,
-    out_host: &Path,
-    out_inside: &str,
-    view: &Path,
-    leaks: &mut Leaks,
-) -> Result<bool, String> {
-    let bytes = fs::read(file).map_err(with_path(file))?;
-    if !bytes.starts_with(b"#!") {
-        return Ok(false);
-    }
-    let end = bytes
-        .iter()
-        .position(|b| *b == b'\n')
-        .unwrap_or(bytes.len());
-    let Ok(line) = std::str::from_utf8(&bytes[2..end]) else {
-        return Ok(false);
-    };
-    let mut words = line.split_whitespace();
-    let Some(first) = words.next() else {
-        return Ok(false);
-    };
-    let rest: Vec<&str> = words.collect();
-    // /bin/sh is provided everywhere. Anything else in /bin is really a program of the view's.
-    let moved = format!("/usr{first}");
-    let first = if first.starts_with("/bin/") && first != "/bin/sh" {
-        moved.as_str()
-    } else {
-        first
-    };
-    let prefix = "/usr";
-    if !first.starts_with(prefix) {
-        return Ok(false);
-    }
-    let (target, arguments): (String, Vec<&str>) = if first.ends_with("/bin/env") {
-        match rest.iter().position(|word| !word.starts_with('-')) {
-            Some(at) => (
-                format!("{prefix}/bin/{}", rest[at]),
-                rest[at + 1..].to_vec(),
-            ),
-            None => return Ok(false),
-        }
-    } else {
-        (first.to_owned(), rest)
-    };
-    let line = match real_interpreter(&target, prefix, out_host, out_inside, view) {
-        Some(real) => {
-            let mut line = format!("#!{real}");
-            for word in arguments {
-                line.push(' ');
-                line.push_str(word);
-            }
-            line
-        }
-        None => {
-            leaks.unresolved_shebangs += 1;
-            leaks.sample(format!("shebang {first}: {}", file.display()));
-            if first.ends_with("/bin/env") {
-                return Ok(false);
-            }
-            // The build doesn't have it, so the system's PATH finds it when the script runs,
-            // through /usr/bin/env, the one other path a system makes for scripts (decision
-            // 0016). The kernel passes what follows as one argument, so `-S` splits it when
-            // there's more than a name.
-            let name = target.rsplit('/').next().unwrap_or(&target);
-            if arguments.is_empty() {
-                format!("#!/usr/bin/env {name}")
-            } else {
-                format!("#!/usr/bin/env -S {name} {}", arguments.join(" "))
-            }
-        }
-    };
-    let mut new = line.into_bytes();
-    new.extend_from_slice(&bytes[end..]);
-    replace_contents(file, &new)?;
-    Ok(true)
-}
-
-/// What's done to a package once it's installed, on the host.
-pub(crate) fn fix_up(
-    lab: &Lab,
-    prepared: &Prepared,
-    fixups: &mut Fixups,
-    leaks: &mut Leaks,
-) -> Result<(), String> {
-    let out = lab.on_host(&prepared.out);
-    let inside = prepared.out.temporary().inside();
-    let view = &prepared.view.dir;
-    for file in files_under(&out)? {
-        let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
-        if meta.is_symlink() {
-            continue;
-        }
-        if file
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().ends_with(".la"))
-        {
-            fs::remove_file(&file).map_err(with_path(&file))?;
-            fixups.la_removed += 1;
-            continue;
-        }
-        if fix_shebang(&file, &out, &inside, view, leaks)? {
-            fixups.shebangs += 1;
-        }
-    }
-    runpath::shrink_files(
-        lab,
-        &prepared.out.temporary(),
-        &files_under(&out)?,
-        replace_contents,
-    )?;
-    crate::split::strip(lab, &BTreeSet::from([prepared.out.clone()]))?;
-    Ok(())
 }
 
 /// Runs `command` from the package's final location with no view and no `/usr`.
@@ -579,7 +390,7 @@ fn build_shared(
         &mut Fixups::default(),
         &mut Leaks::default(),
     )?;
-    chain::finish(lab, package, &prepared.out, built)
+    crate::fixup::finish(lab, package, &prepared.out, built)
 }
 
 /// That every package someone named, `wanted`, has a recipe among `ids`, before anything builds.
@@ -702,7 +513,7 @@ pub(crate) fn build_and_finish(
             &mut Fixups::default(),
             &mut Leaks::default(),
         )?;
-        chain::finish(lab, package, &prepared.out, built)?;
+        crate::fixup::finish(lab, package, &prepared.out, built)?;
     }
     Ok(())
 }
@@ -838,65 +649,5 @@ mod tests {
             BTreeSet::from(["curl".into(), "git".into(), "zlib".into()])
         );
         assert_eq!(needed(&["jq"]), BTreeSet::from(["jq".into()]));
-    }
-
-    fn view_with(dir: &Path, relative: &str, target: &str) {
-        let at = dir.join(relative);
-        fs::create_dir_all(at.parent().unwrap()).unwrap();
-        symlink(target, at).unwrap();
-    }
-
-    #[test]
-    fn a_shebang_through_env_or_usr_points_at_the_store() {
-        let dir = tempfile::tempdir().unwrap();
-        let view = dir.path().join("view");
-        view_with(&view, "bin/python3", "/store/aaa/bin/python3");
-        let out = dir.path().join("out");
-        fs::create_dir_all(&out).unwrap();
-        let mut leaks = Leaks::default();
-        for (before, after) in [
-            (
-                "#!/usr/bin/python3 -E\nprint\n",
-                "#!/store/aaa/bin/python3 -E\nprint\n",
-            ),
-            (
-                "#!/usr/bin/env python3\nprint\n",
-                "#!/store/aaa/bin/python3\nprint\n",
-            ),
-        ] {
-            let file = out.join("script");
-            fs::write(&file, before).unwrap();
-            assert!(fix_shebang(&file, &out, "/store/self", &view, &mut leaks).unwrap());
-            assert_eq!(fs::read_to_string(&file).unwrap(), after);
-        }
-    }
-
-    #[test]
-    fn a_shebang_the_build_cant_resolve_finds_its_interpreter_on_the_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let view = dir.path().join("view");
-        fs::create_dir_all(&view).unwrap();
-        let mut leaks = Leaks::default();
-        for (before, after) in [
-            ("#!/bin/bash -e\nx\n", "#!/usr/bin/env -S bash -e\nx\n"),
-            ("#!/usr/bin/perl\nx\n", "#!/usr/bin/env perl\nx\n"),
-            (
-                "#!/usr/bin/env python3.13\nx\n",
-                "#!/usr/bin/env python3.13\nx\n",
-            ),
-        ] {
-            let file = dir.path().join("script");
-            fs::write(&file, before).unwrap();
-            fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap();
-            assert_eq!(fs::read_to_string(&file).unwrap(), after);
-        }
-        assert_eq!(
-            leaks.unresolved_shebangs, 3,
-            "each is still counted, to find recipes to fix"
-        );
-        // /bin/sh is on every system.
-        let file = dir.path().join("script");
-        fs::write(&file, "#!/bin/sh\nx\n").unwrap();
-        assert!(!fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap());
     }
 }

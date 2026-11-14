@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -12,6 +12,7 @@ use wrath_starlark::style::{self, Style};
 use memchr::memmem;
 use serde::Deserialize;
 
+use crate::fixup::{finish, linked_by_path, settle_modes, write_runtime_deps};
 use crate::requires;
 use crate::sandbox::{self, Identity, Limits, Status, Step, View};
 use crate::seed::{self, run as run_host, sha256_of};
@@ -205,6 +206,73 @@ pub struct Index {
     pub run: String,
 }
 
+/// A variable a package reads to find other packages' files, such as Python's `PYTHONPATH` with
+/// `files = ["site"]`: in a build that has the package among its dependencies, it lists each
+/// dependency's directories of `files` that are there, in order, between `separator`s.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchPath {
+    pub variable: String,
+    pub files: Vec<String>,
+    #[serde(default = "colon")]
+    pub separator: String,
+}
+
+fn colon() -> String {
+    ":".to_owned()
+}
+
+/// The search paths `deps` in a build's view declare, for a key worked out before they're built.
+fn declared_parts(deps: &[Dep], declared: impl Fn(&str) -> Vec<SearchPath>) -> Vec<Vec<u8>> {
+    deps.iter()
+        .filter(|dep| dep.view)
+        .flat_map(|dep| {
+            declared(&dep.id).into_iter().map(|search| {
+                let SearchPath {
+                    variable,
+                    files,
+                    separator,
+                } = search;
+                format!("declares {} {variable} {files:?} {separator}", dep.id).into_bytes()
+            })
+        })
+        .collect()
+}
+
+/// The search path variables a build with `deps` gets: those every dependency in its view
+/// declares, each listing the directories of its `files` among the dependencies' outputs, by
+/// where they are inside the sandbox. `declared` gives a dependency's declarations, and `has`
+/// whether a directory is in an output. A variable nothing lists is left out.
+fn search_path_values(
+    deps: &[(&str, Vec<StorePath>)],
+    declared: impl Fn(&str) -> Vec<SearchPath>,
+    has: impl Fn(&StorePath, &str) -> bool,
+) -> BTreeMap<String, String> {
+    let mut values: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
+    for (id, _) in deps {
+        for search in declared(id) {
+            let (_, listed) = values
+                .entry(search.variable.clone())
+                .or_insert_with(|| (search.separator.clone(), Vec::new()));
+            for (_, outputs) in deps {
+                for output in outputs {
+                    for file in &search.files {
+                        let dir = format!("{}/{file}", output.inside());
+                        if has(output, file) && !listed.contains(&dir) {
+                            listed.push(dir);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    values
+        .into_iter()
+        .filter(|(_, (_, listed))| !listed.is_empty())
+        .map(|(variable, (separator, listed))| (variable, listed.join(&separator)))
+        .collect()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Source {
@@ -235,7 +303,7 @@ pub(crate) struct Package {
     /// One output, for a package that finds its own files relative to a library at run time,
     /// which no scan of its files can see.
     #[serde(default)]
-    whole: bool,
+    pub(crate) whole: bool,
     /// Build on the core tools as well, instead of the seed's.
     #[serde(default)]
     core: bool,
@@ -252,6 +320,10 @@ pub(crate) struct Package {
     /// What its tools make from what a generation's packages share.
     #[serde(default)]
     indexes: Vec<Index>,
+    /// The variables it reads to find files of other packages, which every build that has it
+    /// among its dependencies gets, listing those directories of its dependencies.
+    #[serde(default)]
+    search_paths: Vec<SearchPath>,
     /// How its project names each target, such as `{ x86_64 = "amd64" }` for Go, which sources
     /// say as `{arch_name}` and scripts read as `$WRATH_ARCH_NAME`. Without it, our own name.
     #[serde(default)]
@@ -265,7 +337,7 @@ pub(crate) struct Package {
     /// Packages it needs at run time without referring to them, such as data it reads by name,
     /// written into it so the reference scan finds them (decision 0021).
     #[serde(default)]
-    runtime_deps: Vec<String>,
+    pub(crate) runtime_deps: Vec<String>,
     #[serde(default)]
     pub(crate) sources: Vec<Source>,
     #[serde(default)]
@@ -631,9 +703,6 @@ fn loader_name() -> &'static str {
     LOADER.rsplit_once('/').map_or(LOADER, |(_, name)| name)
 }
 
-/// Where a Python package keeps its modules, which builds that use it get on `PYTHONPATH`.
-const PYTHON_SITE: &str = "site";
-
 /// A package's action, as a record, under both of its keys.
 #[derive(Debug)]
 pub struct PackageRecord {
@@ -661,6 +730,8 @@ pub struct Built {
     pub requirements: BTreeMap<String, requires::Requirements>,
     /// What each package's tools make from what a generation's packages share.
     pub indexes: BTreeMap<String, Vec<Index>>,
+    /// The variables each package that declares any reads, for the builds that have it.
+    pub search_paths: BTreeMap<String, Vec<SearchPath>>,
 }
 
 impl Built {
@@ -702,28 +773,6 @@ impl Built {
     }
 }
 
-/// Writes the store paths of a package's `runtime_deps` into it, where the reference scan finds
-/// them.
-fn write_runtime_deps(
-    lab: &Lab,
-    package: &Package,
-    out: &StorePath,
-    built: &Built,
-) -> Result<(), String> {
-    if package.runtime_deps.is_empty() {
-        return Ok(());
-    }
-    let text: String = package
-        .runtime_deps
-        .iter()
-        .map(|id| format!("{}\n", built.paths[id].inside()))
-        .collect();
-    let file = lab.on_host(out).join(RUNTIME_DEPS);
-    let dir = file.parent().unwrap_or(&file);
-    fs::create_dir_all(dir).map_err(with_path(dir))?;
-    fs::write(&file, text).map_err(with_path(&file))
-}
-
 /// The wrath checkout running the build, which `tree:@wrath` sources read: grapes carries the
 /// recipe for wrath, built from the tool's own files (0036). Set once by the command.
 static WRATH: OnceLock<PathBuf> = OnceLock::new();
@@ -735,10 +784,6 @@ const WRATH_TREE: &str = "@wrath";
 pub fn set_wrath_tree(dir: &Path) {
     let _ = WRATH.set(dir.to_path_buf());
 }
-
-/// Where a package keeps the store paths of its `runtime_deps`.
-const RUNTIME_DEPS: &str = "lib/wrath/runtime-deps";
-
 /// A listed dependency another one brings, and the one that brings it.
 pub(crate) type Redundant = (String, String);
 
@@ -1537,8 +1582,7 @@ fn failure_hint(lab: &Lab, built: &Built, missing: &Missing) -> String {
         Missing::Macro(name) => {
             return format!(
                 "`{name}` is an autoconf macro configure was made without: when it's made in \
-                 the build, aclocal finds macros in the build's /usr with \
-                 ACLOCAL_PATH=/usr/share/aclocal"
+                 the build, aclocal finds the macros of every dependency once automake is one"
             );
         }
         Missing::Outside(place) => {
@@ -2237,99 +2281,8 @@ pub(crate) fn content_addressed(package: &Package) -> bool {
     !package.is_boot()
 }
 
-/// Moves a finished package to its content addresses, so what's built next is keyed on what this
-/// one really produced. Boot packages stay where they were built.
-pub(crate) fn finish(
-    lab: &Lab,
-    package: &Package,
-    out: &StorePath,
-    built: &mut Built,
-) -> Result<(), String> {
-    if !content_addressed(package) {
-        return Ok(());
-    }
-    let (outputs, whole) = place_outputs(lab, package, out)?;
-    for path in outputs.values() {
-        references_of(lab, path)?;
-    }
-    if let Some(reason) = whole {
-        note_whole(lab, package, &reason)?;
-    }
-    let record = outputs
-        .iter()
-        .map(|(class, path)| format!("{}={}", class.name(), path.hash()))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let done = lab.work.join("done").join(out.hash());
-    fs::write(&done, &record).map_err(with_path(&done))?;
-    remember_outputs(built, package, &record);
-    // Only advice for now: nothing here fails a build that worked.
-    let noted = requires::unbrought_headers(lab, built, &package.id).and_then(|lines| {
-        if lines.is_empty() {
-            Ok(())
-        } else {
-            note_unbrought(lab, package, &lines)
-        }
-    });
-    if let Err(why) = noted {
-        eprintln!(
-            "warning: couldn't check what `{}`'s headers include: {why}",
-            package.id
-        );
-    }
-    Ok(())
-}
-
-/// Says which of a package's headers include ones from a dependency it doesn't bring along, and
-/// records them, so whether this can be an error is decided from what it finds.
-fn note_unbrought(lab: &Lab, package: &Package, lines: &[String]) -> Result<(), String> {
-    eprintln!(
-        "warning: `{}` doesn't bring along what its headers include, so builds using them may \
-         fail; `propagates` in its recipe brings it:\n  {}",
-        package.id,
-        lines.join("\n  ")
-    );
-    let path = logs_dir(lab).join("unbrought-headers.txt");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(with_path(&path))?;
-    for line in lines {
-        writeln!(file, "{} {line}", package.id).map_err(with_path(&path))?;
-    }
-    Ok(())
-}
-
-/// Moves a finished package to its content addresses, and says why if it stayed whole.
-pub(crate) fn place_outputs(
-    lab: &Lab,
-    package: &Package,
-    out: &StorePath,
-) -> Result<(split::Outputs, Option<String>), String> {
-    let seen_as = out.temporary();
-    let root = lab.on_host(out);
-    let pieces = crate::content::split_pieces(&root, seen_as.hash())?;
-    if !pieces.is_empty() {
-        note_pieces(lab, package, out, &pieces)?;
-    }
-    let cut = crate::content::cut_names(&root, seen_as.hash())?;
-    if package.whole {
-        split::keep_whole(lab, out, &seen_as, "the recipe asks".to_owned())
-    } else if let Some(file) = cut.first() {
-        let file = file.strip_prefix(&root).unwrap_or(file).display();
-        let reason = format!(
-            "{file} names its path with the name after the hash cut apart, so which part it \
-             means can't be told"
-        );
-        split::keep_whole(lab, out, &seen_as, reason)
-    } else {
-        split::split_package(lab, out, &seen_as)
-    }
-}
-
 /// Sets where a package is from what its record says.
-fn remember_outputs(built: &mut Built, package: &Package, record: &str) {
+pub(crate) fn remember_outputs(built: &mut Built, package: &Package, record: &str) {
     let outputs: split::Outputs = record
         .split(' ')
         .filter_map(|part| part.split_once('='))
@@ -2339,49 +2292,6 @@ fn remember_outputs(built: &mut Built, package: &Package, record: &str) {
         .paths
         .insert(package.id.clone(), outputs[&split::Class::Out].clone());
     built.outputs.insert(package.id.clone(), outputs);
-}
-
-/// Records that a package stayed whole, and why.
-fn note_whole(lab: &Lab, package: &Package, reason: &str) -> Result<(), String> {
-    let path = logs_dir(lab).join("whole.txt");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(with_path(&path))?;
-    writeln!(file, "{} {reason}", package.id).map_err(with_path(&path))
-}
-
-/// Says which of a package's files hold pieces of the path its build saw, which keep naming that
-/// path once it's moved, and records them for the packaging findings.
-fn note_pieces(
-    lab: &Lab,
-    package: &Package,
-    out: &StorePath,
-    files: &[PathBuf],
-) -> Result<(), String> {
-    let root = lab.on_host(out);
-    let names: Vec<String> = files
-        .iter()
-        .map(|file| {
-            file.strip_prefix(&root)
-                .unwrap_or(file)
-                .display()
-                .to_string()
-        })
-        .collect();
-    eprintln!(
-        "warning: `{}` keeps pieces of its build's path in {}, which can't be rewritten",
-        package.id,
-        names.join(", ")
-    );
-    let path = logs_dir(lab).join("split-pieces.txt");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(with_path(&path))?;
-    writeln!(file, "{} {}", package.id, names.join(" ")).map_err(with_path(&path))
 }
 
 /// What everything else builds on, and a program built with it to show it works. The toolchain
@@ -2493,6 +2403,8 @@ fn recipe_parts(
         origin,
         // What a generation makes from the packages, not this package's build.
         indexes: _,
+        // What its dependents' builds see, in their keys as what it expands to there.
+        search_paths: _,
         // For update checks, the tests and how long a build may be quiet: none changes what's
         // built.
         track: _,
@@ -2597,8 +2509,14 @@ pub(crate) fn keys_of(
             .map(|source| sources.hash_of(lab, source, &package.origin.lock))
             .collect::<Result<Vec<String>, String>>()?;
         let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
-        let recipe = recipe_parts(repository, package, &hashes)?;
+        let mut recipe = recipe_parts(repository, package, &hashes)?;
         let deps = package.all_deps()?;
+        recipe.extend(declared_parts(&deps, |id| {
+            let found = packages.iter().find(|package| package.id == id);
+            found
+                .map(|package| package.search_paths.clone())
+                .unwrap_or_default()
+        }));
         let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
         keys.insert(package.id.clone(), key.hash().to_owned());
     }
@@ -2684,9 +2602,27 @@ pub(crate) fn begin(
     let fetched = fetch_all(sources, lab, package)?;
     let source_hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
     let recipe = recipe_parts(repository, package, &source_hashes)?;
-    let out = package_key("build", &recipe, &deps, |dep| built.reference(&dep.id))
+    let declared = |id: &str| built.search_paths.get(id).cloned().unwrap_or_default();
+    let in_view: Vec<(&str, Vec<StorePath>)> = deps
+        .iter()
+        .filter(|dep| dep.view)
+        .map(|dep| (dep.id.as_str(), built.output_paths(&dep.id)))
+        .collect();
+    let searched = search_path_values(&in_view, declared, |output, file| {
+        lab.on_host(output).join(file).is_dir()
+    });
+    // What the build sees through them changes it, though no dependency's output changed.
+    let mut built_from = recipe.clone();
+    built_from.extend(
+        searched
+            .iter()
+            .map(|(variable, value)| format!("search {variable}={value}").into_bytes()),
+    );
+    let out = package_key("build", &built_from, &deps, |dep| built.reference(&dep.id))
         .named(&package.store_name());
-    let unresolved = package_key("unresolved", &recipe, &listed, |dep| {
+    let mut planned_from = recipe;
+    planned_from.extend(declared_parts(&listed, declared));
+    let unresolved = package_key("unresolved", &planned_from, &listed, |dep| {
         built.unresolved_or_path(&dep.id)
     })
     .hash()
@@ -2716,6 +2652,11 @@ pub(crate) fn begin(
         built
             .indexes
             .insert(package.id.clone(), package.indexes.clone());
+    }
+    if !package.search_paths.is_empty() {
+        built
+            .search_paths
+            .insert(package.id.clone(), package.search_paths.clone());
     }
     built.providers.insert(
         package.id.clone(),
@@ -2835,27 +2776,16 @@ pub(crate) fn begin(
             package.arch_name()?.to_owned(),
         ),
         ("WRATH_LOADER_NAME".to_owned(), loader_name().to_owned()),
-        // Every dependency's macros are in the view's /usr, where aclocal doesn't look itself.
-        ("ACLOCAL_PATH".to_owned(), "/usr/share/aclocal".to_owned()),
     ]);
-    let mut python_path = Vec::new();
     for dep in &deps {
         let name = dep.id.replace('-', "_");
-        let path = &built.paths[&dep.id];
-        env.insert(format!("WRATH_DEP_{name}"), path.inside());
+        env.insert(format!("WRATH_DEP_{name}"), built.paths[&dep.id].inside());
         env.insert(
             format!("WRATH_LIB_{name}"),
             built.library_path(&dep.id).inside(),
         );
-        // Python packages keep their modules in `site`, which Python finds on PYTHONPATH, as
-        // programs are found on PATH.
-        if lab.on_host(path).join(PYTHON_SITE).is_dir() {
-            python_path.push(format!("{}/{PYTHON_SITE}", path.inside()));
-        }
     }
-    if !python_path.is_empty() {
-        env.insert("PYTHONPATH".to_owned(), python_path.join(":"));
-    }
+    env.extend(searched);
     // The loader programs built here run with, for recipes that set one themselves, such as for
     // programs a project built elsewhere.
     env.insert("WRATH_LOADER".to_owned(), interpreter.clone());
@@ -3053,68 +2983,6 @@ fn link_flags(interpreter: &str, rpath_dirs: &[String]) -> String {
     ];
     flags.extend(rpath_dirs.iter().map(|dir| format!("-Wl,-rpath,{dir}")));
     flags.join(" ")
-}
-
-/// The first ELF file under `dir` that needs a library by a path outside the store, such as the
-/// build's `/usr/lib/libsqlite3.so`, with that path. A linker records a path when the library has
-/// no SONAME, and the program then can't start anywhere else.
-fn linked_by_path(dir: &Path) -> Result<Option<(PathBuf, String)>, String> {
-    for file in crate::pilot::files_under(dir)? {
-        if file.is_symlink() {
-            continue;
-        }
-        let mut magic = [0u8; 4];
-        let is_elf = fs::File::open(&file)
-            .and_then(|mut opened| opened.read_exact(&mut magic))
-            .is_ok_and(|()| &magic == b"\x7fELF");
-        if !is_elf {
-            continue;
-        }
-        let bytes = fs::read(&file).map_err(with_path(&file))?;
-        let Some((needed, _)) = crate::runpath::needed_and_run_path(&bytes) else {
-            continue;
-        };
-        if let Some(library) = needed.into_iter().find(|name| outside_store(name)) {
-            let relative = file.strip_prefix(dir).unwrap_or(&file).to_path_buf();
-            return Ok(Some((relative, library)));
-        }
-    }
-    Ok(None)
-}
-
-/// Whether a needed library is named by a path outside the store.
-fn outside_store(needed: &str) -> bool {
-    needed.starts_with('/') && !needed.starts_with("/store/")
-}
-
-/// Clears setuid and setgid under `dir`, which would make a program run as root wherever the
-/// store is copied as root; a system's wrappers are where privileges come from. A device, pipe
-/// or socket is an error.
-fn settle_modes(dir: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    for entry in fs::read_dir(dir).map_err(with_path(dir))? {
-        let path = entry.map_err(with_path(dir))?.path();
-        let meta = fs::symlink_metadata(&path).map_err(with_path(&path))?;
-        let kind = meta.file_type();
-        if kind.is_symlink() {
-            continue;
-        }
-        if !kind.is_file() && !kind.is_dir() {
-            return Err(format!(
-                "{}, a device, pipe or socket, but packages hold only files, directories and links",
-                path.display()
-            ));
-        }
-        let mode = meta.permissions().mode();
-        if mode & 0o6000 != 0 {
-            fs::set_permissions(&path, fs::Permissions::from_mode(mode & !0o6000))
-                .map_err(with_path(&path))?;
-        }
-        if kind.is_dir() {
-            settle_modes(&path)?;
-        }
-    }
-    Ok(())
 }
 
 /// Where the store paths a store path refers to are recorded, beside the store (decision 0021).
@@ -3431,7 +3299,7 @@ mod requirement_tests {
         fs::write(root.join("lib/libapp.so"), &cut).unwrap();
         fs::write(root.join("include/app.h"), "header\n").unwrap();
 
-        let (outputs, whole) = place_outputs(&lab, &package, &out).unwrap();
+        let (outputs, whole) = crate::fixup::place_outputs(&lab, &package, &out).unwrap();
 
         assert_eq!(outputs.len(), 1, "{outputs:?}");
         assert!(whole.unwrap().starts_with("lib/libapp.so names its path"));
@@ -3678,9 +3546,11 @@ mod crate_tests {
 
     #[test]
     fn a_library_needed_by_a_path_outside_the_store_is_one_a_machine_lacks() {
-        assert!(outside_store("/usr/lib/libsqlite3.so"));
-        assert!(!outside_store("libsqlite3.so.0"));
-        assert!(!outside_store("/store/abc-sqlite/lib/libsqlite3.so.0"));
+        assert!(crate::fixup::outside_store("/usr/lib/libsqlite3.so"));
+        assert!(!crate::fixup::outside_store("libsqlite3.so.0"));
+        assert!(!crate::fixup::outside_store(
+            "/store/abc-sqlite/lib/libsqlite3.so.0"
+        ));
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("script"), "#!/bin/sh\n").unwrap();
         assert_eq!(linked_by_path(dir.path()).unwrap(), None);
@@ -5355,5 +5225,97 @@ mod tree_record_tests {
             assert!(!styled.restyled_now());
         }
         assert!(!dir.path().join("recipes/pr/project.lock").exists());
+    }
+}
+
+#[cfg(test)]
+mod search_path_tests {
+    use super::*;
+
+    fn python() -> SearchPath {
+        SearchPath {
+            variable: "PYTHONPATH".into(),
+            files: vec!["site".into()],
+            separator: colon(),
+        }
+    }
+
+    fn path(name: &str) -> StorePath {
+        StorePath::derive(name, &[name.as_bytes()])
+    }
+
+    /// `jinja` and `markupsafe` have `site`; `zlib` doesn't.
+    fn values(declaring: &[&str]) -> BTreeMap<String, String> {
+        let deps = [
+            ("python3", vec![path("python3")]),
+            ("jinja", vec![path("jinja")]),
+            ("zlib", vec![path("zlib")]),
+            (
+                "markupsafe",
+                vec![path("markupsafe-bin"), path("markupsafe")],
+            ),
+        ];
+        let with_site = [path("jinja"), path("markupsafe")];
+        search_path_values(
+            &deps,
+            |id| {
+                if declaring.contains(&id) {
+                    vec![python()]
+                } else {
+                    Vec::new()
+                }
+            },
+            |output, file| file == "site" && with_site.contains(output),
+        )
+    }
+
+    #[test]
+    fn a_build_with_the_declaring_package_lists_its_dependencies_directories_in_order() {
+        let found = values(&["python3"]);
+        let expected = format!(
+            "{}/site:{}/site",
+            path("jinja").inside(),
+            path("markupsafe").inside()
+        );
+        assert_eq!(found, BTreeMap::from([("PYTHONPATH".into(), expected)]));
+    }
+
+    #[test]
+    fn without_the_declaring_package_there_is_no_variable() {
+        assert!(values(&[]).is_empty());
+    }
+
+    #[test]
+    fn two_packages_declaring_one_variable_list_each_directory_once() {
+        assert_eq!(values(&["python3", "jinja"]), values(&["python3"]));
+    }
+
+    #[test]
+    fn a_variable_nothing_lists_is_left_out() {
+        let deps = [("python3", vec![path("python3")])];
+        let found = search_path_values(&deps, |_| vec![python()], |_, _| false);
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn what_dependencies_in_the_view_declare_is_in_a_key_worked_out_before_building() {
+        let dep = |id: &str, view: bool| Dep {
+            id: id.into(),
+            view,
+            rpath: view,
+            skip: Vec::new(),
+            propagate: Propagate::All,
+            exclude: Vec::new(),
+        };
+        let declared = |id: &str| {
+            if id == "python3" {
+                vec![python()]
+            } else {
+                Vec::new()
+            }
+        };
+        let parts = declared_parts(&[dep("python3", true), dep("zlib", true)], declared);
+        assert_eq!(parts.len(), 1);
+        assert!(declared_parts(&[dep("python3", false)], declared).is_empty());
     }
 }

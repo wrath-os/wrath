@@ -3638,7 +3638,7 @@ mod tests {
         let mut db = Db::open(&db_path(&lab)).unwrap();
         let outcome = realised(&lab, &mut db, &packages, &model(80, true));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
-        let found: Vec<String> = pilot::files_under(&root)
+        let found: Vec<String> = crate::fixup::files_under(&root)
             .unwrap()
             .iter()
             .map(|path| path.strip_prefix(&root).unwrap().display().to_string())

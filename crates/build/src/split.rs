@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 
 use memchr::memmem;
 
-use crate::pilot::{files_under, path_byte};
+use crate::fixup::{files_under, path_byte};
 use crate::store::{Lab, StorePath, with_path};
 
 const HASH_LENGTH: usize = 40;

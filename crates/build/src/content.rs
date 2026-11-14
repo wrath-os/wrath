@@ -16,7 +16,7 @@ use memchr::memmem;
 use sha2::{Digest, Sha256};
 
 use crate::chain;
-use crate::pilot::{files_under, replace_contents};
+use crate::fixup::{files_under, replace_contents};
 use crate::store::{HASH_LENGTH, Lab, StorePath, hex, with_path};
 
 /// Replaces every `from` with `to`, and returns where they were.
