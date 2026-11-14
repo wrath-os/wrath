@@ -162,8 +162,8 @@ enum Command {
         /// Remove them without asking first
         #[arg(short, long)]
         yes: bool,
-        /// Also remove what every build made before its fix-ups, which lets a newer wrath fix
-        /// packages up again instead of building them again
+        /// Also remove what packages still in use were built from before their fix-ups; a newer
+        /// wrath then builds them again where it would have fixed them up again
         #[arg(long)]
         raw: bool,
     },

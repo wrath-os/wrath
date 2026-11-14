@@ -133,7 +133,7 @@ fn compare_rebuild(
     // Without its records, the package is built again rather than taken as built or fixed up
     // again from what its first build made.
     let out = built.temporary[&package.id].clone();
-    let fixed = fixup::fixed_record(lab, &out);
+    let fixed = fixup::fixed_record(lab, &out, chain::content_addressed(package));
     let record = fs::read_to_string(&fixed).map_err(with_path(&fixed))?;
     fs::remove_file(&fixed).map_err(with_path(&fixed))?;
     let done = lab.work.join("done").join(out.hash());

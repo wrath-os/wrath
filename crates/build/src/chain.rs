@@ -1084,6 +1084,13 @@ fn read_lock(file: &Path) -> Result<BTreeMap<String, PackageLock>, String> {
     }
 }
 
+/// Writes a lock whole, beside it first, so nothing reading it at the same time sees part of it.
+fn write_lock(file: &Path, text: &str) -> Result<(), String> {
+    let partial = file.with_extension(format!("partial{}", std::process::id()));
+    fs::write(&partial, text).map_err(with_path(&partial))?;
+    fs::rename(&partial, file).map_err(with_path(file))
+}
+
 /// `locks` as a lock's text: a table per package, its sources in the order of their URLs.
 fn lock_text(locks: &BTreeMap<String, PackageLock>) -> String {
     let quoted = |text: &str| toml::Value::String(text.to_owned()).to_string();
@@ -1201,7 +1208,7 @@ impl Sources {
         entry.record = Some(made.record.clone());
         entry.from = Some(made.from.clone());
         entry.deps.clone_from(&made.deps);
-        fs::write(&file, lock_text(&locks)).map_err(with_path(&file))
+        write_lock(&file, &lock_text(&locks))
     }
 
     /// Pins `url` as `hash` in `lock`.
@@ -1216,7 +1223,7 @@ impl Sources {
                     .map(|(url, hash)| format!("{hash}  {url}\n"))
                     .collect();
                 let file = self.repository.join(SHARED_LOCK);
-                fs::write(&file, text).map_err(with_path(&file))
+                write_lock(&file, &text)
             }
             Lock::Beside { file, id } => {
                 self.beside
@@ -1229,7 +1236,7 @@ impl Sources {
                     url: url.to_owned(),
                     hash: hash.to_owned(),
                 });
-                fs::write(&file, lock_text(&locks)).map_err(with_path(&file))
+                write_lock(&file, &lock_text(&locks))
             }
         }
     }
@@ -1246,6 +1253,13 @@ impl Sources {
                 .or_else(|| self.pins.get(&source.url).cloned())
         };
         match known {
+            // Pinned by another recipe's lock, it's pinned in this one's too, as fetching does.
+            Some(hash) if source.sha256.is_none() && !self.holds(lock, &source.url) => {
+                if !self.read_only {
+                    self.pin(&source.url, &hash, lock)?;
+                }
+                Ok(hash)
+            }
             Some(hash) => Ok(hash),
             None => self.fetch_source(lab, source, lock).map(|(_, hash)| hash),
         }
@@ -1775,13 +1789,17 @@ fn style_one(
                 styled.id
             ));
         }
+        // Said, since it changes the checkout.
+        eprintln!("  record {}, in its lock", styled.id);
         sources.remember(&lock, &made)?;
     }
     Ok(styled)
 }
 
 /// The digest of what `package`'s style makes its script from: the style's code, and the
-/// recipe's name, version, options for the style, sources and own files.
+/// recipe's name, version, style tables, dependencies, sources and own files. Every one changes
+/// what the style makes or what's recorded of it, such as the dependencies it adds that the
+/// recipe doesn't list.
 fn made_from(
     lab: &Lab,
     repository: &Path,
@@ -1789,7 +1807,8 @@ fn made_from(
     package: &Package,
     style: &Style,
 ) -> Result<String, String> {
-    let options = serde_json::to_value(package.style_options.get(style.name()))
+    // All of them, so naming another style is seen though the recorded one has no table.
+    let options = serde_json::to_value(&package.style_options)
         .map_err(|e| e.to_string())?
         .to_string();
     let mut parts = vec![
@@ -1799,6 +1818,7 @@ fn made_from(
         package.id.clone(),
         package.version.clone().unwrap_or_default(),
         options,
+        package.dep_ids()?.join(" "),
     ];
     for source in &package.sources {
         parts.push(sources.hash_of(lab, source, &package.origin.lock)?);
@@ -2654,10 +2674,11 @@ pub(crate) fn begin(
 
     let lock = build_lock(lab, &out, &package.id)?;
     let done = lab.work.join("done").join(out.hash());
-    let fixed = crate::fixup::fixed_record(lab, &out);
+    let moved = content_addressed(package);
+    let fixed = crate::fixup::fixed_record(lab, &out, moved);
     // Read once the key is ours: a build that waited finds what the other one made.
     if fixed.exists() && !again {
-        if content_addressed(package) {
+        if moved {
             let address = fs::read_to_string(&fixed).map_err(with_path(&fixed))?;
             remember_outputs(built, package, &address);
         }
@@ -2901,7 +2922,12 @@ fn build_package(
 /// Runs the sandbox of `pending`, or for a build made before, puts back what it made.
 pub(crate) fn run(lab: &Lab, pending: &Pending) -> Result<sandbox::Outcome, String> {
     if !pending.from_raw {
-        return sandbox::run_shown(lab, &pending.step, Some(("build", "built")));
+        let outcome = sandbox::run_shown(lab, &pending.step, Some(("build", "built")))?;
+        // Kept here, outside anything a caller holds: compressing a big package takes a while.
+        if outcome.status == Status::Passed && pending.done.is_some() {
+            keep_raw_output(lab, &pending.out)?;
+        }
+        return Ok(outcome);
     }
     eprintln!("  fix    {}", pending.step.name);
     put_back_raw_output(lab, &pending.out)?;
@@ -2993,6 +3019,14 @@ pub fn forget_raw_outputs(lab: &Lab, all: bool) -> Result<usize, String> {
             kept.insert(out.to_owned());
         }
     }
+    // What a build made whose fix-up never finished has no record, and nothing uses it.
+    let raw_dir = lab.work.join("raw");
+    for entry in fs::read_dir(&raw_dir).into_iter().flatten() {
+        let entry = entry.map_err(with_path(&raw_dir))?;
+        if let Some(out) = entry.file_name().to_string_lossy().strip_suffix(".tar.zst") {
+            seen.insert(out.to_owned());
+        }
+    }
     let mut forgotten = 0;
     for out in &seen {
         let used = kept.contains(out);
@@ -3053,10 +3087,9 @@ pub(crate) fn end(
             step.log.display()
         ));
     }
-    // What the build made is kept as it is, so a change in what's done after it never needs it
-    // built again.
+    // What the build made was kept as it is by `run`, so a change in what's done after it never
+    // needs it built again.
     if let Some(done) = done.filter(|_| !from_raw) {
-        keep_raw_output(lab, &out)?;
         if let Some(dir) = done.parent() {
             fs::create_dir_all(dir).map_err(with_path(dir))?;
         }
@@ -5269,6 +5302,22 @@ style(name = "meson", files = ["meson.build"], build = build)
     }
 
     #[test]
+    fn a_recipe_that_lists_what_its_style_adds_is_styled_again() {
+        let set = set();
+        set.styled(MESON, false).unwrap();
+        let file = set.dir.path().join("recipes/ap/app.toml");
+        let recipe = fs::read_to_string(&file).unwrap();
+        let listed = recipe.replace(
+            "scope = \"runtime\"\n",
+            "scope = \"runtime\"\ndeps = [\"meson\"]\n",
+        );
+        fs::write(&file, listed).unwrap();
+        let again = set.styled(MESON, false).unwrap();
+        assert!(!again.planned);
+        assert_eq!(set.lock()["app"].made().unwrap().deps, Vec::<String>::new());
+    }
+
+    #[test]
     fn a_pinned_set_never_pins_a_source() {
         let set = set();
         let error = set.styled(MESON, true).unwrap_err();
@@ -5444,11 +5493,18 @@ mod raw_output_tests {
     fn a_fix_up_is_recorded_by_its_build_and_rules() {
         let lab = Lab::new("/nonexistent/work");
         let out = StorePath::derive("build", &[b"demo"]);
-        let record = crate::fixup::fixed_record(&lab, &out);
+        let record = crate::fixup::fixed_record(&lab, &out, true);
         let name = record.file_name().unwrap().to_string_lossy().into_owned();
         assert!(name.starts_with(out.hash()), "{name}");
         assert!(name.ends_with(&crate::fixup::rules()[..16]), "{name}");
         assert_eq!(crate::fixup::rules().len(), 64);
+        // A package that stays where it was built is never fixed up again by other rules.
+        let stays = crate::fixup::fixed_record(&lab, &out, false);
+        assert!(
+            stays.to_string_lossy().ends_with("-built"),
+            "{}",
+            stays.display()
+        );
     }
 
     #[test]
@@ -5471,7 +5527,7 @@ mod raw_output_tests {
             for file in [
                 raw_output(&lab, out),
                 lab.work.join("done").join(out.hash()),
-                crate::fixup::fixed_record(&lab, out),
+                crate::fixup::fixed_record(&lab, out, true),
             ] {
                 fs::create_dir_all(file.parent().unwrap()).unwrap();
                 fs::write(
@@ -5486,16 +5542,21 @@ mod raw_output_tests {
             }
         }
 
-        assert_eq!(forget_raw_outputs(&lab, false).unwrap(), 1);
+        // A build whose fix-up never finished left what it made and no record.
+        let orphan = StorePath::derive("build", &[b"orphan"]).named("orphan-1.0");
+        fs::write(raw_output(&lab, &orphan), "").unwrap();
+
+        assert_eq!(forget_raw_outputs(&lab, false).unwrap(), 2);
+        assert!(!raw_output(&lab, &orphan).exists());
         assert!(raw_output(&lab, &kept).exists());
-        assert!(crate::fixup::fixed_record(&lab, &kept).exists());
+        assert!(crate::fixup::fixed_record(&lab, &kept, true).exists());
         assert!(!raw_output(&lab, &gone).exists());
-        assert!(!crate::fixup::fixed_record(&lab, &gone).exists());
+        assert!(!crate::fixup::fixed_record(&lab, &gone, true).exists());
         assert!(!lab.work.join("done").join(gone.hash()).exists());
 
         // All of them, though what's in the store stays fixed up and built.
         assert_eq!(forget_raw_outputs(&lab, true).unwrap(), 1);
         assert!(!raw_output(&lab, &kept).exists());
-        assert!(crate::fixup::fixed_record(&lab, &kept).exists());
+        assert!(crate::fixup::fixed_record(&lab, &kept, true).exists());
     }
 }

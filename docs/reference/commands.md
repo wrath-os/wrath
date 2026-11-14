@@ -99,7 +99,7 @@ wrath clean [OPTIONS]
 
 - `--keep <KEEP>`: How many generations before the current one to keep
 - `-y, --yes`: Remove them without asking first
-- `--raw`: Also remove what every build made before its fix-ups, which lets a newer wrath fix packages up again instead of building them again
+- `--raw`: Also remove what packages still in use were built from before their fix-ups; a newer wrath then builds them again where it would have fixed them up again
 
 ## `wrath rollback`
 

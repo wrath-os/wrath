@@ -257,10 +257,12 @@ pub fn rules() -> &'static str {
     })
 }
 
-/// Where what fixing up the build at `out` under today's [`rules`] made is recorded: its outputs,
-/// or nothing for a package that stays where it was built.
-pub(crate) fn fixed_record(lab: &Lab, out: &StorePath) -> PathBuf {
-    let rules = &rules()[..16];
+/// Where what fixing up the build at `out` under today's [`rules`] made is recorded: the outputs
+/// of a package that's `moved` to its content addresses. One that stays where it was built is
+/// fixed up once, with its build, and never by later rules: its dependents know it by that path,
+/// so they couldn't tell it had changed.
+pub(crate) fn fixed_record(lab: &Lab, out: &StorePath, moved: bool) -> PathBuf {
+    let rules = if moved { &rules()[..16] } else { "built" };
     lab.work
         .join("fixed")
         .join(format!("{}-{rules}", out.hash()))
@@ -324,10 +326,11 @@ pub(crate) fn finish(
     out: &StorePath,
     built: &mut Built,
 ) -> Result<(), String> {
-    let fixed = fixed_record(lab, out);
+    let moved = content_addressed(package);
+    let fixed = fixed_record(lab, out, moved);
     let dir = fixed.parent().expect("a record is in a directory");
     fs::create_dir_all(dir).map_err(with_path(dir))?;
-    if !content_addressed(package) {
+    if !moved {
         return fs::write(&fixed, "").map_err(with_path(&fixed));
     }
     let (outputs, whole) = place_outputs(lab, package, out)?;

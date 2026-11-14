@@ -149,3 +149,29 @@ another question than what it builds with.
 - Hash the whole builder into every key. No bumps, but every commit to wrath rebuilds the world.
 - Search paths as code (Spack, Nix setup hooks). More power, and the opacity that made setup
   hooks the thing to avoid.
+
+## As built (steps 1 to 3)
+
+Where the code differs from the above, or settles what it left open:
+
+- The toolchain isn't a file of its own: it's what `wrapper`, `gcc`, `glibc`, `binutils`,
+  `linux-headers` and `hello` need, wherever their recipes are.
+- A lock records `style`, `record`, `from` and `deps`. `from` covers the style's code and the
+  recipe's version, style tables, dependencies, sources and own files, so planning sees any
+  change that could change the record. A record that still differs when the build styles the
+  recipe means the style isn't deterministic, and the build stops; nothing is rewritten then.
+- A checkout writes a missing or stale record when it plans, and says so per recipe. `wrath dev
+  lint` records every recipe; `wrath update` doesn't write records yet. Grapes' CI runs
+  `wrath dev lint --locked`, which styles every recipe and fails on a missing record or pin.
+- A recipe built from a tree of a checkout, such as wrath's own, is always styled and never
+  recorded: its tree changes with every edit.
+- The fix-up rules are a digest of the code of `fixup.rs`, `runpath.rs`, `split.rs` and
+  `content.rs`, so a comment there fixes every package up again. What a fix-up made is recorded
+  under `fixed/<build key>-<rules>`.
+- A boot package isn't moved to a content address, so its dependents know it by its build's
+  path. It's fixed up once, with its build, and never again by later rules, which its dependents
+  couldn't see.
+- Raw outputs are kept with the build, outside the shared lock, and fix-ups run side by side;
+  only placing a package is serialised.
+- Still outside any key: the host's `strip`, which fix-ups run. A host binutils update can change
+  what a fix-up makes unnoticed, as before.
