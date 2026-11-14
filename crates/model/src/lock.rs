@@ -46,7 +46,7 @@ struct File {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
-    /// What `wrath update` follows, such as `github:johnae/wrath`.
+    /// What `wrath update` follows, such as `github:wrath-os/grapes`.
     pub url: String,
     /// The revision it was at, when it has one.
     pub rev: Option<String>,
