@@ -235,19 +235,20 @@ fn colon() -> String {
     ":".to_owned()
 }
 
-/// The search paths `deps` in a build's view declare, for a key worked out before they're built.
-fn declared_parts(deps: &[Dep], declared: impl Fn(&str) -> Vec<SearchPath>) -> Vec<Vec<u8>> {
-    deps.iter()
-        .filter(|dep| dep.view)
-        .flat_map(|dep| {
-            declared(&dep.id).into_iter().map(|search| {
-                let SearchPath {
-                    variable,
-                    files,
-                    separator,
-                } = search;
-                format!("declares {} {variable} {files:?} {separator}", dep.id).into_bytes()
-            })
+/// The search paths a package declares, for its key worked out before anything is built. They
+/// change what its dependents build with, not what it builds, so its build key leaves them out.
+/// Every dependent's unresolved key has its dependencies', so one that only a requirement brings
+/// into a view is covered too.
+fn declared_parts(declared: &[SearchPath]) -> Vec<Vec<u8>> {
+    declared
+        .iter()
+        .map(|search| {
+            let SearchPath {
+                variable,
+                files,
+                separator,
+            } = search;
+            format!("declares {variable} {files:?} {separator}").into_bytes()
         })
         .collect()
 }
@@ -2458,10 +2459,6 @@ pub(crate) fn keys_of(
     let mut sources = Sources::load(repository)?;
     let mut keys = BTreeMap::from([("seed".to_owned(), seed.hash().to_owned())]);
     let packages = in_order(packages, |id| keys.contains_key(id))?;
-    let declared: BTreeMap<&str, &[SearchPath]> = packages
-        .iter()
-        .map(|package| (package.id.as_str(), package.search_paths.as_slice()))
-        .collect();
     for package in &packages {
         let hashes = package
             .sources
@@ -2471,12 +2468,7 @@ pub(crate) fn keys_of(
         let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
         let mut recipe = recipe_parts(repository, package, &hashes)?;
         let deps = package.all_deps()?;
-        recipe.extend(declared_parts(&deps, |id| {
-            declared
-                .get(id)
-                .map(|found| found.to_vec())
-                .unwrap_or_default()
-        }));
+        recipe.extend(declared_parts(&package.search_paths));
         let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
         keys.insert(package.id.clone(), key.hash().to_owned());
     }
@@ -2580,7 +2572,7 @@ pub(crate) fn begin(
     let out = package_key("build", &built_from, &deps, |dep| built.reference(&dep.id))
         .named(&package.store_name());
     let mut planned_from = recipe;
-    planned_from.extend(declared_parts(&listed, declared));
+    planned_from.extend(declared_parts(&package.search_paths));
     let unresolved = package_key("unresolved", &planned_from, &listed, |dep| {
         built.unresolved_or_path(&dep.id)
     })
@@ -5418,25 +5410,15 @@ mod search_path_tests {
     }
 
     #[test]
-    fn what_dependencies_in_the_view_declare_is_in_a_key_worked_out_before_building() {
-        let dep = |id: &str, view: bool| Dep {
-            id: id.into(),
-            view,
-            rpath: view,
-            skip: Vec::new(),
-            propagate: Propagate::All,
-            exclude: Vec::new(),
-        };
-        let declared = |id: &str| {
-            if id == "python3" {
-                vec![python()]
-            } else {
-                Vec::new()
-            }
-        };
-        let parts = declared_parts(&[dep("python3", true), dep("zlib", true)], declared);
+    fn what_a_package_declares_is_in_its_key_worked_out_before_building() {
+        let parts = declared_parts(&[python()]);
         assert_eq!(parts.len(), 1);
-        assert!(declared_parts(&[dep("python3", false)], declared).is_empty());
+        let semicolons = SearchPath {
+            separator: ";".into(),
+            ..python()
+        };
+        assert_ne!(parts, declared_parts(&[semicolons]));
+        assert!(declared_parts(&[]).is_empty());
     }
 }
 
