@@ -129,7 +129,7 @@ fn cache() -> PathBuf {
 }
 
 fn curl(url: &str, output: &Path) -> Result<(), String> {
-    let status = Command::new("curl")
+    let done = Command::new("curl")
         .args([
             "-q",
             "--fail",
@@ -142,12 +142,26 @@ fn curl(url: &str, output: &Path) -> Result<(), String> {
         .args(["--max-time", "600", "--output"])
         .arg(output)
         .arg(url)
-        .status()
+        .output()
         .map_err(|e| format!("cannot run curl: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("couldn't download {url}"))
+    if done.status.success() {
+        return Ok(());
+    }
+    // curl's own words, such as `The requested URL returned error: 404`, in wrath's error.
+    let said = String::from_utf8_lossy(&done.stderr);
+    let reason = said
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| {
+            let line = line.trim().trim_start_matches("curl: ");
+            line.strip_prefix('(')
+                .and_then(|rest| rest.split_once(") "))
+                .map_or(line, |(_, words)| words)
+        });
+    match reason {
+        Some(reason) => Err(format!("couldn't download {url}: {reason}")),
+        None => Err(format!("couldn't download {url}")),
     }
 }
 
