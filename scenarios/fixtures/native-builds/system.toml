@@ -12,4 +12,4 @@ patches = ["patches/hello.patch"]
 
 [builds.tiny-nano]
 package = "nano"
-options.enableTiny = true
+options.enable_tiny = true

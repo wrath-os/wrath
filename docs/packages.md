@@ -92,7 +92,7 @@ packages = ["tiny-nano", "patched-hello"]
 
 [builds.tiny-nano]
 package = "nano"
-options.enableTiny = true
+options.enable_tiny = true
 
 [builds.patched-hello]
 package = "gnu-hello"

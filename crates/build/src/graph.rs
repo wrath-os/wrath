@@ -2274,6 +2274,43 @@ fn record_packages(db: &mut Db, built: &Built) -> Result<(), String> {
     tx.commit().map_err(sql)
 }
 
+/// Lines about recipe files that aren't where anyone would look for them: each is named after
+/// one of its packages, under the first two letters of that name, and declares ids no other file
+/// does.
+pub fn misplaced_recipes(repository: &Path) -> Result<String, String> {
+    let mut lines = String::new();
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    for file in recipe_files(repository)? {
+        let packages = chain::load(repository, &file)?;
+        let (shard, name) = file.rsplit_once('/').unwrap_or(("", &file));
+        let name = name.strip_suffix(".toml").unwrap_or(name);
+        if !packages.iter().any(|package| package.id == name) {
+            lines.push_str(&format!(
+                "recipes/{file}: named after none of its packages; name it after the main one\n"
+            ));
+        }
+        let wanted: String = name
+            .chars()
+            .take(2)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if shard != wanted {
+            lines.push_str(&format!(
+                "recipes/{file}: goes in recipes/{wanted}/, under the first letters of its name\n"
+            ));
+        }
+        for package in packages {
+            if let Some(other) = declared.insert(package.id.clone(), file.clone()) {
+                lines.push_str(&format!(
+                    "`{}` is declared in recipes/{other} and recipes/{file}\n",
+                    package.id
+                ));
+            }
+        }
+    }
+    Ok(lines)
+}
+
 /// Lines of recipes and styles under `repository` that write a target's name, such as `x86_64`,
 /// where a placeholder or variable says it for whichever target builds (0032): `{arch}`,
 /// `{triple}`, `$WRATH_ARCH`, `$WRATH_TRIPLE` or `$WRATH_LOADER`. Comments don't count.
@@ -2511,6 +2548,16 @@ pub fn system(
     system_from(&lab, &mut db, &known_packages(&built), model, kept)
 }
 
+/// The key every recipe in `repository` has before anything is built, by id.
+pub fn all_keys(repository: &Path, work: &Path) -> Result<BTreeMap<String, String>, String> {
+    let lab = Lab::new(work);
+    let mut packages = Vec::new();
+    for file in recipe_files(repository)? {
+        packages.extend(chain::load_styled(&lab, repository, &file)?);
+    }
+    chain::keys_of(&lab, repository, packages)
+}
+
 /// Styles every recipe whose lock doesn't record what its style makes now, recording it, and
 /// returns their ids. With the locks read only, the first such recipe is an error.
 pub fn record_styles(repository: &Path, work: &Path) -> Result<Vec<String>, String> {
@@ -2579,6 +2626,34 @@ mod tests {
             "{found}"
         );
         assert_eq!(found.lines().count(), 1, "{found}");
+    }
+
+    #[test]
+    fn a_recipe_file_goes_under_its_name_and_declares_ids_no_other_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let recipe = |id: &str| format!("[[package]]\nid = \"{id}\"\nscope = \"runtime\"\n");
+        for (file, text) in [
+            ("jq/jq.toml", recipe("jq")),
+            ("gt/gtk4.toml", recipe("gtk4") + &recipe("gtk4-gir")),
+            ("gt/tools.toml", recipe("gtk4-gir")),
+            ("ripgrep.toml", recipe("ripgrep")),
+        ] {
+            let path = dir.path().join("recipes").join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let found = misplaced_recipes(dir.path()).unwrap();
+        let lines: Vec<&str> = found.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "recipes/gt/tools.toml: named after none of its packages; name it after the main \
+                 one",
+                "recipes/gt/tools.toml: goes in recipes/to/, under the first letters of its name",
+                "`gtk4-gir` is declared in recipes/gt/gtk4.toml and recipes/gt/tools.toml",
+                "recipes/ripgrep.toml: goes in recipes/ri/, under the first letters of its name",
+            ]
+        );
     }
 
     #[test]

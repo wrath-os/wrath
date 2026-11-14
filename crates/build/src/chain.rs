@@ -58,6 +58,20 @@ enum DepSpec {
     },
 }
 
+/// What a package builds with besides its `deps`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Toolchain {
+    /// The final compilers, C library and binutils, and the core tools: coreutils, sed, make,
+    /// bash and the rest, as almost every package wants.
+    #[default]
+    Full,
+    /// The compilers, C library and binutils alone, for what the core tools are built from.
+    Compilers,
+    /// The seed alone, for the packages the toolchain itself is built from.
+    Seed,
+}
+
 /// What of a dependency's requirements a dependent's view takes (decision 0019).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -281,7 +295,7 @@ pub(crate) struct Source {
     #[serde(default)]
     include: Vec<String>,
     /// The hash the file must have, when the recipe knows it, such as a crate's from a
-    /// `Cargo.lock`. Otherwise `sources.lock` pins it.
+    /// `Cargo.lock`. Otherwise its recipe's lock pins it.
     sha256: Option<String>,
     /// Put the file in place at `into` as it is, instead of unpacking it.
     #[serde(default)]
@@ -296,20 +310,16 @@ pub(crate) struct Package {
     #[serde(default)]
     pub(crate) version: Option<String>,
     scope: Scope,
-    /// Build on the final toolchain, in addition to `deps` and `extra_deps`.
+    /// What it builds with besides `deps`: the toolchain and the core tools unless it says less.
     #[serde(default)]
-    toolset: bool,
+    toolchain: Toolchain,
     /// One output, for a package that finds its own files relative to a library at run time,
     /// which no scan of its files can see.
     #[serde(default)]
     pub(crate) whole: bool,
-    /// Build on the core tools as well, instead of the seed's.
-    #[serde(default)]
-    core: bool,
+    /// What it builds with, by id, after its toolchain: exactly what the build sees.
     #[serde(default)]
     deps: Vec<DepSpec>,
-    #[serde(default)]
-    extra_deps: Vec<DepSpec>,
     /// Packages it brings into its dependents' views that no `.pc` file of its names.
     #[serde(default)]
     propagates: Vec<String>,
@@ -375,10 +385,6 @@ pub(crate) struct Package {
     script: String,
     #[serde(default = "yes")]
     wrap: bool,
-    /// Asked a past experiment not to patch binaries after install. It does nothing now, but
-    /// it's still in the key so packages that set it aren't rebuilt.
-    #[serde(default = "yes")]
-    fixup: bool,
     /// How long the build may go without printing anything, such as `3h`, for one that works
     /// quietly for longer than an hour.
     #[serde(default)]
@@ -386,11 +392,6 @@ pub(crate) struct Package {
     /// Commands to run from the final location, with paths relative to the package.
     #[serde(default)]
     pub(crate) smoke: Vec<String>,
-    /// Libraries to link a small program against. Recipes still list them, but nothing links
-    /// the probes any more.
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub(crate) probes: Vec<String>,
     /// Builds the tests, in the view, for tests that need a compiler.
     #[serde(default)]
     pub(crate) check_build: Option<String>,
@@ -422,10 +423,7 @@ const CORE_TOOLS: [&str; 11] = [
 impl Package {
     /// Whether its style ran as it loaded, its lock beside it not recording what the style makes.
     pub(crate) fn restyled_now(&self) -> bool {
-        self.style.is_some()
-            && !self.planned
-            && !self.built_from_a_tree()
-            && matches!(self.origin.lock, Lock::Beside { .. })
+        self.style.is_some() && !self.planned && !self.built_from_a_tree()
     }
 
     /// Whether a source is a tree of a checkout, such as wrath's, which changes with every edit
@@ -443,7 +441,7 @@ impl Package {
 
     /// Whether fixups apply to it after it's installed.
     pub(crate) fn fixed_up(&self) -> bool {
-        self.toolset || self.core
+        self.toolchain != Toolchain::Seed
     }
 
     /// Where its first source is downloaded from, with `{version}` in it. A source from the
@@ -551,18 +549,16 @@ impl Package {
             DepSpec::Id("glibc".to_owned()),
             DepSpec::Id("linux-headers".to_owned()),
         ];
-        let base: &[DepSpec] = if self.toolset || self.core {
-            &toolset
-        } else {
-            &[]
+        let base: &[DepSpec] = match self.toolchain {
+            Toolchain::Full | Toolchain::Compilers => &toolset,
+            Toolchain::Seed => &[],
         };
-        let core: Vec<DepSpec> = if self.core {
-            CORE_TOOLS
+        let core: Vec<DepSpec> = match self.toolchain {
+            Toolchain::Full => CORE_TOOLS
                 .iter()
                 .map(|id| DepSpec::Id((*id).to_owned()))
-                .collect()
-        } else {
-            Vec::new()
+                .collect(),
+            Toolchain::Compilers | Toolchain::Seed => Vec::new(),
         };
         let runtime = self.runtime_deps.iter().map(|id| Dep {
             id: id.clone(),
@@ -575,7 +571,6 @@ impl Package {
         base.iter()
             .chain(&core)
             .chain(&self.deps)
-            .chain(&self.extra_deps)
             .map(DepSpec::resolve)
             .chain(runtime.map(Ok))
             .collect()
@@ -626,12 +621,16 @@ impl Package {
     /// The recipe with its options' defaults set at the top of its script, so the script reads
     /// them without defaults of its own.
     fn with_option_defaults(mut self) -> Result<Self, String> {
-        if let Some(name) = self
-            .options
-            .keys()
-            .find(|name| !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-        {
-            return Err(format!("`{}`'s option `{name}` isn't a name", self.id));
+        // Lower case and underscores, as every other name in a configuration is.
+        if let Some(name) = self.options.keys().find(|name| {
+            !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        }) {
+            return Err(format!(
+                "`{}`'s option `{name}` isn't a name: use lower case and `_`, as `enable_tiny`",
+                self.id
+            ));
         }
         self.script = self.option_exports(&serde_json::Map::new())? + &self.script;
         Ok(self)
@@ -675,14 +674,14 @@ impl Package {
                 "patch -p1 <<'WRATH_PATCH_{index}'\n{patch}{end}WRATH_PATCH_{index}\n"
             ));
         }
-        let mut extra_deps = self.extra_deps.clone();
+        let mut deps = self.deps.clone();
         if !patches.is_empty() && !self.dep_ids()?.iter().any(|id| id == "patch") {
-            extra_deps.push(DepSpec::Id("patch".to_owned()));
+            deps.push(DepSpec::Id("patch".to_owned()));
         }
         Ok(Self {
             id: id.to_owned(),
             script: format!("{prelude}{script}"),
-            extra_deps,
+            deps,
             ..self.clone()
         })
     }
@@ -795,13 +794,13 @@ pub(crate) fn redundant_deps(
 ) -> Result<Vec<(String, Vec<Redundant>)>, String> {
     let mut found = Vec::new();
     for package in packages.iter().filter(|package| !package.is_boot()) {
-        let specs: Vec<&DepSpec> = package.deps.iter().chain(&package.extra_deps).collect();
-        let listed: Vec<Dep> = specs
+        let listed: Vec<Dep> = package
+            .deps
             .iter()
-            .map(|spec| spec.resolve())
+            .map(DepSpec::resolve)
             .collect::<Result<_, _>>()?;
         let mut redundant = Vec::new();
-        for spec in specs {
+        for spec in &package.deps {
             // A dependency written as a table says something about itself; it stays.
             let DepSpec::Id(id) = spec else {
                 continue;
@@ -931,12 +930,9 @@ fn locks_read_only() -> bool {
     LOCKS_READ_ONLY.get().copied().unwrap_or(false)
 }
 
-/// The lock of the recipes kept in files of a theme.
-const SHARED_LOCK: &str = "sources.lock";
-
-/// Every recipe file under `recipes/`, as a path from there: files of a theme at the top, such
-/// as `desktop.toml`, and files of one package or family a directory down, such as
-/// `gh/ghostty.toml`. What's further down is a recipe's own files.
+/// Every recipe file under `recipes/`, as a path from there, such as `gh/ghostty.toml`: the file
+/// of one package or of a family, under the first two letters of its name. What's further down is
+/// a recipe's own files.
 pub(crate) fn recipe_files(repository: &Path) -> Result<Vec<String>, String> {
     let dir = repository.join(RECIPES);
     let tomls = |dir: &Path| -> Result<Vec<String>, String> {
@@ -969,32 +965,27 @@ pub(crate) fn names_of(names: &[String]) -> Vec<&str> {
     names.iter().map(String::as_str).collect()
 }
 
-/// The lock beside each recipe file of one package or family, as a path from the repository.
+/// The lock beside each recipe file, as a path from the repository.
 fn beside_locks(repository: &Path) -> Result<Vec<PathBuf>, String> {
     if !repository.join(RECIPES).is_dir() {
         return Ok(Vec::new());
     }
     Ok(recipe_files(repository)?
         .iter()
-        .filter_map(|file| match Origin::of(file, "").lock {
-            Lock::Beside { file, .. } => Some(file),
-            Lock::Shared => None,
-        })
+        .map(|file| Origin::of(file, "").lock.file)
         .collect())
 }
 
-/// The lock a recipe's new pins are written to.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) enum Lock {
-    /// `sources.lock`, which pins the sources of recipes kept in files of a theme.
-    #[default]
-    Shared,
-    /// The lock beside the recipe's own file, under the recipe's id.
-    Beside { file: PathBuf, id: String },
+/// Where a recipe's sources are pinned and what its style made is recorded: the lock beside its
+/// file, under its id. `file` is a path from the repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Lock {
+    pub(crate) file: PathBuf,
+    pub(crate) id: String,
 }
 
 /// Where a recipe was read from: the directory its own `files` are in, relative to the
-/// repository, and the lock its sources are pinned in.
+/// repository, and its lock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Origin {
     pub(crate) dir: PathBuf,
@@ -1003,25 +994,19 @@ pub(crate) struct Origin {
 
 impl Default for Origin {
     fn default() -> Self {
-        Self {
-            dir: PathBuf::from(RECIPES),
-            lock: Lock::Shared,
-        }
+        Self::of("recipe.toml", "recipe")
     }
 }
 
 impl Origin {
-    /// Where the recipes in `file`, relative to `recipes/`, come from. A file of a theme, at the
-    /// top, has its files beside it and its pins in `sources.lock`. A file of one package or
-    /// family, `gh/ghostty.toml`, has its files in `gh/ghostty/` and its pins in `gh/ghostty.lock`.
+    /// Where the recipe `id` in `file`, a path from `recipes/`, comes from: one in
+    /// `gh/ghostty.toml` has its own files in `gh/ghostty/` and its lock in `gh/ghostty.lock`.
     pub(crate) fn of(file: &str, id: &str) -> Self {
-        let Some(stem) = file.strip_suffix(".toml").filter(|_| file.contains('/')) else {
-            return Self::default();
-        };
+        let stem = file.strip_suffix(".toml").unwrap_or(file);
         let dir = Path::new(RECIPES).join(stem);
         Self {
-            lock: Lock::Beside {
-                file: dir.with_extension("lock"),
+            lock: Lock {
+                file: PathBuf::from(format!("{}.lock", dir.display())),
                 id: id.to_owned(),
             },
             dir,
@@ -1086,6 +1071,9 @@ fn read_lock(file: &Path) -> Result<BTreeMap<String, PackageLock>, String> {
 
 /// Writes a lock whole, beside it first, so nothing reading it at the same time sees part of it.
 fn write_lock(file: &Path, text: &str) -> Result<(), String> {
+    if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir).map_err(with_path(dir))?;
+    }
     let partial = file.with_extension(format!("partial{}", std::process::id()));
     fs::write(&partial, text).map_err(with_path(&partial))?;
     fs::rename(&partial, file).map_err(with_path(file))
@@ -1136,53 +1124,37 @@ fn lock_text(locks: &BTreeMap<String, PackageLock>) -> String {
     text
 }
 
-/// The pinned hashes of sources: in `sources.lock`, as `<sha256>  <url>` lines, for recipes kept
-/// in files of a theme, and in the lock beside each recipe file of one package or family. A URL
-/// not pinned yet is pinned in its recipe's lock the first time it's fetched.
+/// The pinned hashes of sources, in the lock beside each recipe file. A URL not pinned yet is
+/// pinned in its recipe's lock the first time it's fetched.
 pub(crate) struct Sources {
     repository: PathBuf,
     /// Every pin, by URL.
     pins: BTreeMap<String, String>,
-    /// What `sources.lock` pins.
-    shared: BTreeMap<String, String>,
-    /// What the locks beside recipe files pin: each lock, package id and URL.
-    beside: BTreeSet<(PathBuf, String, String)>,
+    /// What each lock pins: each lock, package id and URL.
+    pinned: BTreeSet<(PathBuf, String, String)>,
     /// Whether the locks are only read, as a pinned set's are.
     read_only: bool,
 }
 
 impl Sources {
     pub(crate) fn load(repository: &Path) -> Result<Self, String> {
-        let file = repository.join(SHARED_LOCK);
-        let text = match fs::read_to_string(&file) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(with_path(&file)(e)),
-        };
-        let shared: BTreeMap<String, String> = text
-            .lines()
-            .filter_map(|line| line.split_once("  "))
-            .map(|(hash, url)| (url.to_owned(), hash.to_owned()))
-            .collect();
-        let mut pins = shared.clone();
+        let mut pins: BTreeMap<String, String> = BTreeMap::new();
         let mut pinned_by: BTreeMap<String, PathBuf> = BTreeMap::new();
-        let mut beside = BTreeSet::new();
+        let mut pinned = BTreeSet::new();
         for lock in beside_locks(repository)? {
             for (id, package) in read_lock(&repository.join(&lock))? {
                 for Pinned { url, hash } in package.sources {
                     if let Some(other) = pins.get(&url)
                         && *other != hash
                     {
-                        let by = pinned_by
-                            .get(&url)
-                            .map_or(SHARED_LOCK.into(), |by| by.display().to_string());
                         return Err(format!(
-                            "{url} is pinned as {hash} in {} and as {other} in {by}",
-                            lock.display()
+                            "{url} is pinned as {hash} in {} and as {other} in {}",
+                            lock.display(),
+                            pinned_by[&url].display()
                         ));
                     }
                     pinned_by.insert(url.clone(), lock.clone());
-                    beside.insert((lock.clone(), id.clone(), url.clone()));
+                    pinned.insert((lock.clone(), id.clone(), url.clone()));
                     pins.insert(url, hash);
                 }
             }
@@ -1190,20 +1162,16 @@ impl Sources {
         Ok(Self {
             repository: repository.to_owned(),
             pins,
-            shared,
-            beside,
+            pinned,
             read_only: locks_read_only(),
         })
     }
 
     /// Records in `lock` what a style made, in place of what it recorded before.
     fn remember(&self, lock: &Lock, made: &Made) -> Result<(), String> {
-        let Lock::Beside { file, id } = lock else {
-            return Ok(());
-        };
-        let file = self.repository.join(file);
+        let file = self.repository.join(&lock.file);
         let mut locks = read_lock(&file)?;
-        let entry = locks.entry(id.clone()).or_default();
+        let entry = locks.entry(lock.id.clone()).or_default();
         entry.style = Some(made.style.clone());
         entry.record = Some(made.record.clone());
         entry.from = Some(made.from.clone());
@@ -1214,31 +1182,17 @@ impl Sources {
     /// Pins `url` as `hash` in `lock`.
     fn pin(&mut self, url: &str, hash: &str, lock: &Lock) -> Result<(), String> {
         self.pins.insert(url.to_owned(), hash.to_owned());
-        match lock {
-            Lock::Shared => {
-                self.shared.insert(url.to_owned(), hash.to_owned());
-                let text: String = self
-                    .shared
-                    .iter()
-                    .map(|(url, hash)| format!("{hash}  {url}\n"))
-                    .collect();
-                let file = self.repository.join(SHARED_LOCK);
-                write_lock(&file, &text)
-            }
-            Lock::Beside { file, id } => {
-                self.beside
-                    .insert((file.clone(), id.clone(), url.to_owned()));
-                let file = self.repository.join(file);
-                let mut locks = read_lock(&file)?;
-                let sources = &mut locks.entry(id.clone()).or_default().sources;
-                sources.retain(|pinned| pinned.url != url);
-                sources.push(Pinned {
-                    url: url.to_owned(),
-                    hash: hash.to_owned(),
-                });
-                write_lock(&file, &lock_text(&locks))
-            }
-        }
+        self.pinned
+            .insert((lock.file.clone(), lock.id.clone(), url.to_owned()));
+        let file = self.repository.join(&lock.file);
+        let mut locks = read_lock(&file)?;
+        let sources = &mut locks.entry(lock.id.clone()).or_default().sources;
+        sources.retain(|pinned| pinned.url != url);
+        sources.push(Pinned {
+            url: url.to_owned(),
+            hash: hash.to_owned(),
+        });
+        write_lock(&file, &lock_text(&locks))
     }
 
     /// The hash of `source`, from the recipe or a lock when either knows it, so working out
@@ -1298,13 +1252,8 @@ impl Sources {
 
     /// Whether `lock` pins `url`.
     fn holds(&self, lock: &Lock, url: &str) -> bool {
-        match lock {
-            Lock::Shared => self.shared.contains_key(url),
-            Lock::Beside { file, id } => {
-                self.beside
-                    .contains(&(file.clone(), id.clone(), url.to_owned()))
-            }
-        }
+        self.pinned
+            .contains(&(lock.file.clone(), lock.id.clone(), url.to_owned()))
     }
 
     /// The files `include` names in `tree`, a directory relative to the repository, or under the
@@ -1490,10 +1439,7 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     let parsed: Recipes = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     let styles = styles(repository)?;
-    let locked = match Origin::of(recipes, "").lock {
-        Lock::Beside { file, .. } => read_lock(&repository.join(file))?,
-        Lock::Shared => BTreeMap::new(),
-    };
+    let locked = read_lock(&repository.join(Origin::of(recipes, "").lock.file))?;
     parsed
         .package
         .into_iter()
@@ -1623,10 +1569,10 @@ fn failure_hint(lab: &Lab, built: &Built, missing: &Missing) -> String {
     match (has, missing) {
         (None, _) => format!("no recipe built so far has {what} `{name}`; one may need writing"),
         (Some(id), Missing::Header(_)) => format!(
-            "`{id}` has {what} `{name}`: add it to `extra_deps`, or to `propagates` of the \
+            "`{id}` has {what} `{name}`: add it to `deps`, or to `propagates` of the \
              library whose headers include it"
         ),
-        (Some(id), _) => format!("`{id}` has {what} `{name}`: add it to `extra_deps`"),
+        (Some(id), _) => format!("`{id}` has {what} `{name}`: add it to `deps`"),
     }
 }
 
@@ -1758,13 +1704,11 @@ fn style_one(
     let lock = package.origin.lock.clone();
     let recorded = package.made.clone();
     let styled = style_now(lab, repository, styles, sources, package)?;
-    let (Some(style), Some(record), Lock::Beside { id, .. }) =
-        (&styled.style, &styled.record, &lock)
-    else {
+    let (Some(style), Some(record)) = (&styled.style, &styled.record) else {
         return Ok(styled);
     };
     // A build made from the recipe under another name isn't what the lock records.
-    if *id != styled.id {
+    if lock.id != styled.id {
         return Ok(styled);
     }
     let unstyled = styled
@@ -1856,17 +1800,15 @@ fn style_now(
         .ok_or_else(|| format!("`{}` has a build style but no source", package.id))?;
     let (archive, _) = sources.fetch_source(lab, first, &package.origin.lock)?;
     let top = || top_files(&archive);
-    // A lock among the recipe's own files, or under `recipes/`, is one kept beside the recipe, for
-    // a project that ships none.
+    // A file among the recipe's own, such as a lock kept for a project that ships none, is read
+    // from there; anything else from the source.
     let read = |path: &str| {
-        let file = if package.files.iter().any(|name| name == path) {
-            repository.join(&package.origin.dir).join(path)
-        } else if path.starts_with("recipes/") {
-            repository.join(path)
+        if package.files.iter().any(|name| name == path) {
+            let file = repository.join(&package.origin.dir).join(path);
+            fs::read_to_string(&file).map_err(with_path(&file))
         } else {
-            return read_in(&archive, path);
-        };
-        fs::read_to_string(&file).map_err(with_path(&file))
+            read_in(&archive, path)
+        }
     };
     let mut styled = package.clone().styled_by(styles, &top, &read)?;
     // What the style made: the script, the dependencies and the sources it added, each source by
@@ -1932,7 +1874,7 @@ impl Package {
     fn planned_from(self, made: Made) -> Result<Self, String> {
         let mut planned = self.clone();
         let listed = self.dep_ids()?;
-        planned.extra_deps.extend(
+        planned.deps.extend(
             made.deps
                 .into_iter()
                 .filter(|dep| !listed.contains(dep))
@@ -1981,7 +1923,7 @@ impl Package {
         let listed = self.dep_ids()?;
         for dep in record.deps {
             if !listed.contains(&dep) {
-                self.extra_deps.push(DepSpec::Id(dep));
+                self.deps.push(DepSpec::Id(dep));
             }
         }
         self.sources
@@ -2397,12 +2339,9 @@ fn recipe_parts(
         files,
         script,
         wrap,
-        fixup,
         // In the key as the dependencies they add, which `package_key` names.
-        toolset: _,
-        core: _,
+        toolchain: _,
         deps: _,
-        extra_deps: _,
         runtime_deps: _,
         // Their values reach the build only through `script`, which they're written into.
         options: _,
@@ -2426,7 +2365,6 @@ fn recipe_parts(
         hold: _,
         silent_for: _,
         smoke: _,
-        probes: _,
         check_build: _,
         check: _,
         check_in_view: _,
@@ -2440,7 +2378,7 @@ fn recipe_parts(
         id.as_bytes().to_vec(),
         version.as_deref().unwrap_or_default().as_bytes().to_vec(),
         script.as_bytes().to_vec(),
-        vec![u8::from(*wrap), u8::from(*fixup), u8::from(*whole)],
+        vec![u8::from(*wrap), u8::from(*whole)],
     ];
     // Scripts read the name it gives this target, which no source's hash covers.
     if !arch_names.is_empty() {
@@ -3299,8 +3237,8 @@ mod requirement_tests {
 
     fn consumer(specs: &str, scope: &str) -> Package {
         let text = format!(
-            "[[package]]\nid = \"app\"\nscope = \"{scope}\"\nscript = \"\"\n\
-             extra_deps = [{specs}]\n"
+            "[[package]]\nid = \"app\"\nscope = \"{scope}\"\n\
+             toolchain = \"seed\"\nscript = \"\"\ndeps = [{specs}]\n"
         );
         toml::from_str::<Recipes>(&text).unwrap().package.remove(0)
     }
@@ -3375,8 +3313,8 @@ mod requirement_tests {
 
     #[test]
     fn what_a_package_needs_only_at_run_time_is_a_dependency_outside_its_view() {
-        let text = "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"\"\n\
-                    extra_deps = [\"gtk\"]\nruntime_deps = [\"cairo\"]\n";
+        let text = "[[package]]\nid = \"app\"\nscope = \"runtime\"\ntoolchain = \"seed\"\n\
+                    script = \"\"\ndeps = [\"gtk\"]\nruntime_deps = [\"cairo\"]\n";
         let package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
         let deps = package.all_deps().unwrap();
         let cairo = deps.iter().find(|dep| dep.id == "cairo").unwrap();
@@ -3532,8 +3470,9 @@ mod requirement_tests {
         let key = |scope: &str| {
             let text = format!(
                 "[[package]]\nid = \"app\"\nversion = \"1.2.3\"\nscope = \"{scope}\"\n\
+                 toolchain = \"seed\"\n\
                  script = \"make install\\n\"\n\
-                 extra_deps = [\"gtk\", {{ id = \"zlib\", rpath = false }}]\n\
+                 deps = [\"gtk\", {{ id = \"zlib\", rpath = false }}]\n\
                  sources = [{{ url = \"https://example.org/app.tar.xz\", into = \"sub\" }}]\n"
             );
             let package = toml::from_str::<Recipes>(&text).unwrap().package.remove(0);
@@ -3543,8 +3482,8 @@ mod requirement_tests {
                 .hash()
                 .to_owned()
         };
-        assert_eq!(key("runtime"), "728a04424d07e4f7284f24ce1ebb66aa36ae2f16");
-        assert_eq!(key("boot"), "a53f4f8fe60e5e536c85d3a786897a2419090a4f");
+        assert_eq!(key("runtime"), "1a9cd4e06851f3ef60ee7c04d2bafe237e4217a3");
+        assert_eq!(key("boot"), "3777f5a7dc6a2751206c12e5dbe0cefa22947888");
     }
 
     #[test]
@@ -3650,6 +3589,11 @@ mod tree_tests {
 #[cfg(test)]
 mod crate_tests {
     use super::*;
+
+    /// The lock of a recipe in `recipes/t.toml`, where a test's pins go.
+    fn test_lock() -> Lock {
+        Origin::of("t.toml", "t").lock
+    }
 
     #[test]
     fn two_builds_of_one_key_take_turns() {
@@ -3866,7 +3810,7 @@ mod crate_tests {
             file: false,
         };
         let error = sources
-            .fetch_source(&lab, &source, &Lock::Shared)
+            .fetch_source(&lab, &source, &test_lock())
             .unwrap_err();
         assert!(error.contains(&"00".repeat(32)), "{error}");
         let right = sha256_of(&file).unwrap();
@@ -3875,14 +3819,11 @@ mod crate_tests {
             ..source
         };
         assert_eq!(
-            sources
-                .fetch_source(&lab, &source, &Lock::Shared)
-                .unwrap()
-                .1,
+            sources.fetch_source(&lab, &source, &test_lock()).unwrap().1,
             right
         );
-        // Hashes the recipe carries stay out of `sources.lock`.
-        assert!(!dir.path().join("sources.lock").exists());
+        // Hashes the recipe carries stay out of its lock.
+        assert!(!dir.path().join(test_lock().file).exists());
     }
 
     #[test]
@@ -3902,19 +3843,19 @@ mod crate_tests {
             ..gone("a.crate")
         };
         assert_eq!(
-            sources.hash_of(&lab, &carried, &Lock::Shared).unwrap(),
+            sources.hash_of(&lab, &carried, &test_lock()).unwrap(),
             "ab".repeat(32)
         );
         let pinned = gone("b.tar.gz");
         sources.pins.insert(pinned.url.clone(), "cd".repeat(32));
         assert_eq!(
-            sources.hash_of(&lab, &pinned, &Lock::Shared).unwrap(),
+            sources.hash_of(&lab, &pinned, &test_lock()).unwrap(),
             "cd".repeat(32)
         );
         // Neither known nor there to fetch.
         assert!(
             sources
-                .hash_of(&lab, &gone("c.tar.gz"), &Lock::Shared)
+                .hash_of(&lab, &gone("c.tar.gz"), &test_lock())
                 .is_err()
         );
     }
@@ -3966,32 +3907,35 @@ mod crate_tests {
         let local = format!("git+file://{}#{commit}", repo.display());
         assert!(
             sources
-                .fetch_source(&lab, &source(local), &Lock::Shared)
+                .fetch_source(&lab, &source(local), &test_lock())
                 .is_err()
         );
         let commit = git(&inner, &["rev-parse", "HEAD"]);
         let url = format!("git+file://{}#{commit}", inner.display());
         let (path, hash) = sources
-            .fetch_source(&lab, &source(url.clone()), &Lock::Shared)
+            .fetch_source(&lab, &source(url.clone()), &test_lock())
             .unwrap();
         let listing = Command::new("tar").arg("-tf").arg(&path).output().unwrap();
         let listing = String::from_utf8_lossy(&listing.stdout);
         assert!(listing.contains("tree/lib.rs"), "{listing}");
         assert!(!listing.contains(".git/"), "{listing}");
-        let lock = fs::read_to_string(dir.path().join("sources.lock")).unwrap();
-        assert!(lock.contains(&format!("{hash}  {url}")), "{lock}");
+        let lock = fs::read_to_string(dir.path().join(test_lock().file)).unwrap();
+        assert!(
+            lock.contains(&format!("url = \"{url}\"\nhash = \"{hash}\"")),
+            "{lock}"
+        );
         // Pinned and kept, it needs the repository no more.
         fs::remove_dir_all(&inner).unwrap();
         assert_eq!(
             sources
-                .fetch_source(&lab, &source(url), &Lock::Shared)
+                .fetch_source(&lab, &source(url), &test_lock())
                 .unwrap()
                 .1,
             hash
         );
         let missing = format!("git+file://{}#{}", repo.display(), "0".repeat(40));
         let error = sources
-            .fetch_source(&lab, &source(missing), &Lock::Shared)
+            .fetch_source(&lab, &source(missing), &test_lock())
             .unwrap_err();
         assert!(error.contains(&"0".repeat(40)), "{error}");
     }
@@ -4008,14 +3952,14 @@ mod crate_tests {
             "a".repeat(40)
         );
         let error = sources
-            .fetch_source(&lab, &source(option), &Lock::Shared)
+            .fetch_source(&lab, &source(option), &test_lock())
             .unwrap_err();
         assert!(error.contains("can't start with `-`"), "{error}");
         assert!(!ran.exists());
         for commit in ["main", "--tags", "abc123"] {
             let url = format!("git+https://example.org/repo#{commit}");
             let error = sources
-                .fetch_source(&lab, &source(url), &Lock::Shared)
+                .fetch_source(&lab, &source(url), &test_lock())
                 .unwrap_err();
             assert!(error.contains("names no commit"), "{error}");
         }
@@ -4042,10 +3986,10 @@ mod crate_tests {
         let mut sources = Sources::load(dir.path()).unwrap();
         let url = |sub: &str| format!("file://{}/{sub}/v1.0.tar.gz", dir.path().display());
         let (first, first_hash) = sources
-            .fetch_source(&lab, &source(url("one")), &Lock::Shared)
+            .fetch_source(&lab, &source(url("one")), &test_lock())
             .unwrap();
         let (second, second_hash) = sources
-            .fetch_source(&lab, &source(url("two")), &Lock::Shared)
+            .fetch_source(&lab, &source(url("two")), &test_lock())
             .unwrap();
         assert_ne!(first_hash, second_hash);
         assert_eq!(fs::read_to_string(&first).unwrap(), "first\n");
@@ -4062,11 +4006,11 @@ mod crate_tests {
         let mut sources = Sources::load(dir.path()).unwrap();
         let url = format!("file://{}", file.display());
         let (_, hash) = sources
-            .fetch_source(&lab, &source(url.clone()), &Lock::Shared)
+            .fetch_source(&lab, &source(url.clone()), &test_lock())
             .unwrap();
         fs::remove_file(&file).unwrap();
         let (kept, again) = sources
-            .fetch_source(&lab, &source(url), &Lock::Shared)
+            .fetch_source(&lab, &source(url), &test_lock())
             .unwrap();
         assert_eq!(
             (again, fs::read_to_string(kept).unwrap()),
@@ -4087,7 +4031,7 @@ mod crate_tests {
         let mut sources = Sources::load(dir.path()).unwrap();
         let url = format!("file://{}", file.display());
         let error = sources
-            .fetch_source(&lab, &source(url.clone()), &Lock::Shared)
+            .fetch_source(&lab, &source(url.clone()), &test_lock())
             .unwrap_err();
         assert_eq!(
             error,
@@ -4104,7 +4048,8 @@ mod variant_tests {
     use super::*;
 
     fn recipe() -> Package {
-        let text = "[[package]]\nid = \"locales\"\nscope = \"runtime\"\nscript = \"make\\n\"\n";
+        let text = "[[package]]\nid = \"locales\"\nscope = \"runtime\"\ntoolchain = \"seed\"\n\
+                    script = \"make\\n\"\n";
         toml::from_str::<Recipes>(text).unwrap().package.remove(0)
     }
 
@@ -4200,7 +4145,8 @@ mod variant_tests {
 
     #[test]
     fn a_default_of_the_wrong_type_is_an_error_in_the_recipe() {
-        let text = "[[package]]\nid = \"x\"\nscope = \"runtime\"\nscript = \"make\\n\"\n\
+        let text = "[[package]]\nid = \"x\"\nscope = \"runtime\"\ntoolchain = \"seed\"\n\
+                    script = \"make\\n\"\n\
                     [package.options.small]\ntype = \"bool\"\ndefault = \"no\"\n\
                     doc = \"Smaller.\"\n";
         let error = toml::from_str::<Recipes>(text)
@@ -4346,7 +4292,10 @@ mod order_tests {
     }
 
     fn recipe(id: &str, deps: &str) -> String {
-        format!("[[package]]\nid = \"{id}\"\nscope = \"runtime\"\nscript = \"\"\ndeps = [{deps}]\n")
+        format!(
+            "[[package]]\nid = \"{id}\"\nscope = \"runtime\"\ntoolchain = \"seed\"\n\
+             script = \"\"\ndeps = [{deps}]\n"
+        )
     }
 
     #[test]
@@ -4415,8 +4364,10 @@ style(name = "meson", files = ["meson.build"], build = build)
     }
 
     fn recipe(fields: &str) -> Result<Package, String> {
-        let text =
-            format!("[[package]]\nid = \"app\"\nversion = \"1.0\"\nscope = \"runtime\"\n{fields}");
+        let text = format!(
+            "[[package]]\nid = \"app\"\nversion = \"1.0\"\nscope = \"runtime\"\n\
+             toolchain = \"seed\"\n{fields}"
+        );
         let mut package = toml::from_str::<Recipes>(&text)
             .map_err(|e| e.to_string())?
             .package
@@ -4446,7 +4397,7 @@ style(name = "meson", files = ["meson.build"], build = build)
     fn only_the_recipes_a_configuration_reaches_are_styled() {
         let packages = vec![
             named("unused", "[package.cargo]\n"),
-            named("tool", "extra_deps = [\"zlib\"]\n[package.cargo]\n"),
+            named("tool", "deps = [\"zlib\"]\n[package.cargo]\n"),
             named("zlib", "script = \"make\"\n"),
             named("rust-bin", "script = \"cp\"\n"),
         ];
@@ -4471,8 +4422,7 @@ style(name = "meson", files = ["meson.build"], build = build)
 
     #[test]
     fn a_recipe_without_a_script_gets_the_style_its_lock_picks() {
-        let package =
-            recipe("extra_deps = [\"pam\"]\n[package.cargo]\nfeatures = [\"x\"]\n").unwrap();
+        let package = recipe("deps = [\"pam\"]\n[package.cargo]\nfeatures = [\"x\"]\n").unwrap();
         assert!(package.styled);
         let package = style(package, &["Cargo.lock", "Cargo.toml", "meson.build"]).unwrap();
         assert_eq!(package.script, "cargo build x\n");
@@ -4585,8 +4535,8 @@ mod style_goldens {
     #[test]
     fn a_crate_that_links_a_system_library_brings_it() {
         let styles = styles(&repository()).unwrap();
-        let text = "[[package]]\nid = \"atuin\"\nscope = \"runtime\"\nextra_deps = [\"openssl\"]\n\
-                    [package.cargo]\n";
+        let text = "[[package]]\nid = \"atuin\"\nscope = \"runtime\"\ntoolchain = \"seed\"\n\
+                    deps = [\"openssl\"]\n[package.cargo]\n";
         let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
         package.check_style(&styles).unwrap();
         let lock = "[[package]]\nname = \"openssl-sys\"\nversion = \"0.9.117\"\n\n\
@@ -4997,16 +4947,16 @@ mod hint_tests {
         let hint = |missing| failure_hint(&lab, &built, &missing);
         assert_eq!(
             hint(Missing::Program("cmake".into())),
-            "`cmake` has the program `cmake`: add it to `extra_deps`"
+            "`cmake` has the program `cmake`: add it to `deps`"
         );
         assert_eq!(
             hint(Missing::Header("gmp.h".into())),
-            "`gmp-lib` has the header `gmp.h`: add it to `extra_deps`, or to `propagates` of the \
+            "`gmp-lib` has the header `gmp.h`: add it to `deps`, or to `propagates` of the \
              library whose headers include it"
         );
         assert_eq!(
             hint(Missing::Module("wayland-client".into())),
-            "`wayland` has the pkg-config module `wayland-client`: add it to `extra_deps`"
+            "`wayland` has the pkg-config module `wayland-client`: add it to `deps`"
         );
         assert_eq!(
             hint(Missing::Program("scdoc".into())),
@@ -5038,14 +4988,15 @@ mod layout_tests {
                            files = [\"fix.patch\"]\n\n[[package]]\nid = \"ghostty-docs\"\n\
                            scope = \"runtime\"\nscript = \"true\"\n";
 
-    /// A repository with a file of a theme, `tools.toml`, and a family's file, `gh/ghostty.toml`,
-    /// with its own file `gh/ghostty/fix.patch`.
+    /// A repository with a package's file, `jq/jq.toml`, and a family's, `gh/ghostty.toml`, with
+    /// its own file `gh/ghostty/fix.patch`.
     fn repository() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let recipes = dir.path().join("recipes");
         fs::create_dir_all(recipes.join("gh/ghostty")).unwrap();
+        fs::create_dir_all(recipes.join("jq")).unwrap();
         let jq = "[[package]]\nid = \"jq\"\nscope = \"runtime\"\nscript = \"true\"\n";
-        fs::write(recipes.join("tools.toml"), jq).unwrap();
+        fs::write(recipes.join("jq/jq.toml"), jq).unwrap();
         fs::write(recipes.join("gh/ghostty.toml"), GHOSTTY).unwrap();
         fs::write(recipes.join("gh/ghostty/fix.patch"), "a fix\n").unwrap();
         // A recipe's own files are never recipes, whatever they're called.
@@ -5064,12 +5015,12 @@ mod layout_tests {
     }
 
     #[test]
-    fn recipe_files_are_files_of_a_theme_and_of_a_package_or_family() {
+    fn recipe_files_are_the_files_of_packages_and_families() {
         let dir = repository();
         fs::write(dir.path().join("recipes/gh/ghostty.lock"), "").unwrap();
         assert_eq!(
             recipe_files(dir.path()).unwrap(),
-            ["gh/ghostty.toml", "tools.toml"]
+            ["gh/ghostty.toml", "jq/jq.toml"]
         );
     }
 
@@ -5080,13 +5031,11 @@ mod layout_tests {
         assert_eq!(family[1].origin.dir, Path::new("recipes/gh/ghostty"));
         assert_eq!(
             family[1].origin.lock,
-            Lock::Beside {
+            Lock {
                 file: "recipes/gh/ghostty.lock".into(),
                 id: "ghostty-docs".into()
             }
         );
-        let theme = load(dir.path(), "tools.toml").unwrap();
-        assert_eq!(theme[0].origin, Origin::default());
     }
 
     #[test]
@@ -5118,14 +5067,11 @@ mod layout_tests {
         let entry = format!("[[ghostty.sources]]\nurl = \"{url}\"\nhash = \"{hash}\"\n");
         assert!(lock.contains(&entry), "{lock}");
         assert!(lock.contains("[ghostty-docs]"), "{lock}");
-        assert!(!dir.path().join(SHARED_LOCK).exists());
         // Known from the lock, the source isn't fetched again.
         fs::remove_file(&file).unwrap();
         let mut again = Sources::load(dir.path()).unwrap();
-        assert_eq!(
-            again.hash_of(&lab, &source(url), &Lock::Shared).unwrap(),
-            hash
-        );
+        let lock = &family[0].origin.lock;
+        assert_eq!(again.hash_of(&lab, &source(url), lock).unwrap(), hash);
     }
 
     #[test]

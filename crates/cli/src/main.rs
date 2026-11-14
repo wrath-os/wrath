@@ -357,9 +357,9 @@ enum DevCommand {
         #[arg(long)]
         all: bool,
     },
-    /// Move recipes from files of a theme to a file per package or family, pinned beside it
+    /// Print every recipe's key, as `ID KEY` lines
     #[command(hide = true)]
-    Relayout,
+    Keys,
     /// Print the configuration's model as JSON
     Model,
     /// Print what an apply keeps of the configuration, as JSON
@@ -732,9 +732,14 @@ fn main() -> ExitCode {
                 })
                 .map(|()| ExitCode::SUCCESS),
             DevCommand::Outdated { all } => outdated(all),
-            DevCommand::Relayout => builder()
-                .and_then(|(lab, repository)| wrath_build::relayout::run(&lab, &repository))
-                .map(|()| ExitCode::SUCCESS),
+            DevCommand::Keys => places::grapes()
+                .and_then(|grapes| wrath_build::graph::all_keys(&grapes, &places::work()))
+                .map(|keys| {
+                    for (id, key) in keys {
+                        println!("{id} {key}");
+                    }
+                    ExitCode::SUCCESS
+                }),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::ApplyRecord => {
                 config().and_then(|config| print_apply_record(&config, &modules))
@@ -1069,7 +1074,8 @@ fn lint(packages: &[String], redundant: bool, locked: bool) -> Result<ExitCode, 
             counted(recorded.len(), "recipe")
         );
     }
-    let found = wrath_build::graph::targets_written(&grapes)?;
+    let mut found = wrath_build::graph::misplaced_recipes(&grapes)?;
+    found.push_str(&wrath_build::graph::targets_written(&grapes)?);
     if redundant {
         let only: Vec<&str> = packages.iter().map(String::as_str).collect();
         let listed = wrath_build::graph::redundant(&grapes, &places::work(), &only)?;

@@ -10,7 +10,6 @@ pub mod image;
 pub mod initrd;
 pub mod pilot;
 pub mod progress;
-pub mod relayout;
 pub mod requires;
 pub mod runpath;
 pub mod sandbox;
