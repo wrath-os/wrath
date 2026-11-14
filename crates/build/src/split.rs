@@ -1067,4 +1067,69 @@ mod in_place {
         assert_eq!(first[&Class::Lib], second[&Class::Lib]);
         assert_ne!(first[&Class::Out], second[&Class::Out]);
     }
+
+    /// A package as its build left it at `out`, seeing itself at its temporary path: a program,
+    /// a library naming its data, a header, a `.pc` file, a manual page and a link.
+    fn as_built(lab: &Lab, out: &StorePath) -> StorePath {
+        let seen = out.temporary();
+        let own = seen.inside();
+        for (name, text) in [
+            (
+                "bin/demo",
+                format!("#!{own}/lib/libdemo.so.1\nexec {own}/share/demo/data\n"),
+            ),
+            (
+                "lib/libdemo.so.1",
+                format!("library reading {own}/share/demo/data\n"),
+            ),
+            ("share/demo/data", "data\n".to_owned()),
+            ("include/demo.h", format!("// installed by {own}\n")),
+            (
+                "lib/pkgconfig/demo.pc",
+                format!("prefix={own}\nLibs: -ldemo\n"),
+            ),
+            ("share/man/man1/demo.1", "a manual\n".to_owned()),
+        ] {
+            let path = lab.on_host(out).join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        std::os::unix::fs::symlink("demo", lab.on_host(out).join("bin/demo-link")).unwrap();
+        seen
+    }
+
+    fn shown(outputs: &Outputs) -> String {
+        outputs
+            .iter()
+            .map(|(class, path)| format!("{}={}", class.name(), path.hash()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Pinned: what the builder makes of the same build. When this changes on purpose, packages
+    /// already built were made the old way, so bump `BUILD_RULES` with the new addresses, or
+    /// every machine keeps what the old rules made.
+    #[test]
+    fn the_same_build_is_placed_as_it_was() {
+        let out = StorePath::derive("key", &[b"demo"]).named("demo-1.0");
+        let (_one, first) = lab();
+        let seen = as_built(&first, &out);
+        let (split, _) = split_package(&first, &out, &seen).unwrap();
+        let (_two, second) = lab();
+        let seen = as_built(&second, &out);
+        let (whole, _) = keep_whole(&second, &out, &seen, "pinned".to_owned()).unwrap();
+        let actual = format!("split\n{}\nwhole\n{}", shown(&split), shown(&whole));
+        assert_eq!(
+            actual, GOLDEN_PLACED,
+            "placing a build changed; if that's meant, bump BUILD_RULES and update this"
+        );
+    }
+
+    const GOLDEN_PLACED: &str = "split
+out=3583c4d6ba5317f4b8d7c813a4a5c1e817ead23c-demo-1.0
+lib=6e6aeba275fe96cb14aaca399cd64162f17baa7a-demo-1.0
+dev=e7bd4715dc1be43e65c29f9cc6692ae2dbd57e29-demo-1.0
+doc=685595d5be2e89f008b4676ddbb1cfcfbf8c4ae4-demo-1.0
+whole
+out=4c1790f9fa1227ee562c1e1b00a3920045fe778c-demo-1.0";
 }
