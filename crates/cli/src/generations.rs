@@ -534,7 +534,8 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
     for note in crate::homes::replaced_in_homes(Path::new("/")) {
         println!("{note}");
     }
-    if !model.is_locked() {
+    // wrath from a checkout has no version to pin, so only the configuration's sources count.
+    if model.sources.values().any(|source| !source.is_locked()) {
         println!("the lock doesn't pin every source yet; `wrath apply` pins them first");
     }
     Ok(ExitCode::SUCCESS)
@@ -580,7 +581,10 @@ fn matching(running: Option<&str>, model: &Model) -> &'static str {
     match running {
         Some(hash) if hash == model.hash() => "it matches the configuration",
         Some(_) => "the configuration differs from it; `wrath plan` shows how",
-        None => "wrath didn't build it; `wrath plan` shows the whole configuration as new",
+        None => {
+            "this machine doesn't run a system wrath built; `wrath plan` shows the whole \
+             configuration as new"
+        }
     }
 }
 
@@ -692,8 +696,12 @@ pub fn activate(system: &Path) -> Result<ExitCode, String> {
 
 /// Lists the generations, each with what changed from the one before it.
 pub fn history() -> Result<ExitCode, String> {
+    let generations = here::history()?;
+    if generations.is_empty() {
+        println!("no generations: this machine doesn't run a system wrath built");
+    }
     let mut before: Option<Model> = None;
-    for generation in here::history()? {
+    for generation in generations {
         println!("{generation}");
         let model = generation_model(generation.number).ok();
         if let (Some(before), Some(after)) = (&before, &model) {
@@ -792,7 +800,10 @@ pub fn lock(
     }
     let sources: Vec<&str> = lock.sources.keys().map(String::as_str).collect();
     match sources.as_slice() {
-        [] => println!("there's nothing to pin: this wrath was built from a checkout"),
+        [] => println!(
+            "no sources to pin: wrath and grapes come from checkouts here; the lock keeps user \
+             and group ids"
+        ),
         _ => println!("pinned {}", sources.join(", ")),
     }
     for (role, model) in &models {
@@ -1090,7 +1101,7 @@ mod tests {
             "it matches the configuration"
         );
         assert!(matching(Some("0123"), &model).contains("differs"));
-        assert!(matching(None, &model).contains("didn't build it"));
+        assert!(matching(None, &model).contains("doesn't run a system wrath built"));
     }
 
     #[test]

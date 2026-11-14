@@ -286,9 +286,9 @@ fn namespace_args(store: &Path) -> Vec<OsString> {
     args
 }
 
-/// Where packages come from, as `wrath 1d06008, 2026-10-30` or `this wrath`.
+/// Where packages come from, as `grapes 1d06008, 2026-10-30` or `a checkout of grapes`.
 fn describe(model: &Model) -> String {
-    match model.sources.get(WRATH_SOURCE) {
+    match model.sources.get(crate::places::GRAPES_SOURCE) {
         Some(source) if source.is_locked() => {
             let rev = source.rev.as_deref().map(|rev| &rev[..rev.len().min(7)]);
             let details: Vec<&str> = [rev, source.date.as_deref()]
@@ -296,11 +296,11 @@ fn describe(model: &Model) -> String {
                 .flatten()
                 .collect();
             match details.as_slice() {
-                [] => "wrath, as the lock pins it".to_owned(),
-                _ => format!("wrath {}", details.join(", ")),
+                [] => "grapes, as the lock pins it".to_owned(),
+                _ => format!("grapes {}", details.join(", ")),
             }
         }
-        _ => "this wrath".to_owned(),
+        _ => "a checkout of grapes".to_owned(),
     }
 }
 
@@ -449,19 +449,19 @@ mod tests {
     }
 
     #[test]
-    fn packages_say_which_wrath_they_come_from() {
+    fn packages_say_which_grapes_they_come_from() {
         let mut model = Model::default();
-        assert_eq!(describe(&model), "this wrath");
+        assert_eq!(describe(&model), "a checkout of grapes");
         model.sources.insert(
-            WRATH_SOURCE.into(),
+            crate::places::GRAPES_SOURCE.into(),
             Source {
-                url: "github:johnae/wrath".into(),
+                url: crate::places::GRAPES_URL.into(),
                 rev: Some("1d060086d60c".into()),
                 hash: "sha256-abc".into(),
                 date: Some("2026-10-30".into()),
             },
         );
-        assert_eq!(describe(&model), "wrath 1d06008, 2026-10-30");
+        assert_eq!(describe(&model), "grapes 1d06008, 2026-10-30");
     }
 
     #[test]

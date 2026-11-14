@@ -935,6 +935,15 @@ fn check_config(
     }
 }
 
+/// `count` of `noun`, in the plural unless there's one.
+fn counted(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
 /// Checks one role and says what it holds, or prints why it can't be evaluated.
 fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model> {
     let model = model_as(config, modules, role)?;
@@ -946,8 +955,9 @@ fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model
         (false, true) => "wrath unpinned, since it was built from a checkout",
     };
     println!(
-        "no errors: {} options, {packages} packages, {pinned}, model {}",
-        model.options.len(),
+        "no errors: {}, {}, {pinned}, model {}",
+        counted(model.options.len(), "option"),
+        counted(packages, "package"),
         &model.hash()[..16]
     );
     Some(model)
@@ -1466,7 +1476,7 @@ fn why(config: &Path, modules: &Path, thing: Option<&str>) -> Result<ExitCode, S
         }
         (Err(message), None) => {
             return Err(format!(
-                "{message}, and no module installs a package `{thing}`"
+                "`{thing}` isn't a package any module installs, and {message}"
             ));
         }
     }
