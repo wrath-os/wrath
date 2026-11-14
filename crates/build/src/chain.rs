@@ -1713,6 +1713,31 @@ pub(crate) fn finish(
     let done = lab.work.join("done").join(out.hash());
     fs::write(&done, &record).map_err(with_path(&done))?;
     remember_outputs(built, package, &record);
+    let unbrought = requires::unbrought_headers(lab, built, &package.id)?;
+    if !unbrought.is_empty() {
+        note_unbrought(lab, package, &unbrought)?;
+    }
+    Ok(())
+}
+
+/// Says which of a package's headers include ones from a dependency it doesn't bring along, and
+/// records them, so whether this can be an error is decided from what it finds.
+fn note_unbrought(lab: &Lab, package: &Package, lines: &[String]) -> Result<(), String> {
+    eprintln!(
+        "warning: `{}` doesn't bring along what its headers include, so builds using them may \
+         fail; `propagates` in its recipe brings it:\n  {}",
+        package.id,
+        lines.join("\n  ")
+    );
+    let path = logs_dir(lab).join("unbrought-headers.txt");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(with_path(&path))?;
+    for line in lines {
+        writeln!(file, "{} {line}", package.id).map_err(with_path(&path))?;
+    }
     Ok(())
 }
 

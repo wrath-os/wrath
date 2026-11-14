@@ -89,8 +89,9 @@ Then stb's `whole = true` goes.
   one (`ldd -r` in the sandbox, now that ldd works). nixpkgs' autoPatchelfHook checks libraries;
   this also checks functions, which is what bit Zen.
 - Headers a package installs that include a dependency's header its `.pc` doesn't name
-  (libqalculate's `gmp.h`): an error naming the dependency to propagate. Explicit, rather than the
-  builder propagating on its own guess.
+  (libqalculate's `gmp.h`): a warning naming the dependency to propagate, logged, for this rebuild;
+  an error once the log shows it's right. Explicit, rather than the builder propagating on its
+  own guess.
 - `wrath build no-such-package` says so before building anything.
 
 ## Recipes and styles

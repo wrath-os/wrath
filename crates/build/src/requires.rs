@@ -1,7 +1,7 @@
 //! What a dependency brings into a dependent's view: the packages its `.pc` files require
 //! (decision 0019).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -188,6 +188,117 @@ fn add(requirements: &mut Requirements, id: &str, private: bool) {
         .or_insert(private);
 }
 
+/// The headers `#include <...>` lines in `text` name.
+fn included(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix('#')?.trim_start();
+            let rest = rest
+                .strip_prefix("include")?
+                .trim_start()
+                .strip_prefix('<')?;
+            rest.split_once('>').map(|(name, _)| name)
+        })
+        .collect()
+}
+
+/// The directories under `include` a `.pc` file's `Cflags` add with `-I`, such as `glib-2.0`.
+fn include_subdirs(text: &str) -> Vec<String> {
+    let mut variables = BTreeMap::new();
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let Some(at) = line.find([':', '=']) else {
+            continue;
+        };
+        let (key, value) = (line[..at].trim(), expand(line[at + 1..].trim(), &variables));
+        if line[at..].starts_with('=') {
+            variables.insert(key.to_owned(), value);
+        } else if key == "Cflags" {
+            found.extend(value.split_whitespace().filter_map(|flag| {
+                let dir = flag.strip_prefix("-I")?;
+                let (_, sub) = dir.rsplit_once("/include/")?;
+                let sub = sub.trim_end_matches('/');
+                (!sub.is_empty()).then(|| sub.to_owned())
+            }));
+        }
+    }
+    found
+}
+
+/// Where a build finds package `id`'s headers: each output's `include`, and the directories in it
+/// its `.pc` files add.
+fn header_dirs(lab: &Lab, built: &Built, id: &str) -> Result<Vec<PathBuf>, String> {
+    let mut subdirs = Vec::new();
+    for file in pc_files(lab, built, id)?.values() {
+        subdirs.extend(include_subdirs(
+            &fs::read_to_string(file).map_err(with_path(file))?,
+        ));
+    }
+    let mut dirs = Vec::new();
+    for path in built.output_paths(id) {
+        let include = lab.on_host(&path).join("include");
+        if include.is_dir() {
+            dirs.extend(subdirs.iter().map(|sub| include.join(sub)));
+            dirs.push(include);
+        }
+    }
+    Ok(dirs)
+}
+
+/// Lines for each header package `id` installs that includes one from a dependency with `.pc`
+/// files that nothing `id` brings into a dependent's view provides: a dependent including that
+/// header fails to compile, as noctalia did on libqalculate's `gmp.h`.
+pub fn unbrought_headers(lab: &Lab, built: &mut Built, id: &str) -> Result<Vec<String>, String> {
+    let Some(provider) = built.providers.get(id).cloned() else {
+        return Ok(Vec::new());
+    };
+    let brought = requirements(lab, built, id)?;
+    let mut candidates = Vec::new();
+    for dep in &provider.deps {
+        if !brought.contains_key(dep) && !pc_files(lab, built, dep)?.is_empty() {
+            candidates.push((dep.clone(), header_dirs(lab, built, dep)?));
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let own = header_dirs(lab, built, id)?;
+    let mut from: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut found = BTreeSet::new();
+    for root in built.output_paths(id).iter().map(|path| lab.on_host(path)) {
+        let include = root.join("include");
+        if !include.is_dir() {
+            continue;
+        }
+        for file in crate::pilot::files_under(&include)? {
+            let Ok(text) = fs::read_to_string(&file) else {
+                continue;
+            };
+            let header = file
+                .strip_prefix(&root)
+                .unwrap_or(&file)
+                .display()
+                .to_string();
+            for name in included(&text) {
+                let dep = from.entry(name.to_owned()).or_insert_with(|| {
+                    if own.iter().any(|dir| dir.join(name).is_file()) {
+                        return None;
+                    }
+                    candidates
+                        .iter()
+                        .find(|(_, dirs)| dirs.iter().any(|dir| dir.join(name).is_file()))
+                        .map(|(dep, _)| dep.clone())
+                });
+                if let Some(dep) = dep {
+                    found.insert(format!("{header} includes <{name}> from `{dep}`"));
+                }
+            }
+        }
+    }
+    Ok(found.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,5 +470,80 @@ mod tests {
     fn a_package_built_elsewhere_brings_nothing() {
         let mut fixture = Fixture::new();
         assert!(fixture.requirements("seed").unwrap().is_empty());
+    }
+
+    impl Fixture {
+        /// Writes `text` at `name` in package `id`.
+        fn file(&mut self, id: &str, name: &str, text: &str) -> &mut Self {
+            let path = self.lab.on_host(&self.built.paths[id]).join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+            self
+        }
+    }
+
+    /// libqalculate's headers include gmp's, and its `.pc` file doesn't require gmp.
+    fn qalculate() -> Fixture {
+        let mut fixture = Fixture::new();
+        fixture
+            .package("gmp", &[], &[("gmp", "", "")])
+            .file("gmp", "include/gmp.h", "")
+            .package("glib", &[], &[("glib-2.0", "", "")])
+            .file("glib", "include/glib-2.0/glib.h", "")
+            .package(
+                "qalc",
+                &["gmp", "glib"],
+                &[("libqalculate", "glib-2.0", "")],
+            )
+            .file(
+                "qalc",
+                "include/libqalculate/Number.h",
+                "#include <gmp.h>\n#  include <glib.h>\n#include \"Calc.h\"\n\
+                 #include <libqalculate/Calc.h>\n#include <stdio.h>\n",
+            )
+            .file("qalc", "include/libqalculate/Calc.h", "");
+        fixture
+    }
+
+    #[test]
+    fn a_header_including_what_the_package_doesnt_bring_is_named() {
+        let mut fixture = qalculate();
+        let lines = unbrought_headers(&fixture.lab, &mut fixture.built, "qalc").unwrap();
+        assert_eq!(
+            lines,
+            ["include/libqalculate/Number.h includes <gmp.h> from `gmp`"]
+        );
+    }
+
+    #[test]
+    fn a_header_is_found_where_its_pc_file_points_and_nowhere_else() {
+        let mut fixture = Fixture::new();
+        fixture
+            .package("glib", &[], &[("glib-2.0", "", "")])
+            .file(
+                "glib",
+                "lib/pkgconfig/glib-2.0.pc",
+                "prefix=/store/g\nincludedir=${prefix}/include\n\
+                 Cflags: -I${includedir}/glib-2.0\n",
+            )
+            .file("glib", "include/glib-2.0/glib.h", "")
+            .package("ffmpeg", &[], &[("libavutil", "", "")])
+            .file("ffmpeg", "include/libavutil/time.h", "")
+            .package("app", &["glib", "ffmpeg"], &[("app", "", "")])
+            .file(
+                "app",
+                "include/app.h",
+                "#include <glib.h>\n#include <time.h>\n",
+            );
+        let lines = unbrought_headers(&fixture.lab, &mut fixture.built, "app").unwrap();
+        assert_eq!(lines, ["include/app.h includes <glib.h> from `glib`"]);
+    }
+
+    #[test]
+    fn a_header_from_what_the_package_brings_along_is_fine() {
+        let mut fixture = qalculate();
+        fixture.built.providers.get_mut("qalc").unwrap().propagates = vec!["gmp".to_owned()];
+        let lines = unbrought_headers(&fixture.lab, &mut fixture.built, "qalc").unwrap();
+        assert!(lines.is_empty(), "{lines:?}");
     }
 }
