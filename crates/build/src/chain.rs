@@ -1720,12 +1720,21 @@ pub(crate) fn place_outputs(
     out: &StorePath,
 ) -> Result<(split::Outputs, Option<String>), String> {
     let seen_as = out.temporary();
-    let pieces = crate::content::split_pieces(&lab.on_host(out), seen_as.hash())?;
+    let root = lab.on_host(out);
+    let pieces = crate::content::split_pieces(&root, seen_as.hash())?;
     if !pieces.is_empty() {
         note_pieces(lab, package, out, &pieces)?;
     }
+    let cut = crate::content::cut_names(&root, seen_as.hash())?;
     if package.whole {
         split::keep_whole(lab, out, &seen_as, "the recipe asks".to_owned())
+    } else if let Some(file) = cut.first() {
+        let file = file.strip_prefix(&root).unwrap_or(file).display();
+        let reason = format!(
+            "{file} names its path with the name after the hash cut apart, so which part it \
+             means can't be told"
+        );
+        split::keep_whole(lab, out, &seen_as, reason)
     } else {
         split::split_package(lab, out, &seen_as)
     }
@@ -2678,6 +2687,39 @@ mod requirement_tests {
         };
         assert_ne!(parts("runtime"), parts("tool"));
         assert!(parts("runtime").contains(&TARGET.as_bytes().to_vec()));
+    }
+
+    #[test]
+    fn a_package_naming_itself_with_its_name_cut_apart_stays_whole_and_is_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path());
+        let package = consumer("", "runtime");
+        let out = StorePath::derive("key", &[b"cut"]).named("app");
+        let seen = out.temporary();
+        let path = format!("{}/lib", seen.inside());
+        let (head, tail) = path.split_at(path.len() - 8);
+        let cut = format!("{head}{}{tail}", &head[head.len() - 1..]);
+        let root = lab.on_host(&out);
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::create_dir_all(root.join("include")).unwrap();
+        fs::write(root.join("lib/libapp.so"), &cut).unwrap();
+        fs::write(root.join("include/app.h"), "header\n").unwrap();
+
+        let (outputs, whole) = place_outputs(&lab, &package, &out).unwrap();
+
+        assert_eq!(outputs.len(), 1, "{outputs:?}");
+        assert!(whole.unwrap().starts_with("lib/libapp.so names its path"));
+        let placed = fs::read(
+            lab.on_host(&outputs[&split::Class::Out])
+                .join("lib/libapp.so"),
+        );
+        let digest = |path: &StorePath| path.hash()[..crate::store::HASH_LENGTH].to_owned();
+        let placed = String::from_utf8(placed.unwrap()).unwrap();
+        assert!(!placed.contains(&digest(&seen)), "{placed}");
+        assert!(
+            placed.contains(&digest(&outputs[&split::Class::Out])),
+            "{placed}"
+        );
     }
 
     /// A recipe from `extra` added to a plain one with a source, as its key's recipe parts.

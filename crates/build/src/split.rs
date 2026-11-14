@@ -1118,7 +1118,20 @@ mod in_place {
         let (_two, second) = lab();
         let seen = as_built(&second, &out);
         let (whole, _) = keep_whole(&second, &out, &seen, "pinned".to_owned()).unwrap();
-        let actual = format!("split\n{}\nwhole\n{}", shown(&split), shown(&whole));
+        // Its own path copied in overlapping pieces, the name after the hash cut apart.
+        let (_three, third) = lab();
+        let seen = as_built(&third, &out);
+        let path = format!("{}/lib/libdemo.so.1", seen.inside());
+        let (head, tail) = path.split_at(path.len() - 16);
+        let cut_apart = format!("{head}{}{tail}", &head[head.len() - 1..]);
+        fs::write(third.on_host(&out).join("lib/libcut.so"), cut_apart).unwrap();
+        let (cut, _) = keep_whole(&third, &out, &seen, "pinned".to_owned()).unwrap();
+        let actual = format!(
+            "split\n{}\nwhole\n{}\ncut\n{}",
+            shown(&split),
+            shown(&whole),
+            shown(&cut)
+        );
         assert_eq!(
             actual, GOLDEN_PLACED,
             "placing a build changed; if that's meant, bump BUILD_RULES and update this"
@@ -1131,5 +1144,7 @@ lib=6e6aeba275fe96cb14aaca399cd64162f17baa7a-demo-1.0
 dev=e7bd4715dc1be43e65c29f9cc6692ae2dbd57e29-demo-1.0
 doc=685595d5be2e89f008b4676ddbb1cfcfbf8c4ae4-demo-1.0
 whole
-out=4c1790f9fa1227ee562c1e1b00a3920045fe778c-demo-1.0";
+out=4c1790f9fa1227ee562c1e1b00a3920045fe778c-demo-1.0
+cut
+out=6decc8bbf739631005bd23b3828caf9dc303e3e3-demo-1.0";
 }

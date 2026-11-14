@@ -42,9 +42,9 @@ The temporary and final paths end in the same name, so only the 40-character has
 Nix rewrites hash parts for the same reason.
 
 Fix: after the whole-path rewrite, rewrite any bare hash left, and mask those places when
-computing the address. The split-piece check stays for cases where the hash itself is split
-(glibc's inlined `memcmp`), which nothing can rewrite safely, and its warning names the function
-the pieces are in.
+computing the address. Which part of a split package a cut-apart path means can't be told, so such
+a package stays whole, with that as the reason. The split-piece check stays for cases where the
+hash itself is split (glibc's inlined `memcmp`), which nothing can rewrite safely.
 
 Check: a fixture with the path copied in overlapping 16-byte pieces; glib's and libqalculate's
 warnings gone.

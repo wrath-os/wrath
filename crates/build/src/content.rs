@@ -28,6 +28,23 @@ fn replace(bytes: &mut [u8], from: &[u8], to: &[u8]) -> Vec<usize> {
     found
 }
 
+/// The hash at the start of `path`, when a name follows it.
+fn digest_of(path: &str) -> Option<&str> {
+    path.get(..HASH_LENGTH).filter(|_| path.len() > HASH_LENGTH)
+}
+
+/// Replaces every `own` with `new`, then every hash of `own` left, where a compiler cut the name
+/// after it apart: the name is the same in both, so the hash alone is what changes. Returns
+/// where each was.
+fn replace_own(bytes: &mut [u8], own: &str, new: &str) -> (Vec<usize>, Vec<usize>) {
+    let whole = replace(bytes, own.as_bytes(), new.as_bytes());
+    let bare = match (digest_of(own), digest_of(new)) {
+        (Some(from), Some(to)) => replace(bytes, from.as_bytes(), to.as_bytes()),
+        _ => Vec::new(),
+    };
+    (whole, bare)
+}
+
 /// The places a package's own path was masked. Without them in the hash, a file holding the path
 /// and a file holding the mask would get the same address.
 fn offsets(found: &[usize]) -> Vec<u8> {
@@ -63,7 +80,7 @@ fn sorted_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// The address of the tree at `root`, built at temporary path `own`.
 fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
-    let zeros = vec![b'0'; own.len()];
+    let zeros = "0".repeat(own.len());
     let name = own.get(HASH_LENGTH + 1..);
     let mut hasher = Sha256::new();
     let mut add = |bytes: &[u8]| {
@@ -73,7 +90,7 @@ fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
     add(name.unwrap_or_default().as_bytes());
     for file in sorted_entries(root)? {
         let mut name = relative(root, &file)?.into_bytes();
-        let in_name = replace(&mut name, own.as_bytes(), &zeros);
+        let in_name = replace(&mut name, own.as_bytes(), zeros.as_bytes());
         add(&name);
         add(&offsets(&in_name));
         let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
@@ -88,10 +105,15 @@ fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
         if !meta.is_symlink() {
             add(&(meta.permissions().mode() & 0o777).to_le_bytes());
         }
-        let in_file = replace(&mut bytes, own.as_bytes(), &zeros);
+        let (in_file, cut) = replace_own(&mut bytes, own, &zeros);
         add(kind);
         add(&bytes);
         add(&offsets(&in_file));
+        // Only where there are any, so a package without them keeps its address.
+        if !cut.is_empty() {
+            add(b"cut");
+            add(&offsets(&cut));
+        }
     }
     let address = StorePath::from_hash(&hex(&hasher.finalize())[..HASH_LENGTH]);
     Ok(match name {
@@ -100,28 +122,52 @@ fn content_hash(root: &Path, own: &str) -> Result<StorePath, String> {
     })
 }
 
+/// Where in `bytes` `own` is written whole, and where only its hash is: the name after it cut
+/// apart, as copies in overlapping 16-byte pieces leave it.
+fn occurrences(bytes: &[u8], own: &str) -> (Vec<usize>, Vec<usize>) {
+    let whole: Vec<usize> = memmem::find_iter(bytes, own.as_bytes()).collect();
+    let cut = digest_of(own).map_or_else(Vec::new, |digest| {
+        memmem::find_iter(bytes, digest.as_bytes())
+            .filter(|at| whole.binary_search(at).is_err())
+            .collect()
+    });
+    (whole, cut)
+}
+
+/// The files under `root` holding `own`'s hash with the name after it cut apart. Rewriting the
+/// hash alone gives them the final path, but which part of a split package they name can't be
+/// told, so the package stays whole.
+pub fn cut_names(root: &Path, own: &str) -> Result<Vec<PathBuf>, String> {
+    let mut found = Vec::new();
+    for file in regular_files(root)? {
+        let bytes = fs::read(&file).map_err(with_path(&file))?;
+        if !occurrences(&bytes, own).1.is_empty() {
+            found.push(file);
+        }
+    }
+    Ok(found)
+}
+
 /// The files under `root` holding a piece of `own`'s hash, eight bytes or more, that isn't part of
-/// `own` written whole: where a compiler turned the path into pieces, such as the immediates of
-/// a `memcmp` it inlined. Nothing can rewrite those, so they keep naming the path the build saw.
+/// the hash written whole: where a compiler turned the path into pieces, such as the immediates
+/// of a `memcmp` it inlined. Nothing can rewrite those, so they keep naming the path the build
+/// saw.
 pub fn split_pieces(root: &Path, own: &str) -> Result<Vec<PathBuf>, String> {
     let digest = own.get(..HASH_LENGTH).unwrap_or(own).as_bytes();
     let windows: Vec<&[u8]> = digest.windows(8).collect();
     let mut found = Vec::new();
-    for file in sorted_entries(root)? {
-        let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
-        if !meta.is_file() {
-            continue;
-        }
+    for file in regular_files(root)? {
         let bytes = fs::read(&file).map_err(with_path(&file))?;
-        let whole: Vec<usize> = memmem::find_iter(&bytes, own.as_bytes()).collect();
-        let inside_whole = |at: usize| {
+        let (whole, cut) = occurrences(&bytes, own);
+        let inside = |at: usize| {
             whole
                 .iter()
-                .any(|&start| at >= start && at < start + own.len())
+                .chain(&cut)
+                .any(|&start| at >= start && at < start + digest.len())
         };
         let split = windows
             .iter()
-            .any(|window| memmem::find_iter(&bytes, window).any(|at| !inside_whole(at)));
+            .any(|window| memmem::find_iter(&bytes, window).any(|at| !inside(at)));
         if split {
             found.push(file);
         }
@@ -129,21 +175,35 @@ pub fn split_pieces(root: &Path, own: &str) -> Result<Vec<PathBuf>, String> {
     Ok(found)
 }
 
+/// The regular files under `root`, sorted.
+fn regular_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    for file in sorted_entries(root)? {
+        if fs::symlink_metadata(&file)
+            .map_err(with_path(&file))?
+            .is_file()
+        {
+            files.push(file);
+        }
+    }
+    Ok(files)
+}
+
 pub(crate) fn rewrite_contents(root: &Path, own: &str, new: &str) -> Result<(), String> {
     for file in files_under(root)? {
         let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
         if meta.is_symlink() {
             let target = fs::read_link(&file).map_err(with_path(&file))?;
-            let text = target.to_string_lossy();
-            if text.contains(own) {
-                let replaced = text.replace(own, new);
+            let mut text = target.to_string_lossy().into_owned().into_bytes();
+            if replace_own(&mut text, own, new) != (Vec::new(), Vec::new()) {
                 fs::remove_file(&file).map_err(with_path(&file))?;
-                symlink(replaced, &file).map_err(with_path(&file))?;
+                symlink(String::from_utf8_lossy(&text).as_ref(), &file)
+                    .map_err(with_path(&file))?;
             }
             continue;
         }
         let mut bytes = fs::read(&file).map_err(with_path(&file))?;
-        if !replace(&mut bytes, own.as_bytes(), new.as_bytes()).is_empty() {
+        if replace_own(&mut bytes, own, new) != (Vec::new(), Vec::new()) {
             replace_contents(&file, &bytes)?;
         }
     }
@@ -213,6 +273,53 @@ mod tests {
         let found = split_pieces(dir.path(), &own).unwrap();
 
         assert_eq!(found, [dir.path().join("ld.so")]);
+    }
+
+    /// A file naming `out` as glib's charset path did: copied in 16-byte pieces whose last one
+    /// overlaps the one before, so the hash is whole but the name after it is cut apart.
+    fn cut_apart(out: &StorePath) -> Vec<u8> {
+        let path = format!("{}/lib", out.inside());
+        let (head, tail) = path.split_at(path.len() - 16);
+        format!("{head}{}{tail}", &head[head.len() - 1..]).into_bytes()
+    }
+
+    #[test]
+    fn a_path_whose_name_was_cut_apart_is_found_and_its_hash_rewritten() {
+        let (_dir, lab) = lab();
+        let out = StorePath::derive("test", &[b"cut"]).named("glib-2.84.4");
+        let root = lab.on_host(&out);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("libglib.so"), cut_apart(&out)).unwrap();
+        fs::write(root.join("whole"), out.inside()).unwrap();
+        assert_eq!(
+            cut_names(&root, out.hash()).unwrap(),
+            [root.join("libglib.so")]
+        );
+        assert!(split_pieces(&root, out.hash()).unwrap().is_empty());
+
+        let address = address(&lab, &out).unwrap();
+        let moved = lab.on_host(&address);
+        let bytes = fs::read(moved.join("libglib.so")).unwrap();
+        let digest = |path: &StorePath| path.hash()[..HASH_LENGTH].to_owned();
+        assert!(memmem::find(&bytes, digest(&out).as_bytes()).is_none());
+        assert!(memmem::find(&bytes, digest(&address).as_bytes()).is_some());
+        assert_eq!(
+            fs::read_to_string(moved.join("whole")).unwrap(),
+            address.inside()
+        );
+    }
+
+    #[test]
+    fn a_cut_apart_path_gets_the_same_address_wherever_it_was_built() {
+        let (_dir, lab) = lab();
+        let place = |seed: &[u8]| {
+            let out = StorePath::derive("test", &[seed]).named("glib-2.84.4");
+            let root = lab.on_host(&out);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("libglib.so"), cut_apart(&out)).unwrap();
+            address(&lab, &out).unwrap()
+        };
+        assert_eq!(place(b"first"), place(b"second"));
     }
 
     fn built_at(lab: &Lab, seed: &[u8], text: &str) -> StorePath {
