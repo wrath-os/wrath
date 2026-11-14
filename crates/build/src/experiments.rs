@@ -65,7 +65,7 @@ fn tree(dir: &Path) -> Result<BTreeMap<String, String>, String> {
 /// they build from the seed.
 pub(crate) fn all_packages(lab: &Lab, repository: &Path) -> Result<Vec<Package>, String> {
     let mut packages = Vec::new();
-    for file in crate::graph::recipe_files(repository)? {
+    for file in chain::recipe_files(repository)? {
         packages.extend(chain::load_styled(lab, repository, &file)?);
     }
     chain::in_order(packages, |id| id == "seed")

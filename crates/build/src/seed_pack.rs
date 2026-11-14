@@ -396,7 +396,7 @@ const FINAL: [&str; 4] = ["glibc", "binutils", "gcc", "hello"];
 /// Builds the toolchain and checks it: the final compiler, C library and binutils
 /// refer to nothing from the bootstrap, and a C and a C++ program run with no `/usr` at all.
 pub fn check_toolchain(lab: &Lab, repository: &Path) -> Result<(), String> {
-    let built = chain::build(lab, repository, "toolchain.toml")?;
+    let built = chain::build_toolchain(lab, repository)?;
     let mut failed = false;
 
     for name in FINAL {

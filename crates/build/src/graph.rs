@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::chain::{self, Built};
+use crate::chain::{self, Built, names_of, recipe_files};
 use crate::early;
 use crate::initrd;
 use crate::pilot;
@@ -2274,38 +2274,20 @@ fn record_packages(db: &mut Db, built: &Built) -> Result<(), String> {
     tx.commit().map_err(sql)
 }
 
-/// The recipe files systems are built from: every file in `recipes/` but the toolchain's, which
-/// is built first. Which file a recipe is in doesn't matter; each package is built after what it
-/// depends on.
-pub(crate) fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
-    let dir = repository.join("recipes");
-    let mut files: Vec<String> = fs::read_dir(&dir)
-        .map_err(with_path(&dir))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".toml") && name != TOOLCHAIN_RECIPES)
-        .collect();
-    files.sort();
-    Ok(files)
-}
-
 /// Lines of recipes and styles under `repository` that write a target's name, such as `x86_64`,
 /// where a placeholder or variable says it for whichever target builds (0032): `{arch}`,
 /// `{triple}`, `$WRATH_ARCH`, `$WRATH_TRIPLE` or `$WRATH_LOADER`. Comments don't count.
 pub fn targets_written(repository: &Path) -> Result<String, String> {
     // How projects spell a target their own way too: Go's `amd64`, gcc's `-march=x86-64`.
     const NAMES: [&str; 6] = ["x86_64", "aarch64", "amd64", "x86-64", "x64", "arm64"];
-    let mut files = Vec::new();
-    for dir in ["recipes", "styles"] {
-        let Ok(entries) = std::fs::read_dir(repository.join(dir)) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "toml" || e == "star") {
-                files.push(path);
-            }
-        }
+    let mut files: Vec<PathBuf> = recipe_files(repository)
+        .unwrap_or_default()
+        .iter()
+        .map(|file| repository.join("recipes").join(file))
+        .collect();
+    if let Ok(entries) = std::fs::read_dir(repository.join("styles")) {
+        let styles = entries.flatten().map(|entry| entry.path());
+        files.extend(styles.filter(|path| path.extension().is_some_and(|e| e == "star")));
     }
     files.sort();
     let mut lines = String::new();
@@ -2359,21 +2341,6 @@ pub fn redundant(repository: &Path, work: &Path, only: &[&str]) -> Result<String
     }
     Ok(lines)
 }
-
-/// Every recipe file: the toolchain's and the system's.
-pub(crate) fn recipe_files(repository: &Path) -> Result<Vec<String>, String> {
-    let mut files = vec![TOOLCHAIN_RECIPES.to_owned()];
-    files.extend(system_recipes(repository)?);
-    Ok(files)
-}
-
-/// `files` as the borrowed names the builder takes.
-pub(crate) fn names_of(files: &[String]) -> Vec<&str> {
-    files.iter().map(String::as_str).collect()
-}
-
-/// The recipes of the toolchain everything else is built with.
-const TOOLCHAIN_RECIPES: &str = "toolchain.toml";
 
 /// A system built from a model.
 pub struct System {
@@ -2454,14 +2421,14 @@ pub fn package_keys(
     model: &Value,
 ) -> Result<BTreeMap<String, String>, String> {
     let lab = Lab::new(work);
-    let mut packages = chain::load_styled(&lab, repository, TOOLCHAIN_RECIPES)?;
-    let wanted = system_packages(model);
-    packages.extend(chain::load_reached(
+    let mut wanted = chain::TOOLCHAIN.map(str::to_owned).to_vec();
+    wanted.extend(system_packages(model));
+    let mut packages = chain::load_reached(
         &lab,
         repository,
-        &names_of(&system_recipes(repository)?),
+        &names_of(&recipe_files(repository)?),
         &names_of(&wanted),
-    )?);
+    )?;
     let builds = variants(&lab, repository, &packages, model)?;
     packages.extend(builds);
     chain::keys_of(&lab, repository, packages)

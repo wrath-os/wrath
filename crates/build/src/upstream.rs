@@ -257,7 +257,7 @@ impl Report {
 /// Every recipe in `repository` against upstream, several at a time.
 pub fn outdated(repository: &Path, fetch: Fetch<'_>) -> Result<Vec<Report>, String> {
     let mut recipes = Vec::new();
-    for file in crate::graph::recipe_files(repository)? {
+    for file in chain::recipe_files(repository)? {
         recipes.extend(chain::load(repository, &file)?);
     }
     let queue = Mutex::new(recipes.iter().filter(|recipe| recipe.version.is_some()));

@@ -491,9 +491,9 @@ pub(crate) fn build_some(
     repository: &Path,
     wanted: Option<&[&str]>,
 ) -> Result<(Built, StorePath, Vec<Package>), String> {
-    let files = crate::graph::system_recipes(repository)?;
-    let recipes = crate::graph::names_of(&files);
-    let built = chain::build(lab, repository, "toolchain.toml")?;
+    let files = chain::recipe_files(repository)?;
+    let recipes = chain::names_of(&files);
+    let built = chain::build_toolchain(lab, repository)?;
     let seed = seed::prepare(lab)?;
     let sources = Sources::load(repository)?;
     let loaded = match wanted {
@@ -506,6 +506,11 @@ pub(crate) fn build_some(
             loaded
         }
     };
+    // The toolchain is built already.
+    let loaded = loaded
+        .into_iter()
+        .filter(|package| !built.paths.contains_key(&package.id))
+        .collect();
     let loaded = chain::in_order(loaded, |id| built.paths.contains_key(id))?;
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let shared = Mutex::new((built, sources));

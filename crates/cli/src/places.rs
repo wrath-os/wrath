@@ -200,7 +200,7 @@ fn running_copy(config: &Path, url: &str, running: &Path) -> Option<(PathBuf, So
 /// Whether `dir` has everything of a set a command can build with: a copy missing part of it
 /// would fail later with errors about what's missing rather than about grapes.
 fn whole_set(dir: &Path) -> bool {
-    [SET_FILE, "seed.pin", "sources.lock"]
+    [SET_FILE, "seed.pin"]
         .iter()
         .all(|file| dir.join(file).is_file())
         && ["recipes", "styles", "modules"]
@@ -419,9 +419,7 @@ mod tests {
         for sub in ["styles", "modules"] {
             std::fs::create_dir_all(copy.join(sub)).unwrap();
         }
-        for file in ["seed.pin", "sources.lock"] {
-            std::fs::write(copy.join(file), "").unwrap();
-        }
+        std::fs::write(copy.join("seed.pin"), "").unwrap();
         let config = config("[system]\nhostname = \"a\"\n");
         let mut lock = Lock::default();
         lock.sources.insert(GRAPES_SOURCE.into(), pinned);

@@ -288,6 +288,9 @@ pub(crate) struct Package {
     style: Option<String>,
     #[serde(skip)]
     unstyled: Option<Box<Package>>,
+    /// Where it was read from.
+    #[serde(skip)]
+    pub(crate) origin: Origin,
     #[serde(default)]
     script: String,
     #[serde(default = "yes")]
@@ -833,41 +836,250 @@ fn pack(from: &Path, names: &[String], skip: &[&str], to: &Path) -> Result<(), S
     )
 }
 
-/// The pinned hashes of sources, kept in `sources.lock` as `<sha256>  <url>` lines. A URL not in
-/// it yet is pinned the first time it's fetched.
+/// Where recipes are, in a repository.
+const RECIPES: &str = "recipes";
+
+/// The lock of the recipes kept in files of a theme.
+const SHARED_LOCK: &str = "sources.lock";
+
+/// Every recipe file under `recipes/`, as a path from there: files of a theme at the top, such
+/// as `desktop.toml`, and files of one package or family a directory down, such as
+/// `gh/ghostty.toml`. What's further down is a recipe's own files.
+pub(crate) fn recipe_files(repository: &Path) -> Result<Vec<String>, String> {
+    let dir = repository.join(RECIPES);
+    let tomls = |dir: &Path| -> Result<Vec<String>, String> {
+        let names = fs::read_dir(dir)
+            .map_err(with_path(dir))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".toml"));
+        Ok(names.collect())
+    };
+    let mut files = tomls(&dir)?;
+    for entry in fs::read_dir(&dir).map_err(with_path(&dir))? {
+        let entry = entry.map_err(with_path(&dir))?;
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let shard = entry.file_name().to_string_lossy().into_owned();
+            files.extend(
+                tomls(&entry.path())?
+                    .into_iter()
+                    .map(|name| format!("{shard}/{name}")),
+            );
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// `names` as the borrowed names the builder takes.
+pub(crate) fn names_of(names: &[String]) -> Vec<&str> {
+    names.iter().map(String::as_str).collect()
+}
+
+/// The lock beside each recipe file of one package or family, as a path from the repository.
+fn beside_locks(repository: &Path) -> Result<Vec<PathBuf>, String> {
+    if !repository.join(RECIPES).is_dir() {
+        return Ok(Vec::new());
+    }
+    Ok(recipe_files(repository)?
+        .iter()
+        .filter_map(|file| match Origin::of(file, "").lock {
+            Lock::Beside { file, .. } => Some(file),
+            Lock::Shared => None,
+        })
+        .collect())
+}
+
+/// The lock a recipe's new pins are written to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum Lock {
+    /// `sources.lock`, which pins the sources of recipes kept in files of a theme.
+    #[default]
+    Shared,
+    /// The lock beside the recipe's own file, under the recipe's id.
+    Beside { file: PathBuf, id: String },
+}
+
+/// Where a recipe was read from: the directory its own `files` are in, relative to the
+/// repository, and the lock its sources are pinned in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Origin {
+    pub(crate) dir: PathBuf,
+    pub(crate) lock: Lock,
+}
+
+impl Default for Origin {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::from(RECIPES),
+            lock: Lock::Shared,
+        }
+    }
+}
+
+impl Origin {
+    /// Where the recipes in `file`, relative to `recipes/`, come from. A file of a theme, at the
+    /// top, has its files beside it and its pins in `sources.lock`. A file of one package or
+    /// family, `gh/ghostty.toml`, has its files in `gh/ghostty/` and its pins in `gh/ghostty.lock`.
+    fn of(file: &str, id: &str) -> Self {
+        let Some(stem) = file.strip_suffix(".toml").filter(|_| file.contains('/')) else {
+            return Self::default();
+        };
+        let dir = Path::new(RECIPES).join(stem);
+        Self {
+            lock: Lock::Beside {
+                file: dir.with_extension("lock"),
+                id: id.to_owned(),
+            },
+            dir,
+        }
+    }
+}
+
+/// What a lock beside a recipe file holds for one of its packages.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackageLock {
+    #[serde(default)]
+    sources: Vec<Pinned>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pinned {
+    url: String,
+    hash: String,
+}
+
+/// The lock at `file`, by package id. A lock that isn't there yet pins nothing.
+fn read_lock(file: &Path) -> Result<BTreeMap<String, PackageLock>, String> {
+    match fs::read_to_string(file) {
+        Ok(text) => toml::from_str(&text).map_err(|e| format!("{}: {e}", file.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(e) => Err(with_path(file)(e)),
+    }
+}
+
+/// `locks` as a lock's text: a table per package, its sources in the order of their URLs.
+fn lock_text(locks: &BTreeMap<String, PackageLock>) -> String {
+    let quoted = |text: &str| toml::Value::String(text.to_owned()).to_string();
+    let key = |id: &str| {
+        let bare = id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if bare { id.to_owned() } else { quoted(id) }
+    };
+    let mut text = String::new();
+    for (id, lock) in locks {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        let key = key(id);
+        text.push_str(&format!("[{key}]\n"));
+        let mut sources = lock.sources.clone();
+        sources.sort_by(|a, b| a.url.cmp(&b.url));
+        for Pinned { url, hash } in &sources {
+            text.push_str(&format!(
+                "\n[[{key}.sources]]\nurl = {}\nhash = {}\n",
+                quoted(url),
+                quoted(hash)
+            ));
+        }
+    }
+    text
+}
+
+/// The pinned hashes of sources: in `sources.lock`, as `<sha256>  <url>` lines, for recipes kept
+/// in files of a theme, and in the lock beside each recipe file of one package or family. A URL
+/// not pinned yet is pinned in its recipe's lock the first time it's fetched.
 pub(crate) struct Sources {
-    file: PathBuf,
+    repository: PathBuf,
+    /// Every pin, by URL.
     pins: BTreeMap<String, String>,
+    /// What `sources.lock` pins.
+    shared: BTreeMap<String, String>,
+    /// What the locks beside recipe files pin: each lock, package id and URL.
+    beside: BTreeSet<(PathBuf, String, String)>,
 }
 
 impl Sources {
     pub(crate) fn load(repository: &Path) -> Result<Self, String> {
-        let file = repository.join("sources.lock");
+        let file = repository.join(SHARED_LOCK);
         let text = match fs::read_to_string(&file) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(with_path(&file)(e)),
         };
-        let pins = text
+        let shared: BTreeMap<String, String> = text
             .lines()
             .filter_map(|line| line.split_once("  "))
             .map(|(hash, url)| (url.to_owned(), hash.to_owned()))
             .collect();
-        Ok(Self { file, pins })
+        let mut pins = shared.clone();
+        let mut pinned_by: BTreeMap<String, PathBuf> = BTreeMap::new();
+        let mut beside = BTreeSet::new();
+        for lock in beside_locks(repository)? {
+            for (id, package) in read_lock(&repository.join(&lock))? {
+                for Pinned { url, hash } in package.sources {
+                    if let Some(other) = pins.get(&url)
+                        && *other != hash
+                    {
+                        let by = pinned_by
+                            .get(&url)
+                            .map_or(SHARED_LOCK.into(), |by| by.display().to_string());
+                        return Err(format!(
+                            "{url} is pinned as {hash} in {} and as {other} in {by}",
+                            lock.display()
+                        ));
+                    }
+                    pinned_by.insert(url.clone(), lock.clone());
+                    beside.insert((lock.clone(), id.clone(), url.clone()));
+                    pins.insert(url, hash);
+                }
+            }
+        }
+        Ok(Self {
+            repository: repository.to_owned(),
+            pins,
+            shared,
+            beside,
+        })
     }
 
-    fn save(&self) -> Result<(), String> {
-        let text: String = self
-            .pins
-            .iter()
-            .map(|(url, hash)| format!("{hash}  {url}\n"))
-            .collect();
-        fs::write(&self.file, text).map_err(with_path(&self.file))
+    /// Pins `url` as `hash` in `lock`.
+    fn pin(&mut self, url: &str, hash: &str, lock: &Lock) -> Result<(), String> {
+        self.pins.insert(url.to_owned(), hash.to_owned());
+        match lock {
+            Lock::Shared => {
+                self.shared.insert(url.to_owned(), hash.to_owned());
+                let text: String = self
+                    .shared
+                    .iter()
+                    .map(|(url, hash)| format!("{hash}  {url}\n"))
+                    .collect();
+                let file = self.repository.join(SHARED_LOCK);
+                fs::write(&file, text).map_err(with_path(&file))
+            }
+            Lock::Beside { file, id } => {
+                self.beside
+                    .insert((file.clone(), id.clone(), url.to_owned()));
+                let file = self.repository.join(file);
+                let mut locks = read_lock(&file)?;
+                let sources = &mut locks.entry(id.clone()).or_default().sources;
+                sources.retain(|pinned| pinned.url != url);
+                sources.push(Pinned {
+                    url: url.to_owned(),
+                    hash: hash.to_owned(),
+                });
+                fs::write(&file, lock_text(&locks)).map_err(with_path(&file))
+            }
+        }
     }
 
-    /// The hash of `source`, from the recipe or `sources.lock` when either knows it, so working out
+    /// The hash of `source`, from the recipe or a lock when either knows it, so working out
     /// keys fetches only what was never pinned.
-    fn hash_of(&mut self, lab: &Lab, source: &Source) -> Result<String, String> {
+    fn hash_of(&mut self, lab: &Lab, source: &Source, lock: &Lock) -> Result<String, String> {
         let known = if source.url.starts_with("tree:") {
             None
         } else {
@@ -878,19 +1090,42 @@ impl Sources {
         };
         match known {
             Some(hash) => Ok(hash),
-            None => self.fetch_source(lab, source).map(|(_, hash)| hash),
+            None => self.fetch_source(lab, source, lock).map(|(_, hash)| hash),
         }
     }
 
-    /// Where `source` is on the host, with its hash.
-    fn fetch_source(&mut self, lab: &Lab, source: &Source) -> Result<(PathBuf, String), String> {
+    /// Where `source` is on the host, with its hash, pinned in `lock` unless the recipe carries
+    /// its hash. A source another lock pins is pinned in `lock` too, so each lock pins all its
+    /// recipes fetch, and removing a recipe removes only its own pins.
+    fn fetch_source(
+        &mut self,
+        lab: &Lab,
+        source: &Source,
+        lock: &Lock,
+    ) -> Result<(PathBuf, String), String> {
         if let Some(tree) = source.url.strip_prefix("tree:") {
             return self.fetch_tree(lab, tree, &source.include);
         }
-        if source.url.starts_with("git+") {
-            return self.fetch_git(lab, &source.url);
+        let (path, hash) = if source.url.starts_with("git+") {
+            self.fetch_git(lab, &source.url)?
+        } else {
+            self.fetch(lab, &source.url, source.sha256.as_deref())?
+        };
+        if source.sha256.is_none() && !self.holds(lock, &source.url) {
+            self.pin(&source.url, &hash, lock)?;
         }
-        self.fetch(lab, &source.url, source.sha256.as_deref())
+        Ok((path, hash))
+    }
+
+    /// Whether `lock` pins `url`.
+    fn holds(&self, lock: &Lock, url: &str) -> bool {
+        match lock {
+            Lock::Shared => self.shared.contains_key(url),
+            Lock::Beside { file, id } => {
+                self.beside
+                    .contains(&(file.clone(), id.clone(), url.to_owned()))
+            }
+        }
     }
 
     /// The files `include` names in `tree`, a directory relative to the repository, or under the
@@ -902,7 +1137,7 @@ impl Sources {
         tree: &str,
         include: &[String],
     ) -> Result<(PathBuf, String), String> {
-        let repository = self.file.parent().unwrap_or(Path::new("."));
+        let repository = &self.repository;
         let from = match tree.strip_prefix(WRATH_TREE) {
             Some(rest) if rest.is_empty() || rest.starts_with('/') => WRATH
                 .get()
@@ -929,7 +1164,7 @@ impl Sources {
     /// Where the commit `url` names, `git+REPOSITORY#COMMIT`, is on the host, with its hash: the
     /// commit cloned with its submodules from any host and packed by [`pack`], so the hash is of
     /// the files, not of how a host compresses an archive (decision 0028). It's pinned in
-    /// `sources.lock` the first time.
+    /// a lock the first time.
     fn fetch_git(&mut self, lab: &Lab, url: &str) -> Result<(PathBuf, String), String> {
         let dir = lab.work.join("sources");
         fs::create_dir_all(&dir).map_err(with_path(&dir))?;
@@ -1005,15 +1240,11 @@ impl Sources {
         }
         let path = dir.join(&hash);
         fs::rename(&partial, &path).map_err(with_path(&path))?;
-        if known.is_none() {
-            self.pins.insert(url.to_owned(), hash.clone());
-            self.save()?;
-        }
         Ok((path, hash))
     }
 
     /// Where the source at `url` is on the host, with its hash. Downloads are kept by their hash,
-    /// so a source pinned in `sources.lock` or by `expected` that's kept already isn't fetched
+    /// so a source pinned in a lock or by `expected` that's kept already isn't fetched
     /// again, and two URLs ending alike never share a file.
     fn fetch(
         &mut self,
@@ -1059,10 +1290,6 @@ impl Sources {
         }
         let path = dir.join(&hash);
         fs::rename(&partial, &path).map_err(with_path(&path))?;
-        if known.is_none() {
-            self.pins.insert(url.to_owned(), hash.clone());
-            self.save()?;
-        }
         Ok((path, hash))
     }
 }
@@ -1080,7 +1307,7 @@ fn is_web_page(path: &Path) -> Result<bool, String> {
 }
 
 pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, String> {
-    let path = repository.join("recipes").join(recipes);
+    let path = repository.join(RECIPES).join(recipes);
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     let parsed: Recipes = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     let styles = styles(repository)?;
@@ -1088,6 +1315,7 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
         .package
         .into_iter()
         .map(|mut package| {
+            package.origin = Origin::of(recipes, &package.id);
             package
                 .check_name()
                 .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1337,16 +1565,19 @@ fn style_one(
         .sources
         .first()
         .ok_or_else(|| format!("`{}` has a build style but no source", package.id))?;
-    let (archive, _) = sources.fetch_source(lab, first)?;
+    let (archive, _) = sources.fetch_source(lab, first, &package.origin.lock)?;
     let top = || top_files(&archive);
-    // A lock under `recipes/` is one kept beside the recipes, for a project that ships none.
+    // A lock among the recipe's own files, or under `recipes/`, is one kept beside the recipe, for
+    // a project that ships none.
     let read = |path: &str| {
-        if path.starts_with("recipes/") {
-            let file = repository.join(path);
-            fs::read_to_string(&file).map_err(with_path(&file))
+        let file = if package.files.iter().any(|name| name == path) {
+            repository.join(&package.origin.dir).join(path)
+        } else if path.starts_with("recipes/") {
+            repository.join(path)
         } else {
-            read_in(&archive, path)
-        }
+            return read_in(&archive, path);
+        };
+        fs::read_to_string(&file).map_err(with_path(&file))
     };
     let mut styled = package.clone().styled_by(styles, &top, &read)?;
     styled.unstyled = Some(Box::new(package));
@@ -1613,7 +1844,7 @@ fn fetch_all(
 ) -> Result<Vec<(Source, PathBuf, String)>, String> {
     let mut fetched = Vec::new();
     for source in &package.sources {
-        let (path, hash) = sources.fetch_source(lab, source)?;
+        let (path, hash) = sources.fetch_source(lab, source, &package.origin.lock)?;
         fetched.push((source.clone(), path, hash));
     }
     Ok(fetched)
@@ -1894,14 +2125,25 @@ fn note_pieces(
     writeln!(file, "{} {}", package.id, names.join(" ")).map_err(with_path(&path))
 }
 
-/// Builds every package of `recipes`, reusing what's already built.
-pub fn build(lab: &Lab, repository: &Path, recipes: &str) -> Result<Built, String> {
+/// What everything else builds on, and a program built with it to show it works. The toolchain
+/// is these and what they need, wherever their recipes are.
+pub(crate) const TOOLCHAIN: [&str; 6] = [
+    "wrapper",
+    "linux-headers",
+    "binutils",
+    "glibc",
+    "gcc",
+    "hello",
+];
+
+/// Builds the toolchain, reusing what's already built.
+pub fn build_toolchain(lab: &Lab, repository: &Path) -> Result<Built, String> {
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut built = built_from_seed(&seed);
-    let packages = in_order(load_styled(lab, repository, recipes)?, |id| {
-        built.paths.contains_key(id)
-    })?;
+    let files = recipe_files(repository)?;
+    let reached = load_reached(lab, repository, &names_of(&files), &TOOLCHAIN)?;
+    let packages = in_order(reached, |id| built.paths.contains_key(id))?;
     for package in &packages {
         if let Some(prepared) =
             build_one(lab, repository, package, &seed, &mut sources, &mut built)?
@@ -1974,6 +2216,8 @@ fn recipe_parts(
         styled: _,
         style: _,
         unstyled: _,
+        // Where its files are, which are in the key by what they hold.
+        origin,
         // What a generation makes from the packages, not this package's build.
         indexes: _,
         // For update checks, the tests and how long a build may be quiet: none changes what's
@@ -2007,7 +2251,7 @@ fn recipe_parts(
         parts.push(format!("propagates {propagates:?} {propagate_private}").into_bytes());
     }
     for name in files {
-        let path = repository.join("recipes").join(name);
+        let path = repository.join(&origin.dir).join(name);
         parts.push(fs::read(&path).map_err(with_path(&path))?);
     }
     parts.extend(source_hashes.iter().map(|hash| hash.as_bytes().to_vec()));
@@ -2077,7 +2321,7 @@ pub(crate) fn keys_of(
         let hashes = package
             .sources
             .iter()
-            .map(|source| sources.hash_of(lab, source))
+            .map(|source| sources.hash_of(lab, source, &package.origin.lock))
             .collect::<Result<Vec<String>, String>>()?;
         let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
         let recipe = recipe_parts(repository, package, &hashes)?;
@@ -2228,7 +2472,7 @@ pub(crate) fn begin(
         unpack(path, &target)?;
     }
     for name in &package.files {
-        let from = repository.join("recipes").join(name);
+        let from = repository.join(&package.origin.dir).join(name);
         let to = src.join(name);
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent).map_err(with_path(parent))?;
@@ -3129,7 +3373,7 @@ mod crate_tests {
     #[test]
     fn every_recipe_in_the_repository_loads() {
         let repository = grapes_checkout();
-        let files = crate::graph::recipe_files(&repository).unwrap();
+        let files = crate::chain::recipe_files(&repository).unwrap();
         assert!(files.len() > 10, "{files:?}");
         for file in files {
             if let Err(e) = load(&repository, &file) {
@@ -3342,14 +3586,22 @@ mod crate_tests {
             sha256: Some("00".repeat(32)),
             file: false,
         };
-        let error = sources.fetch_source(&lab, &source).unwrap_err();
+        let error = sources
+            .fetch_source(&lab, &source, &Lock::Shared)
+            .unwrap_err();
         assert!(error.contains(&"00".repeat(32)), "{error}");
         let right = sha256_of(&file).unwrap();
         let source = Source {
             sha256: Some(right.clone()),
             ..source
         };
-        assert_eq!(sources.fetch_source(&lab, &source).unwrap().1, right);
+        assert_eq!(
+            sources
+                .fetch_source(&lab, &source, &Lock::Shared)
+                .unwrap()
+                .1,
+            right
+        );
         // Hashes the recipe carries stay out of `sources.lock`.
         assert!(!dir.path().join("sources.lock").exists());
     }
@@ -3370,12 +3622,22 @@ mod crate_tests {
             sha256: Some("ab".repeat(32)),
             ..gone("a.crate")
         };
-        assert_eq!(sources.hash_of(&lab, &carried).unwrap(), "ab".repeat(32));
+        assert_eq!(
+            sources.hash_of(&lab, &carried, &Lock::Shared).unwrap(),
+            "ab".repeat(32)
+        );
         let pinned = gone("b.tar.gz");
         sources.pins.insert(pinned.url.clone(), "cd".repeat(32));
-        assert_eq!(sources.hash_of(&lab, &pinned).unwrap(), "cd".repeat(32));
+        assert_eq!(
+            sources.hash_of(&lab, &pinned, &Lock::Shared).unwrap(),
+            "cd".repeat(32)
+        );
         // Neither known nor there to fetch.
-        assert!(sources.hash_of(&lab, &gone("c.tar.gz")).is_err());
+        assert!(
+            sources
+                .hash_of(&lab, &gone("c.tar.gz"), &Lock::Shared)
+                .is_err()
+        );
     }
 
     #[test]
@@ -3423,10 +3685,16 @@ mod crate_tests {
         // A submodule on this host could pack the host's own repositories into a source.
         let commit = git(&repo, &["rev-parse", "HEAD"]);
         let local = format!("git+file://{}#{commit}", repo.display());
-        assert!(sources.fetch_source(&lab, &source(local)).is_err());
+        assert!(
+            sources
+                .fetch_source(&lab, &source(local), &Lock::Shared)
+                .is_err()
+        );
         let commit = git(&inner, &["rev-parse", "HEAD"]);
         let url = format!("git+file://{}#{commit}", inner.display());
-        let (path, hash) = sources.fetch_source(&lab, &source(url.clone())).unwrap();
+        let (path, hash) = sources
+            .fetch_source(&lab, &source(url.clone()), &Lock::Shared)
+            .unwrap();
         let listing = Command::new("tar").arg("-tf").arg(&path).output().unwrap();
         let listing = String::from_utf8_lossy(&listing.stdout);
         assert!(listing.contains("tree/lib.rs"), "{listing}");
@@ -3435,9 +3703,17 @@ mod crate_tests {
         assert!(lock.contains(&format!("{hash}  {url}")), "{lock}");
         // Pinned and kept, it needs the repository no more.
         fs::remove_dir_all(&inner).unwrap();
-        assert_eq!(sources.fetch_source(&lab, &source(url)).unwrap().1, hash);
+        assert_eq!(
+            sources
+                .fetch_source(&lab, &source(url), &Lock::Shared)
+                .unwrap()
+                .1,
+            hash
+        );
         let missing = format!("git+file://{}#{}", repo.display(), "0".repeat(40));
-        let error = sources.fetch_source(&lab, &source(missing)).unwrap_err();
+        let error = sources
+            .fetch_source(&lab, &source(missing), &Lock::Shared)
+            .unwrap_err();
         assert!(error.contains(&"0".repeat(40)), "{error}");
     }
 
@@ -3452,12 +3728,16 @@ mod crate_tests {
             ran.display(),
             "a".repeat(40)
         );
-        let error = sources.fetch_source(&lab, &source(option)).unwrap_err();
+        let error = sources
+            .fetch_source(&lab, &source(option), &Lock::Shared)
+            .unwrap_err();
         assert!(error.contains("can't start with `-`"), "{error}");
         assert!(!ran.exists());
         for commit in ["main", "--tags", "abc123"] {
             let url = format!("git+https://example.org/repo#{commit}");
-            let error = sources.fetch_source(&lab, &source(url)).unwrap_err();
+            let error = sources
+                .fetch_source(&lab, &source(url), &Lock::Shared)
+                .unwrap_err();
             assert!(error.contains("names no commit"), "{error}");
         }
     }
@@ -3482,8 +3762,12 @@ mod crate_tests {
         let lab = Lab::new(dir.path().join("work"));
         let mut sources = Sources::load(dir.path()).unwrap();
         let url = |sub: &str| format!("file://{}/{sub}/v1.0.tar.gz", dir.path().display());
-        let (first, first_hash) = sources.fetch_source(&lab, &source(url("one"))).unwrap();
-        let (second, second_hash) = sources.fetch_source(&lab, &source(url("two"))).unwrap();
+        let (first, first_hash) = sources
+            .fetch_source(&lab, &source(url("one")), &Lock::Shared)
+            .unwrap();
+        let (second, second_hash) = sources
+            .fetch_source(&lab, &source(url("two")), &Lock::Shared)
+            .unwrap();
         assert_ne!(first_hash, second_hash);
         assert_eq!(fs::read_to_string(&first).unwrap(), "first\n");
         assert_eq!(fs::read_to_string(&second).unwrap(), "second\n");
@@ -3498,9 +3782,13 @@ mod crate_tests {
         let lab = Lab::new(dir.path().join("work"));
         let mut sources = Sources::load(dir.path()).unwrap();
         let url = format!("file://{}", file.display());
-        let (_, hash) = sources.fetch_source(&lab, &source(url.clone())).unwrap();
+        let (_, hash) = sources
+            .fetch_source(&lab, &source(url.clone()), &Lock::Shared)
+            .unwrap();
         fs::remove_file(&file).unwrap();
-        let (kept, again) = sources.fetch_source(&lab, &source(url)).unwrap();
+        let (kept, again) = sources
+            .fetch_source(&lab, &source(url), &Lock::Shared)
+            .unwrap();
         assert_eq!(
             (again, fs::read_to_string(kept).unwrap()),
             (hash, "x\n".to_owned())
@@ -3520,7 +3808,7 @@ mod crate_tests {
         let mut sources = Sources::load(dir.path()).unwrap();
         let url = format!("file://{}", file.display());
         let error = sources
-            .fetch_source(&lab, &source(url.clone()))
+            .fetch_source(&lab, &source(url.clone()), &Lock::Shared)
             .unwrap_err();
         assert_eq!(
             error,
@@ -4461,4 +4749,146 @@ fn grapes_checkout() -> PathBuf {
         || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../grapes"),
         PathBuf::from,
     )
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    const GHOSTTY: &str = "[[package]]\nid = \"ghostty\"\nscope = \"runtime\"\nscript = \"true\"\n\
+                           files = [\"fix.patch\"]\n\n[[package]]\nid = \"ghostty-docs\"\n\
+                           scope = \"runtime\"\nscript = \"true\"\n";
+
+    /// A repository with a file of a theme, `tools.toml`, and a family's file, `gh/ghostty.toml`,
+    /// with its own file `gh/ghostty/fix.patch`.
+    fn repository() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let recipes = dir.path().join("recipes");
+        fs::create_dir_all(recipes.join("gh/ghostty")).unwrap();
+        let jq = "[[package]]\nid = \"jq\"\nscope = \"runtime\"\nscript = \"true\"\n";
+        fs::write(recipes.join("tools.toml"), jq).unwrap();
+        fs::write(recipes.join("gh/ghostty.toml"), GHOSTTY).unwrap();
+        fs::write(recipes.join("gh/ghostty/fix.patch"), "a fix\n").unwrap();
+        // A recipe's own files are never recipes, whatever they're called.
+        fs::write(recipes.join("gh/ghostty/config.toml"), "x = 1\n").unwrap();
+        dir
+    }
+
+    fn source(url: String) -> Source {
+        Source {
+            url,
+            into: None,
+            include: Vec::new(),
+            sha256: None,
+            file: false,
+        }
+    }
+
+    #[test]
+    fn recipe_files_are_files_of_a_theme_and_of_a_package_or_family() {
+        let dir = repository();
+        fs::write(dir.path().join("recipes/gh/ghostty.lock"), "").unwrap();
+        assert_eq!(
+            recipe_files(dir.path()).unwrap(),
+            ["gh/ghostty.toml", "tools.toml"]
+        );
+    }
+
+    #[test]
+    fn a_family_has_its_files_in_its_directory_and_its_pins_beside_it() {
+        let dir = repository();
+        let family = load(dir.path(), "gh/ghostty.toml").unwrap();
+        assert_eq!(family[1].origin.dir, Path::new("recipes/gh/ghostty"));
+        assert_eq!(
+            family[1].origin.lock,
+            Lock::Beside {
+                file: "recipes/gh/ghostty.lock".into(),
+                id: "ghostty-docs".into()
+            }
+        );
+        let theme = load(dir.path(), "tools.toml").unwrap();
+        assert_eq!(theme[0].origin, Origin::default());
+    }
+
+    #[test]
+    fn a_recipes_own_files_are_in_its_key_from_its_directory() {
+        let dir = repository();
+        let ghostty = load(dir.path(), "gh/ghostty.toml").unwrap().remove(0);
+        let before = recipe_parts(dir.path(), &ghostty, &[]).unwrap();
+        assert!(before.contains(&b"a fix\n".to_vec()));
+        fs::write(dir.path().join("recipes/gh/ghostty/fix.patch"), "another\n").unwrap();
+        assert_ne!(recipe_parts(dir.path(), &ghostty, &[]).unwrap(), before);
+    }
+
+    #[test]
+    fn a_source_is_pinned_in_the_lock_beside_its_recipe_and_read_back_from_there() {
+        let dir = repository();
+        let file = dir.path().join("ghostty.tar.gz");
+        fs::write(&file, "ghostty\n").unwrap();
+        let url = format!("file://{}", file.display());
+        let lab = Lab::new(dir.path().join("work"));
+        let family = load(dir.path(), "gh/ghostty.toml").unwrap();
+        let mut sources = Sources::load(dir.path()).unwrap();
+        for package in &family {
+            sources
+                .fetch_source(&lab, &source(url.clone()), &package.origin.lock)
+                .unwrap();
+        }
+        let hash = sha256_of(&file).unwrap();
+        let lock = fs::read_to_string(dir.path().join("recipes/gh/ghostty.lock")).unwrap();
+        let entry = format!("[[ghostty.sources]]\nurl = \"{url}\"\nhash = \"{hash}\"\n");
+        assert!(lock.contains(&entry), "{lock}");
+        assert!(lock.contains("[ghostty-docs]"), "{lock}");
+        assert!(!dir.path().join(SHARED_LOCK).exists());
+        // Known from the lock, the source isn't fetched again.
+        fs::remove_file(&file).unwrap();
+        let mut again = Sources::load(dir.path()).unwrap();
+        assert_eq!(
+            again.hash_of(&lab, &source(url), &Lock::Shared).unwrap(),
+            hash
+        );
+    }
+
+    #[test]
+    fn a_url_pinned_two_ways_is_an_error_naming_both_locks() {
+        let dir = repository();
+        let pin = |hash: &str| {
+            format!(
+                "[x]\n\n[[x.sources]]\nurl = \"https://example.org/x.tar.gz\"\nhash = \"{hash}\"\n"
+            )
+        };
+        fs::write(dir.path().join("recipes/gh/ghostty.lock"), pin("aa")).unwrap();
+        fs::create_dir_all(dir.path().join("recipes/jq")).unwrap();
+        fs::write(dir.path().join("recipes/jq/jq.toml"), "package = []\n").unwrap();
+        fs::write(dir.path().join("recipes/jq/jq.lock"), pin("bb")).unwrap();
+        let error = Sources::load(dir.path()).err().unwrap();
+        assert!(error.contains("recipes/gh/ghostty.lock"), "{error}");
+        assert!(error.contains("recipes/jq/jq.lock"), "{error}");
+    }
+
+    #[test]
+    fn the_toolchain_is_what_its_roots_need() {
+        let repository = grapes_checkout();
+        let mut packages = Vec::new();
+        for file in recipe_files(&repository).unwrap() {
+            packages.extend(load(&repository, &file).unwrap());
+        }
+        let found: BTreeSet<String> = reached(packages, &TOOLCHAIN, Ok)
+            .unwrap()
+            .into_iter()
+            .map(|package| package.id)
+            .collect();
+        for id in [
+            "gcc-stage1",
+            "binutils-stage1",
+            "m4",
+            "bison",
+            "python",
+            "glibc",
+            "hello",
+        ] {
+            assert!(found.contains(id), "{found:?}");
+        }
+        assert!(!found.contains("bash"), "{found:?}");
+    }
 }
