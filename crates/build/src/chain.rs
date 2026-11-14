@@ -2559,27 +2559,6 @@ pub(crate) fn begin(
     built: &mut Built,
     again: bool,
 ) -> Result<Begun, String> {
-    let styled;
-    let package = match (&package.unstyled, package.planned) {
-        (Some(recipe), true) => {
-            styled = style_now(
-                lab,
-                repository,
-                &styles(repository)?,
-                sources,
-                (**recipe).clone(),
-            )?;
-            if styled.record != package.record {
-                return Err(format!(
-                    "`{}`'s style made something other than what its lock records from the same \
-                     style and source, so it doesn't make the same thing twice",
-                    package.id
-                ));
-            }
-            &styled
-        }
-        _ => package,
-    };
     let listed = package.all_deps()?;
     let deps = with_requirements(lab, package, &listed, built)?;
     let mut closure = BTreeSet::from([seed.clone()]);
@@ -2593,8 +2572,14 @@ pub(crate) fn begin(
         closure.extend(built.closures[&dep.id].iter().cloned());
     }
 
-    let fetched = fetch_all(sources, lab, package)?;
-    let source_hashes: Vec<&str> = fetched.iter().map(|(_, _, hash)| hash.as_str()).collect();
+    // Pinned sources are known by their hashes, and a planned package by its lock, so nothing is
+    // fetched or styled for a package that's built already.
+    let hashes = package
+        .sources
+        .iter()
+        .map(|source| sources.hash_of(lab, source, &package.origin.lock))
+        .collect::<Result<Vec<String>, String>>()?;
+    let source_hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
     let recipe = recipe_parts(repository, package, &source_hashes)?;
     let declared = |id: &str| built.search_paths.get(id).cloned().unwrap_or_default();
     let in_view: Vec<(&str, Vec<StorePath>)> = deps
@@ -2628,7 +2613,9 @@ pub(crate) fn begin(
             "kind": "package",
             "id": package.id,
             "arm": arm_key(package),
-            "script": package.script,
+            // A styled package as its recipe was written and what its style made, as in its key.
+            "script": package.unstyled.as_ref().map_or(&package.script, |recipe| &recipe.script),
+            "made": package.record,
             "sources": source_hashes,
             "deps": deps
                 .iter()
@@ -2678,6 +2665,29 @@ pub(crate) fn begin(
     }
     // Built before but fixed up by other rules, its build's own output is fixed up again.
     let from_raw = !again && done.exists() && raw_output(lab, &out).is_file();
+    // A package planned from its lock is styled now that it builds, and must make what the lock
+    // records.
+    let styled;
+    let package = match &package.unstyled {
+        Some(recipe) if package.planned && !from_raw => {
+            let styles = styles(repository)?;
+            styled = style_now(lab, repository, &styles, sources, (**recipe).clone())?;
+            if styled.record != package.record {
+                return Err(format!(
+                    "`{}`'s style made something other than what its lock records from the same \
+                     style and source, so it doesn't make the same thing twice",
+                    package.id
+                ));
+            }
+            &styled
+        }
+        _ => package,
+    };
+    let fetched = if from_raw {
+        Vec::new()
+    } else {
+        fetch_all(sources, lab, package)?
+    };
     let build_dir = lab.work.join("build").join(out.hash());
     fresh(&build_dir)?;
     fresh(&lab.on_host(&out))?;
@@ -2946,6 +2956,68 @@ fn put_back_raw_output(lab: &Lab, out: &StorePath) -> Result<(), String> {
             .arg(&dir),
         &format!("unpacking {}", raw.display()),
     )
+}
+
+/// Removes what builds made, kept to be fixed up again, once nothing fixed up from it is in the
+/// store any more, with the records of it; with `all`, what packages still in the store were made
+/// from too, which a change of rules then builds again. Returns how many went.
+pub fn forget_raw_outputs(lab: &Lab, all: bool) -> Result<usize, String> {
+    let fixed = lab.work.join("fixed");
+    let mut records: Vec<(String, String)> = Vec::new();
+    for entry in fs::read_dir(&fixed).into_iter().flatten() {
+        let entry = entry.map_err(with_path(&fixed))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let text = fs::read_to_string(entry.path()).map_err(with_path(&entry.path()))?;
+        records.push((name, text));
+    }
+    let in_store = |hash: &str| lab.on_host(&StorePath::from_hash(hash)).exists();
+    let mut kept: BTreeSet<String> = BTreeSet::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for (name, text) in &records {
+        // The rules come last, after the build's path, whose name has dashes of its own.
+        let Some((out, _)) = name.rsplit_once('-') else {
+            continue;
+        };
+        seen.insert(out.to_owned());
+        let hashes: Vec<&str> = text
+            .split(' ')
+            .filter_map(|part| part.split_once('=').map(|(_, hash)| hash))
+            .collect();
+        // An empty record is a package that stayed at its build's path.
+        let used = if hashes.is_empty() {
+            in_store(out)
+        } else {
+            hashes.iter().any(|hash| in_store(hash))
+        };
+        if used {
+            kept.insert(out.to_owned());
+        }
+    }
+    let mut forgotten = 0;
+    for out in &seen {
+        let used = kept.contains(out);
+        if used && !all {
+            continue;
+        }
+        let raw = raw_output(lab, &StorePath::from_hash(out));
+        if raw.exists() {
+            fs::remove_file(&raw).map_err(with_path(&raw))?;
+            forgotten += 1;
+        }
+        let done = lab.work.join("done").join(out);
+        if done.exists() {
+            fs::remove_file(&done).map_err(with_path(&done))?;
+        }
+        if used {
+            continue;
+        }
+        let prefix = format!("{out}-");
+        for (name, _) in records.iter().filter(|(name, _)| name.starts_with(&prefix)) {
+            let record = fixed.join(name);
+            fs::remove_file(&record).map_err(with_path(&record))?;
+        }
+    }
+    Ok(forgotten)
 }
 
 /// Checks what the sandbox of `pending` made, and readies it to be placed.
@@ -5377,5 +5449,53 @@ mod raw_output_tests {
         assert!(name.starts_with(out.hash()), "{name}");
         assert!(name.ends_with(&crate::fixup::rules()[..16]), "{name}");
         assert_eq!(crate::fixup::rules().len(), 64);
+    }
+
+    #[test]
+    fn what_a_build_made_goes_once_nothing_fixed_up_from_it_is_in_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let (kept, gone) = (
+            StorePath::derive("build", &[b"kept"]).named("kept-1.0"),
+            StorePath::derive("build", &[b"gone"]).named("gone-1.0"),
+        );
+        let output = StorePath::derive("out", &[b"kept"]);
+        fs::create_dir_all(lab.on_host(&output)).unwrap();
+        for (out, record) in [
+            (&kept, format!("out={}", output.hash())),
+            (
+                &gone,
+                "out=0000000000000000000000000000000000000000".to_owned(),
+            ),
+        ] {
+            for file in [
+                raw_output(&lab, out),
+                lab.work.join("done").join(out.hash()),
+                crate::fixup::fixed_record(&lab, out),
+            ] {
+                fs::create_dir_all(file.parent().unwrap()).unwrap();
+                fs::write(
+                    &file,
+                    if file.starts_with(lab.work.join("fixed")) {
+                        record.clone()
+                    } else {
+                        String::new()
+                    },
+                )
+                .unwrap();
+            }
+        }
+
+        assert_eq!(forget_raw_outputs(&lab, false).unwrap(), 1);
+        assert!(raw_output(&lab, &kept).exists());
+        assert!(crate::fixup::fixed_record(&lab, &kept).exists());
+        assert!(!raw_output(&lab, &gone).exists());
+        assert!(!crate::fixup::fixed_record(&lab, &gone).exists());
+        assert!(!lab.work.join("done").join(gone.hash()).exists());
+
+        // All of them, though what's in the store stays fixed up and built.
+        assert_eq!(forget_raw_outputs(&lab, true).unwrap(), 1);
+        assert!(!raw_output(&lab, &kept).exists());
+        assert!(crate::fixup::fixed_record(&lab, &kept).exists());
     }
 }

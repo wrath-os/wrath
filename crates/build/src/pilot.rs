@@ -380,11 +380,24 @@ fn build_shared(
         .env
         .insert("NPROC".to_owned(), jobs.max(2).to_string());
     let outcome = chain::run(lab, &pending)?;
+    let prepared = {
+        let mut held = lock()?;
+        let (built, _) = &mut *held;
+        let prepared = chain::end(lab, package, *pending, &outcome, built)?;
+        fixup::settle(lab, package, &prepared, built)?;
+        prepared
+    };
+    // Its files are its own, so they're fixed up while other builds go on.
+    chain::remove(&prepared.build_dir)?;
+    fixup::fix_up(
+        lab,
+        &prepared,
+        &mut fixup::Fixups::default(),
+        &mut fixup::Leaks::default(),
+    )?;
     let mut held = lock()?;
     let (built, _) = &mut *held;
-    let prepared = chain::end(lab, package, *pending, &outcome, built)?;
-    chain::remove(&prepared.build_dir)?;
-    fixup::run(lab, package, &prepared, built, true)
+    fixup::finish(lab, package, &prepared.out, built)
 }
 
 /// That every package someone named, `wanted`, has a recipe among `ids`, before anything builds.

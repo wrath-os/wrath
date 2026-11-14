@@ -288,6 +288,21 @@ pub(crate) fn fix(
     built: &Built,
     fix_files: bool,
 ) -> Result<(), String> {
+    settle(lab, package, prepared, built)?;
+    if fix_files {
+        fix_up(lab, prepared, &mut Fixups::default(), &mut Leaks::default())?;
+    }
+    Ok(())
+}
+
+/// The quick part of [`fix`], which needs what's built: modes settled, libraries checked and
+/// the package's runtime dependencies written in.
+pub(crate) fn settle(
+    lab: &Lab,
+    package: &Package,
+    prepared: &Prepared,
+    built: &Built,
+) -> Result<(), String> {
     let root = lab.on_host(&prepared.out);
     settle_modes(&root).map_err(|e| format!("`{}` installed {e}", package.id))?;
     if let Some((file, library)) = linked_by_path(&root)? {
@@ -298,80 +313,17 @@ pub(crate) fn fix(
             file.display()
         ));
     }
-    write_runtime_deps(lab, package, &prepared.out, built)?;
-    if fix_files {
-        fix_up(lab, prepared, &mut Fixups::default(), &mut Leaks::default())?;
-    }
-    Ok(())
-}
-
-/// Removes what builds made, kept to be fixed up again, once nothing fixed up from it is in the
-/// store any more, with the records of it; with `all`, what packages still in the store were made
-/// from too, which a change of rules then builds again. Returns how many went.
-pub fn forget_raw_outputs(lab: &Lab, all: bool) -> Result<usize, String> {
-    let fixed = lab.work.join("fixed");
-    let mut records: Vec<(String, String)> = Vec::new();
-    for entry in fs::read_dir(&fixed).into_iter().flatten() {
-        let entry = entry.map_err(with_path(&fixed))?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let text = fs::read_to_string(entry.path()).map_err(with_path(&entry.path()))?;
-        records.push((name, text));
-    }
-    let in_store = |hash: &str| lab.on_host(&StorePath::from_hash(hash)).exists();
-    let mut kept: BTreeSet<String> = BTreeSet::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    for (name, text) in &records {
-        // The rules come last, after the build's path, whose name has dashes of its own.
-        let Some((out, _)) = name.rsplit_once('-') else {
-            continue;
-        };
-        seen.insert(out.to_owned());
-        let hashes: Vec<&str> = text
-            .split(' ')
-            .filter_map(|part| part.split_once('=').map(|(_, hash)| hash))
-            .collect();
-        // An empty record is a package that stayed at its build's path.
-        let used = if hashes.is_empty() {
-            in_store(out)
-        } else {
-            hashes.iter().any(|hash| in_store(hash))
-        };
-        if used {
-            kept.insert(out.to_owned());
-        }
-    }
-    let mut forgotten = 0;
-    for out in &seen {
-        let used = kept.contains(out);
-        if used && !all {
-            continue;
-        }
-        let raw = crate::chain::raw_output(lab, &StorePath::from_hash(out));
-        if raw.exists() {
-            fs::remove_file(&raw).map_err(with_path(&raw))?;
-            forgotten += 1;
-        }
-        let done = lab.work.join("done").join(out);
-        if done.exists() {
-            fs::remove_file(&done).map_err(with_path(&done))?;
-        }
-        if used {
-            continue;
-        }
-        for (name, _) in records
-            .iter()
-            .filter(|(name, _)| name.starts_with(&format!("{out}-")))
-        {
-            let record = fixed.join(name);
-            fs::remove_file(&record).map_err(with_path(&record))?;
-        }
-    }
-    Ok(forgotten)
+    write_runtime_deps(lab, package, &prepared.out, built)
 }
 
 /// Moves a finished package to its content addresses, so what's built next is keyed on what this
 /// one really produced, and records them. Boot packages stay where they were built.
-fn finish(lab: &Lab, package: &Package, out: &StorePath, built: &mut Built) -> Result<(), String> {
+pub(crate) fn finish(
+    lab: &Lab,
+    package: &Package,
+    out: &StorePath,
+    built: &mut Built,
+) -> Result<(), String> {
     let fixed = fixed_record(lab, out);
     let dir = fixed.parent().expect("a record is in a directory");
     fs::create_dir_all(dir).map_err(with_path(dir))?;
@@ -662,53 +614,5 @@ mod tests {
             error.contains("bin/pipe") && error.contains("only files"),
             "{error}"
         );
-    }
-
-    #[test]
-    fn what_a_build_made_goes_once_nothing_fixed_up_from_it_is_in_the_store() {
-        let dir = tempfile::tempdir().unwrap();
-        let lab = Lab::new(dir.path().join("work"));
-        let (kept, gone) = (
-            StorePath::derive("build", &[b"kept"]).named("kept-1.0"),
-            StorePath::derive("build", &[b"gone"]).named("gone-1.0"),
-        );
-        let output = StorePath::derive("out", &[b"kept"]);
-        fs::create_dir_all(lab.on_host(&output)).unwrap();
-        for (out, record) in [
-            (&kept, format!("out={}", output.hash())),
-            (
-                &gone,
-                "out=0000000000000000000000000000000000000000".to_owned(),
-            ),
-        ] {
-            for file in [
-                crate::chain::raw_output(&lab, out),
-                lab.work.join("done").join(out.hash()),
-                fixed_record(&lab, out),
-            ] {
-                fs::create_dir_all(file.parent().unwrap()).unwrap();
-                fs::write(
-                    &file,
-                    if file.starts_with(lab.work.join("fixed")) {
-                        record.clone()
-                    } else {
-                        String::new()
-                    },
-                )
-                .unwrap();
-            }
-        }
-
-        assert_eq!(forget_raw_outputs(&lab, false).unwrap(), 1);
-        assert!(crate::chain::raw_output(&lab, &kept).exists());
-        assert!(fixed_record(&lab, &kept).exists());
-        assert!(!crate::chain::raw_output(&lab, &gone).exists());
-        assert!(!fixed_record(&lab, &gone).exists());
-        assert!(!lab.work.join("done").join(gone.hash()).exists());
-
-        // All of them, though what's in the store stays fixed up and built.
-        assert_eq!(forget_raw_outputs(&lab, true).unwrap(), 1);
-        assert!(!crate::chain::raw_output(&lab, &kept).exists());
-        assert!(fixed_record(&lab, &kept).exists());
     }
 }

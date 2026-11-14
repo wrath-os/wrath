@@ -653,7 +653,7 @@ pub fn clean(keep: usize, yes: bool, raw: bool) -> Result<ExitCode, String> {
     let work = crate::places::work();
     if work.is_dir() {
         let lab = wrath_build::store::Lab::new(&work);
-        let forgotten = wrath_build::fixup::forget_raw_outputs(&lab, raw)?;
+        let forgotten = wrath_build::chain::forget_raw_outputs(&lab, raw)?;
         if forgotten > 0 {
             println!(
                 "removed what {} made before fix-ups",
