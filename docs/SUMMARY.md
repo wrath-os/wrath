@@ -23,4 +23,3 @@
 
 - [Commands](reference/commands.md)
 - [The module API](reference/module-api.md)
-- [Recipes](reference/recipes.md) (not written yet)

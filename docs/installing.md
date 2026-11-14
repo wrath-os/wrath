@@ -79,7 +79,15 @@ about to do and asks first. A disk that already has partitions is refused unless
 
 Install copies the configuration directory to `/etc/wrath` on the new disks. That's the copy the
 installed machine applies from, so after the first boot you edit it there (or copy your own
-checkout over it) and run `wrath apply`.
+checkout over it) and run `wrath apply`, which builds what's new on the machine itself.
+
+Grapes isn't published yet, so a stick built from a checkout leaves the lock without a pinned
+grapes, and the first apply on the machine has nowhere to fetch it from. Every system carries the
+grapes it was built from, so give it that one until you pin your own:
+
+```sh
+wrath apply --source grapes=/run/system/grapes
+```
 
 `--name` records the machine's name on it. It's the hostname when `system.hostname` isn't set,
 and it's how a configuration shared by several machines tells them apart. `--role` picks which

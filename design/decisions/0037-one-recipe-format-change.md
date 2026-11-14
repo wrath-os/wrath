@@ -161,8 +161,11 @@ Where the code differs from the above, or settles what it left open:
   change that could change the record. A record that still differs when the build styles the
   recipe means the style isn't deterministic, and the build stops; nothing is rewritten then.
 - A checkout writes a missing or stale record when it plans, and says so per recipe. `wrath dev
-  lint` records every recipe; `wrath update` doesn't write records yet. Grapes' CI runs
-  `wrath dev lint --locked`, which styles every recipe and fails on a missing record or pin.
+  lint` records every recipe; `wrath update` doesn't write records yet. `wrath dev lint --locked`
+  styles every recipe and fails on a missing record or pin: it's the check for grapes' CI, which
+  doesn't exist yet.
+- Crate hashes come from a project's `Cargo.lock` through the record, so a cargo recipe's lock
+  pins only its own source; Go modules have no hashes there, so a go recipe's lock pins each one.
 - A recipe built from a tree of a checkout, such as wrath's own, is always styled and never
   recorded: its tree changes with every edit.
 - The fix-up rules are a digest of the code of `fixup.rs`, `runpath.rs`, `split.rs` and
@@ -182,3 +185,8 @@ Where the code differs from the above, or settles what it left open:
   `nano` (its option's new name) and the two trees of checkouts changed.
 - `wrath dev lint` also checks the layout: a file is named after one of its packages, under that
   name's first two letters, and no id is declared twice.
+- With `BUILD_RULES` gone, what the builder adds to a build is in its key as the build runs with
+  it: the script around the recipe's, every variable but `NPROC` (the compiler wrapper's flags,
+  search paths, where dependencies are) and the sandbox's fixed environment and files, with a
+  small `LAYOUT` constant in `sandbox.rs` changed when its mounts do. A boot package's key also has
+  a digest of `settle.rs`, the one part of the fix-up a boot package gets.

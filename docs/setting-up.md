@@ -90,7 +90,7 @@ A user's settings go in `system.toml` under `[users.NAME]`, or in a file of thei
 description = "John"
 extra_groups = ["wheel", "video"]
 authorized_keys = ["ssh-ed25519 AAAA... john@laptop"]
-# what `mkpasswd -m sha-512` prints
+# what `openssl passwd -6` prints
 initial_hashed_password = '$6$Hn0S2lSw$sQ0rK1pV8Z3xAqf7'
 shell = "zsh"
 packages = ["helix", "lazygit"]
