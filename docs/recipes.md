@@ -5,6 +5,11 @@ the set wrath builds from. A recipe says where the source is, what the build nee
 build it. Most of the time a build style writes the build script, so the recipe is mostly a list
 of what's different about this project.
 
+Each package has a file of its own under the first two letters of its name, such as
+`recipes/jq/jq.toml`. A family that changes together, such as gtk4 and its typelibs, shares the
+main package's file. Beside it, `jq.lock` pins its sources, and a directory with its name,
+`recipes/jq/jq/`, holds its own files, such as patches, which `files` names from there.
+
 ## A recipe
 
 ```toml
@@ -37,8 +42,8 @@ What the fields mean:
   Almost every recipe wants it.
 - `extra_deps` lists what the build needs, by id. That's exactly what the build sees in its
   `/usr`, nothing else.
-- `sources` are downloads, or `git+URL#COMMIT` for a git commit. Each is pinned in
-  grapes' `sources.lock` the first time it's fetched, so recipes never carry hashes. A second source
+- `sources` are downloads, or `git+URL#COMMIT` for a git commit. Each is pinned in the
+  recipe's lock the first time it's fetched, so recipes never carry hashes. A second source
   goes somewhere else in the tree with `into = "subdir"`.
 - `smoke` lists quick commands that should work once it's built, run from the package's
   directory. `check`, when there is one, runs the project's own tests in its build tree.

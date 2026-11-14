@@ -1,6 +1,6 @@
 # 0034: A file per package, a lock beside it, and an index
 
-Status: proposed, 2026-11-13.
+Status: the layout and locks accepted with 0037, 2026-11-14; the index and `recipe new` later.
 
 ## Context
 
