@@ -104,7 +104,9 @@ With it, a plan knows what every package is without downloading a source: a styl
 project's own files, such as its `Cargo.lock`, only when the package is built, and the build
 stops if the style makes something else from the same input. In a checkout of grapes, wrath
 records a new source or a changed style the first time it plans or builds, and says so;
-`wrath dev lint` brings every lock up to date. With a pinned grapes, as a machine has, a lock
+`wrath dev lint` brings every lock up to date. `--locked`, on any command, writes none and fails
+instead, which is what a CI wants: `wrath dev lint --locked` fails on a lock someone forgot to
+update. With a pinned grapes, as a machine has, a lock
 that's behind is an error: nothing is written into a version someone pinned. That version of
 grapes was committed without running `wrath dev lint`; a newer one, or a checkout given with
 `--source grapes=DIR`, gets past it.

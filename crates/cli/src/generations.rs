@@ -862,6 +862,13 @@ fn follow_newest(
 }
 
 pub(crate) fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
+    if crate::locked() {
+        return Err(format!(
+            "the configuration's lock would change, and `--locked` writes none; \
+             `wrath check` in {} pins what's new",
+            config.display()
+        ));
+    }
     write_lock_file(&config.join(LOCK_FILE), lock)
 }
 

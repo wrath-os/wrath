@@ -603,6 +603,16 @@ fn check_pins_whats_new_and_with_locked_refuses_to() {
             .contains("bo = 1000")
     );
     stdout(&wrath(&["-C", config, "check", "--locked"]));
+    // Any command that would change the lock refuses to with `--locked`, and leaves the
+    // configuration as it was.
+    let adding = wrath(&["--locked", "-C", config, "add", "jq"]);
+    assert!(!adding.status.success());
+    let stderr = String::from_utf8_lossy(&adding.stderr);
+    assert!(stderr.contains("`--locked` writes none"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("system.toml")).unwrap(),
+        text
+    );
 }
 
 #[test]

@@ -74,6 +74,9 @@ struct Cli {
     /// such as `grapes=../grapes` to work on grapes beside a configuration
     #[arg(long = "source", global = true, value_name = "NAME=DIR")]
     sources: Vec<String>,
+    /// Write no lock: fail where the configuration's lock or a recipe's would change, as CI wants
+    #[arg(long, global = true)]
+    locked: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -246,11 +249,7 @@ enum Command {
         list: bool,
     },
     /// Check the configuration for errors, without building it, and pin what's new in it
-    Check {
-        /// Fail when something isn't pinned yet instead of pinning it, as CI wants
-        #[arg(long)]
-        locked: bool,
-    },
+    Check,
     /// Show the options there are, with their types, defaults and docs
     Options {
         /// Only the options under this one, such as `services.nginx` or `users.john`
@@ -329,9 +328,6 @@ enum DevCommand {
     /// Point out recipes that write a target's name, such as `x86_64`, where a placeholder says it,
     /// and record what each recipe's style makes where its lock doesn't yet
     Lint {
-        /// Fail when a lock doesn't record what a recipe's style makes, instead of recording it
-        #[arg(long)]
-        locked: bool,
         /// Also list dependencies another listed one already brings, for information; this builds
         /// what isn't built yet
         #[arg(long)]
@@ -413,16 +409,21 @@ struct TestOptions {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     ROLE.set(cli.role.clone()).expect("the role is set once");
+    if cli.locked {
+        LOCKED.set(true).expect("`--locked` is set once");
+        wrath_build::chain::read_only_locks();
+    }
     wrath_build::progress::set(wrath_build::progress::chosen(
         cli.verbose,
         std::io::IsTerminal::is_terminal(&std::io::stderr()),
     ));
     fetch::set(match &cli.command {
+        _ if cli.locked => fetch::Fetching::Pinned,
         Command::Update {
             sources,
             list: false,
         } => fetch::Fetching::Newest(sources.clone()),
-        Command::Check { locked: false }
+        Command::Check
         | Command::Apply { .. }
         | Command::Try { .. }
         | Command::Add { .. }
@@ -677,9 +678,7 @@ fn main() -> ExitCode {
                 generations::sources(&model)
             }
         }),
-        Command::Check { locked } => {
-            config().and_then(|config| check_config(root, &config, &modules, locked))
-        }
+        Command::Check => config().and_then(|config| check_config(root, &config, &modules)),
         Command::Options {
             prefix,
             schema,
@@ -706,10 +705,9 @@ fn main() -> ExitCode {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
             DevCommand::Lint {
-                locked,
                 redundant,
                 packages,
-            } => lint(&packages, redundant, locked),
+            } => lint(&packages, redundant),
             DevCommand::Docs { check } => reference::write(
                 root,
                 &modules,
@@ -773,10 +771,16 @@ fn main() -> ExitCode {
 
 /// The role given with `--role`, set once when the command line is read.
 static ROLE: OnceLock<Option<String>> = OnceLock::new();
+/// Whether `--locked` was given, so no lock is written.
+static LOCKED: OnceLock<bool> = OnceLock::new();
 /// The repository wrath runs from, whose recipes name the packages there are.
 static REPOSITORY: OnceLock<PathBuf> = OnceLock::new();
 /// The role this machine runs, looked up the first time a command needs it.
 static MACHINE_ROLE: OnceLock<Option<String>> = OnceLock::new();
+
+pub(crate) fn locked() -> bool {
+    LOCKED.get().copied().unwrap_or(false)
+}
 
 fn given_role() -> Option<&'static str> {
     ROLE.get().and_then(Option::as_deref)
@@ -823,7 +827,7 @@ fn runs_pinned(command: &Command) -> bool {
         | Command::Add { .. }
         | Command::Remove { .. }
         | Command::Install { .. }
-        | Command::Check { .. }
+        | Command::Check
         | Command::Options { .. }
         | Command::Why { .. }
         | Command::Secret { .. } => true,
@@ -935,13 +939,8 @@ fn print_apply_record(config: &Path, modules: &Path) -> Result<ExitCode, String>
 }
 
 /// Checks every role, or the one `--role` names, then pins what's new in the lock, or with
-/// `locked` fails when something isn't pinned.
-fn check_config(
-    root: &Path,
-    config: &Path,
-    modules: &Path,
-    locked: bool,
-) -> Result<ExitCode, String> {
+/// `--locked` fails when something isn't pinned.
+fn check_config(root: &Path, config: &Path, modules: &Path) -> Result<ExitCode, String> {
     let roles = match given_role() {
         Some(role) => vec![Some(role.to_owned())],
         None => all_roles(config)?,
@@ -962,7 +961,7 @@ fn check_config(
     for model in &models {
         unpinned |= generations::needs_locking(root, config, model)?;
     }
-    match (unpinned, locked) {
+    match (unpinned, locked()) {
         (false, _) => Ok(ExitCode::SUCCESS),
         (true, true) => Err(
             "the lock doesn't pin everything the configuration uses; `wrath check` pins it".into(),
@@ -1062,11 +1061,8 @@ fn builder() -> Result<(Lab, PathBuf), String> {
 
 /// Points out recipes that write a target's name where a placeholder says it, which fails lint;
 /// with `redundant`, also lists dependencies another listed one brings, for information only.
-fn lint(packages: &[String], redundant: bool, locked: bool) -> Result<ExitCode, String> {
+fn lint(packages: &[String], redundant: bool) -> Result<ExitCode, String> {
     let grapes = places::grapes()?;
-    if locked {
-        wrath_build::chain::read_only_locks();
-    }
     let recorded = wrath_build::graph::record_styles(&grapes, &places::work())?;
     if !recorded.is_empty() {
         println!(

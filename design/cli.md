@@ -125,8 +125,8 @@ The lock:
 | `wrath update [SOURCE...]` | Moves sources to their newest versions; single packages are planned |
 | `wrath update --list` | Each source with what it follows, where it's pinned and how old that is |
 
-There's no `lock` verb: `check`, `apply` and `add` pin whatever is new, and `check --locked`
-fails instead.
+There's no `lock` verb: `check`, `apply` and `add` pin whatever is new. `--locked`, on any
+command, writes no lock: the configuration's or a recipe's, and fails where one would change.
 
 Recipes, styles and modules come from grapes (github.com/wrath-os/grapes), a source the lock
 pins on its own as `grapes`. A configuration needn't declare it: the lock pins
@@ -157,7 +157,7 @@ Understanding the configuration:
 
 | Command | Does |
 |---|---|
-| `wrath check` | Evaluates the configuration and reports errors, without building, and pins anything new in it. `--locked` fails instead of pinning, for CI |
+| `wrath check` | Evaluates the configuration and reports errors, without building, and pins anything new in it. With `--locked` it fails instead of pinning, for CI |
 | `wrath why THING` | Where an option's value, a file such as `/etc/nginx/main.conf`, or a package comes from |
 | `wrath options [PREFIX]` | The options there are, with their types, defaults and docs |
 

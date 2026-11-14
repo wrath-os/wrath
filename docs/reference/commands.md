@@ -9,6 +9,7 @@
 - `--json`: Print data as JSON instead of text, where a command supports it
 - `-v, --verbose`: Show everything each build prints, as it prints it
 - `--source <NAME=DIR>`: A source read from a directory instead of where the lock pins it, for this command only, such as `grapes=../grapes` to work on grapes beside a configuration
+- `--locked`: Write no lock: fail where the configuration's lock or a recipe's would change, as CI wants
 
 ## `wrath status`
 
@@ -198,8 +199,6 @@ Check the configuration for errors, without building it, and pin what's new in i
 wrath check [OPTIONS]
 ```
 
-- `--locked`: Fail when something isn't pinned yet instead of pinning it, as CI wants
-
 ## `wrath options`
 
 Show the options there are, with their types, defaults and docs
@@ -303,7 +302,6 @@ Point out recipes that write a target's name, such as `x86_64`, where a placehol
 wrath dev lint [OPTIONS] [PACKAGES]...
 ```
 
-- `--locked`: Fail when a lock doesn't record what a recipe's style makes, instead of recording it
 - `--redundant`: Also list dependencies another listed one already brings, for information; this builds what isn't built yet
 - `[PACKAGES]...`: With `--redundant`, only these recipes [default: every recipe]
 
