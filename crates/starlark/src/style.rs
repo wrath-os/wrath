@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use allocative::Allocative;
+use sha2::{Digest, Sha256};
 use starlark::any::ProvidesStaticType;
 use starlark::collections::SmallMap;
 use starlark::environment::{
@@ -42,6 +43,7 @@ pub struct Style {
     files: Vec<String>,
     options: Vec<(String, OptionSpec)>,
     module: FrozenModule,
+    digest: String,
 }
 
 /// What a style made for one recipe.
@@ -284,12 +286,21 @@ pub fn load(path: &str, text: &str) -> Result<Style, String> {
         files: declared.files,
         options: declared.options,
         module,
+        digest: Sha256::digest(text.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
     })
 }
 
 impl Style {
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The SHA-256 of its code, as hex, which changes whenever what it makes might.
+    pub fn digest(&self) -> &str {
+        &self.digest
     }
 
     /// The locks that pick this style for a source that has one at its top.

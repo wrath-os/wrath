@@ -322,8 +322,12 @@ enum DevCommand {
         #[arg(long)]
         check: bool,
     },
-    /// Point out recipes that write a target's name, such as `x86_64`, where a placeholder says it
+    /// Point out recipes that write a target's name, such as `x86_64`, where a placeholder says it,
+    /// and record what each recipe's style makes where its lock doesn't yet
     Lint {
+        /// Fail when a lock doesn't record what a recipe's style makes, instead of recording it
+        #[arg(long)]
+        locked: bool,
         /// Also list dependencies another listed one already brings, for information; this builds
         /// what isn't built yet
         #[arg(long)]
@@ -698,9 +702,10 @@ fn main() -> ExitCode {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
             DevCommand::Lint {
+                locked,
                 redundant,
                 packages,
-            } => lint(&packages, redundant),
+            } => lint(&packages, redundant, locked),
             DevCommand::Docs { check } => reference::write(
                 root,
                 &modules,
@@ -1048,8 +1053,18 @@ fn builder() -> Result<(Lab, PathBuf), String> {
 
 /// Points out recipes that write a target's name where a placeholder says it, which fails lint;
 /// with `redundant`, also lists dependencies another listed one brings, for information only.
-fn lint(packages: &[String], redundant: bool) -> Result<ExitCode, String> {
+fn lint(packages: &[String], redundant: bool, locked: bool) -> Result<ExitCode, String> {
     let grapes = places::grapes()?;
+    if locked {
+        wrath_build::chain::read_only_locks();
+    }
+    let recorded = wrath_build::graph::record_styles(&grapes, &places::work())?;
+    if !recorded.is_empty() {
+        println!(
+            "recorded what the style makes for {}",
+            counted(recorded.len(), "recipe")
+        );
+    }
     let found = wrath_build::graph::targets_written(&grapes)?;
     if redundant {
         let only: Vec<&str> = packages.iter().map(String::as_str).collect();

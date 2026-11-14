@@ -296,12 +296,13 @@ wrath dev docs [OPTIONS]
 
 ## `wrath dev lint`
 
-Point out recipes that write a target's name, such as `x86_64`, where a placeholder says it
+Point out recipes that write a target's name, such as `x86_64`, where a placeholder says it, and record what each recipe's style makes where its lock doesn't yet
 
 ```text
 wrath dev lint [OPTIONS] [PACKAGES]...
 ```
 
+- `--locked`: Fail when a lock doesn't record what a recipe's style makes, instead of recording it
 - `--redundant`: Also list dependencies another listed one already brings, for information; this builds what isn't built yet
 - `[PACKAGES]...`: With `--redundant`, only these recipes [default: every recipe]
 

@@ -2511,6 +2511,22 @@ pub fn system(
     system_from(&lab, &mut db, &known_packages(&built), model, kept)
 }
 
+/// Styles every recipe whose lock doesn't record what its style makes now, recording it, and
+/// returns their ids. With the locks read only, the first such recipe is an error.
+pub fn record_styles(repository: &Path, work: &Path) -> Result<Vec<String>, String> {
+    let lab = Lab::new(work);
+    let mut styled = Vec::new();
+    for file in recipe_files(repository)? {
+        styled.extend(
+            chain::load_styled(&lab, repository, &file)?
+                .into_iter()
+                .filter(chain::Package::restyled_now)
+                .map(|package| package.id),
+        );
+    }
+    Ok(styled)
+}
+
 /// The id of every recipe in `repository`, the names packages can have, read without building
 /// anything.
 pub fn recipe_ids(repository: &Path) -> Result<BTreeSet<String>, String> {

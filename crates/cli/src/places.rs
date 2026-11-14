@@ -125,6 +125,8 @@ fn resolve(given: Option<&Path>, config: Option<&Path>) -> Result<PathBuf, Strin
             given_dir(dir)?
         }
         Origin::Configured(url) => {
+            // A pinned version is used as it is: what its locks lack is an error, never written.
+            wrath_build::chain::read_only_locks();
             fetched(config.expect("a configured grapes has a config"), &url)?
         }
         Origin::Here => here(&std::env::current_dir().unwrap_or_default())?,

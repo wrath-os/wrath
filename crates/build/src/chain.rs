@@ -288,6 +288,15 @@ pub(crate) struct Package {
     style: Option<String>,
     #[serde(skip)]
     unstyled: Option<Box<Package>>,
+    /// What its lock records its style made, read with it.
+    #[serde(skip)]
+    made: Option<Made>,
+    /// The digest of what its style made, once it's styled or planned from its lock.
+    #[serde(skip)]
+    record: Option<String>,
+    /// Planned from what its lock records, without its style's script: styled when it builds.
+    #[serde(skip)]
+    planned: bool,
     /// Where it was read from.
     #[serde(skip)]
     pub(crate) origin: Origin,
@@ -340,6 +349,22 @@ const CORE_TOOLS: [&str; 11] = [
 ];
 
 impl Package {
+    /// Whether its style ran as it loaded, its lock beside it not recording what the style makes.
+    pub(crate) fn restyled_now(&self) -> bool {
+        self.style.is_some()
+            && !self.planned
+            && !self.built_from_a_tree()
+            && matches!(self.origin.lock, Lock::Beside { .. })
+    }
+
+    /// Whether a source is a tree of a checkout, such as wrath's, which changes with every edit
+    /// to it, so nothing a style makes from it is recorded.
+    fn built_from_a_tree(&self) -> bool {
+        self.sources
+            .iter()
+            .any(|source| source.url.starts_with("tree:"))
+    }
+
     /// Whether this package is built from the seed, before the toolchain.
     pub(crate) fn is_boot(&self) -> bool {
         self.scope == Scope::Boot
@@ -425,6 +450,16 @@ impl Package {
     /// The ids of what it depends on.
     pub(crate) fn dep_ids(&self) -> Result<Vec<String>, String> {
         Ok(self.all_deps()?.into_iter().map(|dep| dep.id).collect())
+    }
+
+    /// The ids of the dependencies it has that `recipe`, the recipe its style styled, doesn't.
+    fn added_deps(&self, recipe: &Package) -> Result<Vec<String>, String> {
+        let listed = recipe.dep_ids()?;
+        Ok(self
+            .dep_ids()?
+            .into_iter()
+            .filter(|dep| !listed.contains(dep))
+            .collect())
     }
 
     /// All the dependencies, the toolchain's first when the package builds on it, and last what
@@ -839,6 +874,19 @@ fn pack(from: &Path, names: &[String], skip: &[&str], to: &Path) -> Result<(), S
 /// Where recipes are, in a repository.
 const RECIPES: &str = "recipes";
 
+/// Whether the set's locks are only read, set once for a pinned set: anything not pinned or
+/// recorded in them is then an error, never written.
+static LOCKS_READ_ONLY: OnceLock<bool> = OnceLock::new();
+
+/// Makes the set's locks read only, for a set that's pinned rather than a checkout.
+pub fn read_only_locks() {
+    let _ = LOCKS_READ_ONLY.set(true);
+}
+
+fn locks_read_only() -> bool {
+    LOCKS_READ_ONLY.get().copied().unwrap_or(false)
+}
+
 /// The lock of the recipes kept in files of a theme.
 const SHARED_LOCK: &str = "sources.lock";
 
@@ -937,12 +985,43 @@ impl Origin {
     }
 }
 
-/// What a lock beside a recipe file holds for one of its packages.
+/// What a lock beside a recipe file holds for one of its packages: what its style made, when it
+/// has one, and its pins.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PackageLock {
+    style: Option<String>,
+    record: Option<String>,
+    from: Option<String>,
+    #[serde(default)]
+    deps: Vec<String>,
     #[serde(default)]
     sources: Vec<Pinned>,
+}
+
+impl PackageLock {
+    fn made(&self) -> Option<Made> {
+        Some(Made {
+            style: self.style.clone()?,
+            record: self.record.clone()?,
+            from: self.from.clone()?,
+            deps: self.deps.clone(),
+        })
+    }
+}
+
+/// What a recipe's style made, as its lock records it, so a plan needn't read its source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Made {
+    /// The style that made it.
+    style: String,
+    /// The digest of what it made: the script, and the sources and dependencies it added.
+    record: String,
+    /// The digest of what it was made from: the style's code, and the recipe's options, sources
+    /// and own files.
+    from: String,
+    /// The dependencies it added.
+    deps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -977,6 +1056,22 @@ fn lock_text(locks: &BTreeMap<String, PackageLock>) -> String {
         }
         let key = key(id);
         text.push_str(&format!("[{key}]\n"));
+        if let Some(Made {
+            style,
+            record,
+            from,
+            deps,
+        }) = lock.made()
+        {
+            let deps: Vec<String> = deps.iter().map(|dep| quoted(dep)).collect();
+            text.push_str(&format!(
+                "style = {}\nrecord = {}\nfrom = {}\ndeps = [{}]\n",
+                quoted(&style),
+                quoted(&record),
+                quoted(&from),
+                deps.join(", ")
+            ));
+        }
         let mut sources = lock.sources.clone();
         sources.sort_by(|a, b| a.url.cmp(&b.url));
         for Pinned { url, hash } in &sources {
@@ -1001,6 +1096,8 @@ pub(crate) struct Sources {
     shared: BTreeMap<String, String>,
     /// What the locks beside recipe files pin: each lock, package id and URL.
     beside: BTreeSet<(PathBuf, String, String)>,
+    /// Whether the locks are only read, as a pinned set's are.
+    read_only: bool,
 }
 
 impl Sources {
@@ -1044,7 +1141,23 @@ impl Sources {
             pins,
             shared,
             beside,
+            read_only: locks_read_only(),
         })
+    }
+
+    /// Records in `lock` what a style made, in place of what it recorded before.
+    fn remember(&self, lock: &Lock, made: &Made) -> Result<(), String> {
+        let Lock::Beside { file, id } = lock else {
+            return Ok(());
+        };
+        let file = self.repository.join(file);
+        let mut locks = read_lock(&file)?;
+        let entry = locks.entry(id.clone()).or_default();
+        entry.style = Some(made.style.clone());
+        entry.record = Some(made.record.clone());
+        entry.from = Some(made.from.clone());
+        entry.deps.clone_from(&made.deps);
+        fs::write(&file, lock_text(&locks)).map_err(with_path(&file))
     }
 
     /// Pins `url` as `hash` in `lock`.
@@ -1106,12 +1219,20 @@ impl Sources {
         if let Some(tree) = source.url.strip_prefix("tree:") {
             return self.fetch_tree(lab, tree, &source.include);
         }
+        let known = source.sha256.is_some() || self.pins.contains_key(&source.url);
+        if !known && self.read_only {
+            return Err(format!(
+                "{} isn't pinned, and a pinned grapes never pins anything: that version of \
+                 grapes is broken, and a checkout of it pins the source when it builds",
+                source.url
+            ));
+        }
         let (path, hash) = if source.url.starts_with("git+") {
             self.fetch_git(lab, &source.url)?
         } else {
             self.fetch(lab, &source.url, source.sha256.as_deref())?
         };
-        if source.sha256.is_none() && !self.holds(lock, &source.url) {
+        if source.sha256.is_none() && !self.holds(lock, &source.url) && !self.read_only {
             self.pin(&source.url, &hash, lock)?;
         }
         Ok((path, hash))
@@ -1311,11 +1432,16 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
     let text = fs::read_to_string(&path).map_err(with_path(&path))?;
     let parsed: Recipes = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     let styles = styles(repository)?;
+    let locked = match Origin::of(recipes, "").lock {
+        Lock::Beside { file, .. } => read_lock(&repository.join(file))?,
+        Lock::Shared => BTreeMap::new(),
+    };
     parsed
         .package
         .into_iter()
         .map(|mut package| {
             package.origin = Origin::of(recipes, &package.id);
+            package.made = locked.get(&package.id).and_then(PackageLock::made);
             package
                 .check_name()
                 .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1552,9 +1678,109 @@ fn reached(
     Ok(found)
 }
 
-/// `package` with its style's script, its first source fetched, if it hasn't been, for the style to
-/// read.
+/// `package` styled: planned from what its lock records, when that was made from what it would be
+/// made from now, or else with its style's script. What a style makes for a checkout of the set
+/// is recorded in the lock; a pinned set's lock has to have it already. A recipe built from a tree
+/// of a checkout is always styled, and never recorded.
 fn style_one(
+    lab: &Lab,
+    repository: &Path,
+    styles: &[Style],
+    sources: &mut Sources,
+    package: Package,
+) -> Result<Package, String> {
+    if package.built_from_a_tree() {
+        return style_now(lab, repository, styles, sources, package);
+    }
+    if let Some(made) = package.made.clone()
+        && let Some(style) = styles.iter().find(|style| style.name() == made.style)
+        && made_from(lab, repository, sources, &package, style)? == made.from
+    {
+        return package.planned_from(made);
+    }
+    let lock = package.origin.lock.clone();
+    let recorded = package.made.clone();
+    let styled = style_now(lab, repository, styles, sources, package)?;
+    let (Some(style), Some(record), Lock::Beside { id, .. }) =
+        (&styled.style, &styled.record, &lock)
+    else {
+        return Ok(styled);
+    };
+    // A build made from the recipe under another name isn't what the lock records.
+    if *id != styled.id {
+        return Ok(styled);
+    }
+    let unstyled = styled
+        .unstyled
+        .as_deref()
+        .expect("a styled package keeps its recipe");
+    let style = styles
+        .iter()
+        .find(|found| found.name() == style)
+        .expect("its style loaded");
+    let made = Made {
+        style: style.name().to_owned(),
+        record: record.clone(),
+        from: made_from(lab, repository, sources, unstyled, style)?,
+        deps: styled.added_deps(unstyled)?,
+    };
+    if recorded.as_ref() != Some(&made) {
+        if sources.read_only {
+            return Err(format!(
+                "`{}`'s lock doesn't record what its style makes now, and a pinned grapes never \
+                 records anything: that version of grapes is broken",
+                styled.id
+            ));
+        }
+        sources.remember(&lock, &made)?;
+    }
+    Ok(styled)
+}
+
+/// The digest of what `package`'s style makes its script from: the style's code, and the
+/// recipe's name, version, options for the style, sources and own files.
+fn made_from(
+    lab: &Lab,
+    repository: &Path,
+    sources: &mut Sources,
+    package: &Package,
+    style: &Style,
+) -> Result<String, String> {
+    let options = serde_json::to_value(package.style_options.get(style.name()))
+        .map_err(|e| e.to_string())?
+        .to_string();
+    let mut parts = vec![
+        "from".to_owned(),
+        style.name().to_owned(),
+        style.digest().to_owned(),
+        package.id.clone(),
+        package.version.clone().unwrap_or_default(),
+        options,
+    ];
+    for source in &package.sources {
+        parts.push(sources.hash_of(lab, source, &package.origin.lock)?);
+    }
+    for name in &package.files {
+        let file = repository.join(&package.origin.dir).join(name);
+        parts.push(sha256_of(&file)?);
+    }
+    Ok(digest(&parts))
+}
+
+/// The SHA-256 of `parts`, each preceded by its length so no two lists of parts run together.
+fn digest(parts: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part.as_bytes());
+    }
+    crate::store::hex(&hasher.finalize())
+}
+
+/// `package` with its style's script, its first source fetched, if it hasn't been, for the style to
+/// read, and the digest of what the style made.
+fn style_now(
     lab: &Lab,
     repository: &Path,
     styles: &[Style],
@@ -1580,6 +1806,21 @@ fn style_one(
         fs::read_to_string(&file).map_err(with_path(&file))
     };
     let mut styled = package.clone().styled_by(styles, &top, &read)?;
+    // What the style made: the script, the dependencies and the sources it added, each source by
+    // its hash, so a record differs whenever what's built from it would.
+    let mut parts = vec![styled.script.clone()];
+    parts.extend(styled.added_deps(&package)?);
+    for source in &styled.sources[package.sources.len()..] {
+        let hash = match &source.sha256 {
+            Some(hash) => hash.clone(),
+            None => sources.hash_of(lab, source, &package.origin.lock)?,
+        };
+        parts.push(format!(
+            "{} {:?} {} {hash}",
+            source.url, source.into, source.file
+        ));
+    }
+    styled.record = Some(digest(&parts));
     styled.unstyled = Some(Box::new(package));
     Ok(styled)
 }
@@ -1621,6 +1862,24 @@ impl Package {
         }
         self.styled = names_style || self.script.is_empty();
         Ok(())
+    }
+
+    /// The recipe planned from what its lock records its style made: the dependencies the style
+    /// added and the digest of what it made, but not the script, which a build styles it for.
+    fn planned_from(self, made: Made) -> Result<Self, String> {
+        let mut planned = self.clone();
+        let listed = self.dep_ids()?;
+        planned.extra_deps.extend(
+            made.deps
+                .into_iter()
+                .filter(|dep| !listed.contains(dep))
+                .map(DepSpec::Id),
+        );
+        planned.style = Some(made.style);
+        planned.record = Some(made.record);
+        planned.planned = true;
+        planned.unstyled = Some(Box::new(self));
+        Ok(planned)
     }
 
     /// The recipe with its style's script, after its options, and the style's dependencies and
@@ -2182,7 +2441,9 @@ const TARGET: &str = "x86_64-linux-gnu";
 const ARCH: &str = "x86_64";
 const OS: &str = "linux";
 const TRIPLE: &str = "x86_64-unknown-linux-gnu";
-/// What goes into a package's key from its recipe, before any dependency.
+/// What goes into a package's key from its recipe, before any dependency. `source_hashes` are
+/// its sources', in order. A styled package's are its recipe's, as written, and the digest of what
+/// its style made, so a plan knows its key from its lock without reading its source.
 ///
 /// Every field is named here, so a new one doesn't compile until it's either in the key or said
 /// not to change what's built: a key that leaves a field out reuses a build that's wrong for it.
@@ -2191,6 +2452,14 @@ fn recipe_parts(
     package: &Package,
     source_hashes: &[&str],
 ) -> Result<Vec<Vec<u8>>, String> {
+    if let (Some(recipe), Some(record)) = (&package.unstyled, &package.record) {
+        let own = source_hashes
+            .get(..recipe.sources.len())
+            .ok_or_else(|| format!("`{}` has fewer source hashes than sources", package.id))?;
+        let mut parts = recipe_parts(repository, recipe, own)?;
+        parts.push(format!("record {record}").into_bytes());
+        return Ok(parts);
+    }
     let Package {
         id,
         version,
@@ -2215,7 +2484,11 @@ fn recipe_parts(
         style_options: _,
         styled: _,
         style: _,
+        // A styled package's key is its recipe's and the digest of what its style made, above.
         unstyled: _,
+        made: _,
+        record: _,
+        planned: _,
         // Where its files are, which are in the key by what they hold.
         origin,
         // What a generation makes from the packages, not this package's build.
@@ -2374,6 +2647,27 @@ pub(crate) fn begin(
     built: &mut Built,
     again: bool,
 ) -> Result<Begun, String> {
+    let styled;
+    let package = match (&package.unstyled, package.planned) {
+        (Some(recipe), true) => {
+            styled = style_now(
+                lab,
+                repository,
+                &styles(repository)?,
+                sources,
+                (**recipe).clone(),
+            )?;
+            if styled.record != package.record {
+                return Err(format!(
+                    "`{}`'s style made something other than what its lock records from the same \
+                     style and source, so it doesn't make the same thing twice",
+                    package.id
+                ));
+            }
+            &styled
+        }
+        _ => package,
+    };
     let listed = package.all_deps()?;
     let deps = with_requirements(lab, package, &listed, built)?;
     let mut closure = BTreeSet::from([seed.clone()]);
@@ -4890,5 +5184,176 @@ mod layout_tests {
             assert!(found.contains(id), "{found:?}");
         }
         assert!(!found.contains("bash"), "{found:?}");
+    }
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    const MESON: &str = r#"
+def build(recipe: Recipe, options: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    return {"script": "meson setup\n", "deps": ["meson"]}
+
+style(name = "meson", files = ["meson.build"], build = build)
+"#;
+
+    struct Set {
+        dir: tempfile::TempDir,
+        lab: Lab,
+        tarball: PathBuf,
+    }
+
+    /// A set with one recipe, `app`, built by the meson style from a downloaded source.
+    fn set() -> Set {
+        let dir = tempfile::tempdir().unwrap();
+        let tarball = dir.path().join("app-1.0.tar.gz");
+        fs::write(&tarball, "app\n").unwrap();
+        let recipe = format!(
+            "[[package]]\nid = \"app\"\nversion = \"1.0\"\nscope = \"runtime\"\n\
+             sources = [{{ url = \"file://{}\" }}]\n\n[package.meson]\n",
+            tarball.display()
+        );
+        fs::create_dir_all(dir.path().join("recipes/ap")).unwrap();
+        fs::write(dir.path().join("recipes/ap/app.toml"), recipe).unwrap();
+        fs::create_dir_all(dir.path().join("styles")).unwrap();
+        fs::write(dir.path().join("styles/meson.star"), MESON).unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        Set { dir, lab, tarball }
+    }
+
+    impl Set {
+        fn styled(&self, code: &str, read_only: bool) -> Result<Package, String> {
+            let styles = [style::load("meson.star", code).unwrap()];
+            let mut sources = Sources::load(self.dir.path()).unwrap();
+            sources.read_only = read_only;
+            let package = load(self.dir.path(), "ap/app.toml").unwrap().remove(0);
+            style_one(&self.lab, self.dir.path(), &styles, &mut sources, package)
+        }
+
+        fn lock(&self) -> BTreeMap<String, PackageLock> {
+            read_lock(&self.dir.path().join("recipes/ap/app.lock")).unwrap()
+        }
+
+        fn key(&self, package: &Package) -> Vec<Vec<u8>> {
+            let mut sources = Sources::load(self.dir.path()).unwrap();
+            let hashes: Vec<String> = package
+                .sources
+                .iter()
+                .map(|source| {
+                    sources
+                        .hash_of(&self.lab, source, &package.origin.lock)
+                        .unwrap()
+                })
+                .collect();
+            let hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
+            recipe_parts(self.dir.path(), package, &hashes).unwrap()
+        }
+
+        /// Takes the source away, downloaded and kept, so only the lock can say what it holds.
+        fn lose_source(&self) {
+            fs::remove_file(&self.tarball).unwrap();
+            fs::remove_dir_all(self.lab.work.join("sources")).unwrap();
+        }
+    }
+
+    #[test]
+    fn styling_records_what_the_style_made_in_the_lock() {
+        let set = set();
+        let styled = set.styled(MESON, false).unwrap();
+        assert!(!styled.planned);
+        assert!(styled.script.ends_with("meson setup\n"));
+        let made = set.lock()["app"].made().unwrap();
+        assert_eq!(made.style, "meson");
+        assert_eq!(made.deps, ["meson"]);
+        assert_eq!(Some(made.record), styled.record);
+    }
+
+    #[test]
+    fn a_recorded_recipe_is_planned_without_its_source_with_the_same_key() {
+        let set = set();
+        let styled = set.styled(MESON, false).unwrap();
+        let key = set.key(&styled);
+        set.lose_source();
+        let planned = set.styled(MESON, false).unwrap();
+        assert!(planned.planned);
+        assert!(planned.dep_ids().unwrap().contains(&"meson".to_owned()));
+        assert_eq!(set.key(&planned), key);
+    }
+
+    #[test]
+    fn a_style_changed_to_make_the_same_script_is_styled_again_and_keeps_the_key() {
+        let set = set();
+        let before = set.styled(MESON, false).unwrap();
+        let from = set.lock()["app"].from.clone();
+        let changed = format!("{MESON}\n# Reworded.\n");
+        let after = set.styled(&changed, false).unwrap();
+        assert!(!after.planned);
+        assert_ne!(set.lock()["app"].from, from);
+        assert_eq!(set.key(&after), set.key(&before));
+    }
+
+    #[test]
+    fn a_style_that_makes_something_else_changes_the_record_and_the_key() {
+        let set = set();
+        let before = set.styled(MESON, false).unwrap();
+        let after = set.styled(&MESON.replace("meson setup", "meson setup -D x=1"), false);
+        let after = after.unwrap();
+        assert_ne!(after.record, before.record);
+        assert_ne!(set.key(&after), set.key(&before));
+    }
+
+    #[test]
+    fn a_pinned_set_whose_lock_is_behind_its_styles_is_refused_and_left_as_it_was() {
+        let set = set();
+        set.styled(MESON, false).unwrap();
+        let lock = fs::read_to_string(set.dir.path().join("recipes/ap/app.lock")).unwrap();
+        let error = set
+            .styled(&format!("{MESON}\n# Reworded.\n"), true)
+            .unwrap_err();
+        assert!(error.contains("doesn't record"), "{error}");
+        let after = fs::read_to_string(set.dir.path().join("recipes/ap/app.lock")).unwrap();
+        assert_eq!(after, lock);
+    }
+
+    #[test]
+    fn a_pinned_set_never_pins_a_source() {
+        let set = set();
+        let error = set.styled(MESON, true).unwrap_err();
+        assert!(error.contains("isn't pinned"), "{error}");
+        assert!(!set.dir.path().join("recipes/ap/app.lock").exists());
+    }
+}
+
+#[cfg(test)]
+mod tree_record_tests {
+    use super::*;
+
+    #[test]
+    fn a_recipe_built_from_a_tree_of_a_checkout_is_always_styled_and_never_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("project")).unwrap();
+        fs::write(dir.path().join("project/meson.build"), "project('p')\n").unwrap();
+        fs::create_dir_all(dir.path().join("recipes/pr")).unwrap();
+        let recipe = "[[package]]\nid = \"project\"\nscope = \"runtime\"\n\
+                      sources = [{ url = \"tree:project\", include = [\"meson.build\"] }]\n\n\
+                      [package.meson]\n";
+        fs::write(dir.path().join("recipes/pr/project.toml"), recipe).unwrap();
+        let meson = "def build(recipe: Recipe, options: dict[str, typing.Any]) -> \
+                     dict[str, typing.Any]:\n    return {\"script\": \"meson setup\\n\"}\n\n\
+                     style(name = \"meson\", files = [\"meson.build\"], build = build)\n";
+        fs::create_dir_all(dir.path().join("styles")).unwrap();
+        fs::write(dir.path().join("styles/meson.star"), meson).unwrap();
+        let styles = [style::load("meson.star", meson).unwrap()];
+        let lab = Lab::new(dir.path().join("work"));
+        for _ in 0..2 {
+            let mut sources = Sources::load(dir.path()).unwrap();
+            sources.read_only = true;
+            let package = load(dir.path(), "pr/project.toml").unwrap().remove(0);
+            let styled = style_one(&lab, dir.path(), &styles, &mut sources, package).unwrap();
+            assert!(!styled.planned);
+            assert!(!styled.restyled_now());
+        }
+        assert!(!dir.path().join("recipes/pr/project.lock").exists());
     }
 }

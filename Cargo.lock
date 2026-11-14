@@ -2176,6 +2176,7 @@ dependencies = [
  "blake3",
  "insta",
  "serde_json",
+ "sha2",
  "starlark",
  "starlark_derive",
  "tempfile",
