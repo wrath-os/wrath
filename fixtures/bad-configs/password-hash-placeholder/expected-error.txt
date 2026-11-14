@@ -1,0 +1,6 @@
+error: this isn't a password hash, which `mkpasswd -m sha-512` makes, or `!` for none
+ --> fixtures/bad-configs/password-hash-placeholder/system.toml:5:27
+  |
+5 | initial_hashed_password = '$6$...'
+  |                           ^^^^^^^^ `users.ann.initial_hashed_password` is set here
+  = reported by modules/accounts.star

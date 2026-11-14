@@ -1,0 +1,6 @@
+error: a system has no /usr; programs are in /run/system/bin
+ --> fixtures/bad-configs/unit-runs-from-usr/system.toml:5:13
+  |
+5 | ExecStart = "/usr/bin/restic backup"
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^ `units."backup.service".Service.ExecStart` is set here
+  = reported by modules/units.star

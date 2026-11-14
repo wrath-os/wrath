@@ -1,0 +1,6 @@
+error: a login shell is a path, such as `/run/system/bin/zsh`
+ --> fixtures/bad-configs/shell-not-a-path/system.toml:5:9
+  |
+5 | shell = "zsh"
+  |         ^^^^^ `users.ann.shell` is set here
+  = reported by modules/accounts.star

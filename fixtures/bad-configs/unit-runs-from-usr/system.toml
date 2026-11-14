@@ -1,0 +1,5 @@
+[system]
+hostname = "box"
+
+[units."backup.service".Service]
+ExecStart = "/usr/bin/restic backup"

@@ -1,0 +1,5 @@
+[system]
+hostname = "box"
+
+[users.ann]
+initial_hashed_password = '$6$...'
