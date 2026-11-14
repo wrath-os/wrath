@@ -207,8 +207,8 @@ pub struct Index {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Source {
-    url: String,
+pub(crate) struct Source {
+    pub(crate) url: String,
     into: Option<String>,
     /// For a `tree:` source, a directory relative to the repository: what in it to take.
     #[serde(default)]
@@ -267,9 +267,9 @@ pub(crate) struct Package {
     #[serde(default)]
     runtime_deps: Vec<String>,
     #[serde(default)]
-    sources: Vec<Source>,
+    pub(crate) sources: Vec<Source>,
     #[serde(default)]
-    files: Vec<String>,
+    pub(crate) files: Vec<String>,
     /// What a build can set, which its script reads as `OPTION_<name>`, by name.
     #[serde(default)]
     options: BTreeMap<String, RecipeOption>,
@@ -922,7 +922,7 @@ impl Origin {
     /// Where the recipes in `file`, relative to `recipes/`, come from. A file of a theme, at the
     /// top, has its files beside it and its pins in `sources.lock`. A file of one package or
     /// family, `gh/ghostty.toml`, has its files in `gh/ghostty/` and its pins in `gh/ghostty.lock`.
-    fn of(file: &str, id: &str) -> Self {
+    pub(crate) fn of(file: &str, id: &str) -> Self {
         let Some(stem) = file.strip_suffix(".toml").filter(|_| file.contains('/')) else {
             return Self::default();
         };
@@ -1097,7 +1097,7 @@ impl Sources {
     /// Where `source` is on the host, with its hash, pinned in `lock` unless the recipe carries
     /// its hash. A source another lock pins is pinned in `lock` too, so each lock pins all its
     /// recipes fetch, and removing a recipe removes only its own pins.
-    fn fetch_source(
+    pub(crate) fn fetch_source(
         &mut self,
         lab: &Lab,
         source: &Source,

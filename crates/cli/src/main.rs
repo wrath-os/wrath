@@ -349,6 +349,9 @@ enum DevCommand {
         #[arg(long)]
         all: bool,
     },
+    /// Move recipes from files of a theme to a file per package or family, pinned beside it
+    #[command(hide = true)]
+    Relayout,
     /// Print the configuration's model as JSON
     Model,
     /// Print what an apply keeps of the configuration, as JSON
@@ -720,6 +723,9 @@ fn main() -> ExitCode {
                 })
                 .map(|()| ExitCode::SUCCESS),
             DevCommand::Outdated { all } => outdated(all),
+            DevCommand::Relayout => builder()
+                .and_then(|(lab, repository)| wrath_build::relayout::run(&lab, &repository))
+                .map(|()| ExitCode::SUCCESS),
             DevCommand::Model => config().and_then(|config| print_model(&config, &modules)),
             DevCommand::ApplyRecord => {
                 config().and_then(|config| print_apply_record(&config, &modules))
