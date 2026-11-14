@@ -150,7 +150,7 @@ another question than what it builds with.
 - Search paths as code (Spack, Nix setup hooks). More power, and the opacity that made setup
   hooks the thing to avoid.
 
-## As built (steps 1 to 3)
+## As built
 
 Where the code differs from the above, or settles what it left open:
 
@@ -175,3 +175,10 @@ Where the code differs from the above, or settles what it left open:
   only placing a package is serialised.
 - Still outside any key: the host's `strip`, which fix-ups run. A host binutils update can change
   what a fix-up makes unnoticed, as before.
+- The cleanup's names: `toolchain = "compilers"` and `toolchain = "seed"`, the full toolchain
+  and core tools when it's left out. Option names must be lower case with `_`.
+- The old format went before the rebuild rather than after, so the one rebuild built the format
+  that stays. Every key was compared before and after the cleanup with `wrath dev keys`: only
+  `nano` (its option's new name) and the two trees of checkouts changed.
+- `wrath dev lint` also checks the layout: a file is named after one of its packages, under that
+  name's first two letters, and no id is declared twice.

@@ -82,8 +82,7 @@ zig) and let it write the script:
 id = "grim"
 version = "1.5.0"
 scope = "runtime"
-core = true
-extra_deps = ["pixman", "libpng", "libjpeg-turbo", "wayland", "wayland-protocols"]
+deps = ["pixman", "libpng", "libjpeg-turbo", "wayland", "wayland-protocols"]
 sources = [{ url = "https://gitlab.freedesktop.org/emersion/grim/-/archive/v{version}/grim-v{version}.tar.gz" }]
 smoke = ["bin/grim -h"]
 
@@ -100,6 +99,17 @@ dependency is missing, the build fails and the hint says which recipe has it.
 Builds start from a seed: a small, pinned set of prebuilt compilers. From there wrath builds its
 own gcc, glibc and binutils, and everything else builds with those. Rust and Go are still
 prebuilt for now, which I'd like to fix at some point.
+
+Packages whose dependencies are built go side by side, a few at a time, each as soon as what it
+needs is there. A package's key, which decides whether it's built already, comes from its recipe,
+the lock beside it and its dependencies, so working out what a system needs reads no source and
+downloads nothing that's built.
+
+What wrath does to a package after its build (pointing its programs at their libraries in the
+store, stripping, splitting it into outputs, naming it by its contents) is a step of its own.
+What the build made is kept, compressed, beside the store, so when a newer wrath changes that
+step it does it again to each package in seconds instead of building everything again.
+`wrath clean` removes what's kept once nothing made from it is left; `--raw` removes all of it.
 
 ### The store
 

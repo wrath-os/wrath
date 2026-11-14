@@ -104,7 +104,7 @@ The machine:
 | `wrath history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
 | `wrath rollback [N]` | Back one generation, or to generation N |
 | `wrath build [PKG...]` | Builds the configuration's system without switching, or the packages named, and prints where each is. `--role` builds another of its roles, `--image` a disk image, and `-o PATH` links the result there, and `--check` runs packages' smoke commands and their own tests |
-| `wrath clean` | Removes old generations and what only they used, after showing how much it frees |
+| `wrath clean` | Removes old generations and what only they used, after showing how much it frees, and what builds made that nothing left uses (`--raw`: all of it) |
 
 Packages:
 
@@ -207,9 +207,10 @@ The commands that only make sense in this repository move under `wrath dev`: `de
 activation runs it, and people don't.
 
 `dev docs` writes the reference pages in `docs/reference` from the code, and `--check` fails
-when they're out of date. `dev lint` points out a target written in
-recipes where a placeholder says it, and with `--redundant [PKG...]` lists dependencies another
-one brings, for information. `dev outdated` compares recipes with upstream releases, `dev repro
+when they're out of date. `dev lint` records what each recipe's style makes where its lock is
+behind (`--locked` fails instead, for CI), and points out recipe files that aren't where they go
+and a target written in recipes where a placeholder says it; with `--redundant [PKG...]` it lists
+dependencies another one brings, for information. `dev outdated` compares recipes with upstream releases, `dev repro
 [PKG...]` builds packages a second time and says which differ, and `dev seed
 check|pack|addresses` works on the seed.
 

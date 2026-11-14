@@ -17,7 +17,6 @@ main package's file. Beside it, `jq.lock` pins its sources, and a directory with
 id = "jq"
 version = "1.8.1"
 scope = "runtime"
-core = true
 sources = [{ url = "https://github.com/jqlang/jq/releases/download/jq-{version}/jq-{version}.tar.gz" }]
 smoke = ["bin/jq --version", "echo '{\"a\":1}' | bin/jq -e .a"]
 
@@ -38,10 +37,12 @@ What the fields mean:
   `{arch_name}`: `arch_names = { x86_64 = "amd64", aarch64 = "arm64" }`.
 - `scope` is `runtime` for anything that ends up on a machine, `tool` for things only builds use
   and `boot` for the toolchain itself.
-- `core = true` builds with the usual tools around (coreutils, sed, grep, make, bash and so on).
-  Almost every recipe wants it.
-- `extra_deps` lists what the build needs, by id. That's exactly what the build sees in its
-  `/usr`, nothing else.
+- A build has the compilers, the C library and the usual tools (coreutils, sed, grep, make, bash
+  and so on). `toolchain = "compilers"` leaves the usual tools out, for the packages they're
+  built from, and `toolchain = "seed"` leaves out everything but the prebuilt compilers the
+  toolchain itself starts from.
+- `deps` lists what else the build needs, by id. That and the toolchain are exactly what the build
+  sees in its `/usr`, nothing else.
 - `sources` are downloads, or `git+URL#COMMIT` for a git commit. Each is pinned in the
   recipe's lock the first time it's fetched, so recipes never carry hashes. A second source
   goes somewhere else in the tree with `into = "subdir"`.
@@ -65,6 +66,30 @@ files = ["site"]
 
 So a build with python3 and jinja2 among its dependencies finds jinja2's modules without saying
 where they are. `separator` sets what goes between the directories, `:` when it's left out.
+
+## What the lock holds
+
+Beside each recipe file is a lock, which wrath writes and nobody edits. For each package it pins
+every source by its hash and records what the package's style made:
+
+```toml
+[jq]
+style = "autotools"
+record = "84d739dc..."   # the script, and the sources and dependencies the style added
+from = "bddf18a9..."     # the style's code and the recipe it read
+deps = []
+
+[[jq.sources]]
+url = "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"
+hash = "2be64e7129cecb11d5906290eba10af694fb9e3e7f9fc208a311dc33ca837eb0"
+```
+
+With it, a plan knows what every package is without downloading a source: a style reads the
+project's own files, such as its `Cargo.lock`, only when the package is built, and the build
+stops if the style makes something else from the same input. In a checkout of grapes, wrath
+records a new source or a changed style the first time it plans or builds, and says so;
+`wrath dev lint` brings every lock up to date. With a pinned grapes, as a machine has, a lock
+that's behind is an error: nothing is written into a version someone pinned.
 
 ## Styles
 
@@ -126,14 +151,14 @@ fetch or an install that wrote outside the prefix:
 
 ```text
 error: `grim` Failed after 4 s, see build/work/logs/f/grim.log
-  hint: `wayland` has the program `wayland-scanner`: add it to `extra_deps`
+  hint: `wayland` has the program `wayland-scanner`: add it to `deps`
 ```
 
 Once it builds:
 
 ```sh
 wrath build grim --check        # its smoke commands, and its own tests in a build thrown away
-wrath dev lint                  # a target written out where a placeholder says it
+wrath dev lint                  # locks up to date, files where they go, no target written out
 wrath dev lint --redundant grim # dependencies it lists that another one also brings
 wrath dev repro grim            # build it again as someone else and compare
 wrath dev outdated              # every recipe against upstream's newest release
