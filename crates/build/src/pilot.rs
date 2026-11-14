@@ -365,7 +365,7 @@ fn run_check(
             }
         }
         env.insert("PATH".to_owned(), bins.join(":"));
-        env.remove("LAB_LINK_FLAGS");
+        env.remove("WRATH_LINK_FLAGS");
         tools_only(prepared)?
     };
     let outcome = sandbox::run(

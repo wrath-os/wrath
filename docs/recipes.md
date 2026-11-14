@@ -76,9 +76,9 @@ A build runs in a sandbox with no network. Its script gets:
 | `$PREFIX` | where the package will live, `/store/<hash>-<name>` |
 | `$DEST` | where to install to, so `make install DESTDIR=$DEST` |
 | `$NPROC` | how many jobs to run |
-| `$LAB_DEP_<id>` | where a dependency is, such as `$LAB_DEP_gettext` |
-| `$LAB_ARCH`, `$LAB_OS`, `$LAB_TRIPLE` | the target, as in URLs above |
-| `$LAB_LOADER` | the loader the package's programs run with, for a program built elsewhere |
+| `$WRATH_DEP_<id>` | where a dependency is, such as `$WRATH_DEP_gettext` |
+| `$WRATH_ARCH`, `$WRATH_OS`, `$WRATH_TRIPLE` | the target, as in URLs above |
+| `$WRATH_LOADER` | the loader the package's programs run with, for a program built elsewhere |
 
 The current directory is the unpacked source.
 

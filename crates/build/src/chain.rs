@@ -20,7 +20,7 @@ use crate::store::{self, Lab, StorePath, with_path};
 use crate::view;
 
 /// The name of the experiment arm every package used to be built under. It's in non-boot
-/// packages' keys and records, the sandbox's `LAB_ARM` and the logs' directory, and is kept
+/// packages' keys and records, the sandbox's `WRATH_ARM` and the logs' directory, and is kept
 /// so existing builds stay valid and their logs stay where they are.
 pub(crate) const ARM: &str = "f";
 
@@ -1837,8 +1837,8 @@ const BUILD_RULES: &str = "11";
 const TARGET: &str = "x86_64-linux-gnu";
 
 /// The target as recipes name it (0032): in sources as `{arch}`, `{os}`, `{target}` and
-/// `{triple}`, and in scripts as `$LAB_ARCH`, `$LAB_OS` and `$LAB_TRIPLE`. One target for now;
-/// these become the toolset's once there are more.
+/// `{triple}`, and in scripts as `$WRATH_ARCH`, `$WRATH_OS` and `$WRATH_TRIPLE`. One target for
+/// now; these become the toolset's once there are more.
 const ARCH: &str = "x86_64";
 const OS: &str = "linux";
 const TRIPLE: &str = "x86_64-unknown-linux-gnu";
@@ -2181,36 +2181,36 @@ fn build_package(
         ("PREFIX".to_owned(), prefix),
         ("DEST".to_owned(), dest),
         ("NPROC".to_owned(), Identity::current().jobs.to_string()),
-        ("LAB_ARM".to_owned(), ARM.to_owned()),
-        ("LAB_SEED".to_owned(), seed.inside()),
-        ("LAB_REAL_BIN".to_owned(), real_bin.to_owned()),
-        ("LAB_ARCH".to_owned(), ARCH.to_owned()),
-        ("LAB_OS".to_owned(), OS.to_owned()),
-        ("LAB_TRIPLE".to_owned(), TRIPLE.to_owned()),
+        ("WRATH_ARM".to_owned(), ARM.to_owned()),
+        ("WRATH_SEED".to_owned(), seed.inside()),
+        ("WRATH_REAL_BIN".to_owned(), real_bin.to_owned()),
+        ("WRATH_ARCH".to_owned(), ARCH.to_owned()),
+        ("WRATH_OS".to_owned(), OS.to_owned()),
+        ("WRATH_TRIPLE".to_owned(), TRIPLE.to_owned()),
     ]);
     for dep in &deps {
         let name = dep.id.replace('-', "_");
-        env.insert(format!("LAB_DEP_{name}"), built.paths[&dep.id].inside());
+        env.insert(format!("WRATH_DEP_{name}"), built.paths[&dep.id].inside());
         env.insert(
-            format!("LAB_LIB_{name}"),
+            format!("WRATH_LIB_{name}"),
             built.library_path(&dep.id).inside(),
         );
     }
     // The loader programs built here run with, for recipes that set one themselves, such as for
     // programs a project built elsewhere.
-    env.insert("LAB_LOADER".to_owned(), interpreter.clone());
+    env.insert("WRATH_LOADER".to_owned(), interpreter.clone());
     let path_var = if package.wrap {
         let wrapper = built
             .paths
             .get("wrapper")
             .ok_or("nothing built the wrapper")?;
         env.insert(
-            "LAB_LINK_FLAGS".to_owned(),
+            "WRATH_LINK_FLAGS".to_owned(),
             link_flags(&interpreter, &rpath_dirs),
         );
         if let Some(gcc) = deps.iter().find(|dep| dep.id == "gcc") {
             env.insert(
-                "LAB_COMPILE_FLAGS".to_owned(),
+                "WRATH_COMPILE_FLAGS".to_owned(),
                 compile_flags(&built.paths[&gcc.id]),
             );
         }

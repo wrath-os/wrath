@@ -2243,7 +2243,7 @@ pub(crate) fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
 
 /// Lines of recipes and styles under `repository` that write a target's name, such as `x86_64`,
 /// where a placeholder or variable says it for whichever target builds (0032): `{arch}`,
-/// `{triple}`, `$LAB_ARCH`, `$LAB_TRIPLE` or `$LAB_LOADER`. Comments don't count.
+/// `{triple}`, `$WRATH_ARCH`, `$WRATH_TRIPLE` or `$WRATH_LOADER`. Comments don't count.
 pub fn targets_written(repository: &Path) -> Result<String, String> {
     const NAMES: [&str; 2] = ["x86_64", "aarch64"];
     let mut files = Vec::new();
@@ -2271,7 +2271,7 @@ pub fn targets_written(repository: &Path) -> Result<String, String> {
                 let file = path.strip_prefix(repository).unwrap_or(&path);
                 lines.push_str(&format!(
                     "{}:{}: names the target `{name}`; write {{arch}} or {{triple}} in a source, \
-                     $LAB_ARCH, $LAB_TRIPLE or $LAB_LOADER in a script\n",
+                     $WRATH_ARCH, $WRATH_TRIPLE or $WRATH_LOADER in a script\n",
                     file.display(),
                     n + 1
                 ));

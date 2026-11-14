@@ -51,8 +51,8 @@ from, uses a seed pinned for that target, as x86_64 does now.
 In order of preference, so most recipes never mention a target:
 
 1. The toolset. Each target has its own seed and chain, which decide the compiler, libc, linker,
-   loader path and triple. Recipes reach these through variables, as they reach `$LAB_LIB_glibc`
-   today, so `ld-linux-x86-64.so.2` becomes `$LAB_LOADER`.
+   loader path and triple. Recipes reach these through variables, as they reach `$WRATH_LIB_glibc`
+   today, so `ld-linux-x86-64.so.2` becomes `$WRATH_LOADER`.
 2. Styles. A style is Starlark and gets the target, so the meson, cargo, zig and autotools styles
    pass the right triple or `-Dtarget` themselves.
 3. Placeholders, like `{version}`: `{arch}`, `{os}` and `{target}` in sources and scripts. Binary
@@ -121,7 +121,7 @@ needs work of its own, each piece its own decision when it's started:
 
 ## Order
 
-1. Make the target explicit on x86_64 Linux: placeholders, `$LAB_LOADER`, the target in store
+1. Make the target explicit on x86_64 Linux: placeholders, `$WRATH_LOADER`, the target in store
    addresses, and the lint. Small, and stops more hard-coding.
 2. aarch64 Linux, built natively: a seed and chain. This checks the model on a second target
    without a second OS.
@@ -141,6 +141,6 @@ needs work of its own, each piece its own decision when it's started:
 ## Open
 
 - Removing from a list on one target. Extending covers every case found so far.
-- Whether a target's toolset variables (`$LAB_LOADER` and the rest) are a fixed set or something
+- Whether a target's toolset variables (`$WRATH_LOADER` and the rest) are a fixed set or something
   each toolset declares.
 - Whether 1 changes every store address, and so goes with the next full rebuild.
