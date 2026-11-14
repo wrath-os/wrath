@@ -8,8 +8,8 @@ use std::path::Path;
 use memchr::memmem;
 use sha2::{Digest, Sha256};
 
-use crate::chain::{self, Built, Package, Prepared, Sources};
-use crate::fixup::{self, Fixups, Leaks};
+use crate::chain::{self, Built, Package, Sources};
+use crate::fixup;
 use crate::sandbox::Identity;
 use crate::seed;
 use crate::split::{Class, Outputs};
@@ -71,14 +71,6 @@ pub(crate) fn all_packages(lab: &Lab, repository: &Path) -> Result<Vec<Package>,
     chain::in_order(packages, |id| id == "seed")
 }
 
-fn fix_up_if_needed(lab: &Lab, package: &Package, prepared: &Prepared) -> Result<(), String> {
-    if package.fixed_up() {
-        let (mut fixups, mut leaks) = (Fixups::default(), Leaks::default());
-        fixup::fix_up(lab, prepared, &mut fixups, &mut leaks)?;
-    }
-    Ok(())
-}
-
 #[derive(Debug)]
 struct Reproduction {
     package: String,
@@ -138,15 +130,19 @@ fn compare_rebuild(
         .get(&package.id)
         .cloned()
         .unwrap_or_else(|| Outputs::from([(Class::Out, path.clone())]));
-    let done = lab
-        .work
-        .join("done")
-        .join(built.temporary[&package.id].hash());
-    let record = fs::read_to_string(&done).map_err(with_path(&done))?;
-    fs::remove_file(&done).map_err(with_path(&done))?;
+    // Without its records, the package is built again rather than taken as built or fixed up
+    // again from what its first build made.
+    let out = built.temporary[&package.id].clone();
+    let fixed = fixup::fixed_record(lab, &out);
+    let record = fs::read_to_string(&fixed).map_err(with_path(&fixed))?;
+    fs::remove_file(&fixed).map_err(with_path(&fixed))?;
+    let done = lab.work.join("done").join(out.hash());
+    if done.exists() {
+        fs::remove_file(&done).map_err(with_path(&done))?;
+    }
     let rebuilt = elsewhere(|| chain::build_one(lab, repository, package, seed, sources, built));
     let outcome = match rebuilt {
-        Ok(Some(prepared)) => fix_up_if_needed(lab, package, &prepared)
+        Ok(Some(prepared)) => fixup::fix(lab, package, &prepared, built, package.fixed_up())
             .and_then(|()| fixup::place_outputs(lab, package, &prepared.out))
             .and_then(|(second, _)| {
                 record_differences(lab, &mut result, &first, &second)?;
@@ -159,7 +155,7 @@ fn compare_rebuild(
         }
     };
     built.paths.insert(package.id.clone(), path);
-    fs::write(&done, record).map_err(with_path(&done))?;
+    fs::write(&fixed, record).map_err(with_path(&fixed))?;
     outcome?;
     Ok(result)
 }

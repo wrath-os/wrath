@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::chain::{self, Built, Package, Prepared, Sources};
-use crate::fixup::{Fixups, Leaks, fix_up};
+use crate::fixup;
 use crate::sandbox::{self, Limits, Status, Step, View};
 use crate::seed;
 use crate::store::{Lab, StorePath, with_path};
@@ -379,18 +379,12 @@ fn build_shared(
         .step
         .env
         .insert("NPROC".to_owned(), jobs.max(2).to_string());
-    let outcome = sandbox::run_shown(lab, &pending.step, Some(("build", "built")))?;
+    let outcome = chain::run(lab, &pending)?;
     let mut held = lock()?;
     let (built, _) = &mut *held;
     let prepared = chain::end(lab, package, *pending, &outcome, built)?;
     chain::remove(&prepared.build_dir)?;
-    fix_up(
-        lab,
-        &prepared,
-        &mut Fixups::default(),
-        &mut Leaks::default(),
-    )?;
-    crate::fixup::finish(lab, package, &prepared.out, built)
+    fixup::run(lab, package, &prepared, built, true)
 }
 
 /// That every package someone named, `wanted`, has a recipe among `ids`, before anything builds.
@@ -507,13 +501,7 @@ pub(crate) fn build_and_finish(
 ) -> Result<(), String> {
     if let Some(prepared) = chain::build_one(lab, repository, package, seed, sources, built)? {
         chain::remove(&prepared.build_dir)?;
-        fix_up(
-            lab,
-            &prepared,
-            &mut Fixups::default(),
-            &mut Leaks::default(),
-        )?;
-        crate::fixup::finish(lab, package, &prepared.out, built)?;
+        fixup::run(lab, package, &prepared, built, true)?;
     }
     Ok(())
 }

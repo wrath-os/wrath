@@ -12,7 +12,6 @@ use wrath_starlark::style::{self, Style};
 use memchr::memmem;
 use serde::Deserialize;
 
-use crate::fixup::{finish, linked_by_path, settle_modes, write_runtime_deps};
 use crate::requires;
 use crate::sandbox::{self, Identity, Limits, Status, Step, View};
 use crate::seed::{self, run as run_host, sha256_of};
@@ -2318,7 +2317,7 @@ pub fn build_toolchain(lab: &Lab, repository: &Path) -> Result<Built, String> {
             build_one(lab, repository, package, &seed, &mut sources, &mut built)?
         {
             remove(&prepared.build_dir)?;
-            finish(lab, package, &prepared.out, &mut built)?;
+            crate::fixup::run(lab, package, &prepared, &mut built, false)?;
         }
     }
     Ok(built)
@@ -2337,10 +2336,6 @@ pub(crate) struct Prepared {
     /// Held until the package is where it ends up, so another build of the same key waits for it.
     pub(crate) _lock: fs::File,
 }
-
-/// The version of what the builder does to every package beside its recipe, such as fixing up
-/// run paths. Every package's key has it, so changing it rebuilds everything.
-const BUILD_RULES: &str = "12";
 
 /// The machines packages are built for, which every key has, so another one's never match.
 const TARGET: &str = "x86_64-linux-gnu";
@@ -2418,7 +2413,6 @@ fn recipe_parts(
         check_deps: _,
     } = package;
     let mut parts: Vec<Vec<u8>> = vec![
-        BUILD_RULES.as_bytes().to_vec(),
         TARGET.as_bytes().to_vec(),
         arm_key(package).as_bytes().to_vec(),
         // Whether it builds under /usr or its own prefix.
@@ -2672,20 +2666,18 @@ pub(crate) fn begin(
     );
 
     let lock = build_lock(lab, &out, &package.id)?;
-    let done_dir = lab.work.join("done");
-    let done = done_dir.join(out.hash());
+    let done = lab.work.join("done").join(out.hash());
+    let fixed = crate::fixup::fixed_record(lab, &out);
     // Read once the key is ours: a build that waited finds what the other one made.
-    if done.exists() && !again {
-        if !content_addressed(package) {
-            return Ok(Begun::Built);
-        }
-        let address = fs::read_to_string(&done).map_err(with_path(&done))?;
-        // An empty record means the build stopped before the package was moved.
-        if !address.is_empty() {
+    if fixed.exists() && !again {
+        if content_addressed(package) {
+            let address = fs::read_to_string(&fixed).map_err(with_path(&fixed))?;
             remember_outputs(built, package, &address);
-            return Ok(Begun::Built);
         }
+        return Ok(Begun::Built);
     }
+    // Built before but fixed up by other rules, its build's own output is fixed up again.
+    let from_raw = !again && done.exists() && raw_output(lab, &out).is_file();
     let build_dir = lab.work.join("build").join(out.hash());
     fresh(&build_dir)?;
     fresh(&lab.on_host(&out))?;
@@ -2693,26 +2685,28 @@ pub(crate) fn begin(
     forget_references(lab, &out)?;
     let src = build_dir.join("src");
     fs::create_dir_all(&src).map_err(with_path(&src))?;
-    for (source, path, _) in &fetched {
-        let target = match &source.into {
-            Some(into) => src.join(into),
-            None => src.clone(),
-        };
-        if source.file {
-            let parent = target.parent().unwrap_or(&src);
-            fs::create_dir_all(parent).map_err(with_path(parent))?;
-            fs::copy(path, &target).map_err(with_path(path))?;
-            continue;
+    if !from_raw {
+        for (source, path, _) in &fetched {
+            let target = match &source.into {
+                Some(into) => src.join(into),
+                None => src.clone(),
+            };
+            if source.file {
+                let parent = target.parent().unwrap_or(&src);
+                fs::create_dir_all(parent).map_err(with_path(parent))?;
+                fs::copy(path, &target).map_err(with_path(path))?;
+                continue;
+            }
+            unpack(path, &target)?;
         }
-        unpack(path, &target)?;
-    }
-    for name in &package.files {
-        let from = repository.join(&package.origin.dir).join(name);
-        let to = src.join(name);
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent).map_err(with_path(parent))?;
+        for name in &package.files {
+            let from = repository.join(&package.origin.dir).join(name);
+            let to = src.join(name);
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent).map_err(with_path(parent))?;
+            }
+            fs::copy(&from, &to).map_err(with_path(&from))?;
         }
-        fs::copy(&from, &to).map_err(with_path(&from))?;
     }
 
     let view_dir = lab.work.join("views").join(out.hash());
@@ -2845,6 +2839,7 @@ pub(crate) fn begin(
         view,
         build_dir,
         done: (!again).then_some(done),
+        from_raw,
         dep_paths: deps
             .iter()
             .map(|dep| built.paths[&dep.id].clone())
@@ -2862,6 +2857,8 @@ pub(crate) struct Pending {
     build_dir: PathBuf,
     /// Its record, written once it's built, unless it's built again only to be looked at.
     done: Option<PathBuf>,
+    /// Built before, so what it made is put back instead of running its sandbox.
+    from_raw: bool,
     dep_paths: Vec<StorePath>,
     lock: fs::File,
 }
@@ -2885,10 +2882,70 @@ fn build_package(
     match begin(lab, repository, package, seed, sources, built, again)? {
         Begun::Built => Ok(None),
         Begun::Run(pending) => {
-            let outcome = sandbox::run_shown(lab, &pending.step, Some(("build", "built")))?;
+            let outcome = run(lab, &pending)?;
             end(lab, package, *pending, &outcome, built).map(Some)
         }
     }
+}
+
+/// Runs the sandbox of `pending`, or for a build made before, puts back what it made.
+pub(crate) fn run(lab: &Lab, pending: &Pending) -> Result<sandbox::Outcome, String> {
+    if !pending.from_raw {
+        return sandbox::run_shown(lab, &pending.step, Some(("build", "built")));
+    }
+    eprintln!("  fix    {}", pending.step.name);
+    put_back_raw_output(lab, &pending.out)?;
+    Ok(sandbox::Outcome {
+        name: pending.step.name.clone(),
+        status: Status::Passed,
+        exit_code: Some(0),
+        milliseconds: 0,
+    })
+}
+
+/// Where what the build at `out` made is kept, as it came out of its sandbox.
+pub(crate) fn raw_output(lab: &Lab, out: &StorePath) -> PathBuf {
+    lab.work.join("raw").join(format!("{}.tar.zst", out.hash()))
+}
+
+/// Keeps what the build at `out` made, compressed, in [`raw_output`].
+fn keep_raw_output(lab: &Lab, out: &StorePath) -> Result<(), String> {
+    let raw = raw_output(lab, out);
+    let dir = raw.parent().expect("raw outputs are in a directory");
+    fs::create_dir_all(dir).map_err(with_path(dir))?;
+    let partial = raw.with_extension(format!("partial{}", std::process::id()));
+    run_host(
+        Command::new("tar")
+            .args(["--zstd", "--create", "--sort=name", "--numeric-owner"])
+            .arg("--file")
+            .arg(&partial)
+            .arg("--directory")
+            .arg(lab.on_host(out))
+            .arg("."),
+        &format!("keeping what {} built", out.hash()),
+    )?;
+    fs::rename(&partial, &raw).map_err(with_path(&raw))
+}
+
+/// Puts what the build at `out` made back at its path, as [`keep_raw_output`] kept it.
+fn put_back_raw_output(lab: &Lab, out: &StorePath) -> Result<(), String> {
+    let raw = raw_output(lab, out);
+    let dir = lab.on_host(out);
+    fs::create_dir_all(&dir).map_err(with_path(&dir))?;
+    run_host(
+        Command::new("tar")
+            .args([
+                "--zstd",
+                "--extract",
+                "--preserve-permissions",
+                "--numeric-owner",
+            ])
+            .arg("--file")
+            .arg(&raw)
+            .arg("--directory")
+            .arg(&dir),
+        &format!("unpacking {}", raw.display()),
+    )
 }
 
 /// Checks what the sandbox of `pending` made, and readies it to be placed.
@@ -2906,6 +2963,7 @@ pub(crate) fn end(
         view,
         build_dir,
         done,
+        from_raw,
         dep_paths,
         lock,
     } = pending;
@@ -2923,17 +2981,10 @@ pub(crate) fn end(
             step.log.display()
         ));
     }
-    settle_modes(&lab.on_host(&out)).map_err(|e| format!("`{}` installed {e}", package.id))?;
-    if let Some((file, library)) = linked_by_path(&lab.on_host(&out))? {
-        return Err(format!(
-            "`{}`'s {} needs `{library}` by its path, which only the build has: the library has \
-             no SONAME, so its recipe should give it one",
-            package.id,
-            file.display()
-        ));
-    }
-    write_runtime_deps(lab, package, &out, built)?;
-    if let Some(done) = done {
+    // What the build made is kept as it is, so a change in what's done after it never needs it
+    // built again.
+    if let Some(done) = done.filter(|_| !from_raw) {
+        keep_raw_output(lab, &out)?;
         if let Some(dir) = done.parent() {
             fs::create_dir_all(dir).map_err(with_path(dir))?;
         }
@@ -3370,7 +3421,7 @@ mod requirement_tests {
     }
 
     /// Pinned so a change to what goes into a key can't slip through and rebuild everything. A
-    /// bump of `BUILD_RULES` changes them on purpose, and they're updated with it.
+    /// change to what goes into keys on purpose updates them with it.
     #[test]
     fn keys_stay_what_they_were() {
         let key = |scope: &str| {
@@ -3387,8 +3438,8 @@ mod requirement_tests {
                 .hash()
                 .to_owned()
         };
-        assert_eq!(key("runtime"), "1f23acc873d6c00cb410e3d9c50587fe5e186413");
-        assert_eq!(key("boot"), "0fa83efc38227e8fb500e51fbde2d98e282ff297");
+        assert_eq!(key("runtime"), "728a04424d07e4f7284f24ce1ebb66aa36ae2f16");
+        assert_eq!(key("boot"), "a53f4f8fe60e5e536c85d3a786897a2419090a4f");
     }
 
     #[test]
@@ -3494,7 +3545,6 @@ mod tree_tests {
 #[cfg(test)]
 mod crate_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn two_builds_of_one_key_take_turns() {
@@ -3543,46 +3593,6 @@ mod crate_tests {
             }
         }
     }
-
-    #[test]
-    fn a_library_needed_by_a_path_outside_the_store_is_one_a_machine_lacks() {
-        assert!(crate::fixup::outside_store("/usr/lib/libsqlite3.so"));
-        assert!(!crate::fixup::outside_store("libsqlite3.so.0"));
-        assert!(!crate::fixup::outside_store(
-            "/store/abc-sqlite/lib/libsqlite3.so.0"
-        ));
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("script"), "#!/bin/sh\n").unwrap();
-        assert_eq!(linked_by_path(dir.path()).unwrap(), None);
-    }
-
-    #[test]
-    fn a_built_package_loses_setuid_and_setgid_and_cant_hold_special_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let (bin, shared) = (dir.path().join("bin"), dir.path().join("share/games"));
-        fs::create_dir_all(&bin).unwrap();
-        fs::create_dir_all(&shared).unwrap();
-        fs::write(bin.join("sudo"), "").unwrap();
-        fs::set_permissions(bin.join("sudo"), fs::Permissions::from_mode(0o4755)).unwrap();
-        fs::set_permissions(&shared, fs::Permissions::from_mode(0o2775)).unwrap();
-        std::os::unix::fs::symlink("sudo", bin.join("su")).unwrap();
-        settle_modes(dir.path()).unwrap();
-        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o7777;
-        assert_eq!(mode(&bin.join("sudo")), 0o755);
-        assert_eq!(mode(&shared), 0o775);
-
-        let status = Command::new("mkfifo")
-            .arg(bin.join("pipe"))
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let error = settle_modes(dir.path()).unwrap_err();
-        assert!(
-            error.contains("bin/pipe") && error.contains("only files"),
-            "{error}"
-        );
-    }
-
     /// A source archive with a lock in its top directory, as a release tarball has.
     fn archive(dir: &Path, files: &[(&str, &str)]) -> PathBuf {
         let top = dir.join("project-1.0");
@@ -5317,5 +5327,55 @@ mod search_path_tests {
         let parts = declared_parts(&[dep("python3", true), dep("zlib", true)], declared);
         assert_eq!(parts.len(), 1);
         assert!(declared_parts(&[dep("python3", false)], declared).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod raw_output_tests {
+    use super::*;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    #[test]
+    fn what_a_build_made_is_put_back_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let out = StorePath::derive("build", &[b"demo"]).named("demo-1.0");
+        let root = lab.on_host(&out);
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(root.join("bin/demo"), "#!/bin/sh\n").unwrap();
+        fs::set_permissions(root.join("bin/demo"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(root.join("README"), "demo\n").unwrap();
+        symlink("demo", root.join("bin/again")).unwrap();
+
+        keep_raw_output(&lab, &out).unwrap();
+        assert!(raw_output(&lab, &out).is_file());
+        remove(&root).unwrap();
+        put_back_raw_output(&lab, &out).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("bin/demo")).unwrap(),
+            "#!/bin/sh\n"
+        );
+        let mode = fs::metadata(root.join("bin/demo"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+        assert_eq!(
+            fs::read_link(root.join("bin/again")).unwrap(),
+            Path::new("demo")
+        );
+        assert_eq!(fs::read_to_string(root.join("README")).unwrap(), "demo\n");
+    }
+
+    #[test]
+    fn a_fix_up_is_recorded_by_its_build_and_rules() {
+        let lab = Lab::new("/nonexistent/work");
+        let out = StorePath::derive("build", &[b"demo"]);
+        let record = crate::fixup::fixed_record(&lab, &out);
+        let name = record.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with(out.hash()), "{name}");
+        assert!(name.ends_with(&crate::fixup::rules()[..16]), "{name}");
+        assert_eq!(crate::fixup::rules().len(), 64);
     }
 }

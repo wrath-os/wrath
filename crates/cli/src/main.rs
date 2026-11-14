@@ -162,6 +162,10 @@ enum Command {
         /// Remove them without asking first
         #[arg(short, long)]
         yes: bool,
+        /// Also remove what every build made before its fix-ups, which lets a newer wrath fix
+        /// packages up again instead of building them again
+        #[arg(long)]
+        raw: bool,
     },
     /// Switch back to the previous generation, or to generation N
     Rollback {
@@ -584,7 +588,7 @@ fn main() -> ExitCode {
             [number] => generations::changes_in(*number),
             [from, to, ..] => generations::diff(*from, *to),
         },
-        Command::Clean { keep, yes } => generations::clean(keep, yes),
+        Command::Clean { keep, yes, raw } => generations::clean(keep, yes, raw),
         Command::Rollback { generation } => generations::rollback(generation),
         Command::Run { package, args } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, _)| run::run(model, &package, &args)),
@@ -963,7 +967,7 @@ fn check_config(
 }
 
 /// `count` of `noun`, in the plural unless there's one.
-fn counted(count: usize, noun: &str) -> String {
+pub(crate) fn counted(count: usize, noun: &str) -> String {
     if count == 1 {
         format!("1 {noun}")
     } else {

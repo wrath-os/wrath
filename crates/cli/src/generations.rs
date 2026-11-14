@@ -647,7 +647,20 @@ fn duration(seconds: u64) -> String {
 
 /// Removes old generations, keeping the current one and the `keep` before it, and what only
 /// they used, after saying which and asking.
-pub fn clean(keep: usize, yes: bool) -> Result<ExitCode, String> {
+pub fn clean(keep: usize, yes: bool, raw: bool) -> Result<ExitCode, String> {
+    // What builds here made before their fix-ups goes with the last package made from it, or
+    // all of it with `raw`.
+    let work = crate::places::work();
+    if work.is_dir() {
+        let lab = wrath_build::store::Lab::new(&work);
+        let forgotten = wrath_build::fixup::forget_raw_outputs(&lab, raw)?;
+        if forgotten > 0 {
+            println!(
+                "removed what {} made before fix-ups",
+                crate::counted(forgotten, "build")
+            );
+        }
+    }
     let generations = here::history()?;
     let old = to_remove(&generations, keep);
     if old.is_empty() {

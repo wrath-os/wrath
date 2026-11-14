@@ -2,12 +2,19 @@
 //! dependencies written in, libraries checked, `.la` files removed, shebangs and run paths
 //! pointed at the store, binaries stripped, and the package split and moved to its content
 //! addresses (decision 0037).
+//!
+//! A build's own output is kept as it came out of the sandbox, and this is a step of its own,
+//! keyed by that build and [`rules`]: the code here and in the modules it uses. Changing any of it
+//! runs this again on every package, which takes seconds each, and rebuilds nothing.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use sha2::{Digest, Sha256};
 
 use crate::chain::{
     Built, Package, Prepared, content_addressed, logs_dir, references_of, remember_outputs,
@@ -230,16 +237,146 @@ pub(crate) fn write_runtime_deps(
     fs::write(&file, text).map_err(with_path(&file))
 }
 
-/// Moves a finished package to its content addresses, so what's built next is keyed on what this
-/// one really produced. Boot packages stay where they were built.
-pub(crate) fn finish(
+/// What this step is keyed by besides the build: a digest of the code of this module and those
+/// that change what it writes into packages, so a change to any of them runs it again.
+pub fn rules() -> &'static str {
+    static RULES: OnceLock<String> = OnceLock::new();
+    RULES.get_or_init(|| {
+        let code = [
+            include_str!("fixup.rs"),
+            include_str!("runpath.rs"),
+            include_str!("split.rs"),
+            include_str!("content.rs"),
+        ];
+        let mut hasher = Sha256::new();
+        for text in code {
+            hasher.update((text.len() as u64).to_le_bytes());
+            hasher.update(text.as_bytes());
+        }
+        crate::store::hex(&hasher.finalize())
+    })
+}
+
+/// Where what fixing up the build at `out` under today's [`rules`] made is recorded: its outputs,
+/// or nothing for a package that stays where it was built.
+pub(crate) fn fixed_record(lab: &Lab, out: &StorePath) -> PathBuf {
+    let rules = &rules()[..16];
+    lab.work
+        .join("fixed")
+        .join(format!("{}-{rules}", out.hash()))
+}
+
+/// Everything done to a package after its build, on what the build left at its path: modes
+/// settled, libraries checked, its runtime dependencies written in, its files fixed up when
+/// `fix_files` says so, and the package moved to its content addresses.
+pub(crate) fn run(
     lab: &Lab,
     package: &Package,
-    out: &StorePath,
+    prepared: &Prepared,
     built: &mut Built,
+    fix_files: bool,
 ) -> Result<(), String> {
+    fix(lab, package, prepared, built, fix_files)?;
+    finish(lab, package, &prepared.out, built)
+}
+
+/// [`run`] but for moving the package: what's done to its files where the build left them.
+pub(crate) fn fix(
+    lab: &Lab,
+    package: &Package,
+    prepared: &Prepared,
+    built: &Built,
+    fix_files: bool,
+) -> Result<(), String> {
+    let root = lab.on_host(&prepared.out);
+    settle_modes(&root).map_err(|e| format!("`{}` installed {e}", package.id))?;
+    if let Some((file, library)) = linked_by_path(&root)? {
+        return Err(format!(
+            "`{}`'s {} needs `{library}` by its path, which only the build has: the library has \
+             no SONAME, so its recipe should give it one",
+            package.id,
+            file.display()
+        ));
+    }
+    write_runtime_deps(lab, package, &prepared.out, built)?;
+    if fix_files {
+        fix_up(lab, prepared, &mut Fixups::default(), &mut Leaks::default())?;
+    }
+    Ok(())
+}
+
+/// Removes what builds made, kept to be fixed up again, once nothing fixed up from it is in the
+/// store any more, with the records of it; with `all`, what packages still in the store were made
+/// from too, which a change of rules then builds again. Returns how many went.
+pub fn forget_raw_outputs(lab: &Lab, all: bool) -> Result<usize, String> {
+    let fixed = lab.work.join("fixed");
+    let mut records: Vec<(String, String)> = Vec::new();
+    for entry in fs::read_dir(&fixed).into_iter().flatten() {
+        let entry = entry.map_err(with_path(&fixed))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let text = fs::read_to_string(entry.path()).map_err(with_path(&entry.path()))?;
+        records.push((name, text));
+    }
+    let in_store = |hash: &str| lab.on_host(&StorePath::from_hash(hash)).exists();
+    let mut kept: BTreeSet<String> = BTreeSet::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for (name, text) in &records {
+        // The rules come last, after the build's path, whose name has dashes of its own.
+        let Some((out, _)) = name.rsplit_once('-') else {
+            continue;
+        };
+        seen.insert(out.to_owned());
+        let hashes: Vec<&str> = text
+            .split(' ')
+            .filter_map(|part| part.split_once('=').map(|(_, hash)| hash))
+            .collect();
+        // An empty record is a package that stayed at its build's path.
+        let used = if hashes.is_empty() {
+            in_store(out)
+        } else {
+            hashes.iter().any(|hash| in_store(hash))
+        };
+        if used {
+            kept.insert(out.to_owned());
+        }
+    }
+    let mut forgotten = 0;
+    for out in &seen {
+        let used = kept.contains(out);
+        if used && !all {
+            continue;
+        }
+        let raw = crate::chain::raw_output(lab, &StorePath::from_hash(out));
+        if raw.exists() {
+            fs::remove_file(&raw).map_err(with_path(&raw))?;
+            forgotten += 1;
+        }
+        let done = lab.work.join("done").join(out);
+        if done.exists() {
+            fs::remove_file(&done).map_err(with_path(&done))?;
+        }
+        if used {
+            continue;
+        }
+        for (name, _) in records
+            .iter()
+            .filter(|(name, _)| name.starts_with(&format!("{out}-")))
+        {
+            let record = fixed.join(name);
+            fs::remove_file(&record).map_err(with_path(&record))?;
+        }
+    }
+    Ok(forgotten)
+}
+
+/// Moves a finished package to its content addresses, so what's built next is keyed on what this
+/// one really produced, and records them. Boot packages stay where they were built.
+fn finish(lab: &Lab, package: &Package, out: &StorePath, built: &mut Built) -> Result<(), String> {
+    let fixed = fixed_record(lab, out);
+    let dir = fixed.parent().expect("a record is in a directory");
+    fs::create_dir_all(dir).map_err(with_path(dir))?;
     if !content_addressed(package) {
-        return Ok(());
+        return fs::write(&fixed, "").map_err(with_path(&fixed));
     }
     let (outputs, whole) = place_outputs(lab, package, out)?;
     for path in outputs.values() {
@@ -253,8 +390,7 @@ pub(crate) fn finish(
         .map(|(class, path)| format!("{}={}", class.name(), path.hash()))
         .collect::<Vec<_>>()
         .join(" ");
-    let done = lab.work.join("done").join(out.hash());
-    fs::write(&done, &record).map_err(with_path(&done))?;
+    fs::write(&fixed, &record).map_err(with_path(&fixed))?;
     remember_outputs(built, package, &record);
     // Only advice for now: nothing here fails a build that worked.
     let noted = crate::requires::unbrought_headers(lab, built, &package.id).and_then(|lines| {
@@ -429,6 +565,7 @@ pub(crate) fn settle_modes(dir: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+    use std::process::Command;
 
     fn view_with(dir: &Path, relative: &str, target: &str) {
         let at = dir.join(relative);
@@ -488,5 +625,90 @@ mod tests {
         let file = dir.path().join("script");
         fs::write(&file, "#!/bin/sh\nx\n").unwrap();
         assert!(!fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap());
+    }
+
+    #[test]
+    fn a_library_needed_by_a_path_outside_the_store_is_one_a_machine_lacks() {
+        assert!(outside_store("/usr/lib/libsqlite3.so"));
+        assert!(!outside_store("libsqlite3.so.0"));
+        assert!(!outside_store("/store/abc-sqlite/lib/libsqlite3.so.0"));
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("script"), "#!/bin/sh\n").unwrap();
+        assert_eq!(linked_by_path(dir.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_built_package_loses_setuid_and_setgid_and_cant_hold_special_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (bin, shared) = (dir.path().join("bin"), dir.path().join("share/games"));
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(bin.join("sudo"), "").unwrap();
+        fs::set_permissions(bin.join("sudo"), fs::Permissions::from_mode(0o4755)).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o2775)).unwrap();
+        std::os::unix::fs::symlink("sudo", bin.join("su")).unwrap();
+        settle_modes(dir.path()).unwrap();
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode(&bin.join("sudo")), 0o755);
+        assert_eq!(mode(&shared), 0o775);
+
+        let status = Command::new("mkfifo")
+            .arg(bin.join("pipe"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let error = settle_modes(dir.path()).unwrap_err();
+        assert!(
+            error.contains("bin/pipe") && error.contains("only files"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn what_a_build_made_goes_once_nothing_fixed_up_from_it_is_in_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let (kept, gone) = (
+            StorePath::derive("build", &[b"kept"]).named("kept-1.0"),
+            StorePath::derive("build", &[b"gone"]).named("gone-1.0"),
+        );
+        let output = StorePath::derive("out", &[b"kept"]);
+        fs::create_dir_all(lab.on_host(&output)).unwrap();
+        for (out, record) in [
+            (&kept, format!("out={}", output.hash())),
+            (
+                &gone,
+                "out=0000000000000000000000000000000000000000".to_owned(),
+            ),
+        ] {
+            for file in [
+                crate::chain::raw_output(&lab, out),
+                lab.work.join("done").join(out.hash()),
+                fixed_record(&lab, out),
+            ] {
+                fs::create_dir_all(file.parent().unwrap()).unwrap();
+                fs::write(
+                    &file,
+                    if file.starts_with(lab.work.join("fixed")) {
+                        record.clone()
+                    } else {
+                        String::new()
+                    },
+                )
+                .unwrap();
+            }
+        }
+
+        assert_eq!(forget_raw_outputs(&lab, false).unwrap(), 1);
+        assert!(crate::chain::raw_output(&lab, &kept).exists());
+        assert!(fixed_record(&lab, &kept).exists());
+        assert!(!crate::chain::raw_output(&lab, &gone).exists());
+        assert!(!fixed_record(&lab, &gone).exists());
+        assert!(!lab.work.join("done").join(gone.hash()).exists());
+
+        // All of them, though what's in the store stays fixed up and built.
+        assert_eq!(forget_raw_outputs(&lab, true).unwrap(), 1);
+        assert!(!crate::chain::raw_output(&lab, &kept).exists());
+        assert!(fixed_record(&lab, &kept).exists());
     }
 }

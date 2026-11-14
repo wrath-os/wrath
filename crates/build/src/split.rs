@@ -1,7 +1,6 @@
 //! Splits built packages into outputs by file class, on a copy of the store or as they're built.
 //!
-//! Changing what this writes into packages needs `BUILD_RULES` bumped in `chain.rs`, or builds
-//! made before the change are kept.
+//! Changing this changes [`crate::fixup::rules`], so every package is fixed up again.
 //!
 //! Each package's run-time libraries, development files and documentation go to store paths of
 //! their own, of the same length, so references can be rewritten in place. Whatever needs only a
@@ -1160,9 +1159,8 @@ mod in_place {
             .join("\n")
     }
 
-    /// Pinned: what the builder makes of the same build. When this changes on purpose, packages
-    /// already built were made the old way, so bump `BUILD_RULES` with the new addresses, or
-    /// every machine keeps what the old rules made.
+    /// Pinned: what the builder makes of the same build, so a change in where packages land is
+    /// one someone meant. Every package is fixed up again by the new rules either way.
     #[test]
     fn the_same_build_is_placed_as_it_was() {
         let out = StorePath::derive("key", &[b"demo"]).named("demo-1.0");
@@ -1188,7 +1186,7 @@ mod in_place {
         );
         assert_eq!(
             actual, GOLDEN_PLACED,
-            "placing a build changed; if that's meant, bump BUILD_RULES and update this"
+            "placing a build changed; if that's meant, update this"
         );
     }
 

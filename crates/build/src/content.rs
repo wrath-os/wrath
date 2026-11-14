@@ -1,7 +1,6 @@
 //! Names a built package by what it contains.
 //!
-//! Changing what this writes into packages needs `BUILD_RULES` bumped in `chain.rs`, or builds
-//! made before the change are kept.
+//! Changing this changes [`crate::fixup::rules`], so every package is fixed up again.
 //!
 //! A package builds at a temporary store path. Its address is a hash of its contents with that
 //! path masked, so the same contents get the same address wherever they were built. Then every

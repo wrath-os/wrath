@@ -52,6 +52,20 @@ A table named after a style, `[package.autotools]` here, picks the style and giv
 Without one, the files in the source pick it (a `meson.build` means meson, a `Cargo.toml` cargo,
 and so on). A recipe can also skip styles and write `script` itself, as plain shell.
 
+A program that finds other packages' files through a variable says so in its recipe, and every
+build that has it among its dependencies gets the variable, listing those directories of all its
+dependencies:
+
+```toml
+# python3's recipe
+[[package.search_paths]]
+variable = "PYTHONPATH"
+files = ["site"]
+```
+
+So a build with python3 and jinja2 among its dependencies finds jinja2's modules without saying
+where they are. `separator` sets what goes between the directories, `:` when it's left out.
+
 ## Styles
 
 There are seven so far:
