@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -111,13 +112,28 @@ pub type Packages = BTreeMap<String, PackageRef>;
 struct Objects(PathBuf);
 
 impl Objects {
+    /// Keeps `bytes` under their hash, written whole or not at all: a crash midway leaves a
+    /// temporary file, never a short object under the hash.
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         let hash = digest(bytes);
         let path = self.0.join(&hash);
         if !path.exists() {
-            fs::write(&path, bytes).map_err(with_path(&path))?;
+            let partial = self.0.join(format!("{hash}.tmp{}", std::process::id()));
+            let mut file = fs::File::create(&partial).map_err(with_path(&partial))?;
+            file.write_all(bytes)
+                .and_then(|()| file.sync_all())
+                .map_err(with_path(&partial))?;
+            fs::rename(&partial, &path).map_err(with_path(&path))?;
         }
         Ok(hash)
+    }
+
+    /// Whether every file in `entries` has its object here.
+    fn hold(&self, entries: &Entries) -> bool {
+        entries.values().all(|entry| match entry {
+            Entry::File { object, .. } => self.0.join(object).is_file(),
+            Entry::Link { .. } => true,
+        })
     }
 }
 
@@ -2145,7 +2161,11 @@ fn realise(lab: &Lab, db: &mut Db, actions: Vec<Action>) -> Result<Outcome, Stri
         let (unresolved, resolved) = (key_of(&action.unresolved), key_of(&action.resolved));
         put_action(&tx, &unresolved, &action.unresolved)?;
         put_action(&tx, &resolved, &action.resolved)?;
-        let text = match output_of(&tx, &resolved)? {
+        // An output whose objects are gone, as after a crash, is made again.
+        let cached = output_of(&tx, &resolved)?.filter(|text| {
+            serde_json::from_str::<Entries>(text).is_ok_and(|entries| objects.hold(&entries))
+        });
+        let text = match cached {
             Some(text) => text,
             None => {
                 ran += 1;
@@ -3688,6 +3708,36 @@ mod tests {
             let text = fs::read_to_string(entry.unwrap().path()).unwrap();
             assert!(!text.contains("files./etc/web.conf"), "{text}");
         }
+    }
+
+    #[test]
+    fn an_action_whose_objects_were_lost_is_run_again() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let first = realised(&lab, &mut db, &packages, &model(80, false));
+        let objects = objects_of(&lab).0;
+        let lost: Vec<PathBuf> = fs::read_dir(&objects)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        for object in &lost {
+            fs::remove_file(object).unwrap();
+        }
+        let generation = lab.on_host(&StorePath::from_hash(&first.generation));
+        fs::remove_dir_all(&generation).unwrap();
+
+        let again = realised(&lab, &mut db, &packages, &model(80, false));
+
+        assert_eq!(again.generation, first.generation);
+        assert!(lost.iter().all(|object| object.is_file()));
+        assert!(generation.join("etc/web.conf").is_file());
+        assert!(fs::read_dir(&objects).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp")
+        }));
     }
 
     #[test]
