@@ -16,6 +16,9 @@ steps = [
   { run = "test -e /var/lib/not-kept || echo erased; cat '/home/john/My Games/save' /home/john/.history", stdout_contains = "erased\nsaved\ncmd" },
   { run = "test \"$(cat /etc/machine-id)\" = \"$(cat /var/lib/app/machine-id)\" && echo same-id; sha256sum -c /var/lib/app/key.sum; findmnt -no FSTYPE /etc/machine-id", stdout_contains = "same-id\n/etc/ssh/ssh_host_ed25519_key: OK\nbtrfs" },
   { run = "test \"$(id -u extra)\" = \"$(cat /var/lib/app/extra-id)\" && echo same-user; systemctl is-failed systemd-machine-id-commit; true", stdout_contains = "same-user\ninactive" },
-  { run = "wrath status 2>&1; true", stdout_contains = "it matches the configuration" },
+  # Built from a checkout, so no lock pins its grapes: wrath says how to choose the one the system
+  # carries, and uses it only when told.
+  { run = "wrath status 2>&1; true", stdout_contains = "--source grapes=/run/system/grapes" },
+  { run = "wrath status --source grapes=/run/system/grapes 2>&1; true", stdout_contains = "it matches the configuration" },
 ]
 timeout_secs = 1500

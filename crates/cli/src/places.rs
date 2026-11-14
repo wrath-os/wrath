@@ -24,6 +24,12 @@ pub const GRAPES_URL: &str = "github:wrath-os/grapes";
 /// The name grapes has among a configuration's sources and in its lock.
 pub const GRAPES_SOURCE: &str = "grapes";
 
+/// The system running on this machine, with the grapes it was built from at [`GRAPES_LINK`] and
+/// its model at [`RUNNING_MODEL`].
+const RUNNING_SYSTEM: &str = "/run/system";
+const GRAPES_LINK: &str = "grapes";
+const RUNNING_MODEL: &str = "etc/wrath/model.json";
+
 struct Places {
     given: Option<PathBuf>,
     config: Option<PathBuf>,
@@ -68,6 +74,11 @@ pub fn grapes() -> Result<PathBuf, String> {
         .grapes
         .get_or_init(|| resolve(places.given.as_deref(), places.config.as_deref()))
         .clone()
+}
+
+/// Whether this command builds from a directory given for it, in place of the pinned grapes.
+pub fn given() -> bool {
+    PLACES.get().is_some_and(|places| places.given.is_some())
 }
 
 /// Where this command builds: the store and the builder's records.
@@ -143,17 +154,55 @@ pub fn keep_pin(sources: &mut BTreeMap<String, Source>, previous: Option<&Lock>)
 /// Grapes at `url` for the configuration at `config`, at the version its lock pins, or its
 /// newest when this command may fetch it, as includes are.
 fn fetched(config: &Path, url: &str) -> Result<PathBuf, String> {
+    let running = Path::new(RUNNING_SYSTEM);
+    let pinned = !crate::fetch::follows_newest(GRAPES_SOURCE);
+    if let Some((dir, pin)) = running_copy(config, url, running).filter(|_| pinned) {
+        crate::fetch::note(GRAPES_SOURCE, pin);
+        return Ok(dir);
+    }
     let tree =
         wrath_eval::ConfigFs::source(&crate::fetch::Sourced::dir(config), GRAPES_SOURCE, url)
             .map_err(|e| {
-                format!(
-                    "cannot fetch grapes from {url}: {e}; to build from a checkout, give it with \
-                 `--source grapes=DIR`"
-                )
+                let mut message = format!("cannot fetch grapes from {url}: {e}");
+                if pinned && whole_set(&running.join(GRAPES_LINK)) {
+                    message.push_str(&format!(
+                        "; to use the grapes the running system was built with instead, give \
+                         `--source grapes={}`",
+                        running.join(GRAPES_LINK).display()
+                    ));
+                } else {
+                    message
+                        .push_str("; to build from a checkout, give it with `--source grapes=DIR`");
+                }
+                message
             })?;
     tree.dir()
         .map(Path::to_path_buf)
         .ok_or_else(|| "grapes isn't on disk".to_owned())
+}
+
+/// The grapes the system at `running` carries, when it's the version the lock next to `config`
+/// pins for `url`: the one it was built with, as its model records, so nothing needs fetching.
+/// Any other version is never used in its place.
+fn running_copy(config: &Path, url: &str, running: &Path) -> Option<(PathBuf, Source)> {
+    let lock = crate::read_lock(config).ok()??;
+    let pin = lock.sources.get(GRAPES_SOURCE)?;
+    let model = crate::read_model(&running.join(RUNNING_MODEL)).ok()?;
+    let built_with = model.sources.get(GRAPES_SOURCE)?;
+    let dir = running.join(GRAPES_LINK);
+    let same = pin.url == url && pin.is_locked() && built_with.url == pin.url;
+    (same && built_with.hash == pin.hash && whole_set(&dir)).then(|| (dir, pin.clone()))
+}
+
+/// Whether `dir` has everything of a set a command can build with: a copy missing part of it
+/// would fail later with errors about what's missing rather than about grapes.
+fn whole_set(dir: &Path) -> bool {
+    [SET_FILE, "seed.pin", "sources.lock"]
+        .iter()
+        .all(|file| dir.join(file).is_file())
+        && ["recipes", "styles", "modules"]
+            .iter()
+            .all(|sub| dir.join(sub).is_dir())
 }
 
 fn given_dir(dir: PathBuf) -> Result<PathBuf, String> {
@@ -214,21 +263,10 @@ fn needed_api(text: &str) -> Result<u32, String> {
 pub const NO_MODULES: &str = "<no grapes>/modules";
 
 /// The modules a configuration builds on when its platform names none of its own: grapes'.
-/// Without grapes, the ones in the wrath package at `root`, from the grapes its system was built
-/// from, so a machine evaluates its configuration offline; else a directory that isn't there,
-/// and loading them says why with [`grapes`]'s error.
-pub fn modules(root: &Path) -> PathBuf {
-    match grapes() {
-        Ok(dir) => dir.join("modules"),
-        Err(why) if root.join("modules").is_dir() => {
-            crate::style::note(&format!(
-                "using the modules this wrath came with, which may not be the version the lock \
-                 pins: {why}"
-            ));
-            root.join("modules")
-        }
-        Err(_) => PathBuf::from(NO_MODULES),
-    }
+/// Without grapes, a directory that isn't there, so loading them says why with [`grapes`]'s
+/// error: no other version is used in its place.
+pub fn modules() -> PathBuf {
+    grapes().map_or_else(|_| PathBuf::from(NO_MODULES), |dir| dir.join("modules"))
 }
 
 /// A checkout of grapes for tests that run its modules: `WRATH_GRAPES`, or one beside wrath's.
@@ -356,6 +394,69 @@ mod tests {
         assert_eq!(
             building_for(Some(config), false, elsewhere.path()).as_deref(),
             Some(config)
+        );
+    }
+
+    /// A running system built with grapes at `built_with`, or from a checkout with `None`, and a
+    /// configuration whose lock pins `pinned`.
+    fn machine(
+        built_with: Option<Source>,
+        pinned: Source,
+    ) -> (tempfile::TempDir, tempfile::TempDir) {
+        let running = tempfile::tempdir().unwrap();
+        let mut model = wrath_model::Model::default();
+        model
+            .sources
+            .extend(built_with.map(|s| (GRAPES_SOURCE.to_owned(), s)));
+        let file = running.path().join(RUNNING_MODEL);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, model.canonical()).unwrap();
+        let copy = running.path().join(GRAPES_LINK);
+        set(&copy, "api = 1\n");
+        for sub in ["styles", "modules"] {
+            std::fs::create_dir_all(copy.join(sub)).unwrap();
+        }
+        for file in ["seed.pin", "sources.lock"] {
+            std::fs::write(copy.join(file), "").unwrap();
+        }
+        let config = config("[system]\nhostname = \"a\"\n");
+        let mut lock = Lock::default();
+        lock.sources.insert(GRAPES_SOURCE.into(), pinned);
+        std::fs::write(config.path().join("wrath.lock"), lock.to_toml()).unwrap();
+        (running, config)
+    }
+
+    #[test]
+    fn the_grapes_a_system_carries_is_used_only_where_the_lock_pins_that_version() {
+        let pin = pin(GRAPES_URL, "aaaaaaa");
+        let (running, config) = machine(Some(pin.clone()), pin.clone());
+        let (dir, used) = running_copy(config.path(), GRAPES_URL, running.path()).unwrap();
+        assert_eq!(dir, running.path().join(GRAPES_LINK));
+        assert_eq!(used, pin);
+
+        let (running, config) = machine(Some(pin.clone()), self::pin(GRAPES_URL, "bbbbbbb"));
+        assert_eq!(
+            running_copy(config.path(), GRAPES_URL, running.path()),
+            None
+        );
+
+        let (running, config) = machine(None, pin.clone());
+        assert_eq!(
+            running_copy(config.path(), GRAPES_URL, running.path()),
+            None
+        );
+
+        let (running, config) = machine(Some(pin.clone()), pin.clone());
+        assert_eq!(
+            running_copy(config.path(), "github:acme/grapes", running.path()),
+            None
+        );
+
+        let (running, config) = machine(Some(pin.clone()), pin);
+        std::fs::remove_dir(running.path().join(GRAPES_LINK).join("modules")).unwrap();
+        assert_eq!(
+            running_copy(config.path(), GRAPES_URL, running.path()),
+            None
         );
     }
 

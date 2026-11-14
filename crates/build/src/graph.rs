@@ -552,12 +552,14 @@ fn run_index(
 
 /// What every system has whatever its platform, since the mechanism needs it: wrath, which
 /// switches; bash and coreutils, which its scripts run; systemd, which starts everything, and
-/// util-linux and kmod, which it mounts with and loads modules with; and D-Bus. The rest of a
+/// util-linux and kmod, which it mounts with and loads modules with; D-Bus; and grapes, the set it
+/// was built from, which wrath on the machine evaluates the configuration with. The rest of a
 /// base system is what the platform's modules add.
 const MECHANISM_PACKAGES: &[&str] = &[
     "bash",
     "coreutils",
     "dbus",
+    "grapes",
     "wrath",
     "kmod",
     "systemd",
@@ -1259,6 +1261,7 @@ fn lower<'a>(
             packages,
         )?,
     ]);
+    actions.push(grapes_link(packages)?);
     // A hostname filled in from the machine's name is one of the files the machine fills in.
     if !hostname.is_empty() {
         actions.push(text(
@@ -2006,6 +2009,31 @@ fn zone_file(zone: &str) -> Result<String, String> {
         ));
     }
     Ok(format!("/run/system/share/zoneinfo/{zone}"))
+}
+
+/// The package of the set the system was built from, which it links as `grapes`, so the machine
+/// evaluates its configuration with it, offline, while the lock pins that version.
+const GRAPES: &str = "grapes";
+
+/// The `grapes` link, to the set the system was built from.
+fn grapes_link(packages: &Packages) -> Result<Action<'_>, String> {
+    let (unresolved, resolved) = action_records(
+        &[GRAPES],
+        packages,
+        |deps| json!({"kind": "grapes", "deps": deps}),
+    )?;
+    let target = package(packages, GRAPES)?.path.inside();
+    Ok(Action {
+        origin: "base.system".to_owned(),
+        unresolved,
+        resolved,
+        run: Box::new(move |_| {
+            let link = Entry::Link {
+                target: target.clone(),
+            };
+            Ok(Entries::from([(GRAPES.to_owned(), link)]))
+        }),
+    })
 }
 
 /// `/etc/localtime`, linking to the configuration's time zone.
@@ -3475,6 +3503,18 @@ mod tests {
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let link = root.join("lib/locale/en_US.UTF-8");
         assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+    }
+
+    #[test]
+    fn a_system_links_the_grapes_it_was_built_from() {
+        let (_dir, lab, packages) = setup();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert_eq!(
+            fs::read_link(root.join("grapes")).unwrap(),
+            PathBuf::from(packages["grapes"].path.inside())
+        );
     }
 
     #[test]

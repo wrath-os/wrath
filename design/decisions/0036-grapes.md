@@ -42,8 +42,12 @@ which grapes built the system. A directory given for one command (`--source grap
 `WRATH_GRAPES` while working on grapes) builds in its place, and says so when the lock pins
 another version.
 
-Until a system carries the grapes it was built from, the wrath package has grapes' modules, so a
-machine evaluates its configuration offline (`wrath status`, `wrath install`) when it can't fetch
+A system carries the grapes it was built from, as a package every system has, linked at
+`/run/system/grapes`, and its model records the pin. wrath on the machine uses that copy when the
+lock pins the same version, so it evaluates offline; it never uses another version in place of
+the pinned one. A pin it can't have is an error saying how to get it, or how to choose the
+system's own copy for one command (`--source grapes=/run/system/grapes`). Installing a system
+that's built already, as from an image, takes its disks from that system's model, and needs no
 grapes.
 
 ### Packages and modules are separate choices

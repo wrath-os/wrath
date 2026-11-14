@@ -136,7 +136,7 @@ pub fn running_built_from() -> Option<String> {
 }
 
 /// Where a system keeps its model and the model's hash.
-const MODEL: &str = "etc/wrath/model.json";
+pub(crate) const MODEL: &str = "etc/wrath/model.json";
 const MODEL_HASH: &str = "etc/wrath/model-hash";
 
 /// Every generation of this machine, oldest first.

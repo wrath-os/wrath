@@ -31,6 +31,23 @@ pub fn set(fetching: Fetching) {
     FETCHING.set(fetching).expect("what to fetch is set once");
 }
 
+/// Records that `name` was read at `source` from somewhere other than a fetch, such as the copy
+/// a running system carries, so the lock and the model say so as for one fetched.
+pub fn note(name: &str, source: Source) {
+    FETCHED
+        .lock()
+        .expect("the fetched sources are writable")
+        .insert(name.to_owned(), source);
+}
+
+/// Whether this command takes `name`'s newest version, as `update` does, rather than its pin.
+pub fn follows_newest(name: &str) -> bool {
+    match FETCHING.get().unwrap_or(&Fetching::Pinned) {
+        Fetching::Newest(names) => names.is_empty() || names.iter().any(|n| n == name),
+        Fetching::Pinned | Fetching::Missing => false,
+    }
+}
+
 /// The sources files were included from, at the versions they were read.
 pub fn fetched() -> BTreeMap<String, Source> {
     FETCHED

@@ -459,9 +459,8 @@ fn main() -> ExitCode {
         wrath_build::chain::set_wrath_tree(&checkout);
     }
     // Only commands that evaluate read the modules, so only they find grapes.
-    let (given_modules, beside) = (cli.modules, root.clone());
-    let modules =
-        std::cell::LazyCell::new(move || given_modules.unwrap_or_else(|| places::modules(&beside)));
+    let given_modules = cli.modules;
+    let modules = std::cell::LazyCell::new(move || given_modules.unwrap_or_else(places::modules));
     let root = root.as_path();
     REPOSITORY
         .set(root.to_path_buf())
@@ -606,11 +605,24 @@ fn main() -> ExitCode {
             system,
         } => machine().and_then(|config| {
             let system = system.or_else(|| fs::read_link(Path::new("/").join(INSTALL)).ok());
-            // A system built already is installed as it is: its packages are built, so there's
-            // nothing to lock, and no recipes to check their names against, as on an image.
-            let model = match system {
-                Some(_) => evaluate(&config, &modules)
-                    .and_then(|evaluation| with_lock(&config, Model::from_evaluation(&evaluation))),
+            // A system built already is installed as it is, with the disks its own model
+            // describes: nothing to evaluate, lock or build, as on an image, and no grapes needed.
+            let model = match &system {
+                Some(system) => {
+                    // Evaluating would have asked which role; the machine needs to know it too.
+                    let roles: Vec<String> = all_roles(&config)?.into_iter().flatten().collect();
+                    if roles.len() > 1 && role(&config).is_none() {
+                        return Err(format!(
+                            "the configuration has the roles {}; say which this machine is with \
+                             `--role`",
+                            roles.join(", ")
+                        ));
+                    }
+                    let path = system.join(switching::MODEL);
+                    Some(read_model(&path).map_err(|e| {
+                        format!("{} isn't a system wrath built: {e}", system.display())
+                    })?)
+                }
                 None => model(&config, &modules)
                     .map(|model| generations::locked(root, &config, model))
                     .transpose()?,
@@ -1155,7 +1167,7 @@ fn files_beside(exe: &Path) -> Option<PathBuf> {
             return Some(dir.to_path_buf());
         }
         let package = dir.join("share/wrath");
-        package.join("modules").is_dir().then_some(package)
+        package.is_dir().then_some(package)
     })
 }
 
@@ -1296,6 +1308,11 @@ fn with_lock(config: &Path, model: Model) -> Option<Model> {
     };
     // Files were included from these versions, which the lock gets when it's written.
     model.sources.extend(fetch::fetched());
+    // Grapes from a directory given for the command isn't the version the lock pins, so the model,
+    // which a generation keeps, doesn't say it is.
+    if places::given() {
+        model.sources.remove(places::GRAPES_SOURCE);
+    }
     Some(model)
 }
 
@@ -1619,7 +1636,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let package = dir.path().join("store/abc");
         fs::create_dir_all(package.join("bin")).unwrap();
-        fs::create_dir_all(package.join("share/wrath/modules")).unwrap();
+        fs::create_dir_all(package.join("share/wrath")).unwrap();
         assert_eq!(
             files_beside(&package.join("bin/wrath")),
             Some(package.join("share/wrath"))
