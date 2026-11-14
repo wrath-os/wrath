@@ -268,7 +268,7 @@ wrath dev test [OPTIONS] [FILES]...
 ```
 
 - `[FILES]...`: Scenario files to run, or directories of bad configs to compare with their golden errors
-- `--determinism <DETERMINISM>`: Check that the modules in this directory render the fixture configs byte for byte the same across fresh interpreters and module orders
+- `--determinism [<DIR>]`: Check that the modules in this directory [default: the set in use's] render the fixture configs byte for byte the same across fresh interpreters and module orders
 - `--configs <CONFIGS>`: Configurations for --determinism
 - `--bless`: Write the actual errors of bad configs as their expected errors
 - `--image <IMAGE>`: Run VM scenarios against this built image instead of building one

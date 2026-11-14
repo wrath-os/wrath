@@ -65,15 +65,14 @@ fn plan_shows_the_changed_option_and_what_it_renders() {
 
 #[test]
 fn modules_render_the_same_model_in_any_load_order() {
-    let output = stdout(&wrath(&[
-        "dev",
-        "test",
-        "--determinism",
-        &in_grapes("modules"),
-    ]));
-
-    assert!(output.contains("PASS  s4"), "{output}");
-    assert!(!output.contains("FAIL"), "{output}");
+    // The set in use's modules, and the ones in a directory given.
+    for given in [None, Some(in_grapes("modules"))] {
+        let mut args = vec!["dev", "test", "--determinism"];
+        args.extend(given.as_deref());
+        let output = stdout(&wrath(&args));
+        assert!(output.contains("PASS  s4"), "{output}");
+        assert!(!output.contains("FAIL"), "{output}");
+    }
 }
 
 #[test]

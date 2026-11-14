@@ -381,10 +381,10 @@ enum SeedCommand {
 
 #[derive(clap::Args)]
 struct TestOptions {
-    /// Check that the modules in this directory render the fixture configs byte for byte the
-    /// same across fresh interpreters and module orders
-    #[arg(long, conflicts_with = "files")]
-    determinism: Option<PathBuf>,
+    /// Check that the modules in this directory [default: the set in use's] render the fixture
+    /// configs byte for byte the same across fresh interpreters and module orders
+    #[arg(long, num_args = 0..=1, value_name = "DIR", conflicts_with = "files")]
+    determinism: Option<Option<PathBuf>>,
     /// Configurations for --determinism
     #[arg(long, default_value = "fixtures/configs")]
     configs: PathBuf,
@@ -949,7 +949,7 @@ fn dev_test(
 ) -> Result<ExitCode, String> {
     match test.determinism {
         Some(dir) => checks::determinism(
-            &under_root(root, &dir),
+            &dir.map_or_else(|| modules.to_path_buf(), |dir| under_root(root, &dir)),
             &under_root(root, &test.configs),
             DETERMINISM_RUNS,
         )
