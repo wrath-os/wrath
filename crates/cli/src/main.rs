@@ -329,6 +329,7 @@ enum DevCommand {
         #[arg(long)]
         redundant: bool,
         /// With `--redundant`, only these recipes [default: every recipe]
+        #[arg(requires = "redundant")]
         packages: Vec<String>,
     },
     /// Build packages a second time, as another user on fewer cores, and say which come out
@@ -453,11 +454,14 @@ fn main() -> ExitCode {
         }
     };
     let configured = find_config(cli.config.as_deref()).ok();
-    places::init(&root, grapes, configured.as_deref());
+    places::init(&root, grapes, configured.as_deref(), cli.config.is_some());
     if let Ok(checkout) = std::path::absolute(&root) {
         wrath_build::chain::set_wrath_tree(&checkout);
     }
-    let modules = modules_dir(&root, cli.modules);
+    // Only commands that evaluate read the modules, so only they find grapes.
+    let (given_modules, beside) = (cli.modules, root.clone());
+    let modules =
+        std::cell::LazyCell::new(move || given_modules.unwrap_or_else(|| places::modules(&beside)));
     let root = root.as_path();
     REPOSITORY
         .set(root.to_path_buf())
@@ -1146,9 +1150,13 @@ fn under_root(root: &Path, path: &Path) -> PathBuf {
 /// The directory with wrath's own files for the binary at `exe`: the checkout it was built in,
 /// or the `share/wrath` beside it in the store.
 fn files_beside(exe: &Path) -> Option<PathBuf> {
-    exe.ancestors()
-        .flat_map(|dir| [dir.to_path_buf(), dir.join("share/wrath")])
-        .find(|dir| dir.join("crates/cli").is_dir() || dir.join("modules").is_dir())
+    exe.ancestors().find_map(|dir| {
+        if dir.join("crates/cli").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        let package = dir.join("share/wrath");
+        package.join("modules").is_dir().then_some(package)
+    })
 }
 
 /// Reruns a failed scenario against the image of the failed run and reports whether it fails
@@ -1184,10 +1192,6 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     wrath_check::parse_scenario(&path, &id, &milestone, &text).map_err(|e| e.to_string())
-}
-
-fn modules_dir(root: &Path, modules: Option<PathBuf>) -> PathBuf {
-    modules.unwrap_or_else(|| places::modules(root))
 }
 
 /// Grapes' directory from `--source` arguments, `NAME=DIR` each. Only grapes can be given so far.
@@ -1611,7 +1615,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_binary_in_the_store_finds_the_modules_beside_it() {
+    fn a_binary_in_the_store_finds_its_files_beside_it() {
         let dir = tempfile::tempdir().unwrap();
         let package = dir.path().join("store/abc");
         fs::create_dir_all(package.join("bin")).unwrap();

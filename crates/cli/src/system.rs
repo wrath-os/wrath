@@ -133,7 +133,11 @@ pub fn load_modules(
                 .map(|entry| entry.map(|entry| entry.path()))
                 .collect::<std::io::Result<Vec<_>>>()
         })
-        .map_err(|e| format!("cannot read modules in {}: {e}", dir.display()))?;
+        .map_err(|e| match crate::places::grapes() {
+            // Without grapes, `dir` is a stand-in, and why there's no grapes is the error.
+            Err(why) if dir == Path::new(crate::places::NO_MODULES) => why,
+            _ => format!("cannot read modules in {}: {e}", dir.display()),
+        })?;
     paths.sort();
     if let ModuleOrder::Shuffled(seed) = order {
         shuffle(&mut paths, seed);

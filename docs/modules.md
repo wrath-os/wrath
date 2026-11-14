@@ -154,7 +154,9 @@ Bad configurations work the same way, with an `expected-error.txt` instead, and
 ## Platforms
 
 Every system builds on a platform, a set of modules. Unless it says otherwise, that's grapes':
-the modules a wrath system is made of. A platform of your own lives in a source, with a
+the modules a wrath system is made of. You don't need to declare grapes: your lock pins it the
+first time it's read, `wrath update grapes` moves it forward, and a rollback takes it back. To
+build from a checkout of grapes for one command, give it with `--source grapes=DIR`. A platform of your own lives in a source, with a
 `platform.toml` that lists its modules:
 
 ```toml

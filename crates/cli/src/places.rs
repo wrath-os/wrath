@@ -1,8 +1,11 @@
 //! Where wrath finds grapes, the set it builds from (its recipes, styles, pins and modules), and
 //! where it builds: the store and its records, which are the tool's (0036).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+use wrath_model::{Lock, Source};
 
 /// The version of the host API, what modules and styles call, that this wrath provides. A set
 /// says the one it needs in its `set.toml`.
@@ -14,44 +17,56 @@ const SET_FILE: &str = "set.toml";
 /// The variable naming a checkout of grapes to build from when the command gives none.
 pub const GRAPES_VARIABLE: &str = "WRATH_GRAPES";
 
+/// Where a configuration's grapes comes from when it declares no `[sources.grapes]`. Its lock
+/// pins it the first time a command reads it, as it does any source.
+pub const GRAPES_URL: &str = "github:wrath-os/grapes";
+
+/// The name grapes has among a configuration's sources and in its lock.
+pub const GRAPES_SOURCE: &str = "grapes";
+
 struct Places {
-    grapes: Result<PathBuf, String>,
+    given: Option<PathBuf>,
+    config: Option<PathBuf>,
+    /// Decided the first time a command needs grapes, so commands that don't, such as a
+    /// rollback, never fetch it.
+    grapes: OnceLock<Result<PathBuf, String>>,
     work: PathBuf,
 }
 
 static PLACES: OnceLock<Places> = OnceLock::new();
 
-/// Decides, once per command, where grapes and the work are for wrath at `root`, with `grapes`
-/// given on the command line as `--source grapes=DIR`, for the configuration at `config`.
-pub fn init(root: &Path, grapes: Option<PathBuf>, config: Option<&Path>) {
+/// Says, once per command, where grapes and the work are for wrath at `root`: `grapes` given on
+/// the command line as `--source grapes=DIR`, or in `WRATH_GRAPES`, or else the one the
+/// configuration at `config` builds on.
+pub fn init(root: &Path, grapes: Option<PathBuf>, config: Option<&Path>, named: bool) {
     let cwd = std::env::current_dir().unwrap_or_default();
-    // A checkout of grapes beside wrath's, for working on both and for their tests, which devenv
-    // names in `WRATH_GRAPES`; `--source` still decides for one command.
-    let grapes = grapes.or_else(|| std::env::var_os(GRAPES_VARIABLE).map(PathBuf::from));
-    let grapes = match grapes {
-        Some(dir) => find(root, Some(dir), &cwd),
-        None => config
-            .and_then(pinned)
-            .unwrap_or_else(|| find(root, None, &cwd)),
-    };
-    let grapes = grapes.and_then(|dir| check(&dir).map(|()| dir));
-    if let Ok(dir) = &grapes {
-        wrath_build::seed::set_pin(dir.join("seed.pin"));
-    }
     let places = Places {
-        grapes,
+        given: grapes.or_else(|| std::env::var_os(GRAPES_VARIABLE).map(PathBuf::from)),
+        config: building_for(config, named, &cwd),
+        grapes: OnceLock::new(),
         work: root.join("build/work"),
     };
     // Tests may decide more than once; the first decision stands.
     let _ = PLACES.set(places);
 }
 
+/// The configuration whose grapes a command builds from: `config`, unless the command runs in a
+/// checkout of grapes and wasn't told a configuration (`named`), as when working on grapes on a
+/// machine whose own configuration is found anyway.
+fn building_for(config: Option<&Path>, named: bool, cwd: &Path) -> Option<PathBuf> {
+    config
+        .filter(|_| named || here(cwd).is_err())
+        .map(Path::to_path_buf)
+}
+
 /// Where grapes is, the set this command builds from.
 pub fn grapes() -> Result<PathBuf, String> {
-    PLACES
+    let places = PLACES
         .get()
-        .ok_or_else(|| "where grapes is hasn't been decided".to_owned())?
+        .ok_or_else(|| "where grapes is hasn't been decided".to_owned())?;
+    places
         .grapes
+        .get_or_init(|| resolve(places.given.as_deref(), places.config.as_deref()))
         .clone()
 }
 
@@ -62,38 +77,97 @@ pub fn work() -> PathBuf {
         .map_or_else(|| PathBuf::from("build/work"), |places| places.work.clone())
 }
 
-/// Grapes as the configuration at `config` declares it, `[sources.grapes]`, fetched at the
-/// version its lock pins, as includes are. `None` when it declares none.
-fn pinned(config: &Path) -> Option<Result<PathBuf, String>> {
-    let url = wrath_eval::declared_source(&wrath_eval::DirFs::new(config), None, "grapes")?;
-    let tree = wrath_eval::ConfigFs::source(&crate::fetch::Sourced::dir(config), "grapes", &url);
-    Some(
-        tree.map_err(|e| format!("cannot fetch grapes: {e}"))
-            .and_then(|tree| {
-                tree.dir()
-                    .map(Path::to_path_buf)
-                    .ok_or_else(|| "grapes isn't on disk".to_owned())
-            }),
-    )
+/// Where grapes comes from for one command.
+#[derive(Debug, PartialEq, Eq)]
+enum Origin {
+    /// A directory given for this command.
+    Given(PathBuf),
+    /// The configuration's grapes, followed at this URL, at the version its lock pins.
+    Configured(String),
+    /// The checkout of grapes the command runs in, when there's no configuration.
+    Here,
 }
 
-/// Grapes as given, or a checkout of it: wrath's own `build/` while grapes still lives there,
-/// or the directory the command runs in.
-fn find(root: &Path, given: Option<PathBuf>, cwd: &Path) -> Result<PathBuf, String> {
-    if let Some(dir) = given {
-        return if dir.join("recipes").is_dir() {
-            Ok(dir)
-        } else {
-            Err(format!(
-                "{} has no recipes, so it isn't grapes",
-                dir.display()
-            ))
-        };
+fn origin(given: Option<&Path>, config: Option<&Path>) -> Origin {
+    match (given, config) {
+        (Some(dir), _) => Origin::Given(dir.to_path_buf()),
+        (None, Some(config)) => Origin::Configured(
+            wrath_eval::declared_source(&wrath_eval::DirFs::new(config), None, GRAPES_SOURCE)
+                .unwrap_or_else(|| GRAPES_URL.to_owned()),
+        ),
+        (None, None) => Origin::Here,
     }
-    let own = root.join("build");
-    if own.join("recipes").is_dir() {
-        return Ok(own);
+}
+
+fn resolve(given: Option<&Path>, config: Option<&Path>) -> Result<PathBuf, String> {
+    let dir = match origin(given, config) {
+        Origin::Given(dir) => {
+            if config.is_some_and(pins_grapes) {
+                crate::style::note(&format!(
+                    "grapes from {}, not the version the lock pins",
+                    dir.display()
+                ));
+            }
+            given_dir(dir)?
+        }
+        Origin::Configured(url) => {
+            fetched(config.expect("a configured grapes has a config"), &url)?
+        }
+        Origin::Here => here(&std::env::current_dir().unwrap_or_default())?,
+    };
+    check(&dir)?;
+    wrath_build::seed::set_pin(dir.join("seed.pin"));
+    Ok(dir)
+}
+
+/// Whether the lock of the configuration at `config` pins a version of grapes, which a given
+/// directory then builds in place of.
+fn pins_grapes(config: &Path) -> bool {
+    crate::read_lock(config)
+        .ok()
+        .flatten()
+        .is_some_and(|lock| lock.sources.contains_key(GRAPES_SOURCE))
+}
+
+/// Keeps grapes' pin in `sources`, a lock being written from what the configuration names. One
+/// that doesn't declare grapes still builds on it, so its pin is the one this command read, or
+/// else the one the lock had, `previous`, as wrath's own is kept.
+pub fn keep_pin(sources: &mut BTreeMap<String, Source>, previous: Option<&Lock>) {
+    let read = crate::fetch::fetched().remove(GRAPES_SOURCE);
+    let had = previous.and_then(|lock| lock.sources.get(GRAPES_SOURCE).cloned());
+    if let Some(pin) = read.or(had) {
+        sources.entry(GRAPES_SOURCE.to_owned()).or_insert(pin);
     }
+}
+
+/// Grapes at `url` for the configuration at `config`, at the version its lock pins, or its
+/// newest when this command may fetch it, as includes are.
+fn fetched(config: &Path, url: &str) -> Result<PathBuf, String> {
+    let tree =
+        wrath_eval::ConfigFs::source(&crate::fetch::Sourced::dir(config), GRAPES_SOURCE, url)
+            .map_err(|e| {
+                format!(
+                    "cannot fetch grapes from {url}: {e}; to build from a checkout, give it with \
+                 `--source grapes=DIR`"
+                )
+            })?;
+    tree.dir()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "grapes isn't on disk".to_owned())
+}
+
+fn given_dir(dir: PathBuf) -> Result<PathBuf, String> {
+    if dir.join("recipes").is_dir() {
+        Ok(dir)
+    } else {
+        Err(format!(
+            "{} has no recipes, so it isn't grapes",
+            dir.display()
+        ))
+    }
+}
+
+fn here(cwd: &Path) -> Result<PathBuf, String> {
     if cwd.join(SET_FILE).is_file() && cwd.join("recipes").is_dir() {
         return Ok(cwd.to_path_buf());
     }
@@ -104,13 +178,16 @@ fn find(root: &Path, given: Option<PathBuf>, cwd: &Path) -> Result<PathBuf, Stri
     )
 }
 
-/// That the set at `dir` needs the host API this wrath has. One without a `set.toml` is wrath's
-/// own `build/` from before the split, which goes with this wrath.
+/// That the set at `dir` says it needs the host API this wrath has.
 fn check(dir: &Path) -> Result<(), String> {
-    let Ok(text) = std::fs::read_to_string(dir.join(SET_FILE)) else {
-        return Ok(());
-    };
-    let api = needed_api(&text).map_err(|e| format!("{}: {e}", dir.join(SET_FILE).display()))?;
+    let file = dir.join(SET_FILE);
+    let text = std::fs::read_to_string(&file).map_err(|e| {
+        format!(
+            "{}: {e}; a set says the version of wrath's host API it needs there",
+            file.display()
+        )
+    })?;
+    let api = needed_api(&text).map_err(|e| format!("{}: {e}", file.display()))?;
     if api == HOST_API {
         Ok(())
     } else {
@@ -133,14 +210,25 @@ fn needed_api(text: &str) -> Result<u32, String> {
     }
 }
 
-/// The modules a configuration builds on when its platform names none of its own: grapes', or
-/// wrath's own `modules/` while they still live there.
+/// The stand-in for grapes' modules when there's no grapes, which no directory is.
+pub const NO_MODULES: &str = "<no grapes>/modules";
+
+/// The modules a configuration builds on when its platform names none of its own: grapes'.
+/// Without grapes, the ones in the wrath package at `root`, from the grapes its system was built
+/// from, so a machine evaluates its configuration offline; else a directory that isn't there,
+/// and loading them says why with [`grapes`]'s error.
 pub fn modules(root: &Path) -> PathBuf {
-    let dir = match grapes() {
-        Ok(grapes) if grapes.join("modules").is_dir() => grapes.join("modules"),
-        _ => root.join("modules"),
-    };
-    dir.strip_prefix(".").map(Path::to_path_buf).unwrap_or(dir)
+    match grapes() {
+        Ok(dir) => dir.join("modules"),
+        Err(why) if root.join("modules").is_dir() => {
+            crate::style::note(&format!(
+                "using the modules this wrath came with, which may not be the version the lock \
+                 pins: {why}"
+            ));
+            root.join("modules")
+        }
+        Err(_) => PathBuf::from(NO_MODULES),
+    }
 }
 
 /// A checkout of grapes for tests that run its modules: `WRATH_GRAPES`, or one beside wrath's.
@@ -161,28 +249,121 @@ mod tests {
         std::fs::write(dir.join(SET_FILE), api).unwrap();
     }
 
-    #[test]
-    fn grapes_is_what_the_command_gives_or_a_checkout_it_runs_in() {
+    fn config(system: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        let (root, grapes) = (dir.path().join("wrath"), dir.path().join("grapes"));
-        std::fs::create_dir_all(&root).unwrap();
-        set(&grapes, "api = 1\n");
-        assert_eq!(find(&root, Some(grapes.clone()), &root).unwrap(), grapes);
-        assert_eq!(find(&root, None, &grapes).unwrap(), grapes);
-        let error = find(&root, None, &root).unwrap_err();
-        assert!(error.contains("--source grapes=DIR"), "{error}");
-        let error = find(&root, Some(root.clone()), &root).unwrap_err();
-        assert!(error.contains("has no recipes"), "{error}");
+        std::fs::write(dir.path().join("system.toml"), system).unwrap();
+        dir
     }
 
     #[test]
-    fn a_checkout_with_grapes_in_its_build_directory_builds_from_it() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("build/recipes")).unwrap();
+    fn a_directory_given_for_the_command_wins_over_the_configuration() {
+        let config = config("[sources.grapes]\nurl = \"github:acme/grapes\"\n");
+        let given = Path::new("/checkouts/grapes");
         assert_eq!(
-            find(dir.path(), None, dir.path()).unwrap(),
-            dir.path().join("build")
+            origin(Some(given), Some(config.path())),
+            Origin::Given(given.to_path_buf())
         );
+    }
+
+    #[test]
+    fn a_configuration_builds_on_the_grapes_it_declares() {
+        let config = config("[sources.grapes]\nurl = \"github:acme/grapes\"\n");
+        assert_eq!(
+            origin(None, Some(config.path())),
+            Origin::Configured("github:acme/grapes".into())
+        );
+    }
+
+    #[test]
+    fn a_configuration_declaring_no_grapes_builds_on_wraths() {
+        let config = config("[system]\nhostname = \"a\"\n");
+        assert_eq!(
+            origin(None, Some(config.path())),
+            Origin::Configured(GRAPES_URL.into())
+        );
+    }
+
+    #[test]
+    fn without_a_configuration_grapes_is_the_checkout_the_command_runs_in() {
+        assert_eq!(origin(None, None), Origin::Here);
+        let dir = tempfile::tempdir().unwrap();
+        set(dir.path(), "api = 1\n");
+        assert_eq!(here(dir.path()).unwrap(), dir.path());
+        let elsewhere = tempfile::tempdir().unwrap();
+        let error = here(elsewhere.path()).unwrap_err();
+        assert!(error.contains("--source grapes=DIR"), "{error}");
+    }
+
+    #[test]
+    fn a_given_directory_is_noted_only_where_the_lock_pins_another_grapes() {
+        let config = config("[system]\nhostname = \"a\"\n");
+        assert!(!pins_grapes(config.path()));
+        let mut lock = wrath_model::Lock::default();
+        lock.sources.insert(
+            "grapes".into(),
+            wrath_model::Source {
+                url: GRAPES_URL.into(),
+                rev: Some("0123456".into()),
+                hash: "sha256-x".into(),
+                date: None,
+            },
+        );
+        std::fs::write(config.path().join("wrath.lock"), lock.to_toml()).unwrap();
+        assert!(pins_grapes(config.path()));
+    }
+
+    fn pin(url: &str, rev: &str) -> Source {
+        Source {
+            url: url.into(),
+            rev: Some(rev.into()),
+            hash: format!("sha256-{rev}"),
+            date: None,
+        }
+    }
+
+    #[test]
+    fn a_lock_written_again_keeps_grapes_pin_unless_the_configuration_declares_one() {
+        let mut previous = Lock::default();
+        previous
+            .sources
+            .insert(GRAPES_SOURCE.into(), pin(GRAPES_URL, "aaaaaaa"));
+
+        let mut sources = BTreeMap::new();
+        keep_pin(&mut sources, Some(&previous));
+        assert_eq!(sources[GRAPES_SOURCE], pin(GRAPES_URL, "aaaaaaa"));
+
+        let declared = pin("github:acme/grapes", "bbbbbbb");
+        let mut sources = BTreeMap::from([(GRAPES_SOURCE.to_owned(), declared.clone())]);
+        keep_pin(&mut sources, Some(&previous));
+        assert_eq!(sources[GRAPES_SOURCE], declared);
+
+        let mut sources = BTreeMap::new();
+        keep_pin(&mut sources, None);
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn a_grapes_checkout_the_command_runs_in_wins_unless_a_configuration_is_named() {
+        let checkout = tempfile::tempdir().unwrap();
+        set(checkout.path(), "api = 1\n");
+        let elsewhere = tempfile::tempdir().unwrap();
+        let config = Path::new("/etc/wrath");
+        assert_eq!(building_for(Some(config), false, checkout.path()), None);
+        assert_eq!(
+            building_for(Some(config), true, checkout.path()).as_deref(),
+            Some(config)
+        );
+        assert_eq!(
+            building_for(Some(config), false, elsewhere.path()).as_deref(),
+            Some(config)
+        );
+    }
+
+    #[test]
+    fn a_given_directory_without_recipes_isnt_grapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = given_dir(dir.path().to_path_buf()).unwrap_err();
+        assert!(error.contains("has no recipes"), "{error}");
     }
 
     #[test]
@@ -198,5 +379,7 @@ mod tests {
         assert!(check(dir.path()).is_ok());
         set(dir.path(), "name = \"grapes\"\n");
         assert!(check(dir.path()).unwrap_err().contains("says no `api`"));
+        std::fs::remove_file(dir.path().join(SET_FILE)).unwrap();
+        assert!(check(dir.path()).unwrap_err().contains("host API it needs"));
     }
 }

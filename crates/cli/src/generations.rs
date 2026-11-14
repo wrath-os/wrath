@@ -390,6 +390,7 @@ pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, 
         sources: pins(&model)?,
         ids,
     };
+    crate::places::keep_pin(&mut lock.sources, crate::read_lock(config)?.as_ref());
     lock.sources
         .extend(wrath.map(|d| (WRATH_SOURCE.to_owned(), d)));
     write_lock(config, &lock)?;
@@ -778,6 +779,7 @@ pub fn lock(
         lock.sources.extend(pins(&model.clone().with_lock(&lock))?);
         lock.ids = lock.ids.merged(&model.ids())?;
     }
+    crate::places::keep_pin(&mut lock.sources, crate::read_lock(config)?.as_ref());
     lock.sources
         .extend(wrath.map(|d| (WRATH_SOURCE.to_owned(), d)));
     match shared {
@@ -816,7 +818,7 @@ fn follow_newest(
     let known: BTreeSet<&str> = models
         .iter()
         .flat_map(|(_, model)| model.sources.keys().map(String::as_str))
-        .chain([WRATH_SOURCE])
+        .chain([WRATH_SOURCE, crate::places::GRAPES_SOURCE])
         .collect();
     if let Some(unknown) = names.iter().find(|name| !known.contains(name.as_str())) {
         let known: Vec<&str> = known.into_iter().collect();
@@ -1201,7 +1203,7 @@ mod tests {
         let unknown = follow(&["stabel".into()]).unwrap_err();
         assert_eq!(
             unknown,
-            "there's no source `stabel`; the configuration has acme, edge, stable, wrath"
+            "there's no source `stabel`; the configuration has acme, edge, grapes, stable, wrath"
         );
     }
 

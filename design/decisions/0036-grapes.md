@@ -35,7 +35,16 @@ platform = { source = "grapes" }
 url = "git+https://github.com/wrath-os/grapes"
 ```
 
-A configuration that names no platform gets grapes, so the common case writes nothing.
+A configuration that names no platform gets grapes, so the common case writes nothing. Without
+`[sources.grapes]`, it follows `github:wrath-os/grapes`, and its lock pins that the first time a
+command reads it, as it pins any source: the TOML stays empty, and the lock still says exactly
+which grapes built the system. A directory given for one command (`--source grapes=DIR`, or
+`WRATH_GRAPES` while working on grapes) builds in its place, and says so when the lock pins
+another version.
+
+Until a system carries the grapes it was built from, the wrath package has grapes' modules, so a
+machine evaluates its configuration offline (`wrath status`, `wrath install`) when it can't fetch
+grapes.
 
 ### Packages and modules are separate choices
 
