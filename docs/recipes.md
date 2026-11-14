@@ -49,20 +49,24 @@ and so on). A recipe can also skip styles and write `script` itself, as plain sh
 
 ## Styles
 
-There are five so far:
+There are seven so far:
 
 | Style | For | Notable options |
 |---|---|---|
-| `autotools` | `./configure && make` | `args` |
+| `autotools` | `./configure && make` | `args`, `cflags` |
 | `meson` | Meson projects | `args`, checked against the project's own options |
-| `cmake` | CMake projects | `args` |
+| `cmake` | CMake projects | `args`, `cflags` |
 | `cargo` | Rust, from `Cargo.lock` | `packages`, `programs`, `features` |
 | `go` | Go, from `go.sum` | `packages`, `ldflags` |
+| `zig` | Zig, from `build.zig.zon.json` | `args`, `deps` |
+| `prebuilt` | a project's own build for other distributions, such as a browser | `programs`, `remove` |
 
 Every style takes `env` and `install` (shell run after installing, for what the project's install
-leaves out), and the autotools, meson and cmake styles take `prepare` (shell run before
-configuring) too. The cargo and go styles read the project's own lock file, fetch every crate
-or module separately and build offline. You never write a vendor hash.
+leaves out), and the autotools, meson, cmake and zig styles take `prepare` (shell run before
+configuring) too. The cargo, go and zig styles read the project's own list of dependencies,
+fetch each crate, module or package separately and build offline. You never write a vendor hash.
+`prebuilt` copies a build made elsewhere into the package and points its programs at wrath's
+loader and libraries; it's never picked from the files, so a recipe names it.
 
 Styles are Starlark too, in grapes' `styles/`. A style is a `build(recipe, options)` function that
 returns the script and the dependencies it adds, plus a `style(...)` declaration of its options.

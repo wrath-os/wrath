@@ -9,8 +9,9 @@ small, deterministic Python: no imports beyond `load`, no I/O, no clocks. Module
 annotations, and wrath checks them when it loads them, so a typo in a module shows up as an
 error with a line number instead of a mystery later.
 
-The built-in modules live in [grapes](https://github.com/wrath-os/grapes), in `modules/`. To bring your own, or to
-build something quite different, a system builds on a platform of your own (see Platforms below).
+The built-in modules live in [grapes](https://github.com/wrath-os/grapes), in `modules/`. To
+bring your own, or to build something quite different, a system builds on a platform of your
+own (see Platforms below).
 
 ## A small one
 
@@ -156,8 +157,8 @@ Bad configurations work the same way, with an `expected-error.txt` instead, and
 Every system builds on a platform, a set of modules. Unless it says otherwise, that's grapes':
 the modules a wrath system is made of. You don't need to declare grapes: your lock pins it the
 first time it's read, `wrath update grapes` moves it forward, and a rollback takes it back. To
-build from a checkout of grapes for one command, give it with `--source grapes=DIR`. A platform of your own lives in a source, with a
-`platform.toml` that lists its modules:
+build from a checkout of grapes for one command, give it with `--source grapes=DIR`. A platform
+of your own lives in a source, with a `platform.toml` that lists its modules:
 
 ```toml
 # platform.toml, in the acme source
@@ -188,4 +189,5 @@ system moves to another platform.
 
 The built-in modules are the best examples. `ssh.star`, `greetd.star` and `syncthing.star` are
 short and cover most of the above. [The module API](reference/module-api.md) lists every call
-and [Options](https://github.com/wrath-os/grapes/blob/main/docs/reference/options.md) every option the built-in modules declare.
+and [Options](https://github.com/wrath-os/grapes/blob/main/docs/reference/options.md) every
+option the built-in modules declare.

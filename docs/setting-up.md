@@ -34,11 +34,27 @@ your password once, when watching starts.
 ## One file or several
 
 `system.toml` is where a configuration starts. For a small machine it can hold everything. When
-it grows, split it up and include the pieces:
+it grows, split it up. Two directories are read without being named:
+
+```text
+/etc/wrath/
+├── system.toml
+├── desktop.toml       # read because system.toml includes it
+├── services/web.toml  # every *.toml under services/ is read
+└── users/john.toml    # configures users.john
+```
+
+Every `*.toml` under `services/` sets options from the top, like `system.toml` does. Each
+`users/NAME.toml` configures the user `NAME`, so it has no `[users.NAME]` header: write
+`extra_groups = ["wheel"]` where `system.toml` would say `[users.john]` first. Don't include
+these files: they're read anyway, and `check` says so if you do.
+
+Any other file is read when something includes it, by its path from the configuration's root.
+There are no wildcards:
 
 ```toml
 # /etc/wrath/system.toml
-include = ["desktop.toml", "users/*.toml"]
+include = ["desktop.toml"]
 
 [system]
 hostname = "framework"
@@ -54,13 +70,23 @@ say so:
 port = { default = 2222 }
 ```
 
-`wrath why services.ssh.port` tells you which file set it and whether something overrode a
-default.
+And when one file has to win over what others set, force it and say why:
+
+```toml
+[services.ssh]
+port = { value = 22, force = "the office firewall only lets 22 through" }
+```
+
+`wrath why services.ssh.port` tells you which file set it, what it overrode, and the reason for
+a forced value. Two files forcing different values is still an error.
 
 ## Users
 
+A user's settings go in `system.toml` under `[users.NAME]`, or in a file of their own,
+`users/NAME.toml`, without that header:
+
 ```toml
-[users.john]
+# /etc/wrath/users/john.toml
 description = "John"
 extra_groups = ["wheel", "video"]
 authorized_keys = ["ssh-ed25519 AAAA... john@laptop"]
@@ -95,15 +121,22 @@ session = "niri"
 
 `wrath options` lists everything there is, with types, defaults and docs, and
 `wrath options services.ssh` narrows it down. For something no module covers, write the
-systemd unit yourself:
+systemd unit yourself, with systemd's own sections:
 
 ```toml
+packages = ["rsync"]
+
 [units."backup.service"]
-Service = { Type = "oneshot", ExecStart = "/run/system/bin/restic backup /home" }
+Service = { Type = "oneshot", ExecStart = "/run/system/bin/rsync -a /home/ /var/backup/home/" }
 
 [units."backup.timer"]
 Timer.OnCalendar = "daily"
 ```
+
+A unit starts with the machine when its `Install` section says so, as systemd's do. A timer
+without one gets `Install.WantedBy = "timers.target"`, so the timer above runs the backup every
+day. A service of your own that should run all the time needs
+`Install.WantedBy = "multi-user.target"`.
 
 ## Programs' settings
 
@@ -225,6 +258,30 @@ its own.
 one running and the one that booted (after a boot fell back, those differ), plus the three before
 the current one by default, and asks first. Anything copied into the store in the last hour stays
 too, in case a switch is about to use it.
+
+## Starting clean at every boot
+
+With `state.path` set, `/` is memory and is erased at every boot. Only what `[state]` lists is
+kept, under that path, which has to be a mount of its own (a btrfs subvolume, say):
+
+```toml
+[state]
+path = "/persist"
+directories = ["/var/lib/tailscale", "/var/backup"]
+files = ["/etc/machine-id"]
+```
+
+A user's file lists what to keep in their home the same way, with paths inside it:
+
+```toml
+# users/john.toml
+[state]
+directories = [".ssh", "src"]
+```
+
+`/etc/wrath` and wrath's own records are always kept, and so are users' passwords. The key
+secrets are decrypted with has to be listed when there are secrets, and `check` says so when
+it isn't. A machine then has only what its configuration lists, so nothing piles up unnoticed.
 
 ## Several machines from one configuration
 

@@ -1,9 +1,14 @@
 # Packages
 
-Every package wrath installs is built from a recipe in wrath's own repository, from source.
-The wrath revision your lock pins decides which recipes you get, so it decides every package's
-version too. Around 350 build today, which covers a desktop, development tools and the usual
-command line things.
+Every package wrath installs is built from source, from a recipe in
+[grapes](https://github.com/wrath-os/grapes), the set of recipes and modules wrath systems are
+made of. Your lock pins grapes as a source of its own, named `grapes`, so the version it pins
+decides every package's version. Around 380 recipes build today, which covers a desktop,
+development tools and the usual command line things.
+
+A configuration doesn't need to declare grapes. Its lock pins it the first time a command reads
+it, and `wrath update grapes` moves it forward. To build from a checkout of grapes for one
+command, give it with `--source grapes=DIR`.
 
 ## Installing one
 
@@ -31,7 +36,7 @@ there is, and `check` and `plan` catch one written by hand the same way.
 
 ```console
 $ wrath run jq -- --version
-jq from wrath 1d06008, 2026-10-30
+jq from grapes 1d06008, 2026-10-30
 jq-1.8.1
 $ wrath shell jq ripgrep
 ```
@@ -55,12 +60,10 @@ want a link, `-o` says where.
 
 ## Updating
 
-Packages move when the wrath revision does:
+Packages move when grapes does:
 
 ```console
-$ wrath update --list
-wrath  github:johnae/wrath  1d06008, 2026-10-30, 13 days old
-$ wrath update
+$ wrath update grapes
 $ wrath plan
 packages
   ~ ripgrep (tier: live)
@@ -69,10 +72,15 @@ packages
 
 The plan says a package was rebuilt, not yet which versions it went between. That's coming.
 
-`update` moves every source to its newest version, `wrath update wrath` just that one. Nothing
-changes on the machine until you apply. A newer wrath can also rebuild packages your
+`update` moves every source to its newest version, `wrath update grapes` just that one, and
+`wrath update --list` shows each source with where it's pinned and how old that is. Nothing
+changes on the machine until you apply. A newer grapes can also rebuild packages your
 configuration never mentions (a kernel with other options, say), and the plan shows those as
 "rebuilt", with the tier they need.
+
+Every system carries the grapes it was built from, at `/run/system/grapes`. When the lock pins
+that same version, commands use that copy instead of fetching grapes, which works offline. Any
+other version is fetched, never replaced by the copy.
 
 ## Your own build of a package
 
@@ -106,7 +114,7 @@ enable = true
 
 ## What's not there yet
 
-- Versions: `jq@1.7` for an older jq from an older wrath revision is planned, but not built.
+- Versions: `jq@1.7` for an older jq from an older version of grapes is planned, but not built.
 - `wrath search` and `wrath info`, for finding packages and seeing what's in one.
-- Recipes from sources other than wrath. `acme#jq` is how it'll be written.
+- Recipes from sources other than grapes. `acme#jq` is how it'll be written.
 - A binary cache, so everything builds on your machine.

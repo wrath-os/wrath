@@ -57,7 +57,7 @@ go, so some pages are still empty.
 ## What it isn't (yet)
 
 There's no binary cache, so everything builds on your machine. A whole desktop takes about an
-hour on a fast one. There's no security team or advisory feed. Around 350 packages build, which
+hour on a fast one. There's no security team or advisory feed. Around 380 packages build, which
 covers a niri desktop, development tools and the usual command line things, but it's nowhere near
 what Debian or nixpkgs have.
 

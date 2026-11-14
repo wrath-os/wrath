@@ -16,15 +16,21 @@ A Linux machine on x86_64 with KVM, and these on it:
 If you use [devenv](https://devenv.sh), `devenv shell` in the repository has all of it, and sets
 `$OVMF` to the firmware.
 
-Then build wrath from a checkout:
+Packages and modules come from [grapes](https://github.com/wrath-os/grapes), a repository of
+its own that a configuration's lock pins like any other source. grapes isn't published yet, so
+for now clone both repositories side by side and build wrath:
 
 ```sh
 git clone https://github.com/wrath-os/wrath
+git clone https://github.com/wrath-os/grapes
 cd wrath
 cargo build --release
+export WRATH_GRAPES=$PWD/../grapes
 ```
 
 There are no releases yet, so commands below run `./target/release/wrath` from the checkout.
+`WRATH_GRAPES` tells every command to build from that grapes checkout. To give it to one
+command instead, add `--source grapes=../grapes`. devenv's shell sets `WRATH_GRAPES` for you.
 
 ## Describe a machine
 
@@ -44,23 +50,24 @@ initial_hashed_password = '$6$...'
 ```
 
 `wrath check` reads it and tells you if anything's wrong, without building anything. It also
-writes `wrath.lock` next to it. That normally pins the wrath revision and with it every
-package's version, but wrath built from a checkout is pinned by the checkout itself, so for
-now the lock just keeps your user's uid:
+writes `wrath.lock` next to it. Normally the lock pins wrath and grapes, and through grapes every
+package's version. With wrath built from a checkout and grapes given as a checkout, neither gets
+pinned, so for now the lock just keeps your user's uid:
 
 ```console
 $ ./target/release/wrath -C ~/my-machine check
 config /home/me/my-machine
-no errors: 106 options, 27 packages, wrath unpinned, since it was built from a checkout, model f4df682c49f67cb5
+no errors: 122 options, 31 packages, wrath unpinned, since it was built from a checkout, model 301cf52895ea4118
 ```
 
-27 packages for one in the file? Those are what any system needs (systemd, a shell, sudo and so
+31 packages for one in the file? Those are what any system needs (systemd, a shell, sudo and so
 on), plus ripgrep.
 
 Typo an option and you get the line and a suggestion:
 
 ```console
 $ ./target/release/wrath -C ~/my-machine check
+config /home/me/my-machine
 error: unknown option `system.hostnme`
  --> /home/me/my-machine/system.toml:4:1
   |
@@ -106,7 +113,13 @@ $ wrath status
 
 ## Change something
 
-Add a package and a service to `system.toml`:
+Keep a copy of the configuration as it is, to compare with:
+
+```sh
+cp -r ~/my-machine ~/my-machine-before
+```
+
+Then add a package and a service to `system.toml`:
 
 ```toml
 packages = ["ripgrep", "jq"]
@@ -115,11 +128,30 @@ packages = ["ripgrep", "jq"]
 enable = true
 ```
 
-`wrath plan` shows what that changes, compared with an empty machine here since this one isn't
-running wrath:
+`wrath plan` compares with the system the machine runs. This machine doesn't run wrath, so a
+plain `wrath plan` here compares with nothing and lists everything as new (`--fresh` does that
+on purpose). `--against` compares with another configuration instead:
 
-```sh
-./target/release/wrath -C ~/my-machine plan --fresh
+```console
+$ ./target/release/wrath -C ~/my-machine plan --against ~/my-machine-before
+config /home/me/my-machine
+model 963c672fb03996f3
+options
+  ~ networking.firewall.allowed_tcp_ports: [] -> [22]
+  ~ packages: ["ripgrep"] -> ["jq", "ripgrep"]
+  ~ services.ssh.enable: false -> true
+  ...
+packages
+  + jq (tier: live)
+files
+  ~ /etc/nftables.conf (tier: live)
+  + /etc/ssh/sshd_config (tier: live)
+  ...
+units
+  ~ nftables.service (tier: live)
+      reloads: /etc/nftables.conf changed
+  + sshd.service (tier: live)
+15 changes, tier: live
 ```
 
 Build the image again and boot it, and the new one has both. Only jq, OpenSSH and the bits that

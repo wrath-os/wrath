@@ -19,19 +19,22 @@ you point at one with `-C DIR`. It usually looks something like this:
 ```text
 /etc/wrath/
 ├── system.toml        # where it starts
-├── services/web.toml  # anything it includes
-├── users/john.toml
+├── services/web.toml  # every file in services/ is read
+├── users/john.toml    # configures users.john
 ├── secrets/           # encrypted with age
-└── wrath.lock        # pins, written for you
+└── wrath.lock         # pins, written for you
 ```
 
-wrath reads every file into one set of options. Each option has a type and exactly one value.
-If two files set `system.hostname` differently you get an error pointing at both, so there's
-never a question of which one won. A value can also be a default, `{ default = "..." }`, which
-anything else may override. `wrath why system.hostname` tells you where a value came from.
+wrath reads `system.toml`, every `*.toml` under `services/`, each `users/NAME.toml` and anything
+those include, into one set of options. Each option has a type and exactly one value. If two
+files set `system.hostname` differently you get an error pointing at both, so there's never a
+question of which one won. A value can also be a default, `{ default = "..." }`, which anything
+else may override, or forced, `{ value = "...", force = "why" }`, which replaces what others set
+and needs a reason. `wrath why system.hostname` tells you where a value came from.
 
 Modules turn options into what a system is made of: packages, files in `/etc`, systemd units,
-users. They're written in Starlark, which is basically a small Python without the parts that make
+users. They come from [grapes](https://github.com/wrath-os/grapes), with the recipes, and are
+written in Starlark, which is basically a small Python without the parts that make
 evaluation unpredictable. The ssh module reads `services.ssh.*` and writes `sshd.service` and
 `/etc/ssh/sshd_config`, the users module writes `/etc/passwd`, and so on.
 
@@ -44,16 +47,20 @@ the same model hash run the same thing.
 `wrath.lock` sits next to the configuration and pins everything that could otherwise change
 under you:
 
-- the wrath revision, which decides every package's recipe and the modules
+- grapes, the source named `grapes`, which decides every package's recipe and the modules
+- wrath itself
 - any other source you pull files or recipes from
 - each user's uid and each group's gid, so adding a user never renumbers the others
 
-`check`, `apply` and `add` pin anything new. Only `wrath update` moves a pin forward.
+`check`, `apply` and `add` pin anything new. Only `wrath update` moves a pin forward. You don't
+declare grapes yourself: the lock pins it the first time a command reads the configuration, and
+`--source grapes=DIR` builds from a checkout of it for one command instead.
 
 ## The plan
 
-`wrath plan` compares the model you'd get from your TOML with the model of the running system.
-Each change gets a tier, which says when it takes effect:
+`wrath plan` compares the model you'd get from your TOML with the model of the running system,
+or with nothing on a machine that doesn't run wrath (`--against DIR` compares with another
+configuration). Each change gets a tier, which says when it takes effect:
 
 | Tier | Takes effect |
 |---|---|
@@ -67,8 +74,8 @@ Each change gets a tier, which says when it takes effect:
 ## Building
 
 Every package is built from source by wrath's own builder. A recipe says where the source is and
-how to build it, and most recipes just name a build style (meson, cmake, autotools, cargo, go)
-and let it write the script:
+how to build it, and most recipes just name a build style (meson, cmake, autotools, cargo, go,
+zig) and let it write the script:
 
 ```toml
 [[package]]
@@ -103,6 +110,10 @@ A finished package goes into `/store` under a name made from a hash of what it c
 ├── bin/jq
 └── lib/libjq.so.1 -> ...
 ```
+
+On a wrath system the store is `/store`. On a machine that doesn't run wrath, it's
+`build/work/store` in the wrath checkout, which builds and the programs `wrath run` starts see
+as `/store`.
 
 The hash covers every file, its permissions and every directory, with the package's own path
 masked out. The same contents always land at the same path, so building something twice costs

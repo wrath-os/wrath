@@ -25,7 +25,7 @@ the system. Output always says which one it is.
 
 A **role** is a kind of machine: a system configuration with `roles/worker.toml` and
 `roles/laptop.toml` instead of `system.toml` describes two. Every machine with a role runs the
-same system; commands pick one with `--role`, and `check` and `lock` cover every role.
+same system; commands pick one with `--role`, and `check` covers every role.
 
 ## Describing what you want
 
@@ -35,7 +35,9 @@ says where each value comes from.
 
 A **default** is a value others may change, written `{ default = "Europe/Stockholm" }`. Every
 value in a file included with `{ path = "common.toml", as = "defaults" }` is a default too. A set
-value beats a default, and when two defaults disagree, the file that includes the other wins.
+value beats a default, and when two defaults disagree, the file that includes the other wins. A
+value written `{ value = 22, force = "reason" }` is forced: it beats set values, needs a reason,
+and two different forced values still conflict.
 
 The **starting file** is the file a configuration starts from, such as `system.toml`, a role's
 file, or (planned) a project's `wrath.toml`. It owns the configuration: included files can't
@@ -55,10 +57,12 @@ its build options or with patches: `[builds.rescue-nano]` with `package = "nano"
 default. The name goes in `packages` like any other. Only that package changes.
 
 A **source** is where packages, or files to include, come from: a name and the URL it follows,
-pinned in the lock. `wrath` is the default: its recipes build every package and the base
-system. A file from a source is included as `{ source = "acme", path = "rust-service.toml" }`.
+pinned in the lock. `grapes` is the default: its recipes build every package and its modules make
+the base system. A configuration needn't declare it; its lock pins it the first time it's read,
+and `--source grapes=DIR` uses a checkout for one command. A file from a source is included as
+`{ source = "acme", path = "rust-service.toml" }`.
 
-A **platform** is the set of modules a system builds on: `wrath`'s built-in ones, or a
+A **platform** is the set of modules a system builds on: grapes' built-in ones, or a
 source's, listed in its `platform.toml` with the built-in ones it keeps. The starting file
 chooses it with `platform = { source = "acme" }` (0030).
 
@@ -91,9 +95,11 @@ Values other than the name are declared in `[machine.values]`, as `zone = { type
 
 ## Making it so
 
-The **lock** pins every source, wrath's own among them, so the same configuration always
+The **lock** pins every source, grapes and wrath among them, so the same configuration always
 means the same software. It lives next to the configuration as `wrath.lock`. It also keeps
-each user's uid and each group's gid, so they stay put as others come and go.
+each user's uid and each group's gid, so they stay put as others come and go. Every system
+carries the grapes it was built from at `/run/system/grapes`, which commands use offline when
+the lock pins that same version.
 
 The **model** is the configuration fully resolved: every option's value and everything modules
 produced, with nothing left to compute. Its hash identifies a system.
@@ -120,8 +126,8 @@ line depends on how it works.
 
 ## Words we keep out of sight
 
-Action, sandbox, closure, view and store path are how the builder works. They appear only in `--verbose` output and in `why`, never in TOML or in
-what commands normally print.
+Action, sandbox, closure, view and store path are how the builder works. They appear only in
+`--verbose` output and in `why`, never in TOML or in what commands normally print.
 
 ## The verbs
 
@@ -132,7 +138,7 @@ what commands normally print.
 | `apply` | makes it so, after showing the plan |
 | `status` | says what's running and whether it matches |
 | `history`, `rollback` | lists generations, goes back to one |
-| `lock`, `update` | pins sources, moves them forward |
+| `update` | moves sources forward (`check`, `apply` and `add` pin what's new) |
 | `run`, `shell` | uses packages without changing anything |
 | `add`, `remove` | edits the configuration's TOML |
 | `why` | explains where a value comes from |

@@ -209,7 +209,7 @@ wrath options [OPTIONS] [PREFIX]
 
 - `[PREFIX]`: Only the options under this one, such as `services.nginx` or `users.john`
 - `--schema`: Print them as a JSON Schema for editors, of the whole configuration or of a file whose options start at the prefix, such as `users.john` for `users/john.toml`
-- `--project`: The schema of a project, `wrath.toml`, instead of a system
+- `--project`: The options of a project, `wrath.toml`, instead of a system's
 
 ## `wrath why`
 

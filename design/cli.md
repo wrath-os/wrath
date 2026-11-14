@@ -53,29 +53,32 @@ Everywhere a package is named, on the command line and in TOML, it's written the
 
 | You write | You get |
 |---|---|
-| `jq` | jq from the recipes of the wrath your lock pins |
-| `jq@1.7` | jq 1.7 from the newest wrath revision that had it (planned) |
+| `jq` | jq from the recipes of the grapes your lock pins |
+| `jq@1.7` | jq 1.7 from the newest version of grapes that had it (planned) |
 | `acme#jq` | jq from the recipes in the source you named `acme` (planned) |
 
 ### Which jq is `jq`?
 
-The one your configuration would give you. Recipes live in wrath's repository, so the wrath
-revision your lock pins decides every package's version and source. `wrath run jq` builds that
-recipe, or finds it in the store already, and nothing else changes. It never quietly means
-"whatever is newest today".
+The one your configuration would give you. Recipes live in grapes, a source of its own, so the
+version of grapes your lock pins decides every package's version and source. `wrath run jq`
+builds that recipe, or finds it in the store already, and nothing else changes. It never quietly
+means "whatever is newest today".
 
 Every command that picks a package says where it came from, on stderr:
 
 ```console
 $ wrath run age -- --version
-age from wrath 1d06008, 2026-10-30
+age from grapes 1d06008, 2026-10-30
 v1.2.1
 ```
 
+The first line names the version of grapes the package's recipe comes from, or says it's from a
+checkout of grapes.
+
 ### Versions (planned)
 
-`jq@1.7` means the recipe from the newest wrath revision that had jq 1.7, built from that
-revision. The store is content-addressed, so whatever comes out the same as what you have is
+`jq@1.7` means the recipe from the newest version of grapes that had jq 1.7, built from that
+version. The store is content-addressed, so whatever comes out the same as what you have is
 shared, and an older version costs only what differs.
 
 ### Trying, then keeping
@@ -112,21 +115,32 @@ Packages:
 | `wrath up` | Runs a project's services, in dependency order, until you stop them |
 | `wrath add PKG...` | Adds packages to the configuration and locks them; `--home USER` for a user's own |
 | `wrath remove PKG...` | Removes them |
-| `wrath search TEXT` | Finds packages by name and description |
-| `wrath info PKG` | Versions, where each comes from, what's installed and what a change would download |
+| `wrath search TEXT` | Finds packages by name and description (not built yet) |
+| `wrath info PKG` | Versions, where each comes from, what's installed and what a change would download (not built yet) |
 
 The lock:
 
 | Command | Does |
 |---|---|
-| `wrath update [SOURCE or PKG...]` | Moves sources, or single packages, to their newest versions |
+| `wrath update [SOURCE...]` | Moves sources to their newest versions; single packages are planned |
 | `wrath update --list` | Each source with what it follows, where it's pinned and how old that is |
 
-The lock pins wrath too, as the source `wrath`: its modules, its evaluator and its recipes.
-`wrath update` pins the wrath you're running, and `[sources.wrath]` says where wrath is
-fetched from. A version of wrath other than the one the lock pins says so.
+There's no `lock` verb: `check`, `apply` and `add` pin whatever is new, and `check --locked`
+fails instead.
 
-A newer wrath can rebuild packages the configuration never mentions, such as a kernel with
+Recipes, styles and modules come from grapes (github.com/wrath-os/grapes), a source the lock
+pins on its own as `grapes`. A configuration needn't declare it: the lock pins
+`github:wrath-os/grapes` the first time a command reads the configuration, `[sources.grapes]`
+points it elsewhere, `wrath update grapes` moves it, and `--source grapes=DIR` (or
+`WRATH_GRAPES`) builds from a checkout for one command. Every system carries the grapes it was
+built from at `/run/system/grapes`, which commands use offline when the lock pins that same
+version, and never in place of another.
+
+The lock pins wrath too, as the source `wrath`: its evaluator and builder. `wrath update` pins
+the wrath you're running, and `[sources.wrath]` says where wrath is fetched from
+(`github:wrath-os/wrath`). A version of wrath other than the one the lock pins says so.
+
+A newer grapes can rebuild packages the configuration never mentions, such as a kernel with
 other options. Each system records which packages it was built from, and `plan` compares that
 with today's recipes, so a rebuilt package shows with the tier it takes:
 
@@ -147,7 +161,7 @@ Understanding the configuration:
 | `wrath why THING` | Where an option's value, a file such as `/etc/nginx/main.conf`, or a package comes from |
 | `wrath options [PREFIX]` | The options there are, with their types, defaults and docs |
 
-Secrets: `wrath secret edit NAME`, `wrath secret list`, `wrath secret rekey`.
+Secrets: `wrath secret edit NAME` and `wrath secret rekey`.
 
 Setting up a machine: `wrath install -C DIR [--disk NAME=/dev/...] [--role NAME] [--name NAME]`,
 from wrath's image or a checkout with its builder, lays out the disks the configuration describes with
@@ -165,7 +179,8 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 - Builds show a line each as they start. On a terminal that line stays up to date with the
   build's time and latest output, and ends as `built NAME 42s`. `-v` shows everything each build
   prints. Each build's full output is kept in `build/work/logs/f/NAME.log` either way.
-- Exit codes: 0 for success, 1 for errors. `plan --exit-code` returns 2 when there are changes.
+- Exit codes: 0 for success, 1 for errors. `plan --exit-code`, returning 2 when there are
+  changes, is planned but not built.
 - `apply` asks before switching unless `-y`. Without a terminal, it refuses rather than
   guessing.
 - `wrath options --schema` prints the options as a JSON Schema, so an editor completes, checks
@@ -209,7 +224,7 @@ paths to check, then bless and review them.
 
 Built: `-C` and the system default, `status`, `plan`, `apply` (asking first), `try`, `keep`,
 `history`, `rollback`, `clean`, `build`, `apply PATH`, `run`, `shell`, `add`, `remove`,
-`update`, `check`, `why` for options, files and packages, `options`,
+`update`, `check`, `install`, `why` for options, files and packages, `options`,
 `secret`, the `dev` commands, `--json` for `plan`, `status`, `history` and `update --list`, and
 `--role` for configurations with `roles/`, which defaults to the machine's role from install or
 `machines.toml`. `apply` and `try` check `[machine.requires]` first, except for a system built
@@ -220,13 +235,14 @@ yet. Projects: found from the current directory, with `shell`, `up`, `run`, `add
 A home of its own, `home.toml` in `~/.config/wrath`, isn't supported for now: a user's
 packages and files go under `[users.NAME]` in the system's configuration.
 
-Not yet: versions (`jq@1.7`), `search`, `info`, and `--json` elsewhere.
+Not yet: versions (`jq@1.7`), `search`, `info`, `update PKG`, `plan --exit-code`, and `--json`
+elsewhere.
 `clean` lists the generations it removes rather than estimating the space first, and says what it
 freed afterwards.
 
 ## Open questions
 
 - How a machine builds what it needs, or fetches it built, without a checkout.
-- Whether `update PKG` moving one package without moving wrath is worth what it costs: that
-  package then comes from a different wrath revision than the rest.
+- Whether `update PKG` moving one package without moving grapes is worth what it costs: that
+  package then comes from a different version of grapes than the rest.
 - How long `try` waits by default, and whether it rolls back when the machine loses the network.
