@@ -1,0 +1,6 @@
+error: a login shell is one of bash, fish, nushell, zsh, or a path
+ --> fixtures/bad-configs/shell-not-a-shell/system.toml:5:9
+  |
+5 | shell = "tcsh"
+  |         ^^^^^^ `users.ann.shell` is set here
+  = reported by modules/accounts.star

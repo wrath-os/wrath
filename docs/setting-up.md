@@ -90,14 +90,25 @@ A user's settings go in `system.toml` under `[users.NAME]`, or in a file of thei
 description = "John"
 extra_groups = ["wheel", "video"]
 authorized_keys = ["ssh-ed25519 AAAA... john@laptop"]
-initial_hashed_password = '$6$...'
+# what `mkpasswd -m sha-512` prints
+initial_hashed_password = '$6$Hn0S2lSw$sQ0rK1pV8Z3xAqf7'
+shell = "zsh"
 packages = ["helix", "lazygit"]
+
+[programs.zsh]
+options = ["share_history"]
+aliases = { ll = "ls -l" }
 ```
 
 `wheel` can use sudo. The password hash only applies when the account is first created; change
 your password with `passwd` on the machine and it stays changed. Each user gets a uid the first
 time wrath sees them, recorded in the lock, so adding someone later never renumbers anyone
 else. Set `uid` yourself if you need a particular one.
+
+`shell` is `bash` (the default), `zsh`, `fish` or `nushell`; the system gets the shell and lists
+it in `/etc/shells`. `programs.zsh` and `programs.nushell` write the user's own settings for
+zsh and Nushell: aliases, lines to run at start, and for Nushell `settings` from its
+`$env.config`, such as `show_banner = false`.
 
 A user's `packages` end up on their own `PATH` only.
 
