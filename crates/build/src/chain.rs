@@ -1773,9 +1773,19 @@ pub(crate) fn finish(
     let done = lab.work.join("done").join(out.hash());
     fs::write(&done, &record).map_err(with_path(&done))?;
     remember_outputs(built, package, &record);
-    let unbrought = requires::unbrought_headers(lab, built, &package.id)?;
-    if !unbrought.is_empty() {
-        note_unbrought(lab, package, &unbrought)?;
+    // Only advice for now: nothing here fails a build that worked.
+    let noted = requires::unbrought_headers(lab, built, &package.id).and_then(|lines| {
+        if lines.is_empty() {
+            Ok(())
+        } else {
+            note_unbrought(lab, package, &lines)
+        }
+    });
+    if let Err(why) = noted {
+        eprintln!(
+            "warning: couldn't check what `{}`'s headers include: {why}",
+            package.id
+        );
     }
     Ok(())
 }
@@ -4075,6 +4085,51 @@ mod style_goldens {
              -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release\nninja -C /build/b -j$NPROC\n\
              DESTDIR=$DEST ninja -C /build/b install\n"
         );
+    }
+
+    #[test]
+    fn compiler_flags_are_given_as_a_list_and_quoted_by_the_style() {
+        let styles = styles(&repository()).unwrap();
+        let script = |style: &str| {
+            let text = format!(
+                "[[package]]\nid = \"x\"\nscope = \"runtime\"\n[package.{style}]\n\
+                 cflags = [\"-std=gnu17\", \"-include\", \"stdbool.h\"]\n\
+                 cxxflags = [\"-I$WRATH_DEP_foo/include\", \"-DX=\\\"y\\\"\"]\n"
+            );
+            let mut package = toml::from_str::<Recipes>(&text).unwrap().package.remove(0);
+            package.check_style(&styles).unwrap();
+            let top = || Ok(Vec::new());
+            let read = |_: &str| Err(String::new());
+            package.styled_by(&styles, &top, &read).unwrap().script
+        };
+        let autotools = script("autotools");
+        assert!(
+            autotools.starts_with(
+                "export CFLAGS=\"-O2 -std=gnu17 -include stdbool.h\"\n\
+                 export CXXFLAGS=\"-O2 -I$WRATH_DEP_foo/include -DX=\\\"y\\\"\"\n./configure"
+            ),
+            "{autotools}"
+        );
+        for style in ["meson", "cmake"] {
+            let text = script(style);
+            assert!(
+                text.starts_with("export CFLAGS=\"-std=gnu17 -include stdbool.h\"\n"),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn flags_set_both_as_a_list_and_in_env_are_refused() {
+        let styles = styles(&repository()).unwrap();
+        let text = "[[package]]\nid = \"x\"\nscope = \"runtime\"\n[package.autotools]\n\
+                    cflags = [\"-std=gnu17\"]\nenv = { CFLAGS = \"-O2\" }\n";
+        let mut package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        package.check_style(&styles).unwrap();
+        let top = || Ok(Vec::new());
+        let read = |_: &str| Err(String::new());
+        let error = package.styled_by(&styles, &top, &read).unwrap_err();
+        assert!(error.contains("say it once"), "{error}");
     }
 
     #[test]
