@@ -40,10 +40,11 @@ pub fn schema(modules: &Path, kind: ConfigKind, prefix: Option<&str>) -> Result<
 }
 
 /// Prints every option under `prefix`, such as `services.nginx` or `users.john.programs`.
-pub fn options(modules: &Path, prefix: Option<&str>) -> Result<ExitCode, String> {
+pub fn options(modules: &Path, kind: ConfigKind, prefix: Option<&str>) -> Result<ExitCode, String> {
     let prefix = prefix.map(OptionPath::parse).transpose()?;
     let mut sources = Sources::default();
-    let modules = system::load_modules(modules, &mut sources, ModuleOrder::Sorted)?;
+    let mut modules = system::load_modules(modules, &mut sources, ModuleOrder::Sorted)?;
+    modules.retain(|module| module.configurations().contains(&kind));
     let mut entries = Vec::new();
     for module in &modules {
         for (path, spec) in module.options() {

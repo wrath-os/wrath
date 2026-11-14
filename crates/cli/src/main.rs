@@ -255,8 +255,8 @@ enum Command {
         /// options start at the prefix, such as `users.john` for `users/john.toml`
         #[arg(long)]
         schema: bool,
-        /// The schema of a project, `wrath.toml`, instead of a system
-        #[arg(long, requires = "schema")]
+        /// The options of a project, `wrath.toml`, instead of a system's
+        #[arg(long)]
         project: bool,
     },
     /// Show where an option's value, a file or a package comes from
@@ -664,11 +664,18 @@ fn main() -> ExitCode {
             prefix,
             schema,
             project,
-        } => match (schema, project) {
-            (true, true) => options::schema(&modules, ConfigKind::Project, prefix.as_deref()),
-            (true, false) => options::schema(&modules, ConfigKind::System, prefix.as_deref()),
-            (false, _) => options::options(&modules, prefix.as_deref()),
-        },
+        } => {
+            let kind = if project {
+                ConfigKind::Project
+            } else {
+                ConfigKind::System
+            };
+            if schema {
+                options::schema(&modules, kind, prefix.as_deref())
+            } else {
+                options::options(&modules, kind, prefix.as_deref())
+            }
+        }
         Command::Why { all: _, option } => {
             config().and_then(|config| why(&config, &modules, option.as_deref()))
         }
