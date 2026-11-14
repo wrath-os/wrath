@@ -293,6 +293,24 @@ impl Loader<'_> {
                 return;
             }
         };
+        let user = path
+            .strip_prefix("users/")
+            .and_then(|rest| rest.strip_suffix(".toml"));
+        if let (None, Some(name), Some(header)) = (origin, user, table.get_ref().get("users"))
+            && *root == OptionPath::root().child("users").child(name)
+        {
+            let shown = self.fs.display(path);
+            self.diagnostics.push(
+                Diagnostic::error(format!("`{shown}` configures `users.{name}` already"))
+                    .label(Span::new(file, header.span()), "not needed here")
+                    .note(format!(
+                        "help: write its settings at the top of the file, without `[users.{name}]`"
+                    )),
+            );
+            self.files.pop();
+            self.seen.insert((None, path.to_owned()), None);
+            return;
+        }
         if let Some(sources) = table.get_ref().get(SOURCES).filter(|_| frame) {
             match origin {
                 None => self.declare(sources, file),
@@ -331,6 +349,12 @@ impl Loader<'_> {
                          uses",
                     ),
                 ),
+                (None, None)
+                    if include.path.contains('*')
+                        || (self.kind == ConfigKind::System && listed(&include.path)) =>
+                {
+                    self.diagnostics.push(not_includable(&include, self.kind));
+                }
                 (None, _) | (Some(_), Some(_)) => {
                     self.add(origin, &include.path, root, Some(include.inclusion));
                 }
@@ -370,6 +394,35 @@ impl Loader<'_> {
             }
         }
     }
+}
+
+/// Whether a system loads the file at `path` on its own: those directly in `services/`, and a
+/// user's file in `users/`.
+fn listed(path: &str) -> bool {
+    ["services/", "users/"].iter().any(|dir| {
+        path.strip_prefix(dir)
+            .is_some_and(|rest| rest.ends_with(".toml") && !rest.contains('/'))
+    })
+}
+
+/// The error for including `include`: a pattern of files, or one a system loads on its own.
+fn not_includable(include: &Include, kind: ConfigKind) -> Diagnostic {
+    let message = if include.path.contains('*') {
+        format!(
+            "`{}` is a pattern, and `include` takes file names",
+            include.path
+        )
+    } else {
+        format!("`{}` is loaded on its own", include.path)
+    };
+    let diagnostic = Diagnostic::error(message).label(include.inclusion.at, "included here");
+    if kind != ConfigKind::System {
+        return diagnostic.note("help: name each file to include");
+    }
+    diagnostic.note(
+        "help: every file in `services/` and `users/` is loaded without being included, and \
+             `users/NAME.toml` configures `users.NAME`; leave them out of `include`",
+    )
 }
 
 /// One entry of a file's `include` list.

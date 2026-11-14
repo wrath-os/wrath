@@ -1,0 +1,6 @@
+error: `users/alice.toml` is loaded on its own
+ --> fixtures/bad-configs/include-a-users-file/system.toml:1:12
+  |
+1 | include = ["users/alice.toml"]
+  |            ^^^^^^^^^^^^^^^^^^ included here
+  = help: every file in `services/` and `users/` is loaded without being included, and `users/NAME.toml` configures `users.NAME`; leave them out of `include`

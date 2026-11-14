@@ -1,0 +1,6 @@
+error: `users/*.toml` is a pattern, and `include` takes file names
+ --> fixtures/bad-configs/include-a-pattern/system.toml:1:12
+  |
+1 | include = ["users/*.toml"]
+  |            ^^^^^^^^^^^^^^ included here
+  = help: every file in `services/` and `users/` is loaded without being included, and `users/NAME.toml` configures `users.NAME`; leave them out of `include`

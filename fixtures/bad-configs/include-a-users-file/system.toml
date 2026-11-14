@@ -1,0 +1,4 @@
+include = ["users/alice.toml"]
+
+[system]
+hostname = "box"

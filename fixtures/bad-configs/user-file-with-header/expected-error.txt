@@ -1,0 +1,6 @@
+error: `fixtures/bad-configs/user-file-with-header/users/alice.toml` configures `users.alice` already
+ --> fixtures/bad-configs/user-file-with-header/users/alice.toml:1:2
+  |
+1 | [users.alice]
+  |  ^^^^^ not needed here
+  = help: write its settings at the top of the file, without `[users.alice]`
