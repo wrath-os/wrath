@@ -445,6 +445,7 @@ pub fn check_packages(
     work: &Path,
     ids: &[&str],
 ) -> Result<Vec<Checked>, String> {
+    unknown(ids, &crate::graph::recipe_ids(repository)?)?;
     let lab = Lab::new(work);
     let (mut built, seed, packages) = build_some(&lab, repository, Some(ids))?;
     let mut sources = Sources::load(repository)?;
@@ -509,6 +510,21 @@ pub(crate) fn build_some(
         build_and_finish(lab, repository, package, &seed, &mut sources, &mut built)
     })?;
     Ok((built, seed, packages))
+}
+
+/// That every package someone named, `wanted`, has a recipe among `ids`, before anything builds.
+/// A system's packages aren't checked here: some are builds its configuration declares.
+pub(crate) fn unknown(wanted: &[&str], ids: &BTreeSet<String>) -> Result<(), String> {
+    let missing: Vec<String> = wanted
+        .iter()
+        .filter(|name| !ids.contains(**name))
+        .map(|name| format!("there's no recipe for `{name}`"))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(missing.join("\n"))
+    }
 }
 
 /// Builds each of `packages`, in order, with `build`. One that fails doesn't stop the others:
@@ -595,6 +611,16 @@ mod tests {
         .concat();
         fs::write(dir.join("recipes/r.toml"), text).unwrap();
         chain::load(dir, "r.toml").unwrap()
+    }
+
+    #[test]
+    fn a_name_without_a_recipe_is_refused_before_anything_builds() {
+        let ids: BTreeSet<String> = ["jq".to_owned(), "ripgrep".to_owned()].into();
+        assert!(unknown(&["jq", "ripgrep"], &ids).is_ok());
+        assert_eq!(
+            unknown(&["jq", "ripgrp", "nope"], &ids).unwrap_err(),
+            "there's no recipe for `ripgrp`\nthere's no recipe for `nope`"
+        );
     }
 
     #[test]

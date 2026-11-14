@@ -2503,6 +2503,7 @@ pub fn recipe_ids(repository: &Path) -> Result<BTreeSet<String>, String> {
 /// where each one is in the store.
 pub fn packages(repository: &Path, work: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {
     let lab = Lab::new(work);
+    pilot::unknown(names, &recipe_ids(repository)?)?;
     let (built, ..) = pilot::build_some(&lab, repository, Some(names))?;
     names
         .iter()
