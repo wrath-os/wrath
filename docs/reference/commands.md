@@ -296,13 +296,14 @@ wrath dev docs [OPTIONS]
 
 ## `wrath dev lint`
 
-Point out what recipes list that they don't need to, such as a dependency another one brings
+Point out recipes that write a target's name, such as `x86_64`, where a placeholder says it
 
 ```text
 wrath dev lint [OPTIONS] [PACKAGES]...
 ```
 
-- `[PACKAGES]...`: Only these recipes [default: every recipe, which builds what isn't built yet]
+- `--redundant`: Also list dependencies another listed one already brings, for information; this builds what isn't built yet
+- `[PACKAGES]...`: With `--redundant`, only these recipes [default: every recipe]
 
 ## `wrath dev repro`
 

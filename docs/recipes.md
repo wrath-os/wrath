@@ -105,10 +105,11 @@ error: `grim` Failed after 4 s, see build/work/logs/f/grim.log
 Once it builds:
 
 ```sh
-wrath build grim --check  # its smoke commands, and its own tests in a build thrown away
-wrath dev lint grim       # dependencies it lists that another one already brings
-wrath dev repro grim      # build it again as someone else and compare
-wrath dev outdated        # every recipe against upstream's newest release
+wrath build grim --check        # its smoke commands, and its own tests in a build thrown away
+wrath dev lint                  # a target written out where a placeholder says it
+wrath dev lint --redundant grim # dependencies it lists that another one also brings
+wrath dev repro grim            # build it again as someone else and compare
+wrath dev outdated              # every recipe against upstream's newest release
 ```
 
 When packaging goes wrong in a way the tool could have caught, it goes in grapes'

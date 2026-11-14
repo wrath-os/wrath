@@ -322,9 +322,13 @@ enum DevCommand {
         #[arg(long)]
         check: bool,
     },
-    /// Point out what recipes list that they don't need to, such as a dependency another one brings
+    /// Point out recipes that write a target's name, such as `x86_64`, where a placeholder says it
     Lint {
-        /// Only these recipes [default: every recipe, which builds what isn't built yet]
+        /// Also list dependencies another listed one already brings, for information; this builds
+        /// what isn't built yet
+        #[arg(long)]
+        redundant: bool,
+        /// With `--redundant`, only these recipes [default: every recipe]
         packages: Vec<String>,
     },
     /// Build packages a second time, as another user on fewer cores, and say which come out
@@ -658,7 +662,10 @@ fn main() -> ExitCode {
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
-            DevCommand::Lint { packages } => lint(&packages),
+            DevCommand::Lint {
+                redundant,
+                packages,
+            } => lint(&packages, redundant),
             DevCommand::Docs { check } => reference::write(
                 root,
                 &modules,
@@ -991,17 +998,18 @@ fn builder() -> Result<(Lab, PathBuf), String> {
     Ok((Lab::new(places::work()), places::grapes()?))
 }
 
-/// Prints recipes that write the target out and each recipe's needless dependencies, and fails
-/// when there are any.
-fn lint(packages: &[String]) -> Result<ExitCode, String> {
-    let only: Vec<&str> = packages.iter().map(String::as_str).collect();
+/// Points out recipes that write a target's name where a placeholder says it, which fails lint;
+/// with `redundant`, also lists dependencies another listed one brings, for information only.
+fn lint(packages: &[String], redundant: bool) -> Result<ExitCode, String> {
     let grapes = places::grapes()?;
-    let mut found = wrath_build::graph::targets_written(&grapes)?;
-    found.push_str(&wrath_build::graph::redundant(
-        &grapes,
-        &places::work(),
-        &only,
-    )?);
+    let found = wrath_build::graph::targets_written(&grapes)?;
+    if redundant {
+        let only: Vec<&str> = packages.iter().map(String::as_str).collect();
+        let listed = wrath_build::graph::redundant(&grapes, &places::work(), &only)?;
+        if !listed.is_empty() {
+            println!("listed, though another dependency brings them:\n{listed}");
+        }
+    }
     if found.is_empty() {
         println!("nothing to point out");
         return Ok(ExitCode::SUCCESS);

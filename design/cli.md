@@ -192,9 +192,11 @@ The commands that only make sense in this repository move under `wrath dev`: `de
 activation runs it, and people don't.
 
 `dev docs` writes the reference pages in `docs/reference` from the code, and `--check` fails
-when they're out of date. `dev lint [PKG...]` points out needless dependencies in recipes, `dev outdated` compares recipes
-with upstream releases, `dev repro [PKG...]` builds packages a second time and says which
-differ, and `dev seed check|pack|addresses` works on the seed.
+when they're out of date. `dev lint` points out a target written in
+recipes where a placeholder says it, and with `--redundant [PKG...]` lists dependencies another
+one brings, for information. `dev outdated` compares recipes with upstream releases, `dev repro
+[PKG...]` builds packages a second time and says which differ, and `dev seed
+check|pack|addresses` works on the seed.
 
 `dev test DIR` checks each configuration in `DIR`. One with an `expected/` directory renders:
 each file there must be what the configuration writes at that path, with units under
