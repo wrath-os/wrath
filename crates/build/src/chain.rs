@@ -1929,7 +1929,7 @@ pub(crate) struct Prepared {
 
 /// The version of what the builder does to every package beside its recipe, such as fixing up
 /// run paths. Every package's key has it, so changing it rebuilds everything.
-const BUILD_RULES: &str = "11";
+const BUILD_RULES: &str = "12";
 
 /// The machines packages are built for, which every key has, so another one's never match.
 const TARGET: &str = "x86_64-linux-gnu";
@@ -2900,17 +2900,21 @@ mod requirement_tests {
     #[test]
     fn keys_stay_what_they_were() {
         let key = |scope: &str| {
-            let mut package = consumer(r#""gtk", { id = "zlib", rpath = false }"#, scope);
-            package.version = Some("1.2.3".to_owned());
-            package.script = "make install\n".to_owned();
+            let text = format!(
+                "[[package]]\nid = \"app\"\nversion = \"1.2.3\"\nscope = \"{scope}\"\n\
+                 script = \"make install\\n\"\n\
+                 extra_deps = [\"gtk\", {{ id = \"zlib\", rpath = false }}]\n\
+                 sources = [{{ url = \"https://example.org/app.tar.xz\", into = \"sub\" }}]\n"
+            );
+            let package = toml::from_str::<Recipes>(&text).unwrap().package.remove(0);
             let recipe = recipe_parts(Path::new("/nonexistent"), &package, &["abc123"]).unwrap();
             let deps = package.all_deps().unwrap();
             package_key("build", &recipe, &deps, |dep| format!("ref-{}", dep.id))
                 .hash()
                 .to_owned()
         };
-        assert_eq!(key("runtime"), "5f7af7bfd64e09e410932eb7638a4b8009ff7587");
-        assert_eq!(key("boot"), "6ceae1c5b2cd11c950b7a01a2d3ee13e2d6473a2");
+        assert_eq!(key("runtime"), "1f23acc873d6c00cb410e3d9c50587fe5e186413");
+        assert_eq!(key("boot"), "0fa83efc38227e8fb500e51fbde2d98e282ff297");
     }
 
     #[test]
