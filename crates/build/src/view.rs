@@ -100,7 +100,7 @@ fn merge<'n>(
 
 /// What a package keeps for wrath itself, such as the store paths of its runtime dependencies,
 /// which builds have no use for and every package names the same.
-const OWN: &str = "lib/wrath";
+pub(crate) const OWN: &str = "lib/wrath";
 
 fn conflict(path: &Path, first: &str, second: &str) -> String {
     format!(

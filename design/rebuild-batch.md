@@ -78,10 +78,10 @@ Then the recipes' own `ACLOCAL_OPTS`, `PYTHONPATH` and `CC_FOR_BUILD` go.
 ### 6. Splitting keeps together what belongs together
 
 - A package whose only content would go to its dev output (stb, headers only) stays whole.
-- A reference to a bare directory both parts have, like `<prefix>/lib` with nothing after it
-  (gobject-introspection's scanner), keeps the package whole with a note.
+- A reference to a bare `<prefix>/lib` can't be told from a run path, which every program has,
+  so gobject-introspection's scanner keeps its explicit `whole = true`.
 
-Then stb's and gobject-introspection's `whole = true` go.
+Then stb's `whole = true` goes.
 
 ### 7. Checks that fail at build time, not on the machine (no rebuild)
 

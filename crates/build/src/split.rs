@@ -532,6 +532,26 @@ pub fn split_package(
     if let Some(reason) = placement.settle(&references) {
         return keep_whole(lab, package, seen_as, reason);
     }
+    // Splitting would leave a package of only what builds use, such as stb's headers or a static
+    // library, with nothing at its own path, where builds that use it look.
+    let classes: BTreeSet<Class> = entries
+        .iter()
+        // What the builder writes into every package, its runtime dependencies, doesn't
+        // count.
+        .filter(|(file, relative, _)| {
+            (!file.is_dir() || file.is_symlink()) && !relative.starts_with(crate::view::OWN)
+        })
+        .map(|(_, relative, _)| placement.class[relative])
+        .collect();
+    if classes.contains(&Class::Dev) && classes.iter().all(|c| matches!(c, Class::Dev | Class::Doc))
+    {
+        return keep_whole(
+            lab,
+            package,
+            seen_as,
+            "it has only what builds use, such as headers and static libraries".to_owned(),
+        );
+    }
 
     let mut plan = Plan::default();
     plan.add(seen_as, package, placement.class.values().copied());
@@ -927,6 +947,7 @@ mod in_place {
             ("share/doc/z/api.txt", format!("see {own}/include/z.h\n")),
             ("share/doc/z/other.txt", "plain\n".to_owned()),
             ("include/z.h", "// z\n".to_owned()),
+            ("lib/libz.so.1", "library\n".to_owned()),
         ] {
             let path = lab.on_host(&package).join(name);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -979,6 +1000,7 @@ mod in_place {
         let header = lab.on_host(&package).join("include/z.h");
         fs::create_dir_all(header.parent().unwrap()).unwrap();
         fs::write(header, "// z\n").unwrap();
+        fs::write(lab.on_host(&package).join("lib/libz.so.1"), "library\n").unwrap();
         let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
         assert_eq!(whole, None);
         let dev = lab.on_host(&outputs[&Class::Dev]);
@@ -1023,6 +1045,38 @@ mod in_place {
         );
         let dev_path = outputs[&Class::Dev].inside();
         assert!(text.contains(&format!("prefix={dev_path}\n")), "{text}");
+    }
+
+    #[test]
+    fn a_package_of_only_headers_stays_whole_at_its_own_path() {
+        let (_dir, lab) = lab();
+        let package = built(
+            &lab,
+            &[
+                ("include/stb_image.h", "header\n".to_owned()),
+                ("share/doc/stb/README", "docs\n".to_owned()),
+                ("lib/wrath/runtime-deps", "/store/x\n".to_owned()),
+            ],
+        );
+        let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
+        assert_eq!(
+            whole.as_deref(),
+            Some("it has only what builds use, such as headers and static libraries")
+        );
+        assert_eq!(outputs.keys().collect::<Vec<_>>(), [&Class::Out]);
+        assert!(
+            lab.on_host(&outputs[&Class::Out])
+                .join("include/stb_image.h")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn a_package_of_only_documents_still_splits() {
+        let (_dir, lab) = lab();
+        let package = built(&lab, &[("share/man/man1/x.1", "docs\n".to_owned())]);
+        let (_, whole) = split_package(&lab, &package, &package).unwrap();
+        assert_eq!(whole, None);
     }
 
     #[test]
