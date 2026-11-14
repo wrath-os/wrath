@@ -1833,48 +1833,87 @@ const TARGET: &str = "x86_64-linux-gnu";
 const ARCH: &str = "x86_64";
 const OS: &str = "linux";
 const TRIPLE: &str = "x86_64-unknown-linux-gnu";
-
 /// What goes into a package's key from its recipe, before any dependency.
+///
+/// Every field is named here, so a new one doesn't compile until it's either in the key or said
+/// not to change what's built: a key that leaves a field out reuses a build that's wrong for it.
 fn recipe_parts(
     repository: &Path,
     package: &Package,
     source_hashes: &[&str],
 ) -> Result<Vec<Vec<u8>>, String> {
+    let Package {
+        id,
+        version,
+        scope,
+        whole,
+        propagates,
+        propagate_private,
+        sources,
+        files,
+        script,
+        wrap,
+        fixup,
+        // In the key as the dependencies they add, which `package_key` names.
+        toolset: _,
+        core: _,
+        deps: _,
+        extra_deps: _,
+        runtime_deps: _,
+        // Their values reach the build only through `script`, which they're written into.
+        options: _,
+        style_options: _,
+        styled: _,
+        style: _,
+        unstyled: _,
+        // What a generation makes from the packages, not this package's build.
+        indexes: _,
+        // For update checks, the tests and how long a build may be quiet: none changes what's
+        // built.
+        track: _,
+        hold: _,
+        silent_for: _,
+        smoke: _,
+        probes: _,
+        check_build: _,
+        check: _,
+        check_in_view: _,
+        check_deps: _,
+    } = package;
     let mut parts: Vec<Vec<u8>> = vec![
         BUILD_RULES.as_bytes().to_vec(),
         TARGET.as_bytes().to_vec(),
         arm_key(package).as_bytes().to_vec(),
         // Whether it builds under /usr or its own prefix.
-        format!("{:?}", package.scope).into_bytes(),
-        package.id.as_bytes().to_vec(),
-        package
-            .version
-            .as_deref()
-            .unwrap_or_default()
-            .as_bytes()
-            .to_vec(),
-        package.script.as_bytes().to_vec(),
-        vec![
-            u8::from(package.wrap),
-            u8::from(package.fixup),
-            u8::from(package.whole),
-        ],
+        format!("{scope:?}").into_bytes(),
+        id.as_bytes().to_vec(),
+        version.as_deref().unwrap_or_default().as_bytes().to_vec(),
+        script.as_bytes().to_vec(),
+        vec![u8::from(*wrap), u8::from(*fixup), u8::from(*whole)],
     ];
-    if !package.propagates.is_empty() || !package.propagate_private {
-        parts.push(
-            format!(
-                "propagates {:?} {}",
-                package.propagates, package.propagate_private
-            )
-            .into_bytes(),
-        );
+    if !propagates.is_empty() || !propagate_private {
+        parts.push(format!("propagates {propagates:?} {propagate_private}").into_bytes());
     }
-    for name in &package.files {
+    for name in files {
         let path = repository.join("recipes").join(name);
         parts.push(fs::read(&path).map_err(with_path(&path))?);
     }
     parts.extend(source_hashes.iter().map(|hash| hash.as_bytes().to_vec()));
+    parts.extend(sources.iter().map(source_part));
     Ok(parts)
+}
+
+/// Where a source goes in the tree. What it holds is in the key as its hash.
+fn source_part(source: &Source) -> Vec<u8> {
+    let Source {
+        into,
+        file,
+        // The hash covers what these fetch and take.
+        url: _,
+        include: _,
+        sha256: _,
+    } = source;
+    format!("source {into:?} {file}").into_bytes()
 }
 
 /// A package's key of `kind`: its recipe, and its dependencies as named by `reference`.
@@ -1887,17 +1926,19 @@ fn package_key(
     let dep_texts: Vec<String> = deps
         .iter()
         .map(|dep| {
-            let mut text = format!(
-                "{} {} {} {} {:?}",
-                dep.id,
-                reference(dep),
-                dep.view,
-                dep.rpath,
-                dep.skip
-            );
+            // Every field is named, so a new one doesn't compile until it's keyed.
+            let Dep {
+                id,
+                view,
+                rpath,
+                skip,
+                propagate,
+                exclude,
+            } = dep;
+            let mut text = format!("{id} {} {view} {rpath} {skip:?}", reference(dep));
             // Only a choice that differs from the default changes a key.
-            if dep.propagate != Propagate::All || !dep.exclude.is_empty() {
-                text.push_str(&format!(" {:?} {:?}", dep.propagate, dep.exclude));
+            if *propagate != Propagate::All || !exclude.is_empty() {
+                text.push_str(&format!(" {propagate:?} {exclude:?}"));
             }
             text
         })
@@ -2637,6 +2678,59 @@ mod requirement_tests {
         };
         assert_ne!(parts("runtime"), parts("tool"));
         assert!(parts("runtime").contains(&TARGET.as_bytes().to_vec()));
+    }
+
+    /// A recipe from `extra` added to a plain one with a source, as its key's recipe parts.
+    fn parts_with(extra: &str) -> Vec<Vec<u8>> {
+        let text = format!(
+            "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"make\"\n\
+             sources = [{{ url = \"https://example.org/app.tar.xz\" }}]\n{extra}"
+        );
+        let package = toml::from_str::<Recipes>(&text).unwrap().package.remove(0);
+        recipe_parts(Path::new("/nonexistent"), &package, &["abc123"]).unwrap()
+    }
+
+    #[test]
+    fn what_changes_a_build_changes_its_key() {
+        let plain = parts_with("");
+        let changed = |extra: &str| parts_with(extra) != plain;
+        assert!(changed("version = \"2\"\n"));
+        assert!(changed("whole = true\n"));
+        assert!(changed("wrap = false\n"));
+        assert!(changed("propagates = [\"zlib\"]\n"));
+        // Where the source goes, and whether it's unpacked.
+        let text = |source: &str| {
+            format!(
+                "[[package]]\nid = \"app\"\nscope = \"runtime\"\nscript = \"make\"\n\
+                 sources = [{source}]\n"
+            )
+        };
+        let source_parts = |source: &str| {
+            let package = toml::from_str::<Recipes>(&text(source))
+                .unwrap()
+                .package
+                .remove(0);
+            recipe_parts(Path::new("/nonexistent"), &package, &["abc123"]).unwrap()
+        };
+        let unpacked = source_parts("{ url = \"https://example.org/a.tar.xz\" }");
+        let into = source_parts("{ url = \"https://example.org/a.tar.xz\", into = \"sub\" }");
+        let file = source_parts("{ url = \"https://example.org/a.tar.xz\", file = true }");
+        assert_ne!(unpacked, into);
+        assert_ne!(unpacked, file);
+        assert_ne!(into, file);
+    }
+
+    #[test]
+    fn what_doesnt_change_a_build_leaves_its_key() {
+        let plain = parts_with("");
+        for extra in [
+            "smoke = [\"bin/app --version\"]\n",
+            "track = \"2.\"\n",
+            "silent_for = \"3h\"\n",
+            "check = \"make check\"\n",
+        ] {
+            assert_eq!(parts_with(extra), plain, "{extra}");
+        }
     }
 
     /// Pinned so a change to what goes into a key can't slip through and rebuild everything. A
