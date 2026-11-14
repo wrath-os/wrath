@@ -568,6 +568,9 @@ struct Recipes {
 const LOADER: &str = "lib/ld-linux-x86-64.so.2";
 const SEED_GCC_LIBS: &str = "lib/gcc/x86_64-unknown-linux-gnu/13.2.0";
 
+/// Where a Python package keeps its modules, which builds that use it get on `PYTHONPATH`.
+const PYTHON_SITE: &str = "site";
+
 /// A package's action, as a record, under both of its keys.
 #[derive(Debug)]
 pub struct PackageRecord {
@@ -2187,14 +2190,26 @@ fn build_package(
         ("WRATH_ARCH".to_owned(), ARCH.to_owned()),
         ("WRATH_OS".to_owned(), OS.to_owned()),
         ("WRATH_TRIPLE".to_owned(), TRIPLE.to_owned()),
+        // Every dependency's macros are in the view's /usr, where aclocal doesn't look itself.
+        ("ACLOCAL_PATH".to_owned(), "/usr/share/aclocal".to_owned()),
     ]);
+    let mut python_path = Vec::new();
     for dep in &deps {
         let name = dep.id.replace('-', "_");
-        env.insert(format!("WRATH_DEP_{name}"), built.paths[&dep.id].inside());
+        let path = &built.paths[&dep.id];
+        env.insert(format!("WRATH_DEP_{name}"), path.inside());
         env.insert(
             format!("WRATH_LIB_{name}"),
             built.library_path(&dep.id).inside(),
         );
+        // Python packages keep their modules in `site`, which Python finds on PYTHONPATH, as
+        // programs are found on PATH.
+        if lab.on_host(path).join(PYTHON_SITE).is_dir() {
+            python_path.push(format!("{}/{PYTHON_SITE}", path.inside()));
+        }
+    }
+    if !python_path.is_empty() {
+        env.insert("PYTHONPATH".to_owned(), python_path.join(":"));
     }
     // The loader programs built here run with, for recipes that set one themselves, such as for
     // programs a project built elsewhere.
