@@ -252,6 +252,10 @@ pub(crate) struct Package {
     /// What its tools make from what a generation's packages share.
     #[serde(default)]
     indexes: Vec<Index>,
+    /// How its project names each target, such as `{ x86_64 = "amd64" }` for Go, which sources
+    /// say as `{arch_name}` and scripts read as `$WRATH_ARCH_NAME`. Without it, our own name.
+    #[serde(default)]
+    arch_names: BTreeMap<String, String>,
     /// The release series it stays on, such as `3.` for GTK 3, which update checks keep to.
     #[serde(default)]
     pub(crate) track: Option<String>,
@@ -348,6 +352,22 @@ impl Package {
     pub(crate) fn source_url(&self) -> Option<String> {
         let url = &self.sources.first()?.url;
         (!url.starts_with("tree:")).then(|| url.clone())
+    }
+
+    /// The target as its project names it: from `arch_names`, or ours when it gives none.
+    pub(crate) fn arch_name(&self) -> Result<&str, String> {
+        if self.arch_names.is_empty() {
+            return Ok(ARCH);
+        }
+        self.arch_names
+            .get(ARCH)
+            .map(String::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "`{}` says how its project names targets in `arch_names`, but not `{ARCH}`",
+                    self.id
+                )
+            })
     }
 
     /// The name its store paths carry after their hash: its id and version, as `jq-1.8.1`.
@@ -567,6 +587,11 @@ struct Recipes {
 
 const LOADER: &str = "lib/ld-linux-x86-64.so.2";
 const SEED_GCC_LIBS: &str = "lib/gcc/x86_64-unknown-linux-gnu/13.2.0";
+
+/// The loader's file name on this target, for programs that name it themselves.
+fn loader_name() -> &'static str {
+    LOADER.rsplit_once('/').map_or(LOADER, |(_, name)| name)
+}
 
 /// Where a Python package keeps its modules, which builds that use it get on `PYTHONPATH`.
 const PYTHON_SITE: &str = "site";
@@ -1072,10 +1097,12 @@ pub(crate) fn load(repository: &Path, recipes: &str) -> Result<Vec<Package>, Str
             package
                 .check_sources()
                 .map_err(|e| format!("{}: {e}", path.display()))?;
-            if let Some(version) = &package.version {
-                for source in &mut package.sources {
-                    source.url = expand(&source.url, version);
-                }
+            let arch_name = package
+                .arch_name()
+                .map_err(|e| format!("{}: {e}", path.display()))?
+                .to_owned();
+            for source in &mut package.sources {
+                source.url = expand(&source.url, package.version.as_deref(), &arch_name);
             }
             package
                 .with_option_defaults()
@@ -1483,15 +1510,21 @@ fn top_files(archive: &Path) -> Result<Vec<String>, String> {
 }
 
 /// `url` with `{version}`, `{series}` and `{underscored}`, the version with underscores for dots
-/// as some projects tag releases (`NSS_3_133_RTM`), and the target's names, filled in.
-fn expand(url: &str, version: &str) -> String {
-    url.replace("{version}", version)
+/// as some projects tag releases (`NSS_3_133_RTM`), when the recipe has a version, and the
+/// target's names, `arch_name` being how its project names the target, filled in.
+fn expand(url: &str, version: Option<&str>, arch_name: &str) -> String {
+    let url = match version {
+        Some(version) => url
+            .replace("{version}", version)
+            .replace("{series}", &series(version))
+            .replace("{underscored}", &version.replace('.', "_")),
+        None => url.to_owned(),
+    };
+    url.replace("{arch_name}", arch_name)
         .replace("{arch}", ARCH)
         .replace("{os}", OS)
         .replace("{target}", &format!("{ARCH}-{OS}"))
         .replace("{triple}", TRIPLE)
-        .replace("{series}", &series(version))
-        .replace("{underscored}", &version.replace('.', "_"))
 }
 
 /// The release series a version belongs to, as GNOME names its download directories: `2.84` for
@@ -1530,16 +1563,43 @@ mod series_tests {
     fn a_url_names_the_version_its_series_or_the_version_with_underscores() {
         let url = "https://example.org/{series}/NSS_{underscored}_RTM/nss-{version}.tar.gz";
         assert_eq!(
-            super::expand(url, "3.133"),
+            super::expand(url, Some("3.133"), "x86_64"),
             "https://example.org/3.133/NSS_3_133_RTM/nss-3.133.tar.gz"
         );
+    }
+
+    #[test]
+    fn a_recipe_says_how_its_project_names_the_target() {
+        let go = super::recipe_from_str(
+            "[[package]]\nid = \"go\"\nscope = \"runtime\"\nscript = \"\"\n\
+             arch_names = { x86_64 = \"amd64\", aarch64 = \"arm64\" }\n",
+        );
+        assert_eq!(go.arch_name().unwrap(), "amd64");
+        assert_eq!(
+            super::expand(
+                "go-{version}.linux-{arch_name}.tar.gz",
+                Some("1.27"),
+                "amd64"
+            ),
+            "go-1.27.linux-amd64.tar.gz"
+        );
+        let plain = super::recipe_from_str(
+            "[[package]]\nid = \"jq\"\nscope = \"runtime\"\nscript = \"\"\n",
+        );
+        assert_eq!(plain.arch_name().unwrap(), super::ARCH);
+        let other = super::recipe_from_str(
+            "[[package]]\nid = \"x\"\nscope = \"runtime\"\nscript = \"\"\n\
+             arch_names = { aarch64 = \"arm64\" }\n",
+        );
+        assert!(other.arch_name().unwrap_err().contains("but not `x86_64`"));
+        assert_eq!(super::loader_name(), "ld-linux-x86-64.so.2");
     }
 
     #[test]
     fn a_url_names_the_target_as_projects_spell_it() {
         let url = "https://example.org/{os}/{arch}/x-{version}-{triple}.tar.xz?for={target}";
         assert_eq!(
-            super::expand(url, "1.0"),
+            super::expand(url, Some("1.0"), "x86_64"),
             "https://example.org/linux/x86_64/x-1.0-x86_64-unknown-linux-gnu.tar.xz?for=x86_64-linux"
         );
     }
@@ -1883,6 +1943,7 @@ fn recipe_parts(
         id,
         version,
         scope,
+        arch_names,
         whole,
         propagates,
         propagate_private,
@@ -1928,6 +1989,10 @@ fn recipe_parts(
         script.as_bytes().to_vec(),
         vec![u8::from(*wrap), u8::from(*fixup), u8::from(*whole)],
     ];
+    // Scripts read the name it gives this target, which no source's hash covers.
+    if !arch_names.is_empty() {
+        parts.push(format!("arch_names {arch_names:?}").into_bytes());
+    }
     if !propagates.is_empty() || !propagate_private {
         parts.push(format!("propagates {propagates:?} {propagate_private}").into_bytes());
     }
@@ -2215,6 +2280,11 @@ fn build_package(
         ("WRATH_ARCH".to_owned(), ARCH.to_owned()),
         ("WRATH_OS".to_owned(), OS.to_owned()),
         ("WRATH_TRIPLE".to_owned(), TRIPLE.to_owned()),
+        (
+            "WRATH_ARCH_NAME".to_owned(),
+            package.arch_name()?.to_owned(),
+        ),
+        ("WRATH_LOADER_NAME".to_owned(), loader_name().to_owned()),
         // Every dependency's macros are in the view's /usr, where aclocal doesn't look itself.
         ("ACLOCAL_PATH".to_owned(), "/usr/share/aclocal".to_owned()),
     ]);

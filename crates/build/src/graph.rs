@@ -2245,7 +2245,8 @@ pub(crate) fn system_recipes(repository: &Path) -> Result<Vec<String>, String> {
 /// where a placeholder or variable says it for whichever target builds (0032): `{arch}`,
 /// `{triple}`, `$WRATH_ARCH`, `$WRATH_TRIPLE` or `$WRATH_LOADER`. Comments don't count.
 pub fn targets_written(repository: &Path) -> Result<String, String> {
-    const NAMES: [&str; 2] = ["x86_64", "aarch64"];
+    // How projects spell a target their own way too: Go's `amd64`, gcc's `-march=x86-64`.
+    const NAMES: [&str; 6] = ["x86_64", "aarch64", "amd64", "x86-64", "x64", "arm64"];
     let mut files = Vec::new();
     for dir in ["recipes", "styles"] {
         let Ok(entries) = std::fs::read_dir(repository.join(dir)) else {
@@ -2264,10 +2265,11 @@ pub fn targets_written(repository: &Path) -> Result<String, String> {
         let text = std::fs::read_to_string(&path).map_err(crate::store::with_path(&path))?;
         for (n, line) in text.lines().enumerate() {
             let code = line.trim_start();
-            if code.starts_with('#') {
+            // `arch_names` is where a recipe says how its project names each target.
+            if code.starts_with('#') || code.starts_with("arch_names") {
                 continue;
             }
-            if let Some(name) = NAMES.iter().find(|name| code.contains(*name)) {
+            if let Some(name) = NAMES.iter().find(|name| names_word(code, name)) {
                 let file = path.strip_prefix(repository).unwrap_or(&path);
                 lines.push_str(&format!(
                     "{}:{}: names the target `{name}`; write {{arch}} or {{triple}} in a source, \
@@ -2279,6 +2281,15 @@ pub fn targets_written(repository: &Path) -> Result<String, String> {
         }
     }
     Ok(lines)
+}
+
+/// Whether `code` has `name` as a word of its own, so `x64` in `0x64` doesn't count.
+fn names_word(code: &str, name: &str) -> bool {
+    code.match_indices(name).any(|(at, _)| {
+        let before = code[..at].chars().next_back();
+        let after = code[at + name.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
 }
 
 /// Each system recipe's listed dependencies that another dependency it lists already brings,

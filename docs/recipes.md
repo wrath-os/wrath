@@ -28,7 +28,9 @@ What the fields mean:
   directories) and `{underscored}` (`3_133`, as some projects tag releases).
 - A URL names the machine it's built for as `{arch}` (`x86_64`), `{os}` (`linux`), `{target}`
   (`x86_64-linux`) or `{triple}` (`x86_64-unknown-linux-gnu`), never by writing it out, so the
-  recipe works for any target. `wrath dev lint` points out a target written out.
+  recipe works for any target. `wrath dev lint` points out a target written out. A project that
+  spells targets its own way, as Go's `amd64`, says how in `arch_names`, and the URL uses
+  `{arch_name}`: `arch_names = { x86_64 = "amd64", aarch64 = "arm64" }`.
 - `scope` is `runtime` for anything that ends up on a machine, `tool` for things only builds use
   and `boot` for the toolchain itself.
 - `core = true` builds with the usual tools around (coreutils, sed, grep, make, bash and so on).
@@ -78,7 +80,9 @@ A build runs in a sandbox with no network. Its script gets:
 | `$NPROC` | how many jobs to run |
 | `$WRATH_DEP_<id>` | where a dependency is, such as `$WRATH_DEP_gettext` |
 | `$WRATH_ARCH`, `$WRATH_OS`, `$WRATH_TRIPLE` | the target, as in URLs above |
+| `$WRATH_ARCH_NAME` | the target as the project names it, from `arch_names` |
 | `$WRATH_LOADER` | the loader the package's programs run with, for a program built elsewhere |
+| `$WRATH_LOADER_NAME` | the loader's file name on this target, `ld-linux-x86-64.so.2` |
 
 The current directory is the unpacked source.
 
