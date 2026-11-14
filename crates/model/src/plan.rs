@@ -73,6 +73,8 @@ pub struct Plan {
     /// Whether every file the plan changes is a setting: as the model before says for a removed
     /// file, and as the one after says for the rest, since that's what the file is now.
     pub files_are_settings: bool,
+    /// Whether it plans a system from nothing, whose options are all new and shown as a count.
+    pub fresh: bool,
 }
 
 /// The system's units a switch stops, starts, restarts or reloads, by name. Users' units are
@@ -301,6 +303,17 @@ impl Plan {
         let mut count = 0;
         for (heading, changes) in self.sections().filter(|(_, changes)| !changes.is_empty()) {
             writeln!(f, "{}", paint("1", heading))?;
+            // Every option is new in a system from nothing; listing them all would bury the
+            // packages, files and units the plan is read for.
+            if self.fresh && heading == "options" {
+                count += changes.len();
+                let line = format!(
+                    "+ {} options; `wrath why` shows where each is set",
+                    changes.len()
+                );
+                writeln!(f, "  {}", paint("32", &line))?;
+                continue;
+            }
             for change in changes {
                 count += 1;
                 let kind = match change.kind {
@@ -415,13 +428,17 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     }
     units.extend(restarts(before, after, &files, &secrets));
     let activation = Activation::from_changes(&units, after, &files);
-    // A unit the plan has already starts, stops or restarts, which a reload adds nothing to.
-    let shown: BTreeSet<String> = units.iter().map(|unit| unit.name.clone()).collect();
-    units.extend(
-        triggered(after, &files)
-            .into_iter()
-            .filter(|unit| !shown.contains(&unit.name)),
-    );
+    // A unit the plan has already starts, stops or restarts, which a reload adds nothing to. A
+    // system from nothing starts everything, so nothing in it restarts.
+    let fresh = before.files.is_empty() && before.units.is_empty();
+    if !fresh {
+        let shown: BTreeSet<String> = units.iter().map(|unit| unit.name.clone()).collect();
+        units.extend(
+            triggered(after, &files)
+                .into_iter()
+                .filter(|unit| !shown.contains(&unit.name)),
+        );
+    }
     units.sort_by(|a, b| a.name.cmp(&b.name));
     let (was, is) = (&before.setting_files, &after.setting_files);
     let files_are_settings = files.iter().all(|change| match change.kind {
@@ -430,8 +447,15 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
     });
     Plan {
         files_are_settings,
-        options: diff(&before.options, &after.options, |before, after| {
-            (vec![value_change(before, after)], None)
+        fresh,
+        options: diff_with_names(&before.options, &after.options, |name, before, after| {
+            // A password hash is as good as the password to anyone with time; plans don't show it.
+            let detail = if name.ends_with("hashed_password") {
+                "a password hash".to_owned()
+            } else {
+                value_change(before, after)
+            };
+            (vec![detail], None)
         }),
         packages: diff_with_names(&before.sources, &after.sources, source_change)
             .into_iter()

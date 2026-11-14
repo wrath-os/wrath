@@ -105,10 +105,9 @@ fn plan_shows_changed_options_and_what_they_render() {
 fn plan_from_nothing_adds_everything() {
     let added = plan(&Model::default(), &model(80));
 
-    insta::assert_snapshot!(added.to_string(), @r#"
+    insta::assert_snapshot!(added.to_string(), @"
     options
-      + services.nginx.main.port: 80
-      + system.hostname: "box"
+      + 2 options; `wrath why` shows where each is set
     packages
       + nginx (tier: live)
     files
@@ -116,7 +115,7 @@ fn plan_from_nothing_adds_everything() {
     units
       + nginx-main.service (tier: live)
     5 changes, tier: live
-    "#);
+    ");
 }
 
 #[test]
@@ -1133,4 +1132,74 @@ fn a_platform_from_a_source_is_kept_and_planned_and_wraths_changes_no_hash() {
     1 change, tier: live
     ");
     assert!(plan(&acme, &acme).is_empty());
+}
+
+#[test]
+fn a_system_from_nothing_restarts_nothing_a_file_would_restart() {
+    let journald = "/etc/systemd/journald.conf";
+    let mut after = Model::default();
+    after.files.insert(
+        journald.to_owned(),
+        File {
+            mode: 0o644,
+            text: "[Journal]\n".to_owned(),
+        },
+    );
+    after.triggers.insert(
+        ("systemd-journald.service".to_owned(), UnitAction::Restart),
+        BTreeSet::from([journald.to_owned()]),
+    );
+    let names = |plan: &Plan| -> Vec<String> {
+        plan.units
+            .iter()
+            .map(|change| change.name.clone())
+            .collect()
+    };
+    assert!(names(&plan(&Model::default(), &after)).is_empty());
+
+    let mut before = Model::default();
+    before.files.insert(
+        "/etc/hostname".to_owned(),
+        File {
+            mode: 0o644,
+            text: "box\n".to_owned(),
+        },
+    );
+    assert_eq!(names(&plan(&before, &after)), ["systemd-journald.service"]);
+}
+
+#[test]
+fn a_system_from_nothing_counts_its_options_and_no_plan_shows_a_password_hash() {
+    let hash = "$6$salt$secret";
+    let mut after = Model::default();
+    after.options.insert(
+        "users.ann.initial_hashed_password".to_owned(),
+        Value::Str(hash.to_owned()),
+    );
+    after
+        .options
+        .insert("system.hostname".to_owned(), Value::Str("box".to_owned()));
+    after.files.insert(
+        "/etc/hostname".to_owned(),
+        File {
+            mode: 0o644,
+            text: "box\n".to_owned(),
+        },
+    );
+    let fresh = plan(&Model::default(), &after).to_string();
+    assert!(
+        fresh.contains("+ 2 options; `wrath why` shows where each is set"),
+        "{fresh}"
+    );
+    assert!(!fresh.contains("system.hostname"), "{fresh}");
+
+    let mut before = after.clone();
+    before.options.insert(
+        "users.ann.initial_hashed_password".to_owned(),
+        Value::Str("$6$salt$older".to_owned()),
+    );
+    let changed = plan(&before, &after).to_string();
+    assert!(changed.contains("initial_hashed_password"), "{changed}");
+    assert!(changed.contains("a password hash"), "{changed}");
+    assert!(!changed.contains(hash), "{changed}");
 }
