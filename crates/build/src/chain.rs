@@ -2848,9 +2848,30 @@ fn build_env(
 fn wrapped(script: &str) -> String {
     format!(
         "cd /build/src\n{script}\ncd /build\n\
-         if [ -d \"$OUT/usr\" ]; then cp -a \"$OUT/usr/.\" \"$OUT/\"; rm -rf \"$OUT/usr\"; fi\n"
+         if [ -d \"$OUT/usr\" ]; then cp -a \"$OUT/usr/.\" \"$OUT/\"; rm -rf \"$OUT/usr\"; fi\n\
+         {STRIP}"
     )
 }
+
+/// Removes debug information from what the build made, which otherwise records the compiler's
+/// include directories and keeps the whole compiler referenced. It's the build's own `strip`, so
+/// which one it is is in the build's key. Only ELF files are stripped, picked by their first four
+/// bytes with bash's own `read` so no process runs per file: `strip` would also take archives
+/// and PE files such as boot loader stubs. A read-only file is made writable only while it's
+/// stripped.
+const STRIP: &str = r#"
+if command -v strip >/dev/null && command -v find >/dev/null && command -v xargs >/dev/null &&
+  command -v bash >/dev/null; then
+  find "$OUT" -type f ! -perm -u+w -print0 > /build/read-only
+  xargs -0r chmod u+w < /build/read-only
+  find "$OUT" -type f -print0 | ELF=$(printf '\177ELF') LC_ALL=C bash -c '
+    while IFS= read -r -d "" file; do
+      IFS= read -r -N 4 magic < "$file" || true
+      if [ "$magic" = "$ELF" ]; then printf "%s\0" "$file"; fi
+    done' | xargs -0r strip --strip-debug 2>/dev/null || true
+  xargs -0r chmod u-w < /build/read-only
+fi
+"#;
 
 /// A build worked out and ready for its sandbox, which needs nothing shared to run.
 pub(crate) struct Pending {

@@ -161,7 +161,8 @@ Where the code differs from the above, or settles what it left open:
   change that could change the record. A record that still differs when the build styles the
   recipe means the style isn't deterministic, and the build stops; nothing is rewritten then.
 - A checkout writes a missing or stale record when it plans, and says so per recipe. `wrath dev
-  lint` records every recipe; `wrath update` doesn't write records yet. `wrath dev lint --locked`
+  lint` records every recipe; `wrath update` doesn't write records yet. `--locked` is one flag for
+  every command, so no plan or build writes a lock under it either. `wrath dev lint --locked`
   styles every recipe and fails on a missing record or pin: it's the check for grapes' CI, which
   doesn't exist yet.
 - Crate hashes come from a project's `Cargo.lock` through the record, so a cargo recipe's lock
@@ -176,8 +177,8 @@ Where the code differs from the above, or settles what it left open:
   couldn't see.
 - Raw outputs are kept with the build, outside the shared lock, and fix-ups run side by side;
   only placing a package is serialised.
-- Still outside any key: the host's `strip`, which fix-ups run. A host binutils update can change
-  what a fix-up makes unnoticed, as before.
+- `strip` runs at the end of the build, in its sandbox, with the build's own binutils, so which
+  one it is is in the key. Fix-ups use no tool from the host.
 - The cleanup's names: `toolchain = "compilers"` and `toolchain = "seed"`, the full toolchain
   and core tools when it's left out. Option names must be lower case with `_`.
 - The old format went before the rebuild rather than after, so the one rebuild built the format

@@ -1,13 +1,11 @@
 //! What's done to a package once its build has run, on the host: modes settled, its runtime
 //! dependencies written in, libraries checked, `.la` files removed, shebangs and run paths
-//! pointed at the store, binaries stripped, and the package split and moved to its content
-//! addresses (decision 0037).
+//! pointed at the store, and the package split and moved to its content addresses (decision 0037).
 //!
 //! A build's own output is kept as it came out of the sandbox, and this is a step of its own,
 //! keyed by that build and [`rules`]: the code here and in the modules it uses. Changing any of it
 //! runs this again on every package, which takes seconds each, and rebuilds nothing.
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -208,7 +206,6 @@ pub(crate) fn fix_up(
         &files_under(&out)?,
         replace_contents,
     )?;
-    split::strip(lab, &BTreeSet::from([prepared.out.clone()]))?;
     Ok(())
 }
 

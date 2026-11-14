@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use memchr::memmem;
 
@@ -231,39 +230,6 @@ fn relative_of(root: &Path, file: &Path) -> Result<String, String> {
 fn place(destination: &Path) -> Result<(), String> {
     let parent = destination.parent().ok_or("a path with no parent")?;
     fs::create_dir_all(parent).map_err(with_path(parent))
-}
-
-/// Removes debug information from every ELF file in `packages`, which otherwise records the
-/// compiler's include directories and keeps the whole compiler referenced.
-pub fn strip(lab: &Lab, packages: &BTreeSet<StorePath>) -> Result<usize, String> {
-    let mut stripped = 0;
-    for package in packages {
-        for file in files_under(&lab.on_host(package))? {
-            let meta = fs::symlink_metadata(&file).map_err(with_path(&file))?;
-            if !meta.is_file()
-                || !fs::read(&file)
-                    .map_err(with_path(&file))?
-                    .starts_with(ELF_MAGIC)
-            {
-                continue;
-            }
-            let mode = meta.permissions().mode();
-            fs::set_permissions(&file, fs::Permissions::from_mode(mode | 0o200))
-                .map_err(with_path(&file))?;
-            let status = Command::new("strip")
-                .arg("--strip-debug")
-                .arg(&file)
-                .stderr(Stdio::null())
-                .status()
-                .map_err(with_path(&file))?;
-            fs::set_permissions(&file, fs::Permissions::from_mode(mode))
-                .map_err(with_path(&file))?;
-            if status.success() {
-                stripped += 1;
-            }
-        }
-    }
-    Ok(stripped)
 }
 
 /// Where `package`'s `class` of files goes, with the package's name, so a reference to the

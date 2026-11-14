@@ -106,7 +106,7 @@ the lock beside it and its dependencies, so working out what a system needs read
 downloads nothing that's built.
 
 What wrath does to a package after its build (pointing its programs at their libraries in the
-store, stripping, splitting it into outputs, naming it by its contents) is a step of its own.
+store, splitting it into outputs, naming it by its contents) is a step of its own.
 What the build made is kept, compressed, beside the store, so when a newer wrath changes that
 step it does it again to each package in seconds instead of building everything again.
 `wrath clean` removes what's kept once nothing made from it is left; `--raw` removes all of it.
