@@ -2,6 +2,7 @@
 //! on a terminal, or everything each build prints with `--verbose`.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,13 +17,34 @@ pub enum Mode {
 
 static MODE: OnceLock<Mode> = OnceLock::new();
 
+/// How many builds are running at once now. A status line kept up to date is one build's, so
+/// with more than one, builds show a line each as they start.
+static RUNNING: AtomicUsize = AtomicUsize::new(0);
+
 /// Sets how builds show progress, once, before the first build.
 pub fn set(mode: Mode) {
     let _ = MODE.set(mode);
 }
 
 pub(crate) fn mode() -> Mode {
-    MODE.get().copied().unwrap_or(Mode::Lines)
+    match MODE.get().copied().unwrap_or(Mode::Lines) {
+        Mode::Live if RUNNING.load(Ordering::Relaxed) > 1 => Mode::Lines,
+        mode => mode,
+    }
+}
+
+/// Counts a build as running until what this returns is dropped.
+pub(crate) fn running() -> Running {
+    RUNNING.fetch_add(1, Ordering::Relaxed);
+    Running
+}
+
+pub(crate) struct Running;
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Whether `--verbose` was given.

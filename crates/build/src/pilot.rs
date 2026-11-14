@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::chain::{self, Built, Package, Prepared, Sources};
 use crate::runpath;
@@ -492,9 +493,9 @@ pub(crate) fn build_some(
 ) -> Result<(Built, StorePath, Vec<Package>), String> {
     let files = crate::graph::system_recipes(repository)?;
     let recipes = crate::graph::names_of(&files);
-    let mut built = chain::build(lab, repository, "toolchain.toml")?;
+    let built = chain::build(lab, repository, "toolchain.toml")?;
     let seed = seed::prepare(lab)?;
-    let mut sources = Sources::load(repository)?;
+    let sources = Sources::load(repository)?;
     let loaded = match wanted {
         Some(wanted) => chain::load_reached(lab, repository, &recipes, wanted)?,
         None => {
@@ -506,10 +507,74 @@ pub(crate) fn build_some(
         }
     };
     let loaded = chain::in_order(loaded, |id| built.paths.contains_key(id))?;
-    let packages = carry_on(loaded, |package| {
-        build_and_finish(lab, repository, package, &seed, &mut sources, &mut built)
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let shared = Mutex::new((built, sources));
+    let packages = carry_on(loaded, slots(cores), |package, running| {
+        build_shared(
+            lab,
+            repository,
+            package,
+            &seed,
+            &shared,
+            cores / running.max(1),
+        )
     })?;
+    let (built, _) = shared
+        .into_inner()
+        .map_err(|_| "a build stopped partway".to_owned())?;
     Ok((built, seed, packages))
+}
+
+/// How many packages build at once on a machine with `cores`: `WRATH_BUILDS` when it's set, or
+/// one for every eight cores. Each build is told to run as many jobs as it has cores to share.
+fn slots(cores: usize) -> usize {
+    std::env::var("WRATH_BUILDS")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(cores / 8)
+        .max(1)
+}
+
+/// [`build_and_finish`] for builds running side by side: what's built and the sources are
+/// shared, and held only while a build is worked out and while it's finished, never while it
+/// runs. It runs `jobs` jobs at once.
+fn build_shared(
+    lab: &Lab,
+    repository: &Path,
+    package: &Package,
+    seed: &StorePath,
+    shared: &Mutex<(Built, Sources)>,
+    jobs: usize,
+) -> Result<(), String> {
+    let lock = || {
+        shared
+            .lock()
+            .map_err(|_| "another build stopped partway".to_owned())
+    };
+    let begun = {
+        let mut held = lock()?;
+        let (built, sources) = &mut *held;
+        chain::begin(lab, repository, package, seed, sources, built, false)?
+    };
+    let chain::Begun::Run(mut pending) = begun else {
+        return Ok(());
+    };
+    pending
+        .step
+        .env
+        .insert("NPROC".to_owned(), jobs.max(2).to_string());
+    let outcome = sandbox::run_shown(lab, &pending.step, Some(("build", "built")))?;
+    let mut held = lock()?;
+    let (built, _) = &mut *held;
+    let prepared = chain::end(lab, package, *pending, &outcome, built)?;
+    chain::remove(&prepared.build_dir)?;
+    fix_up(
+        lab,
+        &prepared,
+        &mut Fixups::default(),
+        &mut Leaks::default(),
+    )?;
+    chain::finish(lab, package, &prepared.out, built)
 }
 
 /// That every package someone named, `wanted`, has a recipe among `ids`, before anything builds.
@@ -527,31 +592,79 @@ pub(crate) fn unknown(wanted: &[&str], ids: &BTreeSet<String>) -> Result<(), Str
     }
 }
 
-/// Builds each of `packages`, in order, with `build`. One that fails doesn't stop the others:
-/// what doesn't need it is still built, so a run shows every failure at once, and what needs it
-/// is skipped. The error lists the failures and how many packages waited on them.
+/// Builds `packages`, given in an order where each comes after what it needs, with `build`: each
+/// starts as soon as what it needs among them is built, up to `slots` at once. `build` is told how
+/// many are running with it. One that fails doesn't stop the others: what doesn't need it is
+/// still built, so a run shows every failure at once, and what needs it is skipped. The error
+/// lists the failures, in the order given, and how many packages waited on them.
 fn carry_on(
     packages: Vec<Package>,
-    mut build: impl FnMut(&Package) -> Result<(), String>,
+    slots: usize,
+    build: impl Fn(&Package, usize) -> Result<(), String> + Sync,
 ) -> Result<Vec<Package>, String> {
-    let mut done = Vec::with_capacity(packages.len());
-    let mut broken = BTreeSet::new();
-    let mut failures = Vec::new();
+    let ids: BTreeSet<&str> = packages.iter().map(|package| package.id.as_str()).collect();
+    let mut needs = Vec::with_capacity(packages.len());
+    for package in &packages {
+        let deps: BTreeSet<String> = package
+            .dep_ids()?
+            .into_iter()
+            .filter(|dep| ids.contains(dep.as_str()))
+            .collect();
+        needs.push(deps);
+    }
+    let mut waiting: Vec<usize> = (0..packages.len()).collect();
+    let (mut built, mut broken) = (BTreeSet::new(), BTreeSet::new());
+    let (mut done, mut failures) = (Vec::new(), Vec::new());
     let mut skipped = 0;
-    for package in packages {
-        if package.dep_ids()?.iter().any(|dep| broken.contains(dep)) {
-            broken.insert(package.id.clone());
-            skipped += 1;
-            continue;
-        }
-        match build(&package) {
-            Ok(()) => done.push(package),
-            Err(error) => {
-                broken.insert(package.id.clone());
-                failures.push(error);
+    std::thread::scope(|scope| {
+        let (sender, results) = std::sync::mpsc::channel();
+        let mut running = 0;
+        loop {
+            let mut still = Vec::with_capacity(waiting.len());
+            for index in waiting {
+                let package = &packages[index];
+                if needs[index].iter().any(|dep| broken.contains(dep)) {
+                    broken.insert(package.id.clone());
+                    skipped += 1;
+                } else if running < slots.max(1) && needs[index].is_subset(&built) {
+                    running += 1;
+                    let (sender, build) = (sender.clone(), &build);
+                    scope.spawn(move || {
+                        let _counted = crate::progress::running();
+                        let _ = sender.send((index, build(package, running)));
+                    });
+                } else {
+                    still.push(index);
+                }
+            }
+            waiting = still;
+            if running == 0 {
+                break;
+            }
+            let Ok((index, result)) = results.recv() else {
+                break;
+            };
+            running -= 1;
+            match result {
+                Ok(()) => {
+                    built.insert(packages[index].id.clone());
+                    done.push(index);
+                }
+                Err(error) => {
+                    broken.insert(packages[index].id.clone());
+                    failures.push((index, error));
+                }
             }
         }
-    }
+    });
+    done.sort_unstable();
+    failures.sort_unstable();
+    let mut failures: Vec<String> = failures.into_iter().map(|(_, error)| error).collect();
+    let mut packages: Vec<Option<Package>> = packages.into_iter().map(Some).collect();
+    let done = done
+        .into_iter()
+        .filter_map(|index| packages[index].take())
+        .collect();
     match failures.len() {
         0 => Ok(done),
         1 if skipped == 0 => Err(failures.remove(0)),
@@ -626,16 +739,16 @@ mod tests {
     #[test]
     fn a_failed_package_stops_only_what_needs_it() {
         let dir = tempfile::tempdir().unwrap();
-        let mut tried = Vec::new();
-        let error = carry_on(chain_of_four(dir.path()), |package| {
-            tried.push(package.id.clone());
+        let tried = Mutex::new(Vec::new());
+        let error = carry_on(chain_of_four(dir.path()), 1, |package, _| {
+            tried.lock().unwrap().push(package.id.clone());
             match package.id.as_str() {
                 "zlib" => Err("`zlib` failed".to_owned()),
                 _ => Ok(()),
             }
         })
         .unwrap_err();
-        assert_eq!(tried, ["zlib", "jq"]);
+        assert_eq!(tried.into_inner().unwrap(), ["zlib", "jq"]);
         assert_eq!(
             error,
             "1 failed, and 2 that need them weren't built:\n`zlib` failed"
@@ -646,17 +759,50 @@ mod tests {
     fn every_failure_is_reported_and_one_alone_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
         let failing = |ids: &'static [&'static str]| {
-            move |package: &Package| match ids.contains(&package.id.as_str()) {
+            move |package: &Package, _: usize| match ids.contains(&package.id.as_str()) {
                 true => Err(format!("`{}` failed", package.id)),
                 false => Ok(()),
             }
         };
-        let error = carry_on(chain_of_four(dir.path()), failing(&["jq", "git"])).unwrap_err();
-        assert_eq!(error, "2 failed:\n`jq` failed\n`git` failed");
-        let error = carry_on(chain_of_four(dir.path()), failing(&["git"])).unwrap_err();
-        assert_eq!(error, "`git` failed");
-        let built = carry_on(chain_of_four(dir.path()), failing(&[])).unwrap();
+        for slots in [1, 4] {
+            let packages = || chain_of_four(dir.path());
+            let error = carry_on(packages(), slots, failing(&["jq", "git"])).unwrap_err();
+            assert_eq!(error, "2 failed:\n`jq` failed\n`git` failed");
+            let error = carry_on(packages(), slots, failing(&["git"])).unwrap_err();
+            assert_eq!(error, "`git` failed");
+            let built = carry_on(packages(), slots, failing(&[])).unwrap();
+            assert_eq!(built.len(), 4);
+        }
+    }
+
+    /// Packages `zlib`, `curl` (needing zlib), `jq` and `git` (needing curl): jq needs nothing,
+    /// so with room it builds beside zlib, and nothing starts before what it needs is built.
+    #[test]
+    fn a_package_starts_once_what_it_needs_is_built_beside_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = Mutex::new(Vec::new());
+        let most = Mutex::new(0);
+        let built = carry_on(chain_of_four(dir.path()), 4, |package, running| {
+            events.lock().unwrap().push(format!("start {}", package.id));
+            let mut most = most.lock().unwrap();
+            *most = (*most).max(running);
+            drop(most);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            events.lock().unwrap().push(format!("end {}", package.id));
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(built.len(), 4);
+        let events = events.into_inner().unwrap();
+        let at = |event: &str| events.iter().position(|e| e == event).unwrap();
+        assert!(at("start jq") < at("end zlib"), "{events:?}");
+        for (needed, by) in [("zlib", "curl"), ("curl", "git")] {
+            assert!(
+                at(&format!("end {needed}")) < at(&format!("start {by}")),
+                "{events:?}"
+            );
+        }
+        assert!(most.into_inner().unwrap() >= 2, "{events:?}");
     }
 
     #[test]
