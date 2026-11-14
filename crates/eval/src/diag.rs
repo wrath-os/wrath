@@ -61,12 +61,18 @@ fn display_width(text: &str) -> usize {
 
 /// Renders diagnostics in the style of compiler errors, without colour.
 pub fn render(diagnostics: &[Diagnostic], sources: &Sources) -> String {
+    // Several modules can find the same mistake; it's said once.
+    let mut shown = std::collections::BTreeSet::new();
     let mut out = String::new();
-    for (i, diagnostic) in diagnostics.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
+    for diagnostic in diagnostics {
+        let mut one = String::new();
+        render_one(diagnostic, sources, &mut one);
+        if shown.insert(one.clone()) {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&one);
         }
-        render_one(diagnostic, sources, &mut out);
     }
     out
 }
@@ -127,6 +133,19 @@ fn render_one(diagnostic: &Diagnostic, sources: &Sources, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_same_mistake_found_twice_is_said_once() {
+        let mut sources = Sources::default();
+        let file = sources.add("system.toml", "source = \"a.lua\"\n");
+        let missing = || {
+            Diagnostic::error("cannot read `a.lua`").label(Span::new(file, 9..16), "no such file")
+        };
+        let other = Diagnostic::error("something else");
+        let rendered = render(&[missing(), other, missing()], &sources);
+        assert_eq!(rendered.matches("cannot read").count(), 1, "{rendered}");
+        assert!(rendered.contains("something else"), "{rendered}");
+    }
 
     #[test]
     fn renders_labels_and_notes() {
