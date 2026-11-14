@@ -2,5 +2,5 @@
 hostname = "native-password"
 
 [users.demo]
-initial_hashed_password = '$6$usrviewtest$lznQtfeGuvyRFdMEqskIFTTDmMnQNb/ECA5pDQf2oZ6K8HEuc9akWa0uPcvPi1ZcRwM85wBzGdCEAsUj3BnFQ/'
+initial_hashed_password = '$6$usrviewtest$1G/1FRdSrD06fzcApcxrWgVXhg9zqoBTuc2mUR8gxtOUwqkBuowz2BADCVvug0IO.9bN4RWxsMA0D2fqtKhzk0'
 extra_groups = ["wheel"]
