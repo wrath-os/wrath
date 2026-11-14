@@ -119,7 +119,7 @@ Run a package's program without installing it
 wrath run [OPTIONS] <PACKAGE> [ARGS]...
 ```
 
-- `<PACKAGE>`: The package, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+- `<PACKAGE>`: The package, such as `jq`
 - `[ARGS]...`: Arguments for the program, after `--`
 
 ## `wrath up`
@@ -138,7 +138,7 @@ Start a shell with packages, without installing them; in a project, with its pac
 wrath shell [OPTIONS] [PACKAGES]...
 ```
 
-- `[PACKAGES]...`: The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+- `[PACKAGES]...`: The packages, such as `jq` and `ripgrep`
 
 ## `wrath add`
 
@@ -148,7 +148,7 @@ Add packages to the configuration and lock them
 wrath add [OPTIONS] <PACKAGES>...
 ```
 
-- `<PACKAGES>...`: The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+- `<PACKAGES>...`: The packages, such as `jq` and `ripgrep`
 - `--home <USER>`: Add them to this user's packages instead of the system's
 
 ## `wrath remove`
@@ -358,6 +358,14 @@ wrath dev outdated [OPTIONS]
 ```
 
 - `--all`: List every recipe, including those that are current or couldn't be checked
+
+## `wrath dev keys`
+
+Print every recipe's key, as `ID KEY` lines, to compare what a change to recipes or the builder rebuilds
+
+```text
+wrath dev keys [OPTIONS]
+```
 
 ## `wrath dev model`
 

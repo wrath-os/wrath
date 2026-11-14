@@ -384,17 +384,19 @@ fn build_shared(
         let mut held = lock()?;
         let (built, _) = &mut *held;
         let prepared = chain::end(lab, package, *pending, &outcome, built)?;
-        fixup::settle(lab, package, &prepared, built)?;
+        crate::settle::settle(lab, package, &prepared, built)?;
         prepared
     };
     // Its files are its own, so they're fixed up while other builds go on.
     chain::remove(&prepared.build_dir)?;
-    fixup::fix_up(
-        lab,
-        &prepared,
-        &mut fixup::Fixups::default(),
-        &mut fixup::Leaks::default(),
-    )?;
+    if package.fixed_up() {
+        fixup::fix_up(
+            lab,
+            &prepared,
+            &mut fixup::Fixups::default(),
+            &mut fixup::Leaks::default(),
+        )?;
+    }
     let mut held = lock()?;
     let (built, _) = &mut *held;
     fixup::finish(lab, package, &prepared.out, built)
@@ -514,7 +516,7 @@ pub(crate) fn build_and_finish(
 ) -> Result<(), String> {
     if let Some(prepared) = chain::build_one(lab, repository, package, seed, sources, built)? {
         chain::remove(&prepared.build_dir)?;
-        fixup::run(lab, package, &prepared, built, true)?;
+        fixup::run(lab, package, &prepared, built, package.fixed_up())?;
     }
     Ok(())
 }

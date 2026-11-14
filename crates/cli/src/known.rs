@@ -38,7 +38,7 @@ pub fn unknown(
         let diagnostic = Diagnostic::error(format!("there's no package `{name}`"));
         let mut diagnostic = match written_at(evaluation, reference) {
             Some(span) => diagnostic.label(span, "named here"),
-            None => diagnostic.note("a module adds it"),
+            None => diagnostic.note(added_by(evaluation, reference)),
         };
         if let Some(near) = near {
             diagnostic = diagnostic.note(format!("help: did you mean `{near}`?"));
@@ -59,6 +59,32 @@ pub fn missing<'a>(
         return None;
     }
     Some((name, closest(name, names.iter().map(String::as_str))))
+}
+
+/// Which modules add `reference`, which the configuration doesn't name itself.
+fn added_by(evaluation: &Evaluation, reference: &str) -> String {
+    let modules: Vec<String> = evaluation
+        .modules()
+        .iter()
+        .filter(|module| {
+            let homes = module.output.homes.values().flat_map(|home| &home.packages);
+            module
+                .output
+                .packages
+                .iter()
+                .chain(homes)
+                .any(|name| name == reference)
+        })
+        .map(|module| format!("`{}`", module.name))
+        .collect();
+    match modules.as_slice() {
+        [] => "a module adds it".to_owned(),
+        [one] => format!("the {one} module adds it, from what the configuration enables"),
+        _ => format!(
+            "the modules {} add it, from what the configuration enables",
+            modules.join(", ")
+        ),
+    }
 }
 
 /// Where the configuration writes `reference` in a list of packages, the system's or a user's.

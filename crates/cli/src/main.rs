@@ -175,7 +175,7 @@ enum Command {
     },
     /// Run a package's program without installing it
     Run {
-        /// The package, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+        /// The package, such as `jq`
         package: String,
         /// Arguments for the program, after `--`
         #[arg(last = true)]
@@ -186,12 +186,12 @@ enum Command {
     /// Start a shell with packages, without installing them; in a project, with its packages and
     /// environment too
     Shell {
-        /// The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+        /// The packages, such as `jq` and `ripgrep`
         packages: Vec<String>,
     },
     /// Add packages to the configuration and lock them
     Add {
-        /// The packages, such as `jq`, `stable#jq` or `github:jqlang/jq#jq`
+        /// The packages, such as `jq` and `ripgrep`
         #[arg(required = true)]
         packages: Vec<String>,
         /// Add them to this user's packages instead of the system's
@@ -357,8 +357,8 @@ enum DevCommand {
         #[arg(long)]
         all: bool,
     },
-    /// Print every recipe's key, as `ID KEY` lines
-    #[command(hide = true)]
+    /// Print every recipe's key, as `ID KEY` lines, to compare what a change to recipes or the
+    /// builder rebuilds
     Keys,
     /// Print the configuration's model as JSON
     Model,

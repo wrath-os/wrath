@@ -137,6 +137,17 @@ const FIXED_ENVIRONMENT: [(&str, &str); 8] = [
     ("TZ", "UTC"),
 ];
 
+/// The filesystem every step sees, as [`bwrap_args`] lays it out: change it with the layout, since
+/// builds' keys have it.
+const LAYOUT: &str = "1";
+
+/// What every step has besides what it's given, for builds' keys: its fixed environment, its
+/// `/etc` and how its filesystem is laid out. Who it runs as is left out, as builds mustn't depend
+/// on it.
+pub(crate) fn fixed() -> String {
+    format!("{FIXED_ENVIRONMENT:?} {PASSWD:?} {GROUP:?} {HOSTS:?} {LAYOUT}")
+}
+
 fn arg(args: &mut Vec<String>, parts: &[&str]) {
     args.extend(parts.iter().map(|part| (*part).to_owned()));
 }
@@ -145,7 +156,7 @@ fn host(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// What to pass `bwrap` for `step`.
+/// What to pass `bwrap` for `step`. A change to the filesystem it lays out changes [`LAYOUT`].
 fn bwrap_args(lab: &Lab, step: &Step, etc: &Path) -> Vec<String> {
     let mut args = Vec::new();
     let identity = Identity::current();

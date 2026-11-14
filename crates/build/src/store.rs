@@ -74,7 +74,11 @@ impl StorePath {
     /// pieces of the path a compiler splits apart, which nothing could find to rewrite, so a
     /// build that makes the same files gets the same address whatever changed its key.
     pub fn temporary(&self) -> Self {
-        let name = self.0.get(HASH_LENGTH + 1..).unwrap_or_default();
+        Self::temporary_named(self.0.get(HASH_LENGTH + 1..).unwrap_or_default())
+    }
+
+    /// The path a build of the package called `name` sees itself at, known before its key.
+    pub fn temporary_named(name: &str) -> Self {
         let path = Self::derive("temporary", &[name.as_bytes()]);
         if name.is_empty() {
             path

@@ -15,6 +15,7 @@ pub mod runpath;
 pub mod sandbox;
 pub mod seed;
 pub mod seed_pack;
+pub(crate) mod settle;
 pub mod split;
 pub mod store;
 pub mod upstream;

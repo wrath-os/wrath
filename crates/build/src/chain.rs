@@ -1089,7 +1089,11 @@ fn lock_text(locks: &BTreeMap<String, PackageLock>) -> String {
         if bare { id.to_owned() } else { quoted(id) }
     };
     let mut text = String::new();
-    for (id, lock) in locks {
+    // A package with nothing pinned or recorded has no table.
+    for (id, lock) in locks
+        .iter()
+        .filter(|(_, lock)| lock.made().is_some() || !lock.sources.is_empty())
+    {
         if !text.is_empty() {
             text.push('\n');
         }
@@ -2454,6 +2458,10 @@ pub(crate) fn keys_of(
     let mut sources = Sources::load(repository)?;
     let mut keys = BTreeMap::from([("seed".to_owned(), seed.hash().to_owned())]);
     let packages = in_order(packages, |id| keys.contains_key(id))?;
+    let declared: BTreeMap<&str, &[SearchPath]> = packages
+        .iter()
+        .map(|package| (package.id.as_str(), package.search_paths.as_slice()))
+        .collect();
     for package in &packages {
         let hashes = package
             .sources
@@ -2464,9 +2472,9 @@ pub(crate) fn keys_of(
         let mut recipe = recipe_parts(repository, package, &hashes)?;
         let deps = package.all_deps()?;
         recipe.extend(declared_parts(&deps, |id| {
-            let found = packages.iter().find(|package| package.id == id);
-            found
-                .map(|package| package.search_paths.clone())
+            declared
+                .get(id)
+                .map(|found| found.to_vec())
                 .unwrap_or_default()
         }));
         let key = package_key("unresolved", &recipe, &deps, |dep| keys[&dep.id].clone());
@@ -2548,13 +2556,27 @@ pub(crate) fn begin(
     let searched = search_path_values(&in_view, declared, |output, file| {
         lab.on_host(output).join(file).is_dir()
     });
-    // What the build sees through them changes it, though no dependency's output changed.
+    let inside = StorePath::temporary_named(&package.store_name()).inside();
+    let env = build_env(lab, package, seed, built, &deps, searched, inside)?;
+    // What the build runs with is in its key as it runs, whatever made it so: the script around
+    // the recipe's (which the recipe's parts have), every variable but how many jobs it may run,
+    // such as the search paths and the flags the compiler wrapper adds, and the sandbox around it.
     let mut built_from = recipe.clone();
-    built_from.extend(
-        searched
-            .iter()
-            .map(|(variable, value)| format!("search {variable}={value}").into_bytes()),
+    let mut keyed = env.clone();
+    keyed.remove("NPROC");
+    built_from.push(
+        format!(
+            "step {:?} {keyed:?} {}",
+            wrapped("$WRATH_SCRIPT"),
+            sandbox::fixed()
+        )
+        .into_bytes(),
     );
+    // A package that stays at its build's path is known to its dependents by that path, so what's
+    // done to it after its build is part of its key.
+    if !content_addressed(package) {
+        built_from.push(format!("settled {}", crate::settle::rules()).into_bytes());
+    }
     let out = package_key("build", &built_from, &deps, |dep| built.reference(&dep.id))
         .named(&package.store_name());
     let mut planned_from = recipe;
@@ -2634,7 +2656,9 @@ pub(crate) fn begin(
             if styled.record != package.record {
                 return Err(format!(
                     "`{}`'s style made something other than what its lock records from the same \
-                     style and source, so it doesn't make the same thing twice",
+                     style and source: the style doesn't make the same thing twice, or this wrath's \
+                     style functions differ from the one that wrote the lock; a grapes recorded by \
+                     this wrath, or `wrath dev lint` in a checkout, has it right",
                     package.id
                 ));
             }
@@ -2695,8 +2719,60 @@ pub(crate) fn begin(
         .collect();
     view::compose_skipping(lab, &view_dir, &in_view)?;
 
+    let limits = match &package.silent_for {
+        Some(text) => Limits {
+            silence: duration(text).map_err(|e| format!("`{}`: silent_for: {e}", package.id))?,
+            ..Limits::DEFAULT
+        },
+        None => Limits::DEFAULT,
+    };
+    let log = logs_dir(lab).join(format!("{}.log", package.id));
+    let view = View { dir: view_dir };
+    let step = Step {
+        name: package.id.clone(),
+        argv: vec![
+            "/bin/sh".to_owned(),
+            "-euc".to_owned(),
+            wrapped(&package.script),
+        ],
+        inputs: closure.iter().cloned().collect(),
+        output: Some(out.clone()),
+        view: Some(view.clone()),
+        build_dir: build_dir.clone(),
+        log,
+        env,
+        limits,
+        links: Vec::new(),
+        at: Some((out.clone(), out.temporary())),
+    };
+    Ok(Begun::Run(Box::new(Pending {
+        step,
+        out,
+        closure,
+        view,
+        build_dir,
+        done: (!again).then_some(done),
+        from_raw,
+        dep_paths: deps
+            .iter()
+            .map(|dep| built.paths[&dep.id].clone())
+            .collect(),
+        lock,
+    })))
+}
+
+/// The environment a build of `package` runs with, with `deps` built, the search path variables
+/// `searched` and the path it sees itself at, `inside`, all of which are known before its key.
+fn build_env(
+    lab: &Lab,
+    package: &Package,
+    seed: &StorePath,
+    built: &Built,
+    deps: &[Dep],
+    searched: BTreeMap<String, String>,
+    inside: String,
+) -> Result<BTreeMap<String, String>, String> {
     let usr_prefix = package.scope != Scope::Runtime;
-    let inside = out.temporary().inside();
     let (prefix, dest) = if usr_prefix {
         ("/usr".to_owned(), inside.clone())
     } else {
@@ -2740,7 +2816,7 @@ pub(crate) fn begin(
         ),
         ("WRATH_LOADER_NAME".to_owned(), loader_name().to_owned()),
     ]);
-    for dep in &deps {
+    for dep in deps {
         let name = dep.id.replace('-', "_");
         env.insert(format!("WRATH_DEP_{name}"), built.paths[&dep.id].inside());
         env.insert(
@@ -2772,49 +2848,16 @@ pub(crate) fn begin(
         real_bin.to_owned()
     };
     env.insert("PATH".to_owned(), path_var);
+    Ok(env)
+}
 
-    let script = format!(
-        "cd /build/src\n{}\ncd /build\n\
-         if [ -d \"$OUT/usr\" ]; then cp -a \"$OUT/usr/.\" \"$OUT/\"; rm -rf \"$OUT/usr\"; fi\n",
-        package.script,
-    );
-
-    let limits = match &package.silent_for {
-        Some(text) => Limits {
-            silence: duration(text).map_err(|e| format!("`{}`: silent_for: {e}", package.id))?,
-            ..Limits::DEFAULT
-        },
-        None => Limits::DEFAULT,
-    };
-    let log = logs_dir(lab).join(format!("{}.log", package.id));
-    let view = View { dir: view_dir };
-    let step = Step {
-        name: package.id.clone(),
-        argv: vec!["/bin/sh".to_owned(), "-euc".to_owned(), script],
-        inputs: closure.iter().cloned().collect(),
-        output: Some(out.clone()),
-        view: Some(view.clone()),
-        build_dir: build_dir.clone(),
-        log,
-        env,
-        limits,
-        links: Vec::new(),
-        at: Some((out.clone(), out.temporary())),
-    };
-    Ok(Begun::Run(Box::new(Pending {
-        step,
-        out,
-        closure,
-        view,
-        build_dir,
-        done: (!again).then_some(done),
-        from_raw,
-        dep_paths: deps
-            .iter()
-            .map(|dep| built.paths[&dep.id].clone())
-            .collect(),
-        lock,
-    })))
+/// The script a build runs: the recipe's, from the source, and what a `/usr` prefix installed
+/// moved up into the package.
+fn wrapped(script: &str) -> String {
+    format!(
+        "cd /build/src\n{script}\ncd /build\n\
+         if [ -d \"$OUT/usr\" ]; then cp -a \"$OUT/usr/.\" \"$OUT/\"; rm -rf \"$OUT/usr\"; fi\n"
+    )
 }
 
 /// A build worked out and ready for its sandbox, which needs nothing shared to run.
