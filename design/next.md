@@ -28,7 +28,8 @@ fixes are done; this is what needs deciding.
 ## 1. A binary cache
 
 Without one, every machine builds the world (about two hours now); three of four reviewers called
-it the blocker. 0018 designs a per-file manifest cache keyed by the unresolved key.
+it the blocker. 0018 designs a per-file manifest cache keyed by the unresolved key; 0038 proposes
+the cache in a bucket, from what follows.
 
 What the research changes: Nix just dropped "deep realisations", the unresolved-key-to-address
 mapping 0018 describes, because an unresolved key hides which dependency outputs went in, so two
@@ -254,8 +255,8 @@ one `--locked` and `clean` reclaiming images. What they found, fixed the same ni
 only read, a pin in another recipe's lock was accepted for this one, so `dev lint --locked`
 missed a lock lacking it; the error blamed a pinned grapes even in a checkout; `-o` linked an
 image that `clean` could then remove, so it copies an image now. Since: `STRIP` resets what it
-read between files, which changes every key, and a plan pins and records what grapes' locks
-lack for itself only, writing nothing.
+read between files, which changes every key, and a plan only reads locks, fetching nothing,
+like Terraform's: what a lock lacks, `wrath check` or `wrath dev lint` pins first.
 
 ## Order
 
