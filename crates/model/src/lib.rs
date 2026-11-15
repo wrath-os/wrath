@@ -54,7 +54,7 @@ pub struct Model {
     pub enabled: BTreeMap<String, BTreeSet<String>>,
     /// Likewise for user units, enabled for every user.
     pub enabled_user: BTreeMap<String, BTreeSet<String>>,
-    /// Programs in `/run/wrappers/bin` with their own owner and mode, by name.
+    /// Programs in `/run/wrath/wrappers/bin` with their own owner and mode, by name.
     pub wrappers: BTreeMap<String, Wrapper>,
     /// Packages built differently from how their source builds them, by the name they go by.
     pub builds: BTreeMap<String, Build>,
@@ -109,7 +109,7 @@ pub struct File {
     pub text: String,
 }
 
-/// A secret, decrypted on the machine to `/run/secrets/<name>`.
+/// A secret, decrypted on the machine to `/run/wrath/secrets/<name>`.
 #[derive(Debug, Clone, Eq)]
 pub struct Secret {
     /// The encrypted file where the system is built. It isn't part of the hash, so moving the

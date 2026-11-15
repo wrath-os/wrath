@@ -258,12 +258,12 @@ mod tests {
             "{}-glibc-2.42",
             "0123456789abcdef".repeat(3)[..40].to_owned()
         );
-        let whole = format!("/store/{own}/lib");
+        let whole = format!("/wrath/store/{own}/lib");
         let digest = &own[..40];
         // As `movabs` immediates: eight bytes of the path at a time, with code in between.
         let mut ld = format!("{whole}\0").into_bytes();
         ld.extend_from_slice(&[0x48, 0xb8]);
-        ld.extend_from_slice(format!("/store/{}", &digest[..1]).as_bytes());
+        ld.extend_from_slice(format!("/wrath/store/{}", &digest[..1]).as_bytes());
         ld.extend_from_slice(&[0x49, 0x33, 0x48, 0xba]);
         ld.extend_from_slice(&digest.as_bytes()[1..9]);
         fs::write(dir.path().join("ld.so"), ld).unwrap();

@@ -396,7 +396,8 @@ fn secrets_are_declared_with_their_encrypted_files_and_paths_take_them() {
     }
     let syncthing = rendered_by(&evaluation, "syncthing");
     assert!(
-        syncthing.contains("/run/secrets/sync-key /var/lib/syncthing/.config/syncthing/key.pem"),
+        syncthing
+            .contains("/run/wrath/secrets/sync-key /var/lib/syncthing/.config/syncthing/key.pem"),
         "{syncthing}"
     );
 }
@@ -699,7 +700,7 @@ fn users_configure_git_and_files_in_their_homes() {
     [user]
     	email = john@example.com
     	name = John
-    	signingKey = /run/secrets/git-signing
+    	signingKey = /run/wrath/secrets/git-signing
     [includeIf "gitdir:~/work/"]
     	path = ~/.config/git/include-1
 
@@ -720,7 +721,7 @@ fn users_configure_git_and_files_in_their_homes() {
     [signing]
     backend = "ssh"
     behavior = "own"
-    key = "/run/secrets/git-signing"
+    key = "/run/wrath/secrets/git-signing"
 
     [ui]
     diff-formatter = ["difft", "--color=always", "$left", "$right"]

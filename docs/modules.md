@@ -93,7 +93,7 @@ values is an error, a `set` gets both files' items, and so on. `doc` shows up in
 | `ctx.set(option, value)` | sets another module's option |
 | `ctx.default(option, value)` | the same, but anything in the configuration wins |
 | `ctx.error(option, message)` | stops with an error pointing at where the option is set |
-| `ctx.wrapper(name, source = ...)` | a setuid copy in `/run/wrappers/bin` |
+| `ctx.wrapper(name, source = ...)` | a setuid copy in `/run/wrath/wrappers/bin` |
 | `ctx.secret(name, ...)` | a secret decrypted on the machine |
 
 `formats.json`, `formats.toml` and `formats.systemd` turn a dict into a file's text, and

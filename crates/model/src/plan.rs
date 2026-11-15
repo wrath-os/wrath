@@ -717,12 +717,12 @@ fn units(model: &Model) -> BTreeMap<String, &Unit> {
         .collect()
 }
 
-/// Programs in `/run/wrappers/bin`, by path.
+/// Programs in `/run/wrath/wrappers/bin`, by path.
 fn wrappers(model: &Model) -> BTreeMap<String, &Wrapper> {
     model
         .wrappers
         .iter()
-        .map(|(name, wrapper)| (format!("/run/wrappers/bin/{name}"), wrapper))
+        .map(|(name, wrapper)| (format!("/run/wrath/wrappers/bin/{name}"), wrapper))
         .collect()
 }
 

@@ -15,8 +15,8 @@ use crate::activate::replace_link;
 use crate::state::State;
 use crate::templates;
 
-const SECRETS: &str = "/run/secrets";
-const TEMPLATES: &str = "/run/wrath/templates";
+const SECRETS: &str = wrath_eval::SECRETS_DIR;
+const TEMPLATES: &str = wrath_build::graph::FILLED;
 
 /// Does what `system` asks of the machine it's being switched on: the machine's part, then
 /// users' homes.
@@ -202,7 +202,7 @@ fn decrypt(system: &Path, activation: &Value, dir: &Path) {
 }
 
 /// Makes `link`, where a configuration wants a secret, point to it. Links stay valid as
-/// `/run/secrets` moves between sets.
+/// `/run/wrath/secrets` moves between sets.
 fn link_secret(name: &str, link: &Path) {
     if let Some(parent) = link.parent() {
         let _ = fs::create_dir_all(parent);

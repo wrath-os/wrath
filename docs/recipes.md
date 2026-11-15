@@ -148,7 +148,7 @@ A build runs in a sandbox with no network. Its script gets:
 
 | Variable | Is |
 |---|---|
-| `$PREFIX` | where the package will live, `/store/<hash>-<name>` |
+| `$PREFIX` | where the package will live, `/wrath/store/<hash>-<name>` |
 | `$DEST` | where to install to, so `make install DESTDIR=$DEST` |
 | `$OUT` | the package's own directory as the build sees it |
 | `$NPROC` | how many jobs to run |

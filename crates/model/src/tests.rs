@@ -239,8 +239,8 @@ fn units_that_mention_a_secret_restart_when_it_changes() {
             model.secrets.insert(name.into(), secret);
         }
         for (name, uses) in [
-            ("app.service", "/run/secrets/api-token"),
-            ("old.service", "/run/secrets/api-token-old"),
+            ("app.service", "/run/wrath/secrets/api-token"),
+            ("old.service", "/run/wrath/secrets/api-token-old"),
         ] {
             let unit = Unit {
                 sections: vec![Section {
@@ -899,7 +899,7 @@ fn enabling_a_unit_starts_it_and_wrappers_show_as_files() {
     let plan = plan(&before, &after);
     insta::assert_snapshot!(plan.to_string(), @"
     files
-      + /run/wrappers/bin/sudo (tier: live)
+      + /run/wrath/wrappers/bin/sudo (tier: live)
           root:root mode 4755, of /run/current-system/sw/bin/sudo
     units
       + pipewire.service (for every user) (tier: live)

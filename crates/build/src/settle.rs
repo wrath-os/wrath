@@ -98,7 +98,7 @@ pub(crate) fn linked_by_path(dir: &Path) -> Result<Option<(PathBuf, String)>, St
 
 /// Whether a needed library is named by a path outside the store.
 pub(crate) fn outside_store(needed: &str) -> bool {
-    needed.starts_with('/') && !needed.starts_with("/store/")
+    needed.starts_with('/') && !needed.starts_with("/wrath/store/")
 }
 
 /// Clears setuid and setgid under `dir`, which would make a program run as root wherever the

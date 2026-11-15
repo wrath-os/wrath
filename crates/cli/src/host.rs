@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitCode, Stdio};
 
-use wrath_build::store::{Lab, StorePath, is_entry};
+use wrath_build::store::{Lab, STORE_DIR, StorePath, is_entry};
 use wrath_model::Model;
 
 use crate::activate::{UNFINISHED, Unfinished};
@@ -128,10 +128,10 @@ impl Remote {
         let entry = unfinished
             .from
             .as_deref()
-            .and_then(|from| from.strip_prefix("/store").ok());
+            .and_then(|from| from.strip_prefix(STORE_DIR).ok());
         let from = match entry.and_then(Path::to_str).filter(|name| is_entry(name)) {
             Some(from) => {
-                let path = format!("/store/{from}/etc/wrath/model.json");
+                let path = format!("{STORE_DIR}/{from}/etc/wrath/model.json");
                 let text = self.output(&format!("cat {path} 2>/dev/null || true"))?;
                 Model::from_json(&text).ok()
             }
@@ -150,7 +150,7 @@ impl Remote {
     /// Copies what the machine lacks of `system`, built in `lab`, into a new directory on it,
     /// and returns that directory, or `None` when it has everything already.
     fn send(&self, lab: &Lab, system: &StorePath) -> Result<Option<String>, String> {
-        let have = self.output("ls /store 2>/dev/null || true")?;
+        let have = self.output("ls /wrath/store 2>/dev/null || true")?;
         let closure = wrath_build::chain::runtime_closure(lab, system)?;
         let missing = missing(&have, closure.iter().map(StorePath::hash));
         if missing.is_empty() {
@@ -377,7 +377,7 @@ pub(crate) fn read_password(prompt: &str) -> Result<String, String> {
     Ok(password.trim_end_matches(['\n', '\r']).to_owned())
 }
 
-/// The store paths of `closure` that aren't in `have`, as `ls /store` lists it.
+/// The store paths of `closure` that aren't in `have`, as `ls /wrath/store` lists it.
 fn missing<'a>(have: &str, closure: impl Iterator<Item = &'a str>) -> Vec<String> {
     let have: BTreeSet<&str> = have.lines().collect();
     closure
@@ -393,12 +393,14 @@ fn switch_steps(sent: Option<&str>, system: &StorePath, how: Switch) -> String {
         Switch::Apply => format!("{path}/bin/wrath apply --yes {path}"),
         Switch::Try(seconds) => format!("{path}/bin/wrath try --yes --for {seconds}s {path}"),
     };
-    // Unpacked beside the store and renamed in one path at a time, so an interrupted copy
-    // never leaves a partial path under a name `send` would take as complete.
+    // Unpacked beside the store, on its filesystem, and renamed in one path at a time, so an
+    // interrupted copy never leaves a partial path under a name `send` would take as complete,
+    // and the store holds nothing else.
     match sent {
         Some(dir) => format!(
-            "staged=$(mktemp -d /store/.incoming.XXXXXX) && tar -C $staged -xf {dir}/system.tar && \
-             for path in $staged/*; do test -e /store/${{path##*/}} || mv $path /store/ || exit; \
+            "staged=$(mktemp -d /wrath/incoming.XXXXXX) && tar -C $staged -xf {dir}/system.tar && \
+             for path in $staged/*; do \
+             test -e /wrath/store/${{path##*/}} || mv $path /wrath/store/ || exit; \
              done && rm -rf $staged {dir} && {switch}"
         ),
         None => switch,
@@ -509,15 +511,16 @@ mod tests {
                 &switch_steps(Some("/var/tmp/wrath.Ab12"), &system, Switch::Apply),
                 true
             ),
-            "sh -c 'staged=$(mktemp -d /store/.incoming.XXXXXX) && \
+            "sh -c 'staged=$(mktemp -d /wrath/incoming.XXXXXX) && \
              tar -C $staged -xf /var/tmp/wrath.Ab12/system.tar && \
-             for path in $staged/*; do test -e /store/${path##*/} || mv $path /store/ || exit; \
+             for path in $staged/*; do \
+             test -e /wrath/store/${path##*/} || mv $path /wrath/store/ || exit; \
              done && rm -rf $staged /var/tmp/wrath.Ab12 && \
-             /store/abc/bin/wrath apply --yes /store/abc'"
+             /wrath/store/abc/bin/wrath apply --yes /wrath/store/abc'"
         );
         assert_eq!(
             as_root(&switch_steps(None, &system, Switch::Try(60)), false),
-            "sudo sh -c '/store/abc/bin/wrath try --yes --for 60s /store/abc'"
+            "sudo sh -c '/wrath/store/abc/bin/wrath try --yes --for 60s /wrath/store/abc'"
         );
     }
 

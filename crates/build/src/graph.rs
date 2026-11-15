@@ -370,7 +370,7 @@ fn sharing<'a>(
 
 /// Whether two links into the store name files with the same contents.
 fn same_contents(lab: &Lab, first: &str, second: &str) -> Result<bool, String> {
-    let on_host = |target: &str| match target.strip_prefix("/store/") {
+    let on_host = |target: &str| match target.strip_prefix("/wrath/store/") {
         Some(rest) => lab.work.join("store").join(rest),
         None => PathBuf::from(target),
     };
@@ -907,7 +907,7 @@ const SECRET_FILES: &str = "secrets";
 const TEMPLATES_SPEC: &str = "templates.json";
 
 /// Where activation fills in files with secrets or machine values.
-const FILLED: &str = "/run/wrath/templates";
+pub const FILLED: &str = "/run/wrath/templates";
 
 /// A filled-in file's name in [`FILLED`], from its path.
 fn filled_name(path: &str) -> String {
@@ -1178,7 +1178,7 @@ fn lower<'a>(
             base,
             "etc/systemd/system.conf",
             0o644,
-            "[Manager]\nDefaultEnvironment=PATH=/run/wrappers/bin:/run/system/bin\n".into(),
+            "[Manager]\nDefaultEnvironment=PATH=/run/wrath/wrappers/bin:/run/system/bin\n".into(),
             &[],
             packages,
         )?,
@@ -1546,7 +1546,7 @@ fn initrd_files(
     modprobe: &str,
 ) -> Vec<(String, u32, String)> {
     let unit = "[Unit]\nDescription=Ready the root to switch to\nDefaultDependencies=no\n\
-        RequiresMountsFor=/sysroot /sysroot/store\nAfter=initrd-fs.target\n\
+        RequiresMountsFor=/sysroot /sysroot/wrath\nAfter=initrd-fs.target\n\
         Before=initrd.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n\
         ExecStart=/etc/wrath-root\n";
     // A shell on the console when the root can't be reached, so the machine can be fixed. The
@@ -1913,7 +1913,7 @@ fn boot_files<'a>(
             initrd::add_programs(&mut nodes, &lab.work.join("store"), &roots)?;
             let modules = lab.on_host(linux).join("lib/modules");
             if modules.exists() {
-                let to = format!("store/{}/lib/modules", linux.hash());
+                let to = format!("wrath/store/{}/lib/modules", linux.hash());
                 initrd::add_tree(&mut nodes, &modules, &to)?;
                 let target = format!("{}/lib/modules", linux.inside());
                 initrd::insert(&mut nodes, "lib/modules", link(target));
@@ -2955,7 +2955,7 @@ mod tests {
     fn the_initrd_unlocks_and_mounts_what_the_model_describes_then_readies_the_root() {
         let disks = early::Disks {
             crypttab: "main0-system /dev/disk/by-partlabel/main0-system none luks\n".into(),
-            initrd_fstab: "/dev/mapper/main0-system /sysroot/store btrfs subvol=@store 0 0\n"
+            initrd_fstab: "/dev/mapper/main0-system /sysroot/wrath btrfs subvol=@wrath 0 0\n"
                 .into(),
             modules: vec!["dm_crypt".into(), "btrfs".into()],
             ..early::Disks::default()
@@ -3096,7 +3096,7 @@ mod tests {
             "mounts": [
                 {"device": "none", "format": "tmpfs", "options": ["mode=755"], "path": "/"},
                 {"device": "/dev/mapper/main0-system", "format": "btrfs",
-                 "options": ["subvol=@store"], "path": "/store"},
+                 "options": ["subvol=@wrath"], "path": "/wrath"},
             ],
             "unlock": {},
         });
@@ -3110,7 +3110,7 @@ mod tests {
         let outcome = realised(&lab, &mut db, &packages, &with_disks(model(80, false)));
         let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
         let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
-        assert!(read("etc/fstab").contains("/dev/mapper/main0-system /store btrfs subvol=@store"));
+        assert!(read("etc/fstab").contains("/dev/mapper/main0-system /wrath btrfs subvol=@wrath"));
         assert!(
             read("etc/crypttab").starts_with("main0-system /dev/disk/by-partlabel/main0-system")
         );
@@ -3542,7 +3542,7 @@ mod tests {
         let host = lab
             .work
             .join("store")
-            .join(inside.strip_prefix("/store").unwrap());
+            .join(inside.strip_prefix("/wrath/store").unwrap());
         let initrd = fs::read(host).unwrap();
         let start = String::from_utf8_lossy(&initrd[..2048.min(initrd.len())]).into_owned();
         assert!(start.starts_with("070701"), "an uncompressed archive first");

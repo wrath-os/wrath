@@ -17,7 +17,7 @@ use crate::fixup::{files_under, path_byte};
 use crate::store::{Lab, StorePath, with_path};
 
 const HASH_LENGTH: usize = 40;
-const STORE: &[u8] = b"/store/";
+const STORE: &[u8] = b"/wrath/store/";
 const ELF_MAGIC: &[u8] = b"\x7fELF";
 const DOC_DIRS: [&str; 5] = [
     "share/doc",
@@ -274,7 +274,7 @@ fn is_lib_dir(rest: &str) -> bool {
 
 /// Adds the paths inside package `own` that `bytes` name, each as the rest after the package.
 fn own_references(bytes: &[u8], own: &str, names: &mut BTreeSet<String>) {
-    let needle = format!("/store/{own}");
+    let needle = format!("/wrath/store/{own}");
     for at in memmem::find_iter(bytes, needle.as_bytes()) {
         let rest_at = at + needle.len();
         let length = bytes[rest_at..]
@@ -1020,7 +1020,7 @@ mod in_place {
             &[
                 ("include/stb_image.h", "header\n".to_owned()),
                 ("share/doc/stb/README", "docs\n".to_owned()),
-                ("lib/wrath/runtime-deps", "/store/x\n".to_owned()),
+                ("lib/wrath/runtime-deps", "/wrath/store/x\n".to_owned()),
             ],
         );
         let (outputs, whole) = split_package(&lab, &package, &package).unwrap();
@@ -1157,12 +1157,12 @@ mod in_place {
     }
 
     const GOLDEN_PLACED: &str = "split
-out=3583c4d6ba5317f4b8d7c813a4a5c1e817ead23c-demo-1.0
-lib=6e6aeba275fe96cb14aaca399cd64162f17baa7a-demo-1.0
-dev=e7bd4715dc1be43e65c29f9cc6692ae2dbd57e29-demo-1.0
+out=cd7aff8e1b6a350e56f674c6a7aeee8740a5570a-demo-1.0
+lib=fcae79bf5674a6b6e2442faa7c0565ded351ed60-demo-1.0
+dev=4618f7528d6664c99d7d40b2ebc10bc7244bcb71-demo-1.0
 doc=685595d5be2e89f008b4676ddbb1cfcfbf8c4ae4-demo-1.0
 whole
-out=4c1790f9fa1227ee562c1e1b00a3920045fe778c-demo-1.0
+out=f26f13820c19e48d293b55cb7abf41ee0b9e5662-demo-1.0
 cut
-out=6decc8bbf739631005bd23b3828caf9dc303e3e3-demo-1.0";
+out=50221e43faf477427c43d604e5cf6845cdb4d376-demo-1.0";
 }

@@ -1077,7 +1077,7 @@ mod tests {
                 .map(|name| {
                     (
                         (*name).to_owned(),
-                        PathBuf::from(format!("/store/x-{name}")),
+                        PathBuf::from(format!("/wrath/store/x-{name}")),
                     )
                 })
                 .collect()
@@ -1085,15 +1085,15 @@ mod tests {
         let at = dir.path().join("jq-link");
         assert_eq!(
             link_places(&built(&["jq"]), &at).unwrap(),
-            [(at.clone(), PathBuf::from("/store/x-jq"))]
+            [(at.clone(), PathBuf::from("/wrath/store/x-jq"))]
         );
         assert_eq!(
             link_places(&built(&["jq", "ripgrep"]), dir.path()).unwrap(),
             [
-                (dir.path().join("jq"), PathBuf::from("/store/x-jq")),
+                (dir.path().join("jq"), PathBuf::from("/wrath/store/x-jq")),
                 (
                     dir.path().join("ripgrep"),
-                    PathBuf::from("/store/x-ripgrep")
+                    PathBuf::from("/wrath/store/x-ripgrep")
                 ),
             ]
         );
@@ -1103,7 +1103,7 @@ mod tests {
         show_built(&built(&["ripgrep"]), Some(&at)).unwrap();
         assert_eq!(
             std::fs::read_link(&at).unwrap(),
-            PathBuf::from("/store/x-ripgrep")
+            PathBuf::from("/wrath/store/x-ripgrep")
         );
         let file = dir.path().join("file");
         std::fs::write(&file, "").unwrap();

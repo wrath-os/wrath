@@ -1,6 +1,7 @@
 # 0016: Where a system keeps things
 
-Status: accepted, 2026-11-10.
+Status: accepted, 2026-11-10. Where the store, the generations and the per-boot directories are
+changed in 0039.
 
 ## Context
 

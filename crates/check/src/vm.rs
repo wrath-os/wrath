@@ -20,7 +20,7 @@ use serde::Deserialize;
 use vsock::VsockStream;
 use wrath_agent::{Client, Request, Response};
 use wrath_build::chain;
-use wrath_build::store::{Lab, StorePath};
+use wrath_build::store::{Lab, STORE_DIR, StorePath};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "RawVmSpec")]
@@ -789,7 +789,7 @@ impl VmRun<'_> {
             ));
         }
         let name = self.copy_generation(agent, config, None, deadline)?;
-        let system = format!("/store/{name}");
+        let system = format!("{STORE_DIR}/{name}");
         let system = system.as_str();
         let switch = match try_for {
             Some(duration) => argv(&["wrath", "try", "-y", "--for", duration, system]),
@@ -937,7 +937,7 @@ impl VmRun<'_> {
     ) -> Result<(), String> {
         let name = self.copy_generation(agent, config, target, deadline)?;
         let share = self.dir.join(SHARE);
-        fs::write(share.join("system"), format!("/store/{name}\n"))
+        fs::write(share.join("system"), format!("{STORE_DIR}/{name}\n"))
             .map_err(io_err("the system's path"))?;
         let config_name = Path::new(config)
             .file_name()
@@ -981,7 +981,7 @@ impl VmRun<'_> {
         let generation = StorePath::from_hash(name);
         let closure = chain::runtime_closure(&lab, &generation)?;
         let hashes: Vec<&str> = closure.iter().map(|path| path.hash()).collect();
-        let (_, have, _) = run_shell(agent, argv(&["ls", "/store"]), deadline)?;
+        let (_, have, _) = run_shell(agent, argv(&["ls", STORE_DIR]), deadline)?;
         let Some(copy) = copy_command(&have, &hashes) else {
             return Ok(());
         };
@@ -993,7 +993,7 @@ impl VmRun<'_> {
     }
 }
 
-/// The command that copies the paths of `closure` the guest lacks, as `ls /store` there says,
+/// The command that copies the paths of `closure` the guest lacks, as `ls /wrath/store` there says,
 /// from the host's store into its own, or `None` when it has them all.
 fn copy_command(have: &str, closure: &[&str]) -> Option<String> {
     let have: BTreeSet<&str> = have.lines().collect();
@@ -1002,7 +1002,7 @@ fn copy_command(have: &str, closure: &[&str]) -> Option<String> {
         .filter(|hash| !have.contains(*hash))
         .map(|hash| format!("{GUEST_STORE}/{hash}"))
         .collect();
-    (!missing.is_empty()).then(|| format!("cp -a {} /store/", missing.join(" ")))
+    (!missing.is_empty()).then(|| format!("cp -a {} {STORE_DIR}/", missing.join(" ")))
 }
 
 /// Where the guest sees the host's store, from wrath's own builder.
@@ -1369,7 +1369,7 @@ mod tests {
         let closure = ["aaa", "ccc", "bbb", "ddd"];
         assert_eq!(
             copy_command(have, &closure),
-            Some("cp -a /run/wrath-store/ccc /run/wrath-store/ddd /store/".to_owned())
+            Some("cp -a /run/wrath-store/ccc /run/wrath-store/ddd /wrath/store/".to_owned())
         );
         assert_eq!(copy_command("aaa\nccc\nbbb\nddd\n", &closure), None);
     }

@@ -523,7 +523,7 @@ mod tests {
             .file(
                 "glib",
                 "lib/pkgconfig/glib-2.0.pc",
-                "prefix=/store/g\nincludedir=${prefix}/include\n\
+                "prefix=/wrath/store/g\nincludedir=${prefix}/include\n\
                  Cflags: -I${includedir}/glib-2.0\n",
             )
             .file("glib", "include/glib-2.0/glib.h", "")

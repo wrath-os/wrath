@@ -245,7 +245,7 @@ enum Command {
         /// Erase disks that have partitions already
         #[arg(long)]
         wipe: bool,
-        /// A system already built and in /store, to install instead of building one [default:
+        /// A system already built and in /wrath/store, to install instead of building one [default:
         /// the one an image of a configuration with disks carries to install]
         #[arg(long, value_name = "PATH")]
         system: Option<PathBuf>,

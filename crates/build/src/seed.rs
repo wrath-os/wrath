@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
 
 use crate::sandbox::{self, Limits, Status, Step};
-use crate::store::{Lab, StorePath, hex, with_path};
+use crate::store::{Lab, STORE_DIR, StorePath, hex, with_path};
 
 /// Points the unpacked binaries at their new location.
 const PREPARE: &str = r#"
@@ -117,13 +117,17 @@ fn tarball(lab: &Lab, sha256: &str, url: Option<&str>) -> Result<PathBuf, String
     Ok(path)
 }
 
-/// The seed's store path, which keys name it by, whether it's unpacked or not.
+/// The seed's store path, which keys name it by, whether it's unpacked or not. It covers how the
+/// seed is prepared and where the store is, which the prepared seed's programs have in them.
 pub fn path(lab: &Lab) -> Result<StorePath, String> {
     Ok(named(&pin(lab)?.0))
 }
 
 fn named(sha256: &str) -> StorePath {
-    StorePath::derive("seed", &[sha256.as_bytes()])
+    StorePath::derive(
+        "seed",
+        &[sha256.as_bytes(), PREPARE.as_bytes(), STORE_DIR.as_bytes()],
+    )
 }
 
 /// The seed's store path, unpacked and ready to run. Safe to call from several processes.
@@ -133,7 +137,7 @@ pub fn prepare(lab: &Lab) -> Result<StorePath, String> {
     fs::create_dir_all(&lab.work).map_err(with_path(&lab.work))?;
     let lock = File::create(lab.work.join("seed.lock")).map_err(|e| format!("seed.lock: {e}"))?;
     lock.lock().map_err(|e| format!("seed.lock: {e}"))?;
-    let ready = lab.work.join(format!("seed/ready-{sha256}"));
+    let ready = lab.work.join(format!("seed/ready-{}", seed.hash()));
     if ready.exists() {
         return Ok(seed);
     }

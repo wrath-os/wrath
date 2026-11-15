@@ -20,10 +20,10 @@ const HASH_LENGTH: usize = 40;
 /// Replaces the hash in every store path, so a tree compares equal however its dependencies are
 /// addressed.
 pub fn mask_references(bytes: &[u8]) -> Vec<u8> {
-    let finder = memmem::Finder::new(b"/store/");
+    let finder = memmem::Finder::new(b"/wrath/store/");
     let mut masked = bytes.to_vec();
     for at in finder.find_iter(bytes) {
-        let start = at + "/store/".len();
+        let start = at + "/wrath/store/".len();
         let Some(tail) = bytes.get(start..start + HASH_LENGTH) else {
             continue;
         };
@@ -341,11 +341,14 @@ mod tests {
 
     #[test]
     fn store_hashes_are_masked_and_nothing_else_is() {
-        let path = format!("x/store/{}/lib y", "a".repeat(HASH_LENGTH));
+        let path = format!("x/wrath/store/{}/lib y", "a".repeat(HASH_LENGTH));
         let masked = String::from_utf8(mask_references(path.as_bytes())).unwrap();
 
-        assert_eq!(masked, format!("x/store/{}/lib y", "0".repeat(HASH_LENGTH)));
-        let short = b"/store/abc/lib";
+        assert_eq!(
+            masked,
+            format!("x/wrath/store/{}/lib y", "0".repeat(HASH_LENGTH))
+        );
+        let short = b"/wrath/store/abc/lib";
         assert_eq!(mask_references(short), short);
     }
 }

@@ -20,7 +20,7 @@ Ideas that belong to later milestones. Add a line here instead of building them 
   - Assembly does only what changed: the one rendered file's action runs, everything else is a
     cache hit, and putting the system together costs milliseconds.
   - A files-only switch. Today every switch runs sysusers, tmpfiles, `daemon-reload`, restarts and
-    the user managers. When the plan says only files changed, moving `/etc/.system` is the whole
+    the user managers. When the plan says only files changed, moving `/etc/.wrath` is the whole
     switch.
   - Programs notice. A module says how its program picks up a new file: it watches it (niri,
     alacritty), a signal (helix on `SIGUSR1`), a command, or a restart. The plan shows which.

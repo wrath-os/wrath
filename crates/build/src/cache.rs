@@ -589,7 +589,7 @@ mod tests {
         fs::write(store.join("lib/libhello.so.1"), "elf").unwrap();
         symlink("libhello.so.1", store.join("lib/libhello.so")).unwrap();
         symlink(
-            "/store/elsewhere/lib/libc.so.6",
+            "/wrath/store/elsewhere/lib/libc.so.6",
             store.join("lib/libc.so.6"),
         )
         .unwrap();
@@ -615,7 +615,7 @@ mod tests {
         assert_eq!(link("lib/libhello.so"), Path::new("libhello.so.1"));
         assert_eq!(
             link("lib/libc.so.6"),
-            Path::new("/store/elsewhere/lib/libc.so.6")
+            Path::new("/wrath/store/elsewhere/lib/libc.so.6")
         );
         let inode = |path: &str| fs::metadata(got.join(path)).unwrap().ino();
         assert_eq!(inode("bin/hi"), inode("bin/hello"));

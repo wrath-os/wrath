@@ -167,7 +167,7 @@ pub fn built(model: &Model, references: &[String]) -> Result<Built, String> {
 }
 
 /// Where packages are when programs run: their links point into it.
-const STORE: &str = "/store";
+const STORE: &str = wrath_build::store::STORE_DIR;
 
 /// The packages' programs, linked into one directory.
 struct Environment {
@@ -236,9 +236,9 @@ impl Environment {
         programs
     }
 
-    /// A command that runs `program` with the store at `/store`. Where the packages were built
-    /// into another directory, as in a checkout, it runs in a mount namespace with that directory
-    /// at `/store`, the way builds see it.
+    /// A command that runs `program` with the store at `/wrath/store`. Where the packages were
+    /// built into another directory, as in a checkout, it runs in a mount namespace with that
+    /// directory at `/wrath/store`, the way builds see it.
     fn command(&self, program: &Path) -> Command {
         let here = Path::new(STORE).canonicalize().ok();
         if here.is_some() && here == self.store.canonicalize().ok() {
@@ -253,7 +253,7 @@ impl Environment {
     }
 }
 
-/// What to pass `bwrap` to run with this machine's directories and `store` at `/store`. `/`
+/// What to pass `bwrap` to run with this machine's directories and `store` at `/wrath/store`. `/`
 /// can't take a new directory, so the root is built from its entries.
 fn namespace_args(store: &Path) -> Vec<OsString> {
     let mut args: Vec<OsString> = Vec::new();
@@ -475,7 +475,7 @@ mod tests {
             .position(|arg| arg == "/srv/work/store")
             .unwrap();
         assert_eq!(args[at - 1], "--dev-bind");
-        assert_eq!(args[at + 1], "/store");
+        assert_eq!(args[at + 1], "/wrath/store");
         assert!(args.windows(3).any(|w| w == ["--dev-bind", "/tmp", "/tmp"]));
     }
 }

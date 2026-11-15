@@ -424,23 +424,23 @@ mod tests {
     fn a_shebang_through_env_or_usr_points_at_the_store() {
         let dir = tempfile::tempdir().unwrap();
         let view = dir.path().join("view");
-        view_with(&view, "bin/python3", "/store/aaa/bin/python3");
+        view_with(&view, "bin/python3", "/wrath/store/aaa/bin/python3");
         let out = dir.path().join("out");
         fs::create_dir_all(&out).unwrap();
         let mut leaks = Leaks::default();
         for (before, after) in [
             (
                 "#!/usr/bin/python3 -E\nprint\n",
-                "#!/store/aaa/bin/python3 -E\nprint\n",
+                "#!/wrath/store/aaa/bin/python3 -E\nprint\n",
             ),
             (
                 "#!/usr/bin/env python3\nprint\n",
-                "#!/store/aaa/bin/python3\nprint\n",
+                "#!/wrath/store/aaa/bin/python3\nprint\n",
             ),
         ] {
             let file = out.join("script");
             fs::write(&file, before).unwrap();
-            assert!(fix_shebang(&file, &out, "/store/self", &view, &mut leaks).unwrap());
+            assert!(fix_shebang(&file, &out, "/wrath/store/self", &view, &mut leaks).unwrap());
             assert_eq!(fs::read_to_string(&file).unwrap(), after);
         }
     }
@@ -461,7 +461,7 @@ mod tests {
         ] {
             let file = dir.path().join("script");
             fs::write(&file, before).unwrap();
-            fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap();
+            fix_shebang(&file, dir.path(), "/wrath/store/s", &view, &mut leaks).unwrap();
             assert_eq!(fs::read_to_string(&file).unwrap(), after);
         }
         assert_eq!(
@@ -471,14 +471,16 @@ mod tests {
         // /bin/sh is on every system.
         let file = dir.path().join("script");
         fs::write(&file, "#!/bin/sh\nx\n").unwrap();
-        assert!(!fix_shebang(&file, dir.path(), "/store/s", &view, &mut leaks).unwrap());
+        assert!(!fix_shebang(&file, dir.path(), "/wrath/store/s", &view, &mut leaks).unwrap());
     }
 
     #[test]
     fn a_library_needed_by_a_path_outside_the_store_is_one_a_machine_lacks() {
         assert!(outside_store("/usr/lib/libsqlite3.so"));
         assert!(!outside_store("libsqlite3.so.0"));
-        assert!(!outside_store("/store/abc-sqlite/lib/libsqlite3.so.0"));
+        assert!(!outside_store(
+            "/wrath/store/abc-sqlite/lib/libsqlite3.so.0"
+        ));
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("script"), "#!/bin/sh\n").unwrap();
         assert_eq!(linked_by_path(dir.path()).unwrap(), None);

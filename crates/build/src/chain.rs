@@ -1555,7 +1555,7 @@ fn missing_in(log: &str) -> Option<Missing> {
             .strip_prefix("Installing ")
             .and_then(|l| l.rsplit(" to ").next())
             && place.starts_with('/')
-            && !place.starts_with("/store/")
+            && !place.starts_with("/wrath/store/")
         {
             return Some(Missing::Outside(place.to_owned()));
         }
@@ -3227,7 +3227,7 @@ pub fn references_of(lab: &Lab, path: &StorePath) -> Result<Vec<StorePath>, Stri
 /// The store paths `dir` refers to, with one file referring to each.
 pub fn references(dir: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     let mut found = BTreeMap::new();
-    let finder = memmem::Finder::new(b"/store/");
+    let finder = memmem::Finder::new(b"/wrath/store/");
     scan(dir, dir, &finder, &mut found)?;
     Ok(found)
 }
@@ -3239,7 +3239,7 @@ fn note(
     found: &mut BTreeMap<String, PathBuf>,
 ) {
     for at in finder.find_iter(bytes) {
-        let start = at + "/store/".len();
+        let start = at + "/wrath/store/".len();
         if let Some(length) = store::entry_length(&bytes[start..]) {
             let entry = String::from_utf8_lossy(&bytes[start..start + length]).into_owned();
             found.entry(entry).or_insert_with(|| file.to_path_buf());
@@ -3485,16 +3485,16 @@ mod requirement_tests {
         let gcc = StorePath::from_hash("abc").named("gcc-15.2.0");
         assert_eq!(
             compile_flags(&gcc),
-            "-fmacro-prefix-map=/store/abc-gcc-15.2.0/include=/usr/include"
+            "-fmacro-prefix-map=/wrath/store/abc-gcc-15.2.0/include=/usr/include"
         );
     }
 
     #[test]
     fn links_are_hardened_and_run_from_the_store() {
-        let flags = link_flags("/store/s/ld.so", &["/store/a/lib".to_owned()]);
+        let flags = link_flags("/wrath/store/s/ld.so", &["/wrath/store/a/lib".to_owned()]);
         assert_eq!(
             flags,
-            "-Wl,--dynamic-linker=/store/s/ld.so -Wl,-z,relro -Wl,-z,now -Wl,-rpath,/store/a/lib"
+            "-Wl,--dynamic-linker=/wrath/store/s/ld.so -Wl,-z,relro -Wl,-z,now -Wl,-rpath,/wrath/store/a/lib"
         );
     }
 
@@ -5043,8 +5043,8 @@ mod hint_tests {
                 Missing::Outside("/etc/udev/x.rules".into()),
             ),
             (
-                "OSError: [Errno 30] Read-only file system: '/store/abc-systemd/lib/x.service'",
-                Missing::Outside("/store/abc-systemd/lib/x.service".into()),
+                "OSError: [Errno 30] Read-only file system: '/wrath/store/abc-systemd/lib/x.service'",
+                Missing::Outside("/wrath/store/abc-systemd/lib/x.service".into()),
             ),
         ];
         for (line, missing) in cases {
@@ -5053,7 +5053,7 @@ mod hint_tests {
         }
         assert_eq!(missing_in("error: something else entirely\n"), None);
         assert_eq!(
-            missing_in("Installing src/x to /store/abc-x/bin\nFAILED\n"),
+            missing_in("Installing src/x to /wrath/store/abc-x/bin\nFAILED\n"),
             None
         );
     }

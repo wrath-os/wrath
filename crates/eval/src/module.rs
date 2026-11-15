@@ -121,7 +121,8 @@ pub struct Output {
     pub enabled: BTreeMap<String, BTreeSet<String>>,
     /// Likewise for user units, enabled for every user.
     pub enabled_user: BTreeMap<String, BTreeSet<String>>,
-    /// Programs that run with more privilege than their caller, in `/run/wrappers/bin`, by name.
+    /// Programs that run with more privilege than their caller, in `/run/wrath/wrappers/bin`, by
+    /// name.
     pub wrappers: BTreeMap<String, Wrapper>,
     /// Packages built differently from how their source builds them, by the name they go by.
     pub builds: BTreeMap<String, Build>,
@@ -138,7 +139,8 @@ pub struct Build {
     pub patches: Vec<String>,
 }
 
-/// A program copied into `/run/wrappers/bin` with its own owner and mode, such as setuid root.
+/// A program copied into `/run/wrath/wrappers/bin` with its own owner and mode, such as setuid
+/// root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wrapper {
     /// The program, such as `/run/system/bin/sudo`.
@@ -177,7 +179,7 @@ pub fn home_path(user: &str, path: &str) -> String {
 }
 
 /// Where decrypted secrets are on the machine, one file per secret.
-pub const SECRETS_DIR: &str = "/run/secrets";
+pub const SECRETS_DIR: &str = "/run/wrath/secrets";
 
 /// Where a home of its own decrypts its secrets, which the user can do without root.
 pub const HOME_SECRETS_DIR: &str = "~/.local/state/wrath/secrets";

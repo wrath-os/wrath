@@ -9,7 +9,7 @@ partitions.system = { size = "rest", encrypt = true }
 [filesystems.root]
 on = ["main.system"]
 subvolumes."@root" = { mount = "/" }
-subvolumes."@store" = { mount = "/store" }
+subvolumes."@wrath" = { mount = "/wrath" }
 
 [unlock]
 tpm2 = true

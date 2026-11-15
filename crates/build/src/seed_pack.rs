@@ -180,16 +180,16 @@ fn wanted_from_glibc(name: &str) -> bool {
 fn without_store_paths(script: &str) -> String {
     let mut result = String::with_capacity(script.len());
     let mut rest = script;
-    while let Some(at) = rest.find("/store/") {
+    while let Some(at) = rest.find("/wrath/store/") {
         result.push_str(&rest[..at]);
-        let after = &rest[at + "/store/".len()..];
+        let after = &rest[at + "/wrath/store/".len()..];
         let hash = after.get(..HASH_LENGTH);
         match hash.zip(after.get(HASH_LENGTH..)) {
             Some((hash, tail)) if hash.bytes().all(|b| b.is_ascii_hexdigit()) => {
                 rest = tail.strip_prefix("/lib/").unwrap_or(tail);
             }
             _ => {
-                result.push_str("/store/");
+                result.push_str("/wrath/store/");
                 rest = after;
             }
         }
@@ -232,7 +232,7 @@ fn elf_files(dir: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
 
 /// Where a run path directory is on the host, if it's in the store.
 fn on_host(lab: &Lab, dir: &str) -> Option<PathBuf> {
-    let rest = dir.strip_prefix("/store/")?;
+    let rest = dir.strip_prefix("/wrath/store/")?;
     let hash = rest.get(..HASH_LENGTH)?;
     let tail = rest.get(HASH_LENGTH..)?.trim_start_matches('/');
     Some(lab.on_host(&StorePath::from_hash(hash)).join(tail))
@@ -459,13 +459,14 @@ mod tests {
     #[test]
     fn a_linker_script_stops_naming_store_paths() {
         let hash = "a".repeat(40);
-        let script = format!("GROUP ( /store/{hash}/lib/libc.so.6 /store/{hash}/lib/x.a )\n");
+        let script =
+            format!("GROUP ( /wrath/store/{hash}/lib/libc.so.6 /wrath/store/{hash}/lib/x.a )\n");
         assert_eq!(without_store_paths(&script), "GROUP ( libc.so.6 x.a )\n");
     }
 
     #[test]
     fn text_that_only_looks_like_a_store_path_stays() {
-        let script = "/store/short/lib/x\n";
+        let script = "/wrath/store/short/lib/x\n";
         assert_eq!(without_store_paths(script), script);
     }
 
@@ -475,7 +476,7 @@ mod tests {
         let (from, stage) = (dir.path().join("from"), dir.path().join("stage"));
         write(&from.join("bin/ls"), ELF);
         write(&from.join("bin/sh"), ELF);
-        write(&from.join("bin/zgrep"), b"#!/store/x/bin/sh\n");
+        write(&from.join("bin/zgrep"), b"#!/wrath/store/x/bin/sh\n");
         copy_programs(&from, &stage).unwrap();
         assert!(stage.join("bin/ls").exists());
         assert!(!stage.join("bin/sh").exists());
@@ -501,7 +502,7 @@ mod tests {
         let links = [
             ("c++".to_owned(), PathBuf::from("g++")),
             ("gone".to_owned(), PathBuf::from("missing")),
-            ("far".to_owned(), PathBuf::from("/store/x/bin/y")),
+            ("far".to_owned(), PathBuf::from("/wrath/store/x/bin/y")),
         ];
         make_links(&stage, &links).unwrap();
         assert!(stage.join("bin/c++").exists());

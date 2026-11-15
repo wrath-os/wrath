@@ -14,7 +14,7 @@ steps = [
   { run = "command -v cryptsetup mkfs.btrfs mkfs.vfat | wc -l", stdout_contains = "3" },
   # What it carries is the configured system, as a build of the configuration makes it.
   { prepare_build = "scenarios/fixtures/native-install" },
-  { run = '[ "$(readlink /store/.system/install)" = "$(cat /run/wrath-share/system)" ] && echo carried', stdout_contains = "carried" },
+  { run = '[ "$(readlink /wrath/system/install)" = "$(cat /run/wrath-share/system)" ] && echo carried', stdout_contains = "carried" },
   { run = "cp -r /run/wrath-share/configs/native-install /tmp/config && printf 'correct horse' > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
   # No passphrase typed: the TPM unlocked the disk the image installed.
   { boot_installed = true },

@@ -144,7 +144,7 @@ fn keep<'a>(
     runpath
         .split(':')
         .filter(|dir| {
-            !dir.starts_with("/store/")
+            !dir.starts_with("/wrath/store/")
                 || dir.starts_with(own)
                 || !provides(dir).is_disjoint(wanted)
         })
@@ -201,7 +201,7 @@ impl Shrunk {
 }
 
 fn libraries_in(lab: &Lab, dir: &str) -> BTreeSet<String> {
-    let Some(rest) = dir.strip_prefix("/store/") else {
+    let Some(rest) = dir.strip_prefix("/wrath/store/") else {
         return BTreeSet::new();
     };
     let (hash, relative) = rest.split_once('/').unwrap_or((rest, ""));
@@ -304,9 +304,9 @@ mod tests {
 
     fn provider(dir: &str) -> BTreeSet<String> {
         let names: &[&str] = match dir {
-            "/store/a/lib" => &["libz.so.1"],
-            "/store/b/lib" => &["libkmod.so.2"],
-            "/store/c/lib" => &["libunused.so.3"],
+            "/wrath/store/a/lib" => &["libz.so.1"],
+            "/wrath/store/b/lib" => &["libkmod.so.2"],
+            "/wrath/store/c/lib" => &["libunused.so.3"],
             _ => &[],
         };
         names.iter().map(|name| (*name).to_owned()).collect()
@@ -318,43 +318,46 @@ mod tests {
 
     #[test]
     fn keeps_what_is_needed_or_named_and_drops_the_rest() {
-        let path = "/store/a/lib:/store/b/lib:/store/c/lib";
+        let path = "/wrath/store/a/lib:/wrath/store/b/lib:/wrath/store/c/lib";
         let (bytes, at) = elf(path, &["libz.so.1"], b"\0libkmod.so.2\0");
-        let (new, shrunk) = shrink(&bytes, "/store/self/", &mut provider).unwrap();
-        assert_eq!(runpath_of(&new, at), "/store/a/lib:/store/b/lib");
+        let (new, shrunk) = shrink(&bytes, "/wrath/store/self/", &mut provider).unwrap();
+        assert_eq!(
+            runpath_of(&new, at),
+            "/wrath/store/a/lib:/wrath/store/b/lib"
+        );
         assert_eq!((shrunk.entries_before, shrunk.entries_after), (3, 2));
         assert_eq!(new.len(), bytes.len());
     }
 
     #[test]
     fn leaves_an_old_style_run_path_whole_since_what_the_program_loads_uses_it_too() {
-        let path = "/store/a/lib:/store/b/lib:/store/c/lib";
+        let path = "/wrath/store/a/lib:/wrath/store/b/lib:/wrath/store/c/lib";
         let (bytes, at) = elf_with(DT_RPATH, path, &["libz.so.1"], b"");
-        assert!(shrink(&bytes, "/store/self/", &mut provider).is_none());
+        assert!(shrink(&bytes, "/wrath/store/self/", &mut provider).is_none());
         assert_eq!(runpath_of(&bytes, at), path);
     }
 
     #[test]
     fn keeps_own_directories_and_anything_outside_the_store() {
-        let path = "$ORIGIN/../lib:/store/self/lib/private:/store/c/lib";
+        let path = "$ORIGIN/../lib:/wrath/store/self/lib/private:/wrath/store/c/lib";
         let (bytes, at) = elf(path, &[], b"");
-        let (new, ..) = shrink(&bytes, "/store/self/", &mut provider).unwrap();
+        let (new, ..) = shrink(&bytes, "/wrath/store/self/", &mut provider).unwrap();
         assert_eq!(
             runpath_of(&new, at),
-            "$ORIGIN/../lib:/store/self/lib/private"
+            "$ORIGIN/../lib:/wrath/store/self/lib/private"
         );
     }
 
     #[test]
     fn leaves_a_file_alone_when_everything_is_used() {
-        let (bytes, _) = elf("/store/a/lib", &["libz.so.1"], b"");
-        assert!(shrink(&bytes, "/store/self/", &mut provider).is_none());
+        let (bytes, _) = elf("/wrath/store/a/lib", &["libz.so.1"], b"");
+        assert!(shrink(&bytes, "/wrath/store/self/", &mut provider).is_none());
     }
 
     #[test]
     fn can_empty_a_run_path() {
-        let (bytes, at) = elf("/store/c/lib", &[], b"");
-        let (new, ..) = shrink(&bytes, "/store/self/", &mut provider).unwrap();
+        let (bytes, at) = elf("/wrath/store/c/lib", &[], b"");
+        let (new, ..) = shrink(&bytes, "/wrath/store/self/", &mut provider).unwrap();
         assert_eq!(runpath_of(&new, at), "");
     }
 

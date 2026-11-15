@@ -181,7 +181,7 @@ fn bwrap_args(lab: &Lab, step: &Step, etc: &Path) -> Vec<String> {
             "--tmpfs",
             "/tmp",
             "--dir",
-            "/store",
+            crate::store::STORE_DIR,
             "--dir",
             "/etc",
             "--ro-bind",

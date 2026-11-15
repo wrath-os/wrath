@@ -1016,7 +1016,8 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Declares a secret, kept encrypted in `file` and decrypted on the machine to
-    /// `/run/secrets/<name>`, owned by `owner` and `group` with `mode`, and linked from `path`.
+    /// `/run/wrath/secrets/<name>`, owned by `owner` and `group` with `mode`, and linked from
+    /// `path`.
     #[allow(clippy::too_many_arguments)]
     fn secret<'v>(
         #[starlark(this)] _this: StarValue<'v>,
@@ -1100,8 +1101,8 @@ fn ctx_methods(builder: &mut MethodsBuilder) {
         Ok(NoneType)
     }
 
-    /// Puts a copy of `source` in `/run/wrappers/bin/<name>` with its own owner and mode, such
-    /// as setuid root, for programs that run with more privilege than their caller.
+    /// Puts a copy of `source` in `/run/wrath/wrappers/bin/<name>` with its own owner and mode,
+    /// such as setuid root, for programs that run with more privilege than their caller.
     fn wrapper<'v>(
         #[starlark(this)] _this: StarValue<'v>,
         #[starlark(require = pos)] name: &str,

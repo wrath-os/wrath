@@ -45,8 +45,8 @@ So wrath keeps the parts I like and tries to fix the rest:
 - Modules, the code that turns options into files and services, are Starlark. That's a small,
   Python-like language, type checked, so a mistake in a module is caught when you run `check`.
 - It has its own builder and store. Packages build from source in a sandbox, and each one ends up
-  in `/store` under a name made from what it contains, so the same package built twice is stored
-  once.
+  in `/wrath/store` under a name made from what it contains, so the same package built twice is
+  stored once.
 - The same commands and the same model work for a whole machine and for a single project's
   development environment.
 

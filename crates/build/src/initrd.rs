@@ -106,13 +106,17 @@ mod tests {
         let mut nodes = Nodes::new();
         insert(
             &mut nodes,
-            "store/abc/bin/sh",
+            "wrath/store/abc/bin/sh",
             Node::File {
                 mode: 0o755,
                 bytes: b"#!x\n".to_vec(),
             },
         );
-        insert(&mut nodes, "bin", Node::Link("store/abc/bin".to_owned()));
+        insert(
+            &mut nodes,
+            "bin",
+            Node::Link("wrath/store/abc/bin".to_owned()),
+        );
         insert(&mut nodes, "dev/console", Node::Char { major: 5, minor: 1 });
         nodes
     }
@@ -125,7 +129,7 @@ mod tests {
     #[test]
     fn parents_are_added_and_every_entry_is_aligned() {
         let nodes = sample();
-        assert_eq!(nodes["store/abc"], Node::Dir);
+        assert_eq!(nodes["wrath/store/abc"], Node::Dir);
         let bytes = archive(&nodes);
         assert_eq!(bytes.len() % 4, 0);
         assert!(bytes.starts_with(b"070701"));
@@ -162,7 +166,7 @@ fn for_building(name: &str) -> bool {
 pub fn add_programs(nodes: &mut Nodes, store: &Path, roots: &[&str]) -> Result<(), String> {
     let mut adder = Adder { nodes, store };
     for root in roots {
-        adder.tree(&store.join(root), &format!("store/{root}"))?;
+        adder.tree(&store.join(root), &format!("wrath/store/{root}"))?;
     }
     Ok(())
 }
@@ -208,8 +212,11 @@ impl Adder<'_> {
                 to,
                 Node::Link(target.to_string_lossy().into_owned()),
             );
-            let (host, inside) = match target.strip_prefix("/store/") {
-                Ok(rest) => (self.store.join(rest), format!("store/{}", rest.display())),
+            let (host, inside) = match target.strip_prefix("/wrath/store/") {
+                Ok(rest) => (
+                    self.store.join(rest),
+                    format!("wrath/store/{}", rest.display()),
+                ),
                 Err(_) => {
                     let parent = to.rsplit_once('/').map_or("", |(parent, _)| parent);
                     let from_parent = from.parent().unwrap_or(Path::new("/"));
@@ -232,7 +239,7 @@ impl Adder<'_> {
         if let Some((needed, runpath)) = wanted {
             let dirs: Vec<&str> = runpath
                 .split(':')
-                .filter(|dir| dir.starts_with("/store/"))
+                .filter(|dir| dir.starts_with("/wrath/store/"))
                 .collect();
             let mut sonames = needed;
             sonames.extend(names);
@@ -242,10 +249,10 @@ impl Adder<'_> {
             }
             for soname in sonames {
                 let found = dirs.iter().find_map(|dir| {
-                    let rest = dir.trim_start_matches("/store/");
+                    let rest = dir.trim_start_matches("/wrath/store/");
                     let host = self.store.join(rest).join(&soname);
                     host.exists()
-                        .then(|| (host, format!("store/{rest}/{soname}")))
+                        .then(|| (host, format!("wrath/store/{rest}/{soname}")))
                 });
                 if let Some((host, inside)) = found {
                     self.file(&host, &inside)?;
@@ -323,6 +330,6 @@ mod program_tests {
             .filter(|(_, node)| matches!(node, Node::File { .. }))
             .map(|(path, _)| path)
             .collect();
-        assert_eq!(files, [&format!("store/{}/bin/tool", "a".repeat(40))]);
+        assert_eq!(files, [&format!("wrath/store/{}/bin/tool", "a".repeat(40))]);
     }
 }

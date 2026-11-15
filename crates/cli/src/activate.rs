@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use wrath_build::store::STORE_DIR;
 use wrath_eval::Unit;
 use wrath_model::{Activation, Model};
 
@@ -57,22 +58,20 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
     }
 }
 
-/// Where a machine from wrath's store keeps its generations, under the root: each a link named
-/// by its number to a system in `/store`, kept beside the store so a root erased at every boot
-/// keeps them.
-pub(crate) const GENERATIONS: &str = "store/.system/generations";
+pub(crate) use wrath_build::image::{CURRENT, GENERATIONS};
 
-/// The link to the current generation, under the root, as `generations/N`.
-pub(crate) const CURRENT: &str = "store/.system/current";
+/// Where the wrappers are, under the root: `bin` links to the current set, on a filesystem of
+/// their own that allows setuid.
+const WRAPPERS: &str = "run/wrath/wrappers";
 
 /// Writes a boot loader entry for generations of the system at `root`, with their kernels and
-/// initrds copied to the ESP at `/boot`, and makes the current generation the default. The
-/// current generation and the running one always get entries, and older ones as long as their
-/// files fit; the rest stay in the store, without an entry. Kernels and entries no generation
-/// with an entry has are removed first, so their space is there for what's copied. A machine
-/// without an ESP, such as a test VM booted directly, has nothing to write. An older generation that
-/// can't boot, such as one whose kernel is gone, loses its entry with a warning. With `renew`, the
-/// current generation gets fresh tries if it had run out: switching to it says to try it again.
+/// initrds copied to the ESP at `/boot`, and makes the current generation the default. The current
+/// generation and the running one always get entries, and older ones as long as their files fit;
+/// the rest stay in the store, without an entry. Kernels and entries no generation with an entry
+/// has are removed first, so their space is there for what's copied. A machine without an ESP, such
+/// as a test VM booted directly, has nothing to write. An older generation that can't boot, such as
+/// one whose kernel is gone, loses its entry with a warning. With `renew`, the current generation
+/// gets fresh tries if it had run out: switching to it says to try it again.
 fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     let esp = root.join("boot");
     if !esp.join("loader").is_dir() {
@@ -99,7 +98,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
             .map(|path| {
                 // Named after the store path, so a kernel shared by generations is copied once.
                 let name = path
-                    .strip_prefix("/store")
+                    .strip_prefix(STORE_DIR)
                     .unwrap_or(path)
                     .to_string_lossy()
                     .replace('/', "-");
@@ -510,7 +509,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         ("home", 0o755),
         ("bin", 0o755),
         ("usr/bin", 0o755),
-        ("run/wrappers", 0o755),
+        (WRAPPERS, 0o755),
     ] {
         let dir = root.join(dir);
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -541,7 +540,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         "-o",
         "mode=755,nodev",
         "wrappers",
-        "/run/wrappers",
+        &format!("/{WRAPPERS}"),
     ]))?;
     run(&mut Command::new(programs.join("systemd-sysusers")))?;
     if let Some(state) = &state {
@@ -558,7 +557,7 @@ pub(crate) const RUNNING: &str = "run/system";
 pub(crate) const BOOTED: &str = "run/system-booted";
 
 /// The link every file in /etc goes through to the running system's, under the root.
-const ETC_LINK: &str = "etc/.system";
+const ETC_LINK: &str = "etc/.wrath";
 
 /// Points each of `links`, under `root`, at `system`.
 fn point_at(root: &Path, system: &Path, links: &[&str]) -> Result<(), String> {
@@ -771,13 +770,23 @@ fn switch_steps(
     steps.time("daemon-reload", || {
         run(Command::new("systemctl").arg("daemon-reload"))
     })?;
+    let start = installed(&activation, &after);
+    // A unit that failed before, as in a switch that went wrong, may have used up its start limit
+    // restarting itself; this switch is a new attempt, so it starts with a clean count. A unit
+    // systemd doesn't have loaded can't be reset, which leaves the rest reset all the same.
+    steps.time("reset-failed", || {
+        let touched = (activation.restart.iter())
+            .chain(&activation.reload)
+            .chain(&start)
+            .cloned()
+            .collect();
+        let _ = systemctl("reset-failed", &touched);
+    });
     steps.time("restart", || systemctl("try-restart", &activation.restart))?;
     steps.time("reload", || {
         systemctl("try-reload-or-restart", &activation.reload)
     })?;
-    steps.time("start", || {
-        systemctl("start", &installed(&activation, &after))
-    })?;
+    steps.time("start", || systemctl("start", &start))?;
     steps.time("user-managers", || {
         switch_user_managers(root, &before, &after)
     });
@@ -926,7 +935,7 @@ fn wanted(unit: &Unit) -> bool {
         .any(|(key, _)| key == "WantedBy" || key == "RequiredBy")
 }
 
-/// Points /etc at `system`'s files: every file links through /etc/.system, which moves in one
+/// Points /etc at `system`'s files: every file links through /etc/.wrath, which moves in one
 /// step, and links to files `old` had and `system` doesn't are removed. Accounts are merged.
 fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), String> {
     let etc = root.join("etc");
@@ -939,9 +948,9 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
     let new_modes = etc_modes(system);
     let old_modes = old.map(etc_modes).unwrap_or_default();
     replace_link(&new_etc, &root.join(ETC_LINK))?;
-    // A link in the system's /etc is made as it is: through /etc/.system it would be two steps,
+    // A link in the system's /etc is made as it is: through /etc/.wrath it would be two steps,
     // and systemd takes a unit reached in two steps for a unit of its own, so `default.target`
-    // would stop being `multi-user.target`. Files are linked through /etc/.system.
+    // would stop being `multi-user.target`. Files are linked through /etc/.wrath.
     let target_in = |system_etc: &Path, path: &Path| {
         fs::read_link(system_etc.join(path))
             .unwrap_or_else(|_| Path::new("/").join(ETC_LINK).join(path))
@@ -1020,7 +1029,7 @@ fn make_dirs(etc: &Path, path: &Path) -> Result<(), String> {
             continue;
         };
         let ours =
-            target.starts_with(Path::new("/").join(ETC_LINK)) || target.starts_with("/store");
+            target.starts_with(Path::new("/").join(ETC_LINK)) || target.starts_with(STORE_DIR);
         if !ours {
             return Err(format!(
                 "{} is a link wrath didn't make, where the new system has a directory",
@@ -1048,11 +1057,12 @@ fn etc_modes(system: &Path) -> BTreeMap<PathBuf, u32> {
         .collect()
 }
 
-/// Makes `/run/wrappers/bin` hold `model`'s wrappers, copied from `system`, each with its owner and
-/// mode. The new set replaces the old one in one step. A wrapper that can't be made, such as one
-/// for a program the system lacks, is left out, and returned with why, so the rest still work.
+/// Makes `/run/wrath/wrappers/bin` hold `model`'s wrappers, copied from `system`, each with its
+/// owner and mode. The new set replaces the old one in one step. A wrapper that can't be made, such
+/// as one for a program the system lacks, is left out, and returned with why, so the rest still
+/// work.
 fn make_wrappers(root: &Path, system: &Path, model: &Model) -> Result<Vec<String>, String> {
-    let wrappers = root.join("run/wrappers");
+    let wrappers = root.join(WRAPPERS);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
@@ -1322,7 +1332,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let [old, new, other] = ["old", "new", "other"].map(|name| {
-            let path = root.join("store").join(name);
+            let path = root.join("wrath/store").join(name);
             fs::create_dir_all(&path).unwrap();
             path
         });
@@ -1355,11 +1365,17 @@ mod tests {
 
     #[test]
     fn a_failed_switch_only_counts_for_the_system_it_switched_to() {
-        let text = "from /store/old\nto /store/new\nerror it failed\n";
-        assert!(Unfinished::parse(text, Path::new("/store/old")).is_none());
-        let unfinished = Unfinished::parse(text, Path::new("/store/new")).unwrap();
-        assert_eq!(unfinished.from.as_deref(), Some(Path::new("/store/old")));
-        let first = Unfinished::parse("to /store/new\nerror it failed\n", Path::new("/store/new"));
+        let text = "from /wrath/store/old\nto /wrath/store/new\nerror it failed\n";
+        assert!(Unfinished::parse(text, Path::new("/wrath/store/old")).is_none());
+        let unfinished = Unfinished::parse(text, Path::new("/wrath/store/new")).unwrap();
+        assert_eq!(
+            unfinished.from.as_deref(),
+            Some(Path::new("/wrath/store/old"))
+        );
+        let first = Unfinished::parse(
+            "to /wrath/store/new\nerror it failed\n",
+            Path::new("/wrath/store/new"),
+        );
         assert_eq!(first.unwrap().from, None);
     }
 
@@ -1415,7 +1431,7 @@ mod tests {
     /// A machine from wrath's store, with generations `numbered` by store name, each with its own
     /// kernel and the same initrd, and `current` the current one.
     fn store_machine(root: &Path, numbered: &[(u32, &str)], current: u32) {
-        let store = root.join("store");
+        let store = root.join("wrath/store");
         for (name, file) in [("k1", "bzImage"), ("k2", "bzImage"), ("i1", "initrd")] {
             fs::create_dir_all(store.join(name)).unwrap();
             fs::write(store.join(name).join(file), name).unwrap();
@@ -1426,11 +1442,11 @@ mod tests {
             let dir = store.join(name);
             fs::create_dir_all(&dir).unwrap();
             let kernel = if *number == 1 { "k1" } else { "k2" };
-            symlink(format!("/store/{kernel}/bzImage"), dir.join("kernel")).unwrap();
-            symlink("/store/i1/initrd", dir.join("initrd")).unwrap();
+            symlink(format!("/wrath/store/{kernel}/bzImage"), dir.join("kernel")).unwrap();
+            symlink("/wrath/store/i1/initrd", dir.join("initrd")).unwrap();
             fs::write(dir.join("kernel-params"), "root=LABEL=wrath-root rw\n").unwrap();
             symlink(
-                format!("/store/{name}"),
+                format!("/wrath/store/{name}"),
                 generations.join(number.to_string()),
             )
             .unwrap();
@@ -1445,12 +1461,12 @@ mod tests {
         store_machine(root, &[(1, "aaa"), (2, "bbb")], 2);
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
         // Generation 1's kernel is gone, such as after a half-finished clean.
-        fs::remove_file(root.join("store/aaa/kernel")).unwrap();
+        fs::remove_file(root.join("wrath/store/aaa/kernel")).unwrap();
         boot_entries(root, false).unwrap();
         let names = entry_names(root);
         assert_eq!(names, ["wrath-2+3.conf"]);
         // The current one can't be left out.
-        fs::remove_file(root.join("store/bbb/kernel")).unwrap();
+        fs::remove_file(root.join("wrath/store/bbb/kernel")).unwrap();
         assert!(boot_entries(root, false).is_err());
     }
 
@@ -1504,7 +1520,7 @@ mod tests {
         store_machine(root, &[(1, "aaa"), (2, "bbb")], 2);
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
         // The new system has no activation record, so switching to it fails before any unit.
-        let system = root.join("store/bbb");
+        let system = root.join("wrath/store/bbb");
         assert!(activate(&system, Mode::Switch, root).is_err());
         assert!(root.join("boot/loader/entries/wrath-2+3.conf").exists());
     }
@@ -1532,12 +1548,12 @@ mod tests {
     fn a_generation_boots_as_its_files_say() {
         let work = tempfile::tempdir().unwrap();
         let system = work.path();
-        symlink("/store/old/bzImage", system.join("kernel")).unwrap();
-        symlink("/store/old/initrd", system.join("initrd")).unwrap();
+        symlink("/wrath/store/old/bzImage", system.join("kernel")).unwrap();
+        symlink("/wrath/store/old/initrd", system.join("initrd")).unwrap();
         fs::write(system.join("kernel-params"), "quiet rw\n").unwrap();
         let old = Boot::of(system).unwrap();
-        assert_eq!(old.kernel, Path::new("/store/old/bzImage"));
-        assert_eq!(old.initrd, Path::new("/store/old/initrd"));
+        assert_eq!(old.kernel, Path::new("/wrath/store/old/bzImage"));
+        assert_eq!(old.initrd, Path::new("/wrath/store/old/initrd"));
         assert_eq!(old.params, ["quiet", "rw"]);
         assert!(old.secrets.is_empty());
 
@@ -1570,7 +1586,7 @@ mod tests {
         assert!(entry.contains("linux /EFI/wrath/k2-bzImage\n"), "{entry}");
         assert!(entry.contains("initrd /EFI/wrath/i1-initrd\n"), "{entry}");
         assert!(
-            entry.contains("options root=LABEL=wrath-root rw init=/store/ccc/init\n"),
+            entry.contains("options root=LABEL=wrath-root rw init=/wrath/store/ccc/init\n"),
             "{entry}"
         );
         assert_eq!(fs::read_dir(esp.join("EFI/wrath")).unwrap().count(), 3);
@@ -1592,7 +1608,7 @@ mod tests {
     fn each_generation_gets_a_boot_entry_and_the_current_one_is_the_default() {
         let work = tempfile::tempdir().unwrap();
         let root = work.path();
-        let store = root.join("store");
+        let store = root.join("wrath/store");
         let system = |name: &str, kernel: &str| {
             let dir = store.join(name);
             fs::create_dir_all(&dir).unwrap();
@@ -1602,14 +1618,18 @@ mod tests {
                 fs::write(part.join(file), text).unwrap();
             }
             symlink(
-                format!("/store/{kernel}-bzImage/bzImage"),
+                format!("/wrath/store/{kernel}-bzImage/bzImage"),
                 dir.join("kernel"),
             )
             .unwrap();
-            symlink(format!("/store/{kernel}-initrd/initrd"), dir.join("initrd")).unwrap();
+            symlink(
+                format!("/wrath/store/{kernel}-initrd/initrd"),
+                dir.join("initrd"),
+            )
+            .unwrap();
             fs::write(
                 dir.join("kernel-params"),
-                format!("init=/store/{name}/init\n"),
+                format!("init=/wrath/store/{name}/init\n"),
             )
             .unwrap();
         };
@@ -1627,7 +1647,7 @@ mod tests {
         fs::create_dir_all(&generations).unwrap();
         for (number, name) in [(1, "aaa"), (2, "bbb"), (3, "ccc")] {
             let link = generations.join(number.to_string());
-            symlink(format!("/store/{name}-wrath-system"), link).unwrap();
+            symlink(format!("/wrath/store/{name}-wrath-system"), link).unwrap();
         }
         symlink("generations/2", root.join(CURRENT)).unwrap();
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
@@ -1661,7 +1681,7 @@ mod tests {
             "{entry}"
         );
         assert!(
-            entry.contains("options init=/store/ccc-wrath-system/init\n"),
+            entry.contains("options init=/wrath/store/ccc-wrath-system/init\n"),
             "{entry}"
         );
         assert!(!esp.join("loader/entries/wrath-9.conf").exists());
@@ -1784,11 +1804,11 @@ mod tests {
         assert!(make_wrappers(&root, &system, &model).unwrap().is_empty());
         assert!(make_wrappers(&root, &system, &model).unwrap().is_empty());
 
-        let tool = root.join("run/wrappers/bin/tool");
+        let tool = root.join(WRAPPERS).join("bin/tool");
         assert_eq!(fs::read_to_string(&tool).unwrap(), "new\n");
         let metadata = fs::metadata(&tool).unwrap();
         assert_eq!((metadata.uid(), metadata.mode() & 0o7777), (uid, 0o4750));
-        let sets = fs::read_dir(root.join("run/wrappers")).unwrap().count();
+        let sets = fs::read_dir(root.join(WRAPPERS)).unwrap().count();
         assert_eq!(
             sets, 2,
             "the link and one set of wrappers; the old set is gone"
@@ -1825,8 +1845,8 @@ mod tests {
         let left_out = make_wrappers(&root, &system, &model).unwrap();
         assert_eq!(left_out.len(), 1);
         assert!(left_out[0].starts_with("wrapper `gone`: "), "{left_out:?}");
-        assert!(root.join("run/wrappers/bin/tool").exists());
-        assert!(!root.join("run/wrappers/bin/gone").exists());
+        assert!(root.join(WRAPPERS).join("bin/tool").exists());
+        assert!(!root.join(WRAPPERS).join("bin/gone").exists());
     }
 
     #[test]
@@ -1854,7 +1874,7 @@ mod tests {
                 (wants, "../web.service"),
                 (
                     default,
-                    "/store/systemd/lib/systemd/system/multi-user.target",
+                    "/wrath/store/systemd/lib/systemd/system/multi-user.target",
                 ),
             ],
         );
@@ -1870,7 +1890,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_link(etc.join(default)).unwrap(),
-            Path::new("/store/systemd/lib/systemd/system/multi-user.target")
+            Path::new("/wrath/store/systemd/lib/systemd/system/multi-user.target")
         );
         assert!(fs::symlink_metadata(etc.join(gone)).is_err());
     }
@@ -2077,13 +2097,13 @@ mod tests {
         assert!(fs::symlink_metadata(etc.join("app")).unwrap().is_dir());
         assert_eq!(
             fs::read_link(etc.join("app/one.conf")).unwrap(),
-            Path::new("/etc/.system/app/one.conf")
+            Path::new("/etc/.wrath/app/one.conf")
         );
 
         switch_etc(&root, Some(&dir), &file).unwrap();
         assert_eq!(
             fs::read_link(etc.join("app")).unwrap(),
-            Path::new("/etc/.system/app")
+            Path::new("/etc/.wrath/app")
         );
 
         // Files wrath didn't put there stay, and say why the switch can't go on.
@@ -2123,10 +2143,10 @@ mod tests {
         switch_etc(&root, Some(&old), &new).unwrap();
 
         let etc = root.join("etc");
-        assert_eq!(fs::read_link(etc.join(".system")).unwrap(), new.join("etc"));
+        assert_eq!(fs::read_link(etc.join(".wrath")).unwrap(), new.join("etc"));
         assert_eq!(
             fs::read_link(etc.join("ssh/sshd_config")).unwrap(),
-            Path::new("/etc/.system/ssh/sshd_config")
+            Path::new("/etc/.wrath/ssh/sshd_config")
         );
         assert!(fs::symlink_metadata(etc.join("nftables.conf")).is_ok());
         assert!(fs::symlink_metadata(etc.join("gone.conf")).is_err());

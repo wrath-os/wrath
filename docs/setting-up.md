@@ -351,8 +351,8 @@ text = "TOKEN=${secret.api-token}\n"
 ```
 
 The encrypted files go into the system as they are, and they're only ever decrypted on the
-machine, into `/run/secrets`, by the keys in `secret_identities` (the machine's SSH host key by
-default). A file that uses a secret, like `/etc/app/env` above, is filled in there too, so the
+machine, into `/run/wrath/secrets`, by the keys in `secret_identities` (the machine's SSH host key
+by default). A file that uses a secret, like `/etc/app/env` above, is filled in there too, so the
 plain text never ends up in the store or in a build.
 
 ## Checking before applying

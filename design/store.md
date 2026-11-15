@@ -18,7 +18,7 @@ systemd reached `running` from a disk with no `/usr`, with no patches to its sou
 
 ### The store is plain files
 
-`/store/<hash>-<name>` is an ordinary directory on an ordinary filesystem, read-only to everything
+`/wrath/store/<hash>-<name>` is an ordinary directory on an ordinary filesystem, read-only to everything
 but the tool that adds to it. Adding a package means unpacking one directory, with nothing to mount
 and no switch. That's what makes running a package ad hoc possible, and live switches need old and
 new paths visible together.
@@ -183,9 +183,9 @@ Decisions the store model still needs:
 - Verifying what's installed, including whether fs-verity can work with filled-in references.
 - Garbage collection of objects and packages.
 
-- Where a store can live. Current thinking: `/store` stays the fixed path inside binaries, and the
-  bytes can be anywhere via a mount or namespace. Rewriting the root changes what was hashed and
-  misses compressed paths, so it needs a security case first.
+- Where a store can live. Current thinking: `/wrath/store` (0039) stays the fixed path inside
+  binaries, and the bytes can be anywhere via a mount or namespace. Rewriting the root changes what
+  was hashed and misses compressed paths, so it needs a security case first.
 
 And things nothing has tested:
 

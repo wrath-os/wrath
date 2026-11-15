@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use crate::chain::{fresh, runtime_closure};
 use crate::graph::ROOT_LABEL;
 use crate::seed::run;
-use crate::store::{Lab, StorePath, with_path};
+use crate::store::{Lab, STORE_DIR, StorePath, with_path};
 
 /// The EFI system partition's size, in MiB.
 const ESP_MIB: u64 = 256;
@@ -55,7 +55,7 @@ pub fn image(
 /// The root file system: every store path `generation` needs, the generation as generation 1
 /// and the current one, and the directories wrath expects before it puts the system in place.
 pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), String> {
-    let store = root.join("store");
+    let store = root.join("wrath/store");
     fs::create_dir_all(&store).map_err(with_path(&store))?;
     for path in runtime_closure(lab, generation)? {
         run(
@@ -66,10 +66,10 @@ pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), S
             &format!("copying {}", path.inside()),
         )?;
     }
-    let generations = root.join("store/.system/generations");
+    let generations = root.join(GENERATIONS);
     fs::create_dir_all(&generations).map_err(with_path(&generations))?;
     symlink(generation.inside(), generations.join("1")).map_err(with_path(&generations))?;
-    symlink("generations/1", root.join("store/.system/current")).map_err(with_path(root))?;
+    symlink("generations/1", root.join(CURRENT)).map_err(with_path(root))?;
     for dir in [
         "bin", "etc", "dev", "proc", "sys", "run", "tmp", "var/lib", "root", "home", "srv",
     ] {
@@ -78,14 +78,21 @@ pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), S
     Ok(())
 }
 
+/// Where a machine keeps its generations, under the root: each a link named by its number to a
+/// system in `/wrath/store`, kept beside the store so a root erased at every boot keeps them.
+pub const GENERATIONS: &str = "wrath/system/generations";
+
+/// The link to the current generation, under the root, as `generations/N`.
+pub const CURRENT: &str = "wrath/system/current";
+
 /// Where an image names the system `wrath install` puts on the disks, under its root.
-pub const INSTALL: &str = "store/.system/install";
+pub const INSTALL: &str = "wrath/system/install";
 
 /// Adds `system`, and what it needs that the root doesn't have yet, to an image's store, named as
 /// [`INSTALL`]. An image of a configuration with disks boots a system without them, which can't
 /// wait for disks that aren't there yet, and installs this one.
 pub fn add_install(lab: &Lab, system: &StorePath, root: &Path) -> Result<(), String> {
-    let store = root.join("store");
+    let store = root.join("wrath/store");
     for path in runtime_closure(lab, system)? {
         let host = lab.on_host(&path);
         if host
@@ -131,7 +138,7 @@ fn boot_file(lab: &Lab, generation: &StorePath, name: &str) -> Result<(PathBuf, 
     let link = lab.on_host(generation).join(name);
     let target = fs::read_link(&link).map_err(with_path(&link))?;
     let inside = target
-        .strip_prefix("/store")
+        .strip_prefix(STORE_DIR)
         .map_err(|_| format!("{} isn't in the store", target.display()))?;
     let on_esp = inside.to_string_lossy().replace('/', "-");
     Ok((lab.work.join("store").join(inside), on_esp))
@@ -341,7 +348,7 @@ mod tests {
         let (dir, lab, generation) = store();
         let root = dir.path().join("root");
         root_tree(&lab, &generation, &root).unwrap();
-        let mut stored: Vec<String> = fs::read_dir(root.join("store"))
+        let mut stored: Vec<String> = fs::read_dir(root.join("wrath/store"))
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .filter(|name| !name.starts_with('.'))
@@ -350,11 +357,11 @@ mod tests {
         stored.sort();
         assert_eq!(stored, ["a", "b", "c", "d"]);
         assert_eq!(
-            fs::read_link(root.join("store/.system/generations/1")).unwrap(),
+            fs::read_link(root.join("wrath/system/generations/1")).unwrap(),
             Path::new(&generation.inside())
         );
         assert_eq!(
-            fs::read_link(root.join("store/.system/current")).unwrap(),
+            fs::read_link(root.join("wrath/system/current")).unwrap(),
             Path::new("generations/1")
         );
         assert!(root.join("var/lib").is_dir());
@@ -378,7 +385,7 @@ mod tests {
 
         add_install(&lab, &installed, &root).unwrap();
 
-        let stored: BTreeSet<String> = fs::read_dir(root.join("store"))
+        let stored: BTreeSet<String> = fs::read_dir(root.join("wrath/store"))
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy()[..1].to_owned())
             .filter(|name| name != ".")

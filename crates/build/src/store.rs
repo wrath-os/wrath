@@ -1,4 +1,4 @@
-//! Fixed-length paths under `/store`, and where they are kept on the host.
+//! Fixed-length paths under `/wrath/store`, and where they are kept on the host.
 
 use std::path::{Path, PathBuf};
 
@@ -21,9 +21,12 @@ pub(crate) fn with_path(path: &Path) -> impl FnOnce(std::io::Error) -> String {
     move |e| format!("{}: {e}", path.display())
 }
 
-/// A path under `/store`: a hash of the same length for every path, then for a package a name,
-/// as `<hash>-jq-1.8.1`. A package keeps its name while it moves from where it was built to where
-/// its contents put it, so one path can be rewritten to the other in place.
+/// Where the store is on a machine, and in every build and program wrath runs.
+pub const STORE_DIR: &str = "/wrath/store";
+
+/// A path under `/wrath/store`: a hash of the same length for every path, then for a package a
+/// name, as `<hash>-jq-1.8.1`. A package keeps its name while it moves from where it was built to
+/// where its contents put it, so one path can be rewritten to the other in place.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StorePath(String);
 
@@ -44,7 +47,7 @@ impl StorePath {
         Self(hash.to_owned())
     }
 
-    /// The path's entry in `/store`: its hash, and its name when it has one.
+    /// The path's entry in `/wrath/store`: its hash, and its name when it has one.
     pub fn hash(&self) -> &str {
         &self.0
     }
@@ -66,7 +69,7 @@ impl StorePath {
 
     /// The path as builds see it.
     pub fn inside(&self) -> String {
-        format!("/store/{}", self.0)
+        format!("{STORE_DIR}/{}", self.0)
     }
 
     /// Where a build of the package at `self` sees itself: a path named by the package's name
@@ -114,7 +117,7 @@ pub(crate) fn name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"._+-".contains(&byte)
 }
 
-/// Whether `name` is a whole store entry, such as a directory in `/store`.
+/// Whether `name` is a whole store entry, such as a directory in `/wrath/store`.
 pub fn is_entry(name: &str) -> bool {
     entry_length(name.as_bytes()) == Some(name.len())
 }
@@ -211,7 +214,7 @@ mod tests {
         let long = StorePath::derive("a much longer kind", &[&[7; 4096]]);
 
         assert_eq!(short.inside().len(), long.inside().len());
-        assert_eq!(short.inside().len(), "/store/".len() + HASH_LENGTH);
+        assert_eq!(short.inside().len(), "/wrath/store/".len() + HASH_LENGTH);
     }
 
     #[test]

@@ -124,7 +124,7 @@ Restarts a service the system provides when one of the files in `on` changes.
 
 ### `ctx.secret(name, *, file, owner = "root", group = None, mode = ..., path = None)`
 
-Declares a secret, kept encrypted in `file` and decrypted on the machine to `/run/secrets/<name>`, owned by `owner` and `group` with `mode`, and linked from `path`.
+Declares a secret, kept encrypted in `file` and decrypted on the machine to `/run/wrath/secrets/<name>`, owned by `owner` and `group` with `mode`, and linked from `path`.
 
 ### `ctx.service_package(name)`
 
@@ -140,4 +140,4 @@ Renders a systemd unit from a dictionary of sections. `restart_on` lists files t
 
 ### `ctx.wrapper(name, *, source, owner = ..., group = ..., mode = ...)`
 
-Puts a copy of `source` in `/run/wrappers/bin/<name>` with its own owner and mode, such as setuid root, for programs that run with more privilege than their caller.
+Puts a copy of `source` in `/run/wrath/wrappers/bin/<name>` with its own owner and mode, such as setuid root, for programs that run with more privilege than their caller.

@@ -658,7 +658,7 @@ password = { secret = "key" }
         .iter()
         .find(|rendered| rendered.name == "app")
         .unwrap();
-    insta::assert_snapshot!(app.output.files["/etc/app.conf"].text, @r#"{ key = "/run/secrets/key", keys = ["/etc/other.pem", "/run/secrets/key"], password = { secret = "key" } }"#);
+    insta::assert_snapshot!(app.output.files["/etc/app.conf"].text, @r#"{ key = "/run/wrath/secrets/key", keys = ["/etc/other.pem", "/run/wrath/secrets/key"], password = { secret = "key" } }"#);
     let file = &evaluation.secret_files()["key"];
     assert_eq!(file.source, "secrets/key.age");
     assert_eq!(file.hash, blake3::hash(b"ciphertext").to_hex().to_string());

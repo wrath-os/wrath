@@ -256,7 +256,9 @@ only read, a pin in another recipe's lock was accepted for this one, so `dev lin
 missed a lock lacking it; the error blamed a pinned grapes even in a checkout; `-o` linked an
 image that `clean` could then remove, so it copies an image now. Since: `STRIP` resets what it
 read between files, which changes every key, and a plan only reads locks, fetching nothing,
-like Terraform's: what a lock lacks, `wrath check` or `wrath dev lint` pins first.
+like Terraform's: what a lock lacks, `wrath check` or `wrath dev lint` pins first. A first binary
+cache works over a directory or HTTP (0038), and everything wrath owns moved under `/wrath`
+(0039): the store at `/wrath/store`, generations at `/wrath/system`.
 
 ## Order
 

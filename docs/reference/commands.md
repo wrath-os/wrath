@@ -179,7 +179,7 @@ wrath install [OPTIONS]
 - `--identity <FILE>`: An age identity that decrypts the machine's keys under `secrets/machines/NAME`
 - `--target <TARGET>`: Where the new system is mounted while it's installed
 - `--wipe`: Erase disks that have partitions already
-- `--system <PATH>`: A system already built and in /store, to install instead of building one [default: the one an image of a configuration with disks carries to install]
+- `--system <PATH>`: A system already built and in /wrath/store, to install instead of building one [default: the one an image of a configuration with disks carries to install]
 - `-y, --yes`: Go ahead without asking
 
 ## `wrath update`

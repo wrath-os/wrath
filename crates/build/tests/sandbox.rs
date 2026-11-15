@@ -118,7 +118,7 @@ fn a_store_path_nobody_declared_is_not_there() {
     assert!(fixture.lab.on_host(&hidden).join("file").exists());
 
     let log = fixture.output(&format!(
-        "test -e {} || echo absent; ls /store",
+        "test -e {} || echo absent; ls /wrath/store",
         hidden.inside()
     ));
 

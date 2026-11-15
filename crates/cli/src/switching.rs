@@ -1,7 +1,6 @@
-//! A machine's generations in wrath's store: each one a link in `/store/.system/generations`
-//! named by its number, `/store/.system/current` naming the current one, and the systems
-//! themselves in `/store`. The records live with the store, so a root erased at every boot keeps
-//! them.
+//! A machine's generations in wrath's store: each one a link in `/wrath/system/generations` named
+//! by its number, `/wrath/system/current` naming the current one, and the systems themselves in
+//! `/wrath/store`. The records live beside the store, so a root erased at every boot keeps them.
 //! Making one current and switching to it, trying one for a while, rolling back, and collecting
 //! what no generation uses any more.
 
@@ -13,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use wrath_build::store::{Lab, StorePath, is_entry};
+use wrath_build::store::{Lab, STORE_DIR, StorePath, is_entry};
 
 use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, Unfinished, generations};
 
@@ -38,11 +37,11 @@ fn require_generations() -> Result<(), String> {
 }
 
 /// A system being tried, kept from collection while no generation has it.
-const TRYING: &str = "store/.system/trying";
+const TRYING: &str = "wrath/system/trying";
 
 /// Held while the generations change, so two changes never take the same number and a clean never
 /// runs in the middle of a switch.
-const LOCK: &str = "store/.system/lock";
+const LOCK: &str = "wrath/system/lock";
 
 /// How long a store path is kept after it arrives though nothing uses it yet, such as a system
 /// copied in for a switch that hasn't made it a generation.
@@ -189,12 +188,12 @@ fn system_of(root: &Path, link: &Path) -> Result<PathBuf, String> {
     Ok(root.join(target.strip_prefix("/").unwrap_or(&target)))
 }
 
-/// Adds `system`, a path in `/store`, as the newest generation and makes it current. Returns its
-/// number. A system that is the current generation already stays that one.
+/// Adds `system`, a path in `/wrath/store`, as the newest generation and makes it current. Returns
+/// its number. A system that is the current generation already stays that one.
 pub fn add(root: &Path, system: &Path) -> Result<u32, String> {
-    if !system.starts_with("/store") {
+    if !system.starts_with(STORE_DIR) {
         return Err(format!(
-            "{} isn't in /store; copy it in first",
+            "{} isn't in {STORE_DIR}; copy it in first",
             system.display()
         ));
     }
@@ -367,7 +366,7 @@ pub fn remove(root: &Path, numbers: &[u32], grace: Duration) -> Result<usize, St
         .into_iter()
         .map(|(_, link)| link)
         .chain([TRYING, RUNNING, BOOTED].map(|link| root.join(link)));
-    let lab = Lab::new(root);
+    let lab = Lab::new(root.join("wrath"));
     let mut used = BTreeSet::new();
     for link in starts {
         let Ok(target) = fs::read_link(&link) else {
@@ -377,12 +376,12 @@ pub fn remove(root: &Path, numbers: &[u32], grace: Duration) -> Result<usize, St
             used.extend(wrath_build::chain::runtime_closure(&lab, &path)?);
         }
     }
-    let store = root.join("store");
+    let store = root.join("wrath/store");
     let mut removed = 0;
     for entry in fs::read_dir(&store).map_err(|e| format!("{}: {e}", store.display()))? {
         let entry = entry.map_err(|e| format!("{}: {e}", store.display()))?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        // Only store paths are collected; the machine's records in `.system` stay.
+        // Only store paths are collected, whatever else is there.
         if !is_entry(&name) || used.contains(&StorePath::from_hash(&name)) {
             continue;
         }
@@ -411,9 +410,9 @@ fn arrived_within(path: &Path, grace: Duration) -> bool {
         .is_ok_and(|age| age < grace)
 }
 
-/// The store path a link's target is in, such as `/store/<hash>/sw`.
+/// The store path a link's target is in, such as `/wrath/store/<hash>/sw`.
 fn store_path(target: &Path) -> Option<StorePath> {
-    let mut parts = target.strip_prefix("/store").ok()?.components();
+    let mut parts = target.strip_prefix(STORE_DIR).ok()?.components();
     let hash = parts.next()?.as_os_str().to_str()?;
     is_entry(hash).then(|| StorePath::from_hash(hash))
 }
@@ -449,9 +448,9 @@ pub fn clean(numbers: &[u32]) -> Result<String, String> {
 /// `target`: copies what it needs into their store, makes it their first generation, and has its
 /// own wrath put the boot loader and its entries in place. Needs root.
 pub fn install(system: &Path, target: &Path) -> Result<(), String> {
-    if !system.starts_with("/store") {
+    if !system.starts_with(STORE_DIR) {
         return Err(format!(
-            "{} isn't in /store; build it with wrath first",
+            "{} isn't in {STORE_DIR}; build it with wrath first",
             system.display()
         ));
     }
@@ -467,10 +466,10 @@ pub fn install(system: &Path, target: &Path) -> Result<(), String> {
 /// under `target`, and makes it generation 1 there. Paths already there are left alone.
 fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
     let generation = store_path(system)
-        .ok_or_else(|| format!("{} isn't a system in /store", system.display()))?;
-    let store = target.join("store");
+        .ok_or_else(|| format!("{} isn't a system in {STORE_DIR}", system.display()))?;
+    let store = target.join("wrath/store");
     fs::create_dir_all(&store).map_err(|e| format!("{}: {e}", store.display()))?;
-    let lab = Lab::new(from);
+    let lab = Lab::new(from.join("wrath"));
     let missing: Vec<_> = wrath_build::chain::runtime_closure(&lab, &generation)?
         .into_iter()
         .filter(|path| !store.join(path.hash()).exists())
@@ -502,8 +501,9 @@ fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
     make_current(target, 1)
 }
 
-/// Runs `system`'s switch in `mode`: `switch`, `test` or `boot`. What it says goes straight to stderr, as it says it, with
-/// its own notes and errors, so a failure here only says that it failed.
+/// Runs `system`'s switch in `mode`: `switch`, `test` or `boot`. What it says goes straight to
+/// stderr, as it says it, with its own notes and errors, so a failure here only says that it
+/// failed.
 fn switch(system: &Path, mode: &str) -> Result<(), String> {
     let status = Command::new(system.join("bin/switch-to-configuration"))
         .arg(mode)
@@ -568,11 +568,11 @@ mod tests {
         let root = dir.path();
         fs::create_dir_all(root.join(GENERATIONS)).unwrap();
         for (n, name) in systems.iter().enumerate() {
-            let system = root.join("store").join(name);
+            let system = root.join("wrath/store").join(name);
             fs::create_dir_all(system.join("etc/wrath")).unwrap();
             fs::write(system.join("etc/wrath/model-hash"), format!("hash-{name}")).unwrap();
             let link = root.join(GENERATIONS).join((n + 1).to_string());
-            symlink(format!("/store/{name}"), link).unwrap();
+            symlink(format!("/wrath/store/{name}"), link).unwrap();
         }
         symlink(format!("generations/{}", systems.len()), root.join(CURRENT)).unwrap();
         dir
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn adding_a_system_makes_it_the_newest_generation_and_current() {
         let dir = machine(&[&hash('a')]);
-        let system = format!("/store/{}", hash('b'));
+        let system = format!("/wrath/store/{}", hash('b'));
         fs::create_dir_all(dir.path().join(&system[1..])).unwrap();
         assert_eq!(add(dir.path(), Path::new(&system)).unwrap(), 2);
         let (_, current) = generations(dir.path()).unwrap();
@@ -615,7 +615,7 @@ mod tests {
     fn only_a_system_in_the_store_can_become_a_generation() {
         let dir = machine(&[&hash('a')]);
         let error = add(dir.path(), Path::new("/home/me/system")).unwrap_err();
-        assert!(error.contains("isn't in /store"), "{error}");
+        assert!(error.contains("isn't in /wrath/store"), "{error}");
     }
 
     #[test]
@@ -663,21 +663,18 @@ mod tests {
         let root = dir.path();
         // `b` uses `c`; `a` uses `d`; `e` nothing uses.
         for (system, uses) in [(hash('b'), hash('c')), (hash('a'), hash('d'))] {
-            let path = root.join("store").join(&system).join("sw");
-            fs::write(path, format!("/store/{uses}/bin/tool\n")).unwrap();
+            let path = root.join("wrath/store").join(&system).join("sw");
+            fs::write(path, format!("/wrath/store/{uses}/bin/tool\n")).unwrap();
         }
         for name in [hash('c'), hash('d'), hash('e')] {
-            fs::create_dir_all(root.join("store").join(name)).unwrap();
+            fs::create_dir_all(root.join("wrath/store").join(name)).unwrap();
         }
         assert_eq!(remove(root, &[1], Duration::ZERO).unwrap(), 3);
-        let left: BTreeSet<String> = fs::read_dir(root.join("store"))
+        let left: BTreeSet<String> = fs::read_dir(root.join("wrath/store"))
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(
-            left,
-            BTreeSet::from([hash('b'), hash('c'), ".system".to_owned()])
-        );
+        assert_eq!(left, BTreeSet::from([hash('b'), hash('c')]));
         assert!(
             remove(root, &[2], Duration::ZERO)
                 .unwrap_err()
@@ -690,9 +687,9 @@ mod tests {
         let dir = machine(&[&hash('a')]);
         let root = dir.path();
         // Copied in for a switch that hasn't made it a generation yet.
-        fs::create_dir_all(root.join("store").join(hash('f'))).unwrap();
+        fs::create_dir_all(root.join("wrath/store").join(hash('f'))).unwrap();
         assert_eq!(remove(root, &[], Duration::from_secs(3600)).unwrap(), 0);
-        assert!(root.join("store").join(hash('f')).exists());
+        assert!(root.join("wrath/store").join(hash('f')).exists());
         assert_eq!(remove(root, &[], Duration::ZERO).unwrap(), 1);
     }
 
@@ -719,19 +716,19 @@ mod tests {
     fn installing_copies_what_the_system_needs_and_makes_it_the_first_generation() {
         let dir = machine(&[&hash('a')]);
         let from = dir.path();
-        let system = from.join("store").join(hash('a'));
+        let system = from.join("wrath/store").join(hash('a'));
         fs::write(
             system.join("sw"),
-            format!("/store/{}/bin/tool\n", hash('b')),
+            format!("/wrath/store/{}/bin/tool\n", hash('b')),
         )
         .unwrap();
         for name in [hash('b'), hash('c')] {
-            fs::create_dir_all(from.join("store").join(name)).unwrap();
+            fs::create_dir_all(from.join("wrath/store").join(name)).unwrap();
         }
         let target = tempfile::tempdir().unwrap();
-        let inside = PathBuf::from(format!("/store/{}", hash('a')));
+        let inside = PathBuf::from(format!("/wrath/store/{}", hash('a')));
         copy_onto(from, &inside, target.path()).unwrap();
-        let store = target.path().join("store");
+        let store = target.path().join("wrath/store");
         assert!(store.join(hash('a')).join("etc/wrath/model-hash").is_file());
         assert!(store.join(hash('b')).is_dir());
         assert!(!store.join(hash('c')).exists(), "nothing uses c");

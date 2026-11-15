@@ -105,7 +105,7 @@ pub fn disks(storage: &Value) -> Disks {
         .copied()
         .filter(|mount| {
             let path = text(mount, "path");
-            path == "/" || path == "/store" || path.starts_with("/store/") || path == state
+            path == "/" || path == "/wrath" || path.starts_with("/wrath/") || path == state
         })
         .collect();
     let mut fstab: String = filesystems.iter().map(|mount| line(mount, "")).collect();
@@ -202,7 +202,7 @@ mod tests {
     fn a_field_with_spaces_keeps_its_place_in_fstab() {
         assert_eq!(field("/mnt/my disk"), "/mnt/my\\040disk");
         assert_eq!(field("a\tb\\c"), "a\\011b\\134c");
-        assert_eq!(field("/store"), "/store");
+        assert_eq!(field("/wrath/store"), "/wrath/store");
     }
 
     /// A root erased at every boot on one encrypted disk, as in the install scenario.
@@ -216,7 +216,7 @@ mod tests {
                 {"device": "/dev/mapper/main0-system", "format": "btrfs",
                  "options": ["subvol=@keep"], "path": "/keep"},
                 {"device": "/dev/mapper/main0-system", "format": "btrfs",
-                 "options": ["subvol=@store"], "path": "/store"},
+                 "options": ["subvol=@wrath"], "path": "/wrath"},
             ],
             "partitions": [
                 {"device": 0, "disk": "main", "encrypt": false, "label": "main0-esp"},
@@ -255,7 +255,7 @@ mod tests {
             disks(&storage()).initrd_fstab,
             "none /sysroot tmpfs mode=755,size=1G,x-systemd.after=cryptsetup.target 0 0\n\
              /dev/mapper/main0-system /sysroot/keep btrfs subvol=@keep 0 0\n\
-             /dev/mapper/main0-system /sysroot/store btrfs subvol=@store 0 0\n"
+             /dev/mapper/main0-system /sysroot/wrath btrfs subvol=@wrath 0 0\n"
         );
     }
 

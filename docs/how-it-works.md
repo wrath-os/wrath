@@ -113,17 +113,17 @@ step it does it again to each package in seconds instead of building everything 
 
 ### The store
 
-A finished package goes into `/store` under a name made from a hash of what it contains:
+A finished package goes into `/wrath/store` under a name made from a hash of what it contains:
 
 ```text
-/store/d548c53eb6e631cf43328ef13bc3e841ae741852-jq-1.8.1/
+/wrath/store/d548c53eb6e631cf43328ef13bc3e841ae741852-jq-1.8.1/
 ├── bin/jq
 └── lib/libjq.so.1 -> ...
 ```
 
-On a wrath system the store is `/store`. On a machine that doesn't run wrath, it's
+On a wrath system the store is `/wrath/store`. On a machine that doesn't run wrath, it's
 `build/work/store` in the wrath checkout, which builds and the programs `wrath run` starts see
-as `/store`.
+as `/wrath/store`.
 
 The hash covers every file, its permissions and every directory, with the package's own path
 masked out. The same contents always land at the same path, so building something twice costs
@@ -164,7 +164,7 @@ A generation is a built system: one directory in the store that holds or links e
 machine needs.
 
 ```text
-/store/9a2ef0f8...-system/
+/wrath/store/9a2ef0f8...-system/
 ├── bin/            # every program, linked from the packages
 ├── etc/            # what goes in /etc
 ├── kernel, initrd  # what boots it
@@ -172,28 +172,31 @@ machine needs.
 └── activation.json # what switching to it does
 ```
 
-Generations are numbered in `/store/.system/generations`, and `current` points at the one the
-machine boots by default. `wrath history` lists them, `wrath history 7` shows what changed in
-generation 7, and `wrath rollback` goes back one.
+Generations are numbered in `/wrath/system/generations`, and `current` beside them points at the
+one the machine boots by default. `wrath history` lists them, `wrath history 7` shows what
+changed in generation 7, and `wrath rollback` goes back one.
 
 ## Where things live on a running machine
 
 A conventional distribution keeps everything in `/usr` and changes files there in place. wrath
-keeps everything in `/store`, which nothing changes after the fact, and points at it from a few
-well-known places:
+keeps everything in `/wrath/store`, which nothing changes after the fact, and points at it from
+a few well-known places:
 
 | Path | What it is |
 |---|---|
-| `/store` | every package and generation, read-only |
-| `/store/.system` | the numbered generations and which one is current |
+| `/wrath/store` | every package and generation, read-only |
+| `/wrath/system` | the numbered generations and which one is current |
 | `/run/system` | the running generation |
 | `/run/system-booted` | the generation that booted, which differs from the running one after a live switch |
-| `/run/wrappers/bin` | setuid copies of `sudo`, `su` and friends, made at boot, since nothing in the store is setuid |
-| `/etc` | real files where a program needs to write, and links through `/etc/.system` for the rest |
+| `/run/wrath/wrappers/bin` | setuid copies of `sudo`, `su` and friends, made at boot, since nothing in the store is setuid |
+| `/etc` | real files where a program needs to write, and links through `/etc/.wrath` for the rest |
 | `/bin/sh`, `/usr/bin/env` | the only two paths outside the store that scripts get to assume |
 | `/var`, `/home` | your data, which wrath leaves alone |
 
-`PATH` is `/run/wrappers/bin:/run/system/bin`, and units name programs as
+Everything wrath keeps on disk is under `/wrath`, so a root erased at every boot keeps that one
+directory, and the store holds nothing but packages and systems.
+
+`PATH` is `/run/wrath/wrappers/bin:/run/system/bin`, and units name programs as
 `/run/system/bin/sshd`. `/run/system` is in `/run` on purpose: it's per boot, so after a crash it
 can't point at a half-switched system.
 
@@ -208,7 +211,7 @@ never has to understand a newer system or the other way round. It goes roughly l
 1. Compare the old and new generation's units, and also the packages behind them, so a service
    whose program changed restarts even if its unit file looks the same.
 2. Stop the units that are going away.
-3. Switch `/etc` in one step, by pointing `/etc/.system` at the new generation.
+3. Switch `/etc` in one step, by pointing `/etc/.wrath` at the new generation.
 4. Point `/run/system` at the new generation.
 5. Create users and groups, setuid wrappers, and the directories systemd-tmpfiles is told about.
 6. Reload systemd, restart and reload what changed, and start what's new.
