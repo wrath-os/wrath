@@ -35,6 +35,9 @@ struct Archived {
     archive: String,
     /// The store paths it refers to, other than itself.
     refs: Vec<String>,
+    /// The size of the archive in bytes, or 0 in a trace from before sizes.
+    #[serde(default)]
+    size: u64,
     /// What its dependents' keys read of it. Without one, as in a trace from before listings, the
     /// path is fetched with its trace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,7 +193,7 @@ impl Location {
         Ok(Some(bytes))
     }
 
-    fn shown(&self) -> String {
+    pub fn shown(&self) -> String {
         match self {
             Self::Dir(dir) => dir.display().to_string(),
             Self::Http(url) => url.clone(),
@@ -275,7 +278,7 @@ pub(crate) fn fetch(lab: &Lab, out: &StorePath, rules: &str, fixed: &Path) -> Re
         });
         return Ok(false);
     }
-    for cache in &caches {
+    for cache in caches.iter().filter(|cache| !is_down(cache)) {
         match fetch_from(lab, cache, &trusted, out.hash(), rules, fixed) {
             Ok(true) => return Ok(true),
             Ok(false) => {}
@@ -297,8 +300,13 @@ fn fetch_from(
     fs::create_dir_all(&scratch).map_err(with_path(&scratch))?;
     let partial = scratch.join(format!("{key}.{}", std::process::id()));
     for signer in trusted {
-        let Some(bytes) = cache.read(&trace_name(key, rules, &signer.name), &partial)? else {
-            continue;
+        let bytes = match cache.read(&trace_name(key, rules, &signer.name), &partial) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => continue,
+            Err(e) => {
+                mark_down(cache, &e);
+                return Ok(false);
+            }
         };
         let signed: Signed = serde_json::from_slice(&bytes)
             .map_err(|e| format!("the trace of {key} by {}: {e}", signer.name))?;
@@ -332,7 +340,6 @@ fn fetch_from(
             )?;
         }
         write_whole(fixed, signed.trace.record.as_bytes())?;
-        eprintln!("  fetched {key}");
         return Ok(true);
     }
     Ok(false)
@@ -353,6 +360,39 @@ fn fetchable_record(lab: &Lab, path: &str) -> PathBuf {
 fn fetchable(lab: &Lab, path: &StorePath) -> Option<Fetchable> {
     let bytes = fs::read(fetchable_record(lab, path.hash())).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+/// The cache that traced `path` and the size of its archive, when it's traced and not in the
+/// store yet.
+pub fn traced(lab: &Lab, path: &StorePath) -> Option<(String, u64)> {
+    if lab.on_host(path).exists() {
+        return None;
+    }
+    fetchable(lab, path).map(|fetchable| (fetchable.cache, fetchable.archived.size))
+}
+
+/// The caches that couldn't be reached this command, which aren't asked again.
+static DOWN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+fn is_down(cache: &Location) -> bool {
+    DOWN.lock()
+        .expect("the caches down are readable")
+        .contains(&cache.shown())
+}
+
+/// Leaves `cache` out for the rest of the command, saying so the first time.
+fn mark_down(cache: &Location, why: &str) {
+    let shown = cache.shown();
+    if DOWN
+        .lock()
+        .expect("the caches down are readable")
+        .insert(shown.clone())
+    {
+        eprintln!(
+            "warning: cache {shown} can't be reached ({why}); \
+             what it has is built instead this time"
+        );
+    }
 }
 
 /// What a cache's trace lists of `path`, when it's traced and not in the store yet.
@@ -407,6 +447,7 @@ pub fn materialize(lab: &Lab, path: &StorePath) -> Result<(), String> {
     fs::create_dir_all(&scratch).map_err(with_path(&scratch))?;
     let partial = scratch.join(format!("{}.{}", path.hash(), std::process::id()));
     let cache = Location::parse(&fetchable.cache);
+    eprintln!("  fetch  {}", path.name().unwrap_or(path.hash()));
     unpack(
         lab,
         &cache,
@@ -589,6 +630,7 @@ pub fn push(lab: &Lab, cache: &Location, signer: &SigningKeyFile) -> Result<Push
                 path.to_owned(),
                 Archived {
                     archive: sha256_of(&archive)?,
+                    size: fs::metadata(&archive).map_err(with_path(&archive))?.len(),
                     refs,
                     listing: Some(Listing::of(&lab.on_host(&StorePath::from_hash(path)))?),
                 },
@@ -708,10 +750,14 @@ mod tests {
         assert!(!fresh.on_host(&path).exists());
         assert!(has_dir(&fresh, &path, "bin").unwrap());
         assert!(!has_dir(&fresh, &path, "lib").unwrap());
+        let archive = dir.path().join("cache").join(archive_name(PATH));
+        let size = fs::metadata(archive).unwrap().len();
+        assert_eq!(traced(&fresh, &path), Some((cache.shown(), size)));
         materialize(&fresh, &path).unwrap();
         let file = fresh.work.join("store").join(PATH).join("bin/hello");
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
         assert!(!fetchable_record(&fresh, PATH).exists());
+        assert_eq!(traced(&fresh, &path), None);
     }
 
     #[test]
@@ -814,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_over_http_gives_a_build_says_what_it_lacks_and_fails_on_anything_else() {
+    fn a_cache_over_http_gives_a_build_says_what_it_lacks_and_is_left_out_on_anything_else() {
         let dir = tempfile::tempdir().unwrap();
         let built = lab_with(&dir.path().join("built"), PATH);
         let key = SigningKeyFile::generate("home").unwrap();
@@ -833,8 +879,10 @@ mod tests {
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
 
         let broken = Location::parse(&serve(dir.path().join("cache"), Some(500)));
-        let error = fetch_from(&fresh, &broken, &trusted, missing, rules, &fixed).unwrap_err();
-        assert!(error.ends_with(": 500"), "{error}");
+        // A cache that answers with an error is left out for the rest of the command.
+        assert!(!fetch_from(&fresh, &broken, &trusted, missing, rules, &fixed).unwrap());
+        assert!(is_down(&broken));
+        assert!(!is_down(&cache));
     }
 
     #[test]

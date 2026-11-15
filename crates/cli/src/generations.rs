@@ -83,6 +83,89 @@ fn encrypted_secrets(model: &Model) -> Result<BTreeMap<String, Vec<u8>>, String>
         .collect()
 }
 
+/// Prints what getting to `model` takes: what would be fetched from each cache and what would be
+/// built. Asking the caches, which only traces answer, can't fail the plan; it says why instead.
+pub fn print_takes(model: &Model) {
+    if crate::cache::offline() || !crate::known::recipes_here() {
+        return;
+    }
+    let takes = crate::places::grapes().and_then(|grapes| {
+        let value = serde_json::from_str(&model.canonical()).map_err(|e| e.to_string())?;
+        wrath_build::graph::system_takes(&grapes, &crate::places::work(), &value)
+    });
+    match takes {
+        Ok(takes) => {
+            if let Some(line) = takes_line(&takes, crate::cache::name_of) {
+                println!("{line}");
+            }
+        }
+        Err(e) => crate::style::warning(&format!("can't tell what it would build: {e}")),
+    }
+}
+
+/// What `takes` says, naming each cache by `name_of` where it is, when there's anything to say.
+fn takes_line(
+    takes: &wrath_build::graph::Takes,
+    name_of: impl Fn(&str) -> String,
+) -> Option<String> {
+    let fetched: Vec<String> = takes
+        .fetch
+        .iter()
+        .enumerate()
+        .map(|(n, (cache, (count, bytes)))| {
+            let count = if n == 0 {
+                crate::counted(*count, "path")
+            } else {
+                count.to_string()
+            };
+            let sized = if *bytes > 0 {
+                format!(" ({})", size(*bytes))
+            } else {
+                String::new()
+            };
+            format!("{count} from {}{sized}", name_of(cache))
+        })
+        .collect();
+    let mut parts = Vec::new();
+    if !fetched.is_empty() {
+        parts.push(format!("fetch {}", fetched.join(" and ")));
+    }
+    if !takes.build.is_empty() {
+        let names: Vec<&str> = takes.build.iter().take(5).map(String::as_str).collect();
+        let more = takes.build.len().saturating_sub(names.len());
+        let rest = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
+        parts.push(format!(
+            "build {} ({}{rest})",
+            takes.build.len(),
+            names.join(", ")
+        ));
+    }
+    (!parts.is_empty()).then(|| format!("to get there: {}", parts.join(", ")))
+}
+
+/// `bytes` as people read sizes, such as `40 MB` or `1.2 GB`.
+fn size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1000 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1000.0;
+    let mut unit = 0;
+    while value >= 1000.0 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if value < 10.0 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
+    }
+}
+
 /// Builds `model` into a generation with wrath's own builder, from grapes' recipes, and returns
 /// where it is. Packages without a recipe are left out, with a warning.
 pub fn build_generation(model: &Model, test: bool) -> Result<PathBuf, String> {
@@ -360,6 +443,7 @@ fn planned(
             plan.summary(5)
         ),
     }
+    print_takes(model);
     if !confirmed(yes, "switch to it?")? {
         return Ok(None);
     }
@@ -1025,6 +1109,42 @@ fn days_since_epoch(date: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_system_takes_says_what_comes_from_each_cache_and_what_is_built() {
+        use wrath_build::graph::Takes;
+        let name_of = |url: &str| {
+            if url == "http://h" {
+                "home".to_owned()
+            } else {
+                url.to_owned()
+            }
+        };
+        let line = |takes: &Takes| takes_line(takes, name_of);
+        assert_eq!(line(&Takes::default()), None);
+        let mut takes = Takes {
+            fetch: BTreeMap::from([
+                ("http://h".to_owned(), (12, 40_400_000)),
+                ("/srv/c".to_owned(), (1, 0)),
+            ]),
+            ..Takes::default()
+        };
+        assert_eq!(
+            line(&takes).unwrap(),
+            "to get there: fetch 1 path from /srv/c and 12 from home (40 MB)"
+        );
+        takes.build = (1..=7).map(|n| format!("p{n}")).collect();
+        assert!(
+            line(&takes)
+                .unwrap()
+                .ends_with(", build 7 (p1, p2, p3, p4, p5 and 2 more)"),
+            "{:?}",
+            line(&takes)
+        );
+        assert_eq!(size(999), "999 B");
+        assert_eq!(size(1_250_000), "1.2 MB");
+        assert_eq!(size(3_400_000_000), "3.4 GB");
+    }
 
     #[test]
     fn an_image_goes_once_the_store_no_longer_has_its_system() {

@@ -11,7 +11,7 @@ fn agent() -> &'static ureq::Agent {
     AGENT.get_or_init(|| {
         ureq::Agent::config_builder()
             .http_status_as_error(false)
-            .timeout_connect(Some(Duration::from_secs(30)))
+            .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_global(Some(Duration::from_secs(600)))
             .build()
             .into()

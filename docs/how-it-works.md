@@ -162,6 +162,15 @@ needs no trust. A package the cache doesn't have is built as usual. Only what ru
 the store: what built it stays a few lines in the cache's trace, unless something has to be built
 with it here.
 
+A plan says what getting there takes, asking the caches for traces and nothing else:
+
+```text
+to get there: fetch 122 paths from home (458 MB), build 1 (wrath)
+```
+
+A cache that can't be reached is said once and left out for the rest of the command, and what it
+has is built instead. `--offline` asks no cache at all.
+
 Only a system's configuration trusts keys. A project can list a cache by its `url`, and what it
 holds is fetched when a key the command trusts signed it. For one command, `--cache URL` and
 `--cache-key KEY` add a cache and a key to those the configuration gives.

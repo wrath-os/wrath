@@ -2548,6 +2548,55 @@ pub fn system(
     system_from(&lab, &mut db, &known_packages(&built), model, kept)
 }
 
+/// What building a system would take: the packages that would be built, and for each cache what
+/// would be fetched from it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Takes {
+    pub build: BTreeSet<String>,
+    /// How many store paths, and how many bytes, by the cache they come from.
+    pub fetch: BTreeMap<String, (usize, u64)>,
+}
+
+/// What building the system `model` describes would take, building nothing. Caches are asked
+/// for traces, and nothing else.
+pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Takes, String> {
+    let lab = Lab::new(work);
+    let wanted = system_packages(model);
+    let mut dry = pilot::Dry::of(&lab, repository, &names_of(&wanted))?;
+    let mut ids: BTreeSet<String> = wanted.iter().cloned().collect();
+    for variant in variants(&lab, repository, &dry.loaded, model)? {
+        dry.add(&lab, repository, &variant)?;
+        ids.insert(variant.id.clone());
+    }
+    // What runs, and what builds of what's missing build with.
+    ids.extend(dry.build_deps.iter().cloned());
+    // The seed, say, is in neither when nothing has built yet, and nothing it holds is fetched.
+    let there =
+        |path: &StorePath| lab.on_host(path).exists() || crate::cache::traced(&lab, path).is_some();
+    let present = ids
+        .iter()
+        .filter(|id| dry.built.paths.contains_key(*id) && !dry.missing.contains(*id));
+    let mut paths = BTreeSet::new();
+    for id in present {
+        for path in dry.built.all_output_paths(id).into_iter().filter(there) {
+            paths.extend(chain::traced_closure(&lab, &path)?);
+        }
+    }
+    let mut takes = Takes {
+        build: dry.missing,
+        ..Takes::default()
+    };
+    for (cache, size) in paths
+        .iter()
+        .filter_map(|path| crate::cache::traced(&lab, path))
+    {
+        let (count, bytes) = takes.fetch.entry(cache).or_default();
+        *count += 1;
+        *bytes += size;
+    }
+    Ok(takes)
+}
+
 /// The key every recipe in `repository` has before anything is built, by id.
 pub fn all_keys(repository: &Path, work: &Path) -> Result<BTreeMap<String, String>, String> {
     let lab = Lab::new(work);

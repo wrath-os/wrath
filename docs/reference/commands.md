@@ -12,6 +12,7 @@
 - `--locked`: Write no lock: fail where the configuration's lock or a recipe's would change, as CI wants
 - `--cache <URL>`: A binary cache to fetch builds from before building them: a directory or an http(s) URL
 - `--cache-key <KEY>`: A key whose signature on what a cache holds is trusted, as `wrath cache key` printed it
+- `--offline`: Ask no cache for anything: build what isn't here, and plan without saying what a cache has
 
 ## `wrath status`
 

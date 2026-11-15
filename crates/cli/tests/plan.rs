@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// Runs `wrath` from the repository root, so fixture and module paths are relative to it.
+/// Runs `wrath` from the repository root, so fixture and module paths are relative to it. It asks
+/// no cache, so what a plan says doesn't depend on what this machine has built.
 fn wrath(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_wrath"))
+        .arg("--offline")
         .args(args)
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
         .env("WRATH_GRAPES", grapes())

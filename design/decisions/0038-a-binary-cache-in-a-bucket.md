@@ -146,6 +146,12 @@ that missed the cache builds with it. Fetching jq and ripgrep into a fresh work 
 2.6. A trace from before listings fetches its paths with it, as before. A path whose archive turns
 out missing or wrong only shows when it's needed, and fails the command then.
 
+Then plans say what getting there takes: a dry run works out every key from the store and the
+caches' traces, fetching traces and nothing else, and counts the paths that would come from each
+cache, with the archives' sizes, and the packages that would be built. A system plan from a fresh
+work directory takes about a quarter of a second. A cache that can't be reached is warned about
+once and left out for the rest of the command, and `--offline` asks none.
+
 ## Open
 
 - Who hosts the first public cache, and what it costs: R2 for egress, or a box at home.

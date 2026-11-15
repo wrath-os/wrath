@@ -2694,6 +2694,9 @@ pub(crate) fn begin(
         }
         return Ok(Begun::Built);
     }
+    if DRY.with(std::cell::Cell::get) {
+        return Ok(Begun::Missing);
+    }
     // Only a build runs the seed, so a machine that fetches everything never needs it.
     seed::prepare(lab)?;
     // What it builds with is in the store, though its key only needed what a cache traced of it.
@@ -2958,6 +2961,21 @@ pub(crate) struct Pending {
 pub(crate) enum Begun {
     Built,
     Run(Box<Pending>),
+    /// Neither in the store nor in a cache, in a dry run, which builds nothing.
+    Missing,
+}
+
+thread_local! {
+    static DRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` as a dry run: a package [`begin`] finds neither in the store nor in a cache's trace is
+/// [`Begun::Missing`] instead of built. Traces are still fetched.
+pub(crate) fn dry_run<T>(f: impl FnOnce() -> T) -> T {
+    DRY.with(|dry| dry.set(true));
+    let result = f();
+    DRY.with(|dry| dry.set(false));
+    result
 }
 
 /// Builds `package`: works it out, runs its sandbox, and checks what it made.
@@ -2976,6 +2994,7 @@ fn build_package(
             let outcome = run(lab, &pending)?;
             end(lab, package, *pending, &outcome, built).map(Some)
         }
+        Begun::Missing => Err(format!("`{}` was reached in a dry run", package.id)),
     }
 }
 
@@ -3298,16 +3317,31 @@ fn scan(
 /// Everything `start` needs at run time, going by the paths its files mention, each brought into
 /// the store from the cache that traced it when it isn't there yet.
 pub fn runtime_closure(lab: &Lab, start: &StorePath) -> Result<BTreeSet<StorePath>, String> {
+    closure_with(lab, start, |path| crate::cache::materialize(lab, path))
+}
+
+/// Everything `start` needs at run time, as [`runtime_closure`] finds it, leaving what a cache
+/// only traced out of the store.
+pub(crate) fn traced_closure(lab: &Lab, start: &StorePath) -> Result<BTreeSet<StorePath>, String> {
+    closure_with(lab, start, |_| Ok(()))
+}
+
+fn closure_with(
+    lab: &Lab,
+    start: &StorePath,
+    visit: impl Fn(&StorePath) -> Result<(), String>,
+) -> Result<BTreeSet<StorePath>, String> {
     let mut seen = BTreeSet::new();
     let mut queue = vec![start.clone()];
-    crate::cache::materialize(lab, start)?;
+    visit(start)?;
     while let Some(path) = queue.pop() {
         if !seen.insert(path.clone()) {
             continue;
         }
         for next in references_of(lab, &path)? {
-            crate::cache::materialize(lab, &next)?;
-            if lab.on_host(&next).exists() && !seen.contains(&next) {
+            visit(&next)?;
+            let there = lab.on_host(&next).exists() || crate::cache::traced(lab, &next).is_some();
+            if there && !seen.contains(&next) {
                 queue.push(next);
             }
         }

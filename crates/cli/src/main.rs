@@ -89,6 +89,9 @@ struct Cli {
     /// A key whose signature on what a cache holds is trusted, as `wrath cache key` printed it
     #[arg(long = "cache-key", global = true, value_name = "KEY")]
     cache_keys: Vec<String>,
+    /// Ask no cache for anything: build what isn't here, and plan without saying what a cache has
+    #[arg(long, global = true, conflicts_with = "caches")]
+    offline: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -431,7 +434,9 @@ fn main() -> ExitCode {
         LOCKED.set(true).expect("`--locked` is set once");
         wrath_build::chain::read_only_locks();
     }
-    if let Err(message) = cache::use_caches(&cli.caches, &cli.cache_keys) {
+    if cli.offline {
+        cache::go_offline();
+    } else if let Err(message) = cache::use_caches(&cli.caches, &cli.cache_keys) {
         style::error(&message);
         return ExitCode::FAILURE;
     }
@@ -1517,6 +1522,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
         println!("against {compared} (model {})", &before.hash()[..16]);
     }
     crate::print_plan(&plan);
+    generations::print_takes(&after);
     Ok(ExitCode::SUCCESS)
 }
 

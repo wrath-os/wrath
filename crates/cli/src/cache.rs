@@ -1,7 +1,10 @@
 //! `wrath cache`: the keys that sign what goes into a binary cache, and pushing builds to one.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use wrath_build::cache::{Location, SigningKeyFile, TrustedKey};
 use wrath_build::store::Lab;
@@ -79,27 +82,54 @@ pub fn use_caches(caches: &[String], keys: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether this command asks no cache for anything, as `--offline` says.
+static OFFLINE: AtomicBool = AtomicBool::new(false);
+
+/// The names configurations give caches, by where each one is, for saying where things come from.
+static NAMES: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+/// Makes this command ask no cache for anything, whatever the configuration lists.
+pub fn go_offline() {
+    OFFLINE.store(true, Ordering::Relaxed);
+}
+
+pub fn offline() -> bool {
+    OFFLINE.load(Ordering::Relaxed)
+}
+
+/// The name a configuration gives the cache at `shown`, or `shown` itself.
+pub fn name_of(shown: &str) -> String {
+    let names = NAMES.lock().expect("the cache names are readable");
+    names
+        .get(shown)
+        .cloned()
+        .unwrap_or_else(|| shown.to_owned())
+}
+
 /// Makes builds fetch from the caches `evaluation` lists, trusting the keys it gives them. A
 /// cache's directory is relative to the configuration at `config`, when it has one.
 pub fn use_configured(evaluation: &wrath_eval::Evaluation, config: Option<&Path>) {
-    let caches = evaluation.declared_caches().values();
-    let locations = caches
-        .clone()
-        .map(|cache| match (Location::parse(&cache.url), config) {
+    if offline() {
+        return;
+    }
+    let mut names = NAMES.lock().expect("the cache names are writable");
+    let mut locations = Vec::new();
+    let mut trusted = Vec::new();
+    for (name, cache) in evaluation.declared_caches() {
+        let location = match (Location::parse(&cache.url), config) {
             (Location::Dir(dir), Some(config)) if dir.is_relative() => {
                 Location::Dir(config.join(dir))
             }
             (location, _) => location,
-        })
-        .collect();
-    let trusted = caches
-        .flat_map(|cache| &cache.keys)
-        .filter_map(|key| {
+        };
+        names.insert(location.shown(), name.clone());
+        locations.push(location);
+        trusted.extend(cache.keys.iter().filter_map(|key| {
             TrustedKey::parse(key)
                 .inspect_err(|e| crate::style::warning(e))
                 .ok()
-        })
-        .collect();
+        }));
+    }
     wrath_build::cache::use_caches(locations, trusted);
 }
 
