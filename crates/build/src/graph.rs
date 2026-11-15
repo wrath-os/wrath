@@ -2552,7 +2552,8 @@ pub fn system(
 /// would be fetched from it.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Takes {
-    pub build: BTreeSet<String>,
+    /// What would be built, and why.
+    pub build: BTreeMap<String, pilot::Why>,
     /// How many store paths, and how many bytes, by the cache they come from.
     pub fetch: BTreeMap<String, (usize, u64)>,
 }
@@ -2568,33 +2569,97 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
         dry.add(&lab, repository, &variant)?;
         ids.insert(variant.id.clone());
     }
-    // What runs, and what builds of what's missing build with.
+    // What runs, and everything but the docs of what builds of what's missing build with.
+    let outputs = |id: &str| {
+        let mut outputs = dry.built.run_outputs(id);
+        if dry.build_deps.contains(id) {
+            outputs.extend(dry.built.output_paths(id));
+        }
+        outputs
+    };
     ids.extend(dry.build_deps.iter().cloned());
-    // The seed, say, is in neither when nothing has built yet, and nothing it holds is fetched.
-    let there =
-        |path: &StorePath| lab.on_host(path).exists() || crate::cache::traced(&lab, path).is_some();
     let present = ids
         .iter()
-        .filter(|id| dry.built.paths.contains_key(*id) && !dry.missing.contains(*id));
+        .filter(|id| dry.built.paths.contains_key(*id) && !dry.missing.contains_key(*id));
     let mut paths = BTreeSet::new();
     for id in present {
-        for path in dry.built.all_output_paths(id).into_iter().filter(there) {
+        for path in outputs(id).into_iter().filter(|path| there(&lab, path)) {
             paths.extend(chain::traced_closure(&lab, &path)?);
         }
     }
-    let mut takes = Takes {
+    Ok(Takes {
+        fetch: by_cache(&lab, &paths),
         build: dry.missing,
-        ..Takes::default()
-    };
+    })
+}
+
+/// Whether `path` is in the store or traced by a cache. The seed, say, is in neither when nothing
+/// has built yet, and nothing it holds is fetched.
+fn there(lab: &Lab, path: &StorePath) -> bool {
+    lab.on_host(path).exists() || crate::cache::traced(lab, path).is_some()
+}
+
+/// How many of `paths`, and how many bytes of them, would be fetched from each cache.
+fn by_cache<'a>(
+    lab: &Lab,
+    paths: impl IntoIterator<Item = &'a StorePath>,
+) -> BTreeMap<String, (usize, u64)> {
+    let mut fetch: BTreeMap<String, (usize, u64)> = BTreeMap::new();
     for (cache, size) in paths
-        .iter()
-        .filter_map(|path| crate::cache::traced(&lab, path))
+        .into_iter()
+        .filter_map(|path| crate::cache::traced(lab, path))
     {
-        let (count, bytes) = takes.fetch.entry(cache).or_default();
+        let (count, bytes) = fetch.entry(cache).or_default();
         *count += 1;
         *bytes += size;
     }
-    Ok(takes)
+    fetch
+}
+
+/// Where one package would come from, as `wrath cache check` says it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Found {
+    /// In the store already.
+    Here,
+    /// From caches: how many paths and bytes from each.
+    Fetched(BTreeMap<String, (usize, u64)>),
+    /// Built: the packages that lead to one no cache has, starting with this one's dependency,
+    /// empty when no cache has this one itself.
+    Built(Vec<String>),
+}
+
+/// What it takes to have package `id`, with its key when one can be worked out: a package built
+/// with one that would be built has none until that's built.
+pub fn package_check(
+    repository: &Path,
+    work: &Path,
+    id: &str,
+) -> Result<(Option<String>, Found), String> {
+    let lab = Lab::new(work);
+    let dry = pilot::Dry::of(&lab, repository, &[id])?;
+    let key = dry.built.temporary.get(id).map(|key| key.hash().to_owned());
+    let mut chain = Vec::new();
+    let mut at = id;
+    while let Some(pilot::Why::BuiltWith(dep)) = dry.missing.get(at) {
+        chain.push(dep.clone());
+        at = dep;
+    }
+    if dry.missing.contains_key(id) {
+        return Ok((key, Found::Built(chain)));
+    }
+    let mut paths = BTreeSet::new();
+    for output in dry.built.run_outputs(id) {
+        if there(&lab, &output) {
+            paths.extend(chain::traced_closure(&lab, &output)?);
+        }
+    }
+    let fetched = by_cache(&lab, &paths);
+    let found = if fetched.is_empty() {
+        Found::Here
+    } else {
+        Found::Fetched(fetched)
+    };
+    Ok((key, found))
 }
 
 /// The key every recipe in `repository` has before anything is built, by id.

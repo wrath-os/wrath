@@ -2,6 +2,7 @@
 //! where it builds: the store and its records, which are the tool's (0036).
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -50,10 +51,38 @@ pub fn init(root: &Path, grapes: Option<PathBuf>, config: Option<&Path>, named: 
         given: grapes.or_else(|| std::env::var_os(GRAPES_VARIABLE).map(PathBuf::from)),
         config: building_for(config, named, &cwd),
         grapes: OnceLock::new(),
-        work: root.join("build/work"),
+        work: machine_work(root).unwrap_or_else(|| root.join("build/work")),
     };
     // Tests may decide more than once; the first decision stands.
     let _ = PLACES.set(places);
+}
+
+/// Where the builder works on a machine wrath installed, which runs the copy of wrath in its own
+/// store, at `root` inside it: [`MACHINE_WORK`], whose `store` is the machine's store, so what's
+/// fetched or built lands where the system runs it. `None` for a checkout.
+fn machine_work(root: &Path) -> Option<PathBuf> {
+    if !root.starts_with(wrath_build::store::STORE_DIR) {
+        return None;
+    }
+    let work = PathBuf::from(MACHINE_WORK);
+    let store = work.join("store");
+    // Made by whoever can, which is root; a command that only reads needs neither.
+    if fs::symlink_metadata(&store).is_err() && fs::create_dir_all(&work).is_ok() {
+        let _ = std::os::unix::fs::symlink(wrath_build::store::STORE_DIR, &store);
+    }
+    Some(work)
+}
+
+/// Where the builder keeps its records on a machine, beside the store.
+const MACHINE_WORK: &str = "/wrath/work";
+
+/// `path` as the machine's store has it, for one the builder made through [`MACHINE_WORK`]'s link,
+/// so generations name the store and not the link to it.
+pub fn in_store(path: &Path) -> PathBuf {
+    match path.strip_prefix(Path::new(MACHINE_WORK).join("store")) {
+        Ok(rest) => Path::new(wrath_build::store::STORE_DIR).join(rest),
+        Err(_) => path.to_path_buf(),
+    }
 }
 
 /// The configuration whose grapes a command builds from: `config`, unless the command runs in a
@@ -286,6 +315,16 @@ pub(crate) fn checkout_for_tests() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_the_builder_makes_on_a_machine_is_named_by_the_store_it_links_to() {
+        let made = Path::new("/wrath/work/store/abc-sys");
+        assert_eq!(in_store(made), Path::new("/wrath/store/abc-sys"));
+        let here = Path::new("build/work/store/abc-sys");
+        assert_eq!(in_store(here), here);
+        assert_eq!(machine_work(Path::new("/home/me/wrath")), None);
+        assert!(machine_work(Path::new("/wrath/store/x-wrath/share/wrath")).is_some());
+    }
 
     fn set(dir: &Path, api: &str) {
         std::fs::create_dir_all(dir.join("recipes")).unwrap();

@@ -730,6 +730,17 @@ fn main() -> ExitCode {
         Command::Secret { command } => {
             config().and_then(|config| secret::run(command, &config, &modules))
         }
+        Command::Cache {
+            command: command @ cache::CacheCommand::Check { .. },
+        } => {
+            // The caches and keys asked are the configuration's, when there is one.
+            if let Ok(config) = config()
+                && evaluate(&config, &modules).is_none()
+            {
+                return ExitCode::FAILURE;
+            }
+            cache::run(command, &places::work())
+        }
         Command::Cache { command } => cache::run(command, &places::work()),
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),

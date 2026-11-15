@@ -371,6 +371,16 @@ pub fn traced(lab: &Lab, path: &StorePath) -> Option<(String, u64)> {
     fetchable(lab, path).map(|fetchable| (fetchable.cache, fetchable.archived.size))
 }
 
+/// The caches in use, each with whether it couldn't be reached this command.
+pub fn asked() -> Vec<(String, bool)> {
+    let caches = CACHES.lock().expect("the caches in use are readable");
+    caches
+        .0
+        .iter()
+        .map(|cache| (cache.shown(), is_down(cache)))
+        .collect()
+}
+
 /// The caches that couldn't be reached this command, which aren't asked again.
 static DOWN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
@@ -435,7 +445,11 @@ pub(crate) fn pc_files(lab: &Lab, path: &StorePath) -> Result<BTreeMap<String, S
     pc_of(&lab.on_host(path))
 }
 
+/// How many paths, and how many bytes of archives, this command has fetched since it last said.
+static FETCHED: Mutex<(usize, u64)> = Mutex::new((0, 0));
+
 /// Puts `path` into the store from the cache that traced it, when it's traced and not there yet.
+/// On a terminal one line says what's being fetched; `--verbose` gives a line per path.
 pub fn materialize(lab: &Lab, path: &StorePath) -> Result<(), String> {
     if lab.on_host(path).exists() {
         return Ok(());
@@ -447,7 +461,13 @@ pub fn materialize(lab: &Lab, path: &StorePath) -> Result<(), String> {
     fs::create_dir_all(&scratch).map_err(with_path(&scratch))?;
     let partial = scratch.join(format!("{}.{}", path.hash(), std::process::id()));
     let cache = Location::parse(&fetchable.cache);
-    eprintln!("  fetch  {}", path.name().unwrap_or(path.hash()));
+    let name = path.name().unwrap_or(path.hash());
+    let (count, bytes) = *FETCHED.lock().expect("what was fetched is readable");
+    match crate::progress::mode() {
+        crate::progress::Mode::Live => eprint!("\r\x1b[2K  fetch  {name}  ({count} so far)"),
+        crate::progress::Mode::Verbose => eprintln!("  fetch  {name}"),
+        crate::progress::Mode::Lines => {}
+    }
     unpack(
         lab,
         &cache,
@@ -456,8 +476,20 @@ pub fn materialize(lab: &Lab, path: &StorePath) -> Result<(), String> {
         &partial,
     )
     .map_err(|e| format!("cache {}: {e}", cache.shown()))?;
+    *FETCHED.lock().expect("what was fetched is writable") =
+        (count + 1, bytes + fetchable.archived.size);
     let _ = fs::remove_file(fetchable_record(lab, path.hash()));
     Ok(())
+}
+
+/// How many paths, and how many bytes, were fetched since this was last asked, clearing the line
+/// that said what was being fetched.
+pub fn fetched() -> (usize, u64) {
+    let mut fetched = FETCHED.lock().expect("what was fetched is writable");
+    if fetched.0 > 0 && crate::progress::mode() == crate::progress::Mode::Live {
+        eprint!("\r\x1b[2K");
+    }
+    std::mem::take(&mut *fetched)
 }
 
 /// What a store path holds that its dependents' keys read, so a key can be worked out from a

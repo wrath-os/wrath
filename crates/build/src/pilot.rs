@@ -345,11 +345,20 @@ pub(crate) fn build_some(
         .keys()
         .filter(|id| wanted.is_none_or(|wanted| wanted.contains(&id.as_str())));
     for id in asked {
-        for path in built.all_output_paths(id) {
+        for path in built.run_outputs(id) {
             chain::runtime_closure(lab, &path)?;
         }
     }
     Ok((built, seed, packages))
+}
+
+/// Why a package would be built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Why {
+    /// Neither the store nor any cache has it.
+    Nowhere,
+    /// It's built with this package, which would be built.
+    BuiltWith(String),
 }
 
 /// What [`build_some`] would do, found by a dry run that builds nothing: each package's key worked
@@ -359,8 +368,8 @@ pub(crate) struct Dry {
     seed: StorePath,
     /// The packages loaded besides the toolchain.
     pub loaded: Vec<Package>,
-    /// What would be built: what neither the store nor a cache has, and what's built with it.
-    pub missing: BTreeSet<String>,
+    /// What would be built, and why.
+    pub missing: BTreeMap<String, Why>,
     /// What those builds would build with that isn't missing itself.
     pub build_deps: BTreeSet<String>,
     sources: Sources,
@@ -382,7 +391,7 @@ impl Dry {
             built: chain::built_from_seed(&seed),
             seed,
             loaded: Vec::new(),
-            missing: BTreeSet::new(),
+            missing: BTreeMap::new(),
             build_deps: BTreeSet::new(),
             sources: Sources::load(repository)?,
         };
@@ -405,21 +414,25 @@ impl Dry {
         package: &Package,
     ) -> Result<(), String> {
         let deps = package.dep_ids()?;
-        let built_with_missing = deps.iter().any(|dep| self.missing.contains(dep));
-        let builds = built_with_missing || {
-            let begun = chain::dry_run(|| {
-                let (built, sources) = (&mut self.built, &mut self.sources);
-                chain::begin(lab, repository, package, &self.seed, sources, built, false)
-            })?;
-            match begun {
-                chain::Begun::Built => false,
-                chain::Begun::Missing => true,
-                chain::Begun::Run(_) => unreachable!("a dry run runs nothing"),
+        let reason = match deps.iter().find(|dep| self.missing.contains_key(*dep)) {
+            Some(dep) => Some(Why::BuiltWith(dep.clone())),
+            None => {
+                let begun = chain::dry_run(|| {
+                    let (built, sources) = (&mut self.built, &mut self.sources);
+                    chain::begin(lab, repository, package, &self.seed, sources, built, false)
+                })?;
+                match begun {
+                    chain::Begun::Built => None,
+                    chain::Begun::Missing => Some(Why::Nowhere),
+                    chain::Begun::Run(_) => unreachable!("a dry run runs nothing"),
+                }
             }
         };
-        if builds {
-            self.missing.insert(package.id.clone());
-            let present = deps.into_iter().filter(|dep| !self.missing.contains(dep));
+        if let Some(reason) = reason {
+            self.missing.insert(package.id.clone(), reason);
+            let present = deps
+                .into_iter()
+                .filter(|dep| !self.missing.contains_key(dep));
             self.build_deps.extend(present);
         }
         Ok(())
@@ -603,7 +616,7 @@ pub(crate) fn build_and_finish(
         chain::remove(&prepared.build_dir)?;
         fixup::run(lab, package, &prepared, built, package.fixed_up())?;
     }
-    for path in built.all_output_paths(&package.id) {
+    for path in built.run_outputs(&package.id) {
         chain::runtime_closure(lab, &path)?;
     }
     Ok(())

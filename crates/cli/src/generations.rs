@@ -131,24 +131,29 @@ fn takes_line(
         parts.push(format!("fetch {}", fetched.join(" and ")));
     }
     if !takes.build.is_empty() {
-        let names: Vec<&str> = takes.build.iter().take(5).map(String::as_str).collect();
-        let more = takes.build.len().saturating_sub(names.len());
-        let rest = if more > 0 {
-            format!(" and {more} more")
-        } else {
-            String::new()
-        };
-        parts.push(format!(
-            "build {} ({}{rest})",
-            takes.build.len(),
-            names.join(", ")
-        ));
+        // What no cache has, by name; the rest is only built with it.
+        let nowhere: Vec<&str> = takes
+            .build
+            .iter()
+            .filter(|(_, why)| **why == wrath_build::pilot::Why::Nowhere)
+            .map(|(id, _)| id.as_str())
+            .collect();
+        let mut named = nowhere[..nowhere.len().min(5)].join(", ");
+        if nowhere.len() > 5 {
+            named.push_str(&format!(" and {} more", nowhere.len() - 5));
+        }
+        let with = takes.build.len() - nowhere.len();
+        if with > 0 {
+            let them = if nowhere.len() == 1 { "it" } else { "them" };
+            named.push_str(&format!("; {with} built with {them}"));
+        }
+        parts.push(format!("build {} ({named})", takes.build.len()));
     }
     (!parts.is_empty()).then(|| format!("to get there: {}", parts.join(", ")))
 }
 
 /// `bytes` as people read sizes, such as `40 MB` or `1.2 GB`.
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
     if bytes < 1000 {
         return format!("{bytes} B");
@@ -186,9 +191,10 @@ pub fn build_generation(model: &Model, test: bool) -> Result<PathBuf, String> {
         add_test_layer(&mut model);
     }
     let system = wrath_build::graph::system(&repository, &crate::places::work(), &model, &kept)?;
+    crate::cache::say_fetched();
     match missing(&system.skipped, &system.unfound) {
         Some(message) => Err(message),
-        None => Ok(system.path),
+        None => Ok(crate::places::in_store(&system.path)),
     }
 }
 
@@ -1133,13 +1139,24 @@ mod tests {
             line(&takes).unwrap(),
             "to get there: fetch 1 path from /srv/c and 12 from home (40 MB)"
         );
-        takes.build = (1..=7).map(|n| format!("p{n}")).collect();
+        use wrath_build::pilot::Why;
+        takes.build = (1..=7).map(|n| (format!("p{n}"), Why::Nowhere)).collect();
+        takes
+            .build
+            .insert("app".into(), Why::BuiltWith("p1".into()));
+        let built = line(&takes).unwrap();
+        assert!(
+            built.ends_with(", build 8 (p1, p2, p3, p4, p5 and 2 more; 1 built with them)"),
+            "{built}"
+        );
+        takes.build = BTreeMap::from([
+            ("glibc".into(), Why::Nowhere),
+            ("zlib".into(), Why::BuiltWith("glibc".into())),
+        ]);
         assert!(
             line(&takes)
                 .unwrap()
-                .ends_with(", build 7 (p1, p2, p3, p4, p5 and 2 more)"),
-            "{:?}",
-            line(&takes)
+                .ends_with(", build 2 (glibc; 1 built with it)")
         );
         assert_eq!(size(999), "999 B");
         assert_eq!(size(1_250_000), "1.2 MB");

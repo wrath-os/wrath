@@ -152,6 +152,15 @@ cache, with the archives' sizes, and the packages that would be built. A system 
 work directory takes about a quarter of a second. A cache that can't be reached is warned about
 once and left out for the rest of the command, and `--offline` asks none.
 
+Then the rest of the first list. A plan names what no cache has and counts what's built only
+because it builds with that; `wrath cache check PKG` follows one package. Fetching shows one line
+on a terminal and a total when it's done, and only programs and libraries of what was asked come
+along, which took a VM's apply from 41 paths to 5. On a machine wrath installed, the builder works
+in `/wrath/work`, whose `store` links to `/wrath/store`, and the `wrath` package carries its own
+source in `share/wrath`, so wrath there has the tree it was built from and finds its key. A cachetest
+VM applied its configuration with jq added, fetched 5 paths (1.7 MB) into its store and switched in
+3.5 seconds.
+
 ## Open
 
 - Who hosts the first public cache, and what it costs: R2 for egress, or a box at home.

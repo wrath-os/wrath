@@ -21,6 +21,11 @@ pub enum CacheCommand {
         #[arg(long)]
         url: Option<String>,
     },
+    /// Say where a package would come from: the store, a cache, or a build, and why
+    Check {
+        /// The package, as `wrath build` names it
+        package: String,
+    },
     /// Push everything built here to a cache, signed, that it doesn't have yet
     Push {
         /// The cache: a directory
@@ -33,6 +38,7 @@ pub enum CacheCommand {
 
 pub fn run(command: CacheCommand, work: &Path) -> Result<ExitCode, String> {
     match command {
+        CacheCommand::Check { package } => check(&package, work),
         CacheCommand::Key { name, file, url } => {
             if file.exists() {
                 return Err(format!("{} is there already", file.display()));
@@ -131,6 +137,59 @@ pub fn use_configured(evaluation: &wrath_eval::Evaluation, config: Option<&Path>
         }));
     }
     wrath_build::cache::use_caches(locations, trusted);
+}
+
+/// Says where `package` would come from, and when it would be built, why.
+fn check(package: &str, work: &Path) -> Result<ExitCode, String> {
+    use wrath_build::graph::Found;
+    let grapes = crate::places::grapes()?;
+    let (key, found) = wrath_build::graph::package_check(&grapes, work, package)?;
+    match key {
+        Some(key) => println!("{package}, key {}", &key[..12.min(key.len())]),
+        None => println!("{package}"),
+    }
+    let asked = wrath_build::cache::asked();
+    // A cache that couldn't be reached may have it all the same.
+    let nowhere = if asked.iter().any(|(_, down)| *down) {
+        "no cache that answered has"
+    } else {
+        "no cache has"
+    };
+    match found {
+        Found::Here => println!("  here already"),
+        Found::Fetched(from) => {
+            for (cache, (count, bytes)) in from {
+                let size = crate::generations::size(bytes);
+                let paths = crate::counted(count, "path");
+                println!("  fetched from {}: {paths} ({size})", name_of(&cache));
+            }
+        }
+        Found::Built(chain) if chain.is_empty() => println!("  built here: {nowhere} it"),
+        Found::Built(chain) => println!(
+            "  built here: it's built with {}, which {nowhere}",
+            chain.join(", which is built with ")
+        ),
+    }
+    if asked.is_empty() {
+        println!("  no cache is listed; a system's configuration lists them under `[caches.NAME]`");
+    }
+    for (cache, down) in asked {
+        let reached = if down { "couldn't be reached" } else { "asked" };
+        match name_of(&cache) {
+            name if name == cache => println!("  {reached}: {cache}"),
+            name => println!("  {reached}: {name} ({cache})"),
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Says how much the command fetched from caches since this was last called, if anything.
+pub fn say_fetched() {
+    let (count, bytes) = wrath_build::cache::fetched();
+    if count > 0 {
+        let size = crate::generations::size(bytes);
+        eprintln!("fetched {} ({size})", crate::counted(count, "path"));
+    }
 }
 
 /// The `[caches]` table a system's configuration trusts `public` with, for a cache at `url`. Without

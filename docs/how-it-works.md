@@ -171,6 +171,14 @@ to get there: fetch 122 paths from home (458 MB), build 1 (wrath)
 A cache that can't be reached is said once and left out for the rest of the command, and what it
 has is built instead. `--offline` asks no cache at all.
 
+Something built that you expected fetched says why: `build 3 (wrath; 2 built with it)` names what
+no cache has and counts what's only built because it builds with that. `wrath cache check PKG`
+goes through one package: its key, whether it's here, what it would fetch from where, or what it
+builds with that no cache has, and which caches were asked.
+
+On a machine wrath installed, fetched paths go straight into `/wrath/store`, beside the system
+that runs them, and the builder keeps its records in `/wrath/work`.
+
 Only a system's configuration trusts keys. A project can list a cache by its `url`, and what it
 holds is fetched when a key the command trusts signed it. For one command, `--cache URL` and
 `--cache-key KEY` add a cache and a key to those the configuration gives.

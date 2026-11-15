@@ -734,10 +734,14 @@ pub struct Built {
 }
 
 impl Built {
-    /// Every output of package `id`, its docs too.
-    pub fn all_output_paths(&self, id: &str) -> Vec<StorePath> {
+    /// What of package `id` runs: its programs and libraries, without its headers or docs.
+    pub fn run_outputs(&self, id: &str) -> Vec<StorePath> {
         match self.outputs.get(id) {
-            Some(outputs) => outputs.values().cloned().collect(),
+            Some(outputs) => outputs
+                .iter()
+                .filter(|(class, _)| matches!(class, split::Class::Out | split::Class::Lib))
+                .map(|(_, path)| path.clone())
+                .collect(),
             None => vec![self.paths[id].clone()],
         }
     }

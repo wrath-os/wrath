@@ -159,6 +159,7 @@ pub fn built(model: &Model, references: &[String]) -> Result<Built, String> {
     let work = crate::places::work();
     let names: Vec<&str> = packages.iter().map(String::as_str).collect();
     let paths = wrath_build::graph::packages(&repository, &work, &names)?;
+    crate::cache::say_fetched();
     Ok(Built {
         packages,
         paths,

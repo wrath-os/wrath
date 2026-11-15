@@ -274,6 +274,16 @@ wrath cache key [OPTIONS] <NAME> <FILE>
 - `<FILE>`: Where to keep the key, which only whoever pushes should be able to read
 - `--url <URL>`: Where machines will fetch from, for the configuration this prints
 
+## `wrath cache check`
+
+Say where a package would come from: the store, a cache, or a build, and why
+
+```text
+wrath cache check [OPTIONS] <PACKAGE>
+```
+
+- `<PACKAGE>`: The package, as `wrath build` names it
+
 ## `wrath cache push`
 
 Push everything built here to a cache, signed, that it doesn't have yet
