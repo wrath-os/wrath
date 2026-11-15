@@ -12,6 +12,7 @@ use std::io;
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
+use crate::caches::{CACHES, DeclaredCache};
 use crate::diag::Diagnostic;
 use crate::fs::ConfigFs;
 use crate::path::OptionPath;
@@ -61,6 +62,8 @@ pub(crate) struct Loaded {
     pub role: Option<String>,
     /// Sources by name, from `[sources]` in its local files.
     pub sources: BTreeMap<String, DeclaredSource>,
+    /// Caches by name, from `[caches]` in its local files.
+    pub caches: BTreeMap<String, DeclaredCache>,
     /// The platform the starting file chooses.
     pub platform: Platform,
 }
@@ -86,6 +89,7 @@ pub(crate) fn load(
         files: Vec::new(),
         seen: HashMap::new(),
         declared: BTreeMap::new(),
+        caches: BTreeMap::new(),
         pending: Vec::new(),
         trees: HashMap::new(),
         diagnostics: Vec::new(),
@@ -129,6 +133,7 @@ pub(crate) fn load(
         diagnostics,
         role,
         sources: loader.declared,
+        caches: loader.caches,
         platform: loader.platform,
     }
 }
@@ -143,6 +148,7 @@ struct Loader<'a> {
     /// has one.
     seen: HashMap<(Option<String>, String), Option<usize>>,
     declared: BTreeMap<String, DeclaredSource>,
+    caches: BTreeMap<String, DeclaredCache>,
     /// Includes from sources, loaded once every local file is, with the root they configure.
     pending: Vec<(Include, OptionPath)>,
     /// The files of each source fetched so far, or `None` when it couldn't be.
@@ -317,6 +323,22 @@ impl Loader<'_> {
                 Some(name) => self.diagnostics.push(
                     Diagnostic::error(format!("a file from source `{name}` can't declare sources"))
                         .label(Span::new(file, sources.span()), "declared here")
+                        .note("help: declare it in the configuration that includes this file"),
+                ),
+            }
+        }
+        if let Some(caches) = table.get_ref().get(CACHES).filter(|_| frame) {
+            match origin {
+                None => crate::caches::declare(
+                    caches,
+                    file,
+                    self.kind,
+                    &mut self.caches,
+                    &mut self.diagnostics,
+                ),
+                Some(name) => self.diagnostics.push(
+                    Diagnostic::error(format!("a file from source `{name}` can't declare caches"))
+                        .label(Span::new(file, caches.span()), "declared here")
                         .note("help: declare it in the configuration that includes this file"),
                 ),
             }

@@ -271,6 +271,7 @@ wrath cache key [OPTIONS] <NAME> <FILE>
 
 - `<NAME>`: The key's name, which a cache files what it signs under, such as `home-1`
 - `<FILE>`: Where to keep the key, which only whoever pushes should be able to read
+- `--url <URL>`: Where machines will fetch from, for the configuration this prints
 
 ## `wrath cache push`
 

@@ -4,6 +4,7 @@
 //! into one value per option. String values can reference other options and machine facts with
 //! `${path}`. Every value keeps the file and line that set it, for error messages and `why`.
 
+mod caches;
 mod diag;
 mod eval;
 pub mod formats;
@@ -25,6 +26,7 @@ mod walk;
 mod why;
 mod writers;
 
+pub use caches::DeclaredCache;
 pub use diag::{Diagnostic, Label, render};
 pub use eval::{
     Contribution, EvalError, Evaluation, Input, MACHINE_VALUES, Rendered, Resolved, Use, evaluate,

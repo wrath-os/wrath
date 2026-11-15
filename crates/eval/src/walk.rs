@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
+use crate::caches::CACHES;
 use crate::diag::Diagnostic;
 use crate::load::{INCLUDE, LoadedFile, SOURCES};
 use crate::module::ModuleId;
@@ -237,7 +238,7 @@ impl Walker<'_> {
                 continue;
             }
             // Read while loading, with the includes.
-            if top && self.frame && name == SOURCES {
+            if top && self.frame && (name == SOURCES || name == CACHES) {
                 continue;
             }
             // Read while loading, and before the modules load.

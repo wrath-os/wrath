@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
+use crate::caches::DeclaredCache;
 use crate::diag::{self, Diagnostic};
 use crate::fs::ConfigFs;
 use crate::load::{self, ConfigKind, DeclaredSource};
@@ -68,6 +69,7 @@ pub struct Evaluation {
     machines: BTreeMap<String, Machine>,
     requirements: Vec<Requirement>,
     declared_sources: BTreeMap<String, DeclaredSource>,
+    declared_caches: BTreeMap<String, DeclaredCache>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
     patches: BTreeMap<String, String>,
@@ -148,6 +150,11 @@ impl Evaluation {
     /// Where packages and included files come from, by name, as `[sources]` declares them.
     pub fn declared_sources(&self) -> &BTreeMap<String, DeclaredSource> {
         &self.declared_sources
+    }
+
+    /// The caches to fetch builds from, by name, as `[caches]` declares them.
+    pub fn declared_caches(&self) -> &BTreeMap<String, DeclaredCache> {
+        &self.declared_caches
     }
 
     /// What a machine needs to run the configuration, from `[machine.requires]`.
@@ -240,6 +247,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         diagnostics: load_diagnostics,
         role,
         sources: declared_sources,
+        caches: declared_caches,
         platform,
     } = load::load(config, &mut sources, kind, user, role);
     diagnostics.extend(load_diagnostics);
@@ -351,6 +359,7 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         machines,
         requirements: walked.requirements,
         declared_sources,
+        declared_caches,
         modules: resolver
             .rendered
             .into_iter()

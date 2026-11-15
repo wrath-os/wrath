@@ -11,7 +11,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -225,23 +225,54 @@ fn archive_name(path: &str) -> String {
     format!("paths/{path}.tar.zst")
 }
 
-/// The caches builds fetch from and the keys they trust, set once for the command.
-static CACHES: OnceLock<(Vec<Location>, Vec<TrustedKey>)> = OnceLock::new();
+/// The caches builds fetch from and the keys they trust, gathered from the command line and the
+/// configurations the command reads.
+static CACHES: Mutex<(Vec<Location>, Vec<TrustedKey>)> = Mutex::new((Vec::new(), Vec::new()));
 
-/// Makes builds fetch from `caches` what a key in `trusted` signed, before building it.
+/// Makes builds fetch from `caches`, as well as those already in use, what a key in `trusted`
+/// or one trusted already signed, before building it.
 pub fn use_caches(caches: Vec<Location>, trusted: Vec<TrustedKey>) {
-    let _ = CACHES.set((caches, trusted));
+    let mut using = CACHES.lock().expect("the caches in use are readable");
+    for cache in caches {
+        if !using.0.contains(&cache) {
+            using.0.push(cache);
+        }
+    }
+    for key in trusted {
+        if !using.1.iter().any(|known| known.key == key.key) {
+            using.1.push(key);
+        }
+    }
 }
 
 /// Fetches the build at `out` under fix-up `rules` from the caches in use, writing its fix-up
 /// record at `fixed` once every path it made is in the store. Says whether it did. A cache that
 /// can't be read, or holds something that doesn't match its trace, is warned about and skipped.
 pub(crate) fn fetch(lab: &Lab, out: &StorePath, rules: &str, fixed: &Path) -> Result<bool, String> {
-    let Some((caches, trusted)) = CACHES.get() else {
+    let (caches, trusted) = CACHES
+        .lock()
+        .expect("the caches in use are readable")
+        .clone();
+    if caches.is_empty() {
         return Ok(false);
-    };
-    for cache in caches {
-        match fetch_from(lab, cache, trusted, out.hash(), rules, fixed) {
+    }
+    if trusted.is_empty() {
+        static SAID: OnceLock<()> = OnceLock::new();
+        SAID.get_or_init(|| {
+            eprintln!(
+                "warning: no cache key is trusted, so nothing is fetched from {}; a system's \
+                 configuration trusts one with `keys` under `[caches.NAME]`",
+                caches
+                    .iter()
+                    .map(Location::shown)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        });
+        return Ok(false);
+    }
+    for cache in &caches {
+        match fetch_from(lab, cache, &trusted, out.hash(), rules, fixed) {
             Ok(true) => return Ok(true),
             Ok(false) => {}
             Err(message) => eprintln!("warning: cache {}: {message}", cache.shown()),

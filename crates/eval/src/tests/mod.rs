@@ -660,6 +660,7 @@ fn error_required_option_not_set() {
     ");
 }
 
+mod caches;
 mod defaults;
 mod homes;
 mod lists;

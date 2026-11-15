@@ -1,0 +1,45 @@
+---
+source: crates/eval/src/tests/caches.rs
+expression: "err(&[(\"system.toml\",\n\"[system]\\nhostname = \\\"box\\\"\\n\\n[caches.none]\\n\\n[caches.bad]\\nurl = 3\\n\\n\\\n             [caches.typo]\\nurl = \\\"/c\\\"\\nkey = []\\n\\n[caches.short]\\nurl = \\\"/c\\\"\\n\\\n             keys = [\\\"home:abc\\\"]\\n\\n[caches.home]\\nurl = \\\"/c\\\"\\n\",),\n(\"services/other.toml\", \"[caches.home]\\nurl = \\\"/elsewhere\\\"\\n\"),\n(\"services/flat.toml\", \"caches = \\\"/c\\\"\\n\"),])"
+---
+error: a cache's `url` is a string, found integer
+ --> system.toml:7:7
+  |
+7 | url = 3
+  |       ^ expected a directory or an `https://` URL
+
+error: cache `none` has no `url`
+ --> system.toml:4:1
+  |
+4 | [caches.none]
+  | ^^^^^^^^^^^^^ expected `url = "..."`
+
+error: a cache key is `name:` and 64 hex digits
+  --> system.toml:15:9
+   |
+15 | keys = ["home:abc"]
+   |         ^^^^^^^^^^ not a key
+   = help: `wrath cache key` prints a key to paste here
+
+error: unexpected `key` in a cache
+  --> system.toml:11:1
+   |
+11 | key = []
+   | ^^^ only `url` and `keys` belong here
+
+error: `caches` is a table of caches by name
+ --> services/flat.toml:1:10
+  |
+1 | caches = "/c"
+  |          ^^^^ expected `[caches.NAME]`
+  = help: for example `[caches.home]` with `url = "https://..."`
+
+error: cache `home` is defined twice, differently
+  --> system.toml:17:1
+   |
+17 | [caches.home]
+   | ^^^^^^^^^^^^^ once here
+  --> services/other.toml:1:1
+   |
+ 1 | [caches.home]
+   | ^^^^^^^^^^^^^ and again here

@@ -132,10 +132,14 @@ needs no curl, tar or zstd; pushing and recipes' source downloads still run curl
 which only builders need. Not yet: sets, hints, sources, S3, `cache clean`, checking a
 content-addressed path against its own name, and fetching only what's needed.
 
+Then `[caches.NAME]` with `url` and `keys`: a system's configuration lists caches and trusts
+keys, a project lists caches by URL only, and `--cache` and `--cache-key` add to them for one
+command. A cache with no key trusted anywhere is warned about once. `wrath cache key` prints the
+table to paste, with `--url` for where machines fetch from. A project trusts only what the command
+line gives so far; reading the keys of the machine's own configuration for it is still to do.
+
 ## Open
 
-- The configuration's side: where caches and keys are listed, which belongs with the
-  configuration work that comes next.
 - Who hosts the first public cache, and what it costs: R2 for egress, or a box at home.
 - Per-file manifests and content-defined chunks (0018), once paths are fetched often enough for
   the bandwidth to matter.

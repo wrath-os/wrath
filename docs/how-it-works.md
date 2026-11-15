@@ -141,22 +141,28 @@ A machine with a fast sibling doesn't have to build what the sibling built. Make
 machine that builds, and push what it built into a directory:
 
 ```sh
-wrath cache key home-1 ~/.config/wrath/cache-key   # prints home-1:4f0c...
+wrath cache key home-1 ~/.config/wrath/cache-key --url http://builder:8080
 wrath cache push /srv/wrath-cache --key ~/.config/wrath/cache-key
 ```
 
-Any build elsewhere then fetches what it would otherwise build, from the directory or from
-whatever serves it over HTTP, when the key that signed it is one you name:
+`cache key` prints the table a machine trusts the key with. Paste it into the machine's
+configuration, and its builds fetch what they would otherwise build, from the directory or from
+whatever serves it over HTTP:
 
-```sh
-wrath --cache http://builder:8080 --cache-key home-1:4f0c... build
+```toml
+[caches.home-1]
+url = "http://builder:8080"
+keys = ["home-1:4f0c..."]
 ```
 
 Each package is looked up by the same key that decides whether it's built already, so what comes
 from the cache is what this machine would have built. What's fetched is checked against the
 digest the signer gave before it reaches the store, so the cache itself, and whatever serves it,
-needs no trust. A package the cache doesn't have is built as usual. Where caches and keys go in
-the configuration, rather than on the command line, is still to come.
+needs no trust. A package the cache doesn't have is built as usual.
+
+Only a system's configuration trusts keys. A project can list a cache by its `url`, and what it
+holds is fetched when a key the command trusts signed it. For one command, `--cache URL` and
+`--cache-key KEY` add a cache and a key to those the configuration gives.
 
 ## Generations
 

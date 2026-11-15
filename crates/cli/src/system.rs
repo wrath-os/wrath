@@ -109,7 +109,7 @@ fn evaluate_with(
     modules.retain(|module| module.configurations().contains(&kind));
     // A home belongs to whoever runs the command.
     let user = std::env::var("USER").ok();
-    wrath_eval::evaluate(Input {
+    let evaluation = wrath_eval::evaluate(Input {
         sources,
         config,
         kind,
@@ -118,7 +118,9 @@ fn evaluate_with(
         schema: Schema::default(),
         modules: &modules,
     })
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    crate::cache::use_configured(&evaluation, config.dir());
+    Ok(evaluation)
 }
 
 /// Loads every Starlark module (`*.star`) in `dir`.

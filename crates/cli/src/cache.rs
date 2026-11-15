@@ -14,6 +14,9 @@ pub enum CacheCommand {
         name: String,
         /// Where to keep the key, which only whoever pushes should be able to read
         file: PathBuf,
+        /// Where machines will fetch from, for the configuration this prints
+        #[arg(long)]
+        url: Option<String>,
     },
     /// Push everything built here to a cache, signed, that it doesn't have yet
     Push {
@@ -27,13 +30,18 @@ pub enum CacheCommand {
 
 pub fn run(command: CacheCommand, work: &Path) -> Result<ExitCode, String> {
     match command {
-        CacheCommand::Key { name, file } => {
+        CacheCommand::Key { name, file, url } => {
             if file.exists() {
                 return Err(format!("{} is there already", file.display()));
             }
             let key = SigningKeyFile::generate(&name)?;
             write_private(&file, &key.secret())?;
-            println!("{}", key.public());
+            eprintln!(
+                "wrote the key to {}; only whoever pushes should be able to read it. A machine \
+                 fetches what it signs with this in its configuration:\n",
+                file.display()
+            );
+            print!("{}", paste_ready(&name, url.as_deref(), &key.public()));
             Ok(ExitCode::SUCCESS)
         }
         CacheCommand::Push { cache, key } => {
@@ -57,14 +65,9 @@ pub fn run(command: CacheCommand, work: &Path) -> Result<ExitCode, String> {
     }
 }
 
-/// Makes builds fetch from `caches` what a key in `keys` signed.
+/// Makes builds fetch from `caches` what a key in `keys` signed, or a key a configuration this
+/// command reads trusts.
 pub fn use_caches(caches: &[String], keys: &[String]) -> Result<(), String> {
-    if caches.is_empty() {
-        return Ok(());
-    }
-    if keys.is_empty() {
-        return Err("`--cache` needs a `--cache-key` to trust what it holds".into());
-    }
     let trusted = keys
         .iter()
         .map(|key| TrustedKey::parse(key))
@@ -74,6 +77,44 @@ pub fn use_caches(caches: &[String], keys: &[String]) -> Result<(), String> {
         trusted,
     );
     Ok(())
+}
+
+/// Makes builds fetch from the caches `evaluation` lists, trusting the keys it gives them. A
+/// cache's directory is relative to the configuration at `config`, when it has one.
+pub fn use_configured(evaluation: &wrath_eval::Evaluation, config: Option<&Path>) {
+    let caches = evaluation.declared_caches().values();
+    let locations = caches
+        .clone()
+        .map(|cache| match (Location::parse(&cache.url), config) {
+            (Location::Dir(dir), Some(config)) if dir.is_relative() => {
+                Location::Dir(config.join(dir))
+            }
+            (location, _) => location,
+        })
+        .collect();
+    let trusted = caches
+        .flat_map(|cache| &cache.keys)
+        .filter_map(|key| {
+            TrustedKey::parse(key)
+                .inspect_err(|e| crate::style::warning(e))
+                .ok()
+        })
+        .collect();
+    wrath_build::cache::use_caches(locations, trusted);
+}
+
+/// The `[caches]` table a system's configuration trusts `public` with, for a cache at `url`. Without
+/// one, the line for it is there to fill in, and the configuration says it's missing until then.
+fn paste_ready(name: &str, url: Option<&str>, public: &str) -> String {
+    let url = match url {
+        Some(url) => format!("url = {}", toml_string(url)),
+        None => "# url = \"https://...\"   where machines fetch from".to_owned(),
+    };
+    format!("[caches.{name}]\n{url}\nkeys = [{}]\n", toml_string(public))
+}
+
+fn toml_string(text: &str) -> String {
+    toml_edit::Value::from(text).to_string().trim().to_owned()
 }
 
 fn write_private(file: &Path, text: &str) -> Result<(), String> {
@@ -86,4 +127,24 @@ fn write_private(file: &Path, text: &str) -> Result<(), String> {
         .open(file)
         .and_then(|mut opened| opened.write_all(text.as_bytes()))
         .map_err(|e| format!("{}: {e}", file.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_key_prints_the_table_a_machine_trusts_it_with() {
+        let key = SigningKeyFile::generate("home-1").unwrap();
+        let block = paste_ready("home-1", Some("https://cache.lan/\"x\""), &key.public());
+        let table: toml_edit::DocumentMut = block.parse().unwrap();
+        let cache = &table["caches"]["home-1"];
+        assert_eq!(cache["url"].as_str(), Some("https://cache.lan/\"x\""));
+        assert_eq!(cache["keys"][0].as_str(), Some(key.public().as_str()));
+
+        let without = paste_ready("home-1", None, &key.public());
+        let table: toml_edit::DocumentMut = without.parse().unwrap();
+        assert!(table["caches"]["home-1"].get("url").is_none());
+        assert!(without.contains("# url = "), "{without}");
+    }
 }
