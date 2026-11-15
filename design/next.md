@@ -249,6 +249,16 @@ refuses any write to the configuration's lock or a recipe's; a package's search 
 declarations are in its own unresolved key, so dependents see them however the dependency got
 into their view; syncthing has a recipe; four recipes propagate what their headers include.
 
+A third, short round on those: all four happier. The NixOS user calls strip fixed properly but
+won't move without a cache and overlays; the fleet engineer finds `--locked` sound; the Bazel
+engineer finds the search path keying sound and now wants scheduling most; the newcomer likes
+one `--locked` and `clean` reclaiming images. What they found, fixed the same night: with locks
+only read, a pin in another recipe's lock was accepted for this one, so `dev lint --locked`
+missed a lock lacking it; the error blamed a pinned grapes even in a checkout; `-o` linked an
+image that `clean` could then remove, so it copies an image now. Left for the next world
+rebuild: `STRIP` doesn't reset what it read between files, harmless since `strip` refuses a file
+it can't open anyway.
+
 ## Order
 
 Each step leaves something usable, and the format changes land in one world rebuild:
