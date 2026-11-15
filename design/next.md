@@ -228,25 +228,26 @@ they still want, most asked first:
   machine. The keys it needs are in place.
 - **Scheduling.** A fixed number of builds with a fixed `NPROC` each; no jobserver, no memory or
   pressure gating, no longest path first (section 2's recommendation, not built).
-- **`strip` from the host** is outside every key. It should come from the seed, which means
-  running it in the sandbox.
 - **`replaces` and the other escape hatches** (section 6 and 7). Patching openssl for everything
   still means forking grapes.
 - **Variants are copy-paste.** gtk4-gir repeats gtk4's recipe to flip one option and builds GTK
   twice; a build of a styled recipe also styles at plan time, fetching its source.
-- **`--locked` per command.** Only `check` and `dev lint` have it; one flag for every command
-  that could write a lock.
-- **Plans write locks in a checkout.** Said per recipe now, but a CI wants it refused by default.
-- **The unresolved key** misses search paths that requirement-brought dependencies declare, so a
-  plan can say nothing rebuilds when something does.
-- **Smaller:** `syncthing` has a module and no recipe (`fixtures/configs/secrets` fails to check);
-  a typo'd group still becomes a new group; `tier` and `platform` keep their names; grapes has
-  no CI to run `dev lint --locked`.
+- **Plans write locks in a checkout** unless given `--locked`. Said per recipe; whether the
+  default should flip is open.
+- **Smaller:** a typo'd group still becomes a new group; `tier` and `platform` keep their
+  names; grapes has no CI to run `dev lint --locked`.
 
 Fixed from the review the same night: a build's key now has what it runs with (the wrapper's flags,
 the script around the recipe's, the sandbox's setup), which `BUILD_RULES` covered by hand; boot
 packages' keys have the settle step's digest; the newcomer's gaps in the recipes guide and the
 first apply after installing; an unknown package a module adds names the module.
+
+Fixed later that night: `strip` runs at the end of each build, in its sandbox, with the build's own
+binutils, and only on ELF files, so it's in the key and fix-ups use no host tool (a world
+rebuild, 386 packages in 50 minutes, none failed); `--locked` is one flag for every command, and
+refuses any write to the configuration's lock or a recipe's; a package's search path
+declarations are in its own unresolved key, so dependents see them however the dependency got
+into their view; syncthing has a recipe; four recipes propagate what their headers include.
 
 ## Order
 
