@@ -370,8 +370,8 @@ pub(crate) struct Dry {
     pub loaded: Vec<Package>,
     /// What would be built, and why.
     pub missing: BTreeMap<String, Why>,
-    /// What those builds would build with that isn't missing itself.
-    pub build_deps: BTreeSet<String>,
+    /// What those builds would build with, which comes into the store before they run.
+    pub build_closure: BTreeSet<StorePath>,
     sources: Sources,
 }
 
@@ -392,7 +392,7 @@ impl Dry {
             seed,
             loaded: Vec::new(),
             missing: BTreeMap::new(),
-            build_deps: BTreeSet::new(),
+            build_closure: BTreeSet::new(),
             sources: Sources::load(repository)?,
         };
         let all = toolchain
@@ -414,26 +414,33 @@ impl Dry {
         package: &Package,
     ) -> Result<(), String> {
         let deps = package.dep_ids()?;
-        let reason = match deps.iter().find(|dep| self.missing.contains_key(*dep)) {
-            Some(dep) => Some(Why::BuiltWith(dep.clone())),
+        let (reason, closure) = match deps.iter().find(|dep| self.missing.contains_key(*dep)) {
+            // Built after what's missing, with what of its dependencies is here or fetched.
+            Some(dep) => {
+                let present = deps
+                    .iter()
+                    .filter(|dep| {
+                        self.built.paths.contains_key(*dep) && !self.missing.contains_key(*dep)
+                    })
+                    .map(String::as_str);
+                let closure = chain::build_closure(&self.built, &self.seed, &package.id, present)?;
+                (Some(Why::BuiltWith(dep.clone())), closure)
+            }
             None => {
                 let begun = chain::dry_run(|| {
                     let (built, sources) = (&mut self.built, &mut self.sources);
                     chain::begin(lab, repository, package, &self.seed, sources, built, false)
                 })?;
                 match begun {
-                    chain::Begun::Built => None,
-                    chain::Begun::Missing => Some(Why::Nowhere),
+                    chain::Begun::Built => (None, BTreeSet::new()),
+                    chain::Begun::Missing(closure) => (Some(Why::Nowhere), closure),
                     chain::Begun::Run(_) => unreachable!("a dry run runs nothing"),
                 }
             }
         };
         if let Some(reason) = reason {
             self.missing.insert(package.id.clone(), reason);
-            let present = deps
-                .into_iter()
-                .filter(|dep| !self.missing.contains_key(dep));
-            self.build_deps.extend(present);
+            self.build_closure.extend(closure);
         }
         Ok(())
     }

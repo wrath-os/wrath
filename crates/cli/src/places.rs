@@ -68,6 +68,8 @@ fn machine_work(root: &Path) -> Option<PathBuf> {
     let store = work.join("store");
     // Made by whoever can, which is root; a command that only reads needs neither.
     if fs::symlink_metadata(&store).is_err() && fs::create_dir_all(&work).is_ok() {
+        // Only root writes the records machines trust what they fetch by, whatever its umask.
+        let _ = fs::set_permissions(&work, std::os::unix::fs::PermissionsExt::from_mode(0o755));
         let _ = std::os::unix::fs::symlink(wrath_build::store::STORE_DIR, &store);
     }
     Some(work)

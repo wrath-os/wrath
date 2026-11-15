@@ -130,6 +130,15 @@ fn named(sha256: &str) -> StorePath {
     )
 }
 
+/// Whether the seed is unpacked and ready to run, as builds need it.
+pub fn ready(lab: &Lab) -> Result<bool, String> {
+    let seed = path(lab)?;
+    Ok(lab
+        .work
+        .join(format!("seed/ready-{}", seed.hash()))
+        .exists())
+}
+
 /// The seed's store path, unpacked and ready to run. Safe to call from several processes.
 pub fn prepare(lab: &Lab) -> Result<StorePath, String> {
     let (sha256, url) = pin(lab)?;

@@ -2554,6 +2554,8 @@ pub fn system(
 pub struct Takes {
     /// What would be built, and why.
     pub build: BTreeMap<String, pilot::Why>,
+    /// Whether those builds would prepare the seed first, which isn't ready here.
+    pub seed: bool,
     /// How many store paths, and how many bytes, by the cache they come from.
     pub fetch: BTreeMap<String, (usize, u64)>,
 }
@@ -2569,27 +2571,26 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
         dry.add(&lab, repository, &variant)?;
         ids.insert(variant.id.clone());
     }
-    // What runs, and everything but the docs of what builds of what's missing build with.
-    let outputs = |id: &str| {
-        let mut outputs = dry.built.run_outputs(id);
-        if dry.build_deps.contains(id) {
-            outputs.extend(dry.built.output_paths(id));
-        }
-        outputs
-    };
-    ids.extend(dry.build_deps.iter().cloned());
+    // What runs, and what the builds of what's missing build with.
     let present = ids
         .iter()
         .filter(|id| dry.built.paths.contains_key(*id) && !dry.missing.contains_key(*id));
-    let mut paths = BTreeSet::new();
+    let mut paths = dry.build_closure.clone();
     for id in present {
-        for path in outputs(id).into_iter().filter(|path| there(&lab, path)) {
+        for path in dry
+            .built
+            .run_outputs(id)
+            .into_iter()
+            .filter(|path| there(&lab, path))
+        {
             paths.extend(chain::traced_closure(&lab, &path)?);
         }
     }
+    let seed = !dry.missing.is_empty() && !crate::seed::ready(&lab)?;
     Ok(Takes {
         fetch: by_cache(&lab, &paths),
         build: dry.missing,
+        seed,
     })
 }
 

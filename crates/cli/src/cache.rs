@@ -128,6 +128,14 @@ pub fn use_configured(evaluation: &wrath_eval::Evaluation, config: Option<&Path>
             }
             (location, _) => location,
         };
+        if let Location::Dir(dir) = &location
+            && !dir.join("traces").is_dir()
+        {
+            crate::style::warning(&format!(
+                "cache {name}: {} holds no traces, so nothing comes from it",
+                dir.display()
+            ));
+        }
         names.insert(location.shown(), name.clone());
         locations.push(location);
         trusted.extend(cache.keys.iter().filter_map(|key| {

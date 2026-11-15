@@ -79,7 +79,16 @@ fn read(
     let file = whole.file;
     only_keys(table, &["url", "keys"], "a cache", file)?;
     let url = match table.get("url").map(|url| (url.get_ref(), url.span())) {
-        Some((DeValue::String(text), _)) => text.to_string(),
+        Some((DeValue::String(text), span)) => {
+            let scheme = text.split_once("://").map(|(scheme, _)| scheme);
+            if scheme.is_some_and(|scheme| !["http", "https", "file"].contains(&scheme)) {
+                return Err(Diagnostic::error(format!(
+                    "wrath can't fetch from `{text}`: a cache is a directory or an `http(s)://` URL"
+                ))
+                .label(Span::new(file, span), "not a directory or an HTTP URL"));
+            }
+            text.to_string()
+        }
         Some((other, span)) => {
             return Err(Diagnostic::error(format!(
                 "a cache's `url` is a string, found {}",

@@ -2556,6 +2556,27 @@ pub(crate) fn rebuild_one(
     build_package(lab, repository, package, seed, sources, built, true)
 }
 
+/// What a build of `id` builds with, given the dependencies `deps`: the seed, and each one's
+/// paths and what they run with, all of which must be in the store before it runs.
+pub(crate) fn build_closure<'a>(
+    built: &Built,
+    seed: &StorePath,
+    id: &str,
+    deps: impl Iterator<Item = &'a str>,
+) -> Result<BTreeSet<StorePath>, String> {
+    let mut closure = BTreeSet::from([seed.clone()]);
+    for dep in deps {
+        let path = built
+            .paths
+            .get(dep)
+            .ok_or_else(|| format!("`{id}` needs `{dep}`, not built before it"))?;
+        closure.insert(path.clone());
+        closure.extend(built.output_paths(dep));
+        closure.extend(built.closures[dep].iter().cloned());
+    }
+    Ok(closure)
+}
+
 /// Works out how to build `package`: its key, sources and view, recorded in `built`. Says when
 /// it's built already, by this process or another.
 pub(crate) fn begin(
@@ -2569,16 +2590,12 @@ pub(crate) fn begin(
 ) -> Result<Begun, String> {
     let listed = package.all_deps()?;
     let deps = with_requirements(lab, package, &listed, built)?;
-    let mut closure = BTreeSet::from([seed.clone()]);
-    for dep in &deps {
-        let path = built
-            .paths
-            .get(&dep.id)
-            .ok_or_else(|| format!("`{}` needs `{}`, not built before it", package.id, dep.id))?;
-        closure.insert(path.clone());
-        closure.extend(built.output_paths(&dep.id));
-        closure.extend(built.closures[&dep.id].iter().cloned());
-    }
+    let closure = build_closure(
+        built,
+        seed,
+        &package.id,
+        deps.iter().map(|dep| dep.id.as_str()),
+    )?;
 
     // Pinned sources are known by their hashes, and a planned package by its lock, so nothing is
     // fetched or styled for a package that's built already.
@@ -2681,7 +2698,13 @@ pub(crate) fn begin(
         },
     );
 
-    let lock = build_lock(lab, &out, &package.id)?;
+    // A dry run takes no lock: it waits for no build, and what another one is making counts as
+    // missing until it's done.
+    let lock = if DRY.with(std::cell::Cell::get) {
+        None
+    } else {
+        Some(build_lock(lab, &out, &package.id)?)
+    };
     let done = lab.work.join("done").join(out.hash());
     let moved = content_addressed(package);
     let fixed = crate::fixup::fixed_record(lab, &out, moved);
@@ -2698,9 +2721,9 @@ pub(crate) fn begin(
         }
         return Ok(Begun::Built);
     }
-    if DRY.with(std::cell::Cell::get) {
-        return Ok(Begun::Missing);
-    }
+    let Some(lock) = lock else {
+        return Ok(Begun::Missing(closure));
+    };
     // Only a build runs the seed, so a machine that fetches everything never needs it.
     seed::prepare(lab)?;
     // What it builds with is in the store, though its key only needed what a cache traced of it.
@@ -2965,8 +2988,9 @@ pub(crate) struct Pending {
 pub(crate) enum Begun {
     Built,
     Run(Box<Pending>),
-    /// Neither in the store nor in a cache, in a dry run, which builds nothing.
-    Missing,
+    /// Neither in the store nor in a cache, in a dry run, which builds nothing; with what its
+    /// build would build with.
+    Missing(BTreeSet<StorePath>),
 }
 
 thread_local! {
@@ -2998,7 +3022,7 @@ fn build_package(
             let outcome = run(lab, &pending)?;
             end(lab, package, *pending, &outcome, built).map(Some)
         }
-        Begun::Missing => Err(format!("`{}` was reached in a dry run", package.id)),
+        Begun::Missing(_) => Err(format!("`{}` was reached in a dry run", package.id)),
     }
 }
 

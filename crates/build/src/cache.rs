@@ -17,6 +17,7 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::http::Object;
 use crate::store::{Lab, StorePath, hex, with_path};
 
 /// One build: the fix-up record its key and rules led to, and the paths it made.
@@ -35,24 +36,36 @@ struct Archived {
     archive: String,
     /// The store paths it refers to, other than itself.
     refs: Vec<String>,
-    /// The size of the archive in bytes, or 0 in a trace from before sizes.
-    #[serde(default)]
+    /// The size of the archive in bytes.
     size: u64,
-    /// What its dependents' keys read of it. Without one, as in a trace from before listings, the
-    /// path is fetched with its trace.
+    /// What its dependents' keys read of it. A trace from before listings has none, and is
+    /// refused: its cache needs pushing to again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     listing: Option<Listing>,
 }
 
-#[derive(Serialize, Deserialize)]
+/// A trace as a cache holds it: the trace's JSON as it was signed, and the signature over those
+/// very bytes, so what's checked is what was sent, whatever fields a later wrath adds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Signed {
-    trace: Trace,
+    trace: String,
     signature: String,
 }
 
-impl Trace {
+/// What a signature covers before the trace, so nothing else signed with the key can pass for a
+/// trace.
+const SIGNED_AS: &[u8] = b"wrath-trace-v1\0";
+
+/// The most a trace may be, in bytes.
+const TRACE_LIMIT: u64 = 16_000_000;
+
+impl Signed {
     fn bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("a trace serializes")
+        [SIGNED_AS, self.trace.as_bytes()].concat()
+    }
+
+    fn trace(&self) -> Result<Trace, String> {
+        serde_json::from_str(&self.trace).map_err(|e| format!("a trace wrath can't read: {e}"))
     }
 }
 
@@ -131,9 +144,13 @@ impl SigningKeyFile {
         )
     }
 
-    fn sign(&self, trace: Trace) -> Signed {
-        let signature = hex(&self.key.sign(&trace.bytes()).to_bytes());
-        Signed { trace, signature }
+    fn sign(&self, trace: &Trace) -> Signed {
+        let mut signed = Signed {
+            trace: serde_json::to_string(trace).expect("a trace serializes"),
+            signature: String::new(),
+        };
+        signed.signature = hex(&self.key.sign(&signed.bytes()).to_bytes());
+        signed
     }
 }
 
@@ -148,11 +165,7 @@ impl TrustedKey {
     fn verifies(&self, signed: &Signed) -> bool {
         from_hex::<64>(&signed.signature)
             .map(|bytes| Signature::from_bytes(&bytes))
-            .is_some_and(|signature| {
-                self.key
-                    .verify_strict(&signed.trace.bytes(), &signature)
-                    .is_ok()
-            })
+            .is_some_and(|signature| self.key.verify_strict(&signed.bytes(), &signature).is_ok())
     }
 }
 
@@ -172,20 +185,29 @@ impl Location {
         }
     }
 
-    /// Fetches `name` into `file`, or says there's no such thing.
-    fn download(&self, name: &str, file: &Path) -> Result<bool, String> {
+    /// Fetches `name`, at most `limit` bytes, into `file`, or says the cache doesn't have it.
+    fn download(&self, name: &str, file: &Path, limit: u64) -> Result<Object, String> {
         match self {
-            Self::Dir(dir) => match fs::copy(dir.join(name), file) {
-                Ok(_) => Ok(true),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-                Err(e) => Err(format!("{}: {e}", dir.join(name).display())),
-            },
-            Self::Http(base) => crate::http::download(&format!("{base}/{name}"), file),
+            Self::Dir(dir) => {
+                let from = dir.join(name);
+                match fs::metadata(&from) {
+                    Ok(meta) if meta.len() > limit => Err(format!(
+                        "{} is larger than the {limit} bytes expected",
+                        from.display()
+                    )),
+                    Ok(_) => fs::copy(&from, file)
+                        .map(|_| Object::Got)
+                        .map_err(with_path(&from)),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Object::Missing),
+                    Err(e) => Err(format!("{}: {e}", from.display())),
+                }
+            }
+            Self::Http(base) => crate::http::object(&format!("{base}/{name}"), file, limit),
         }
     }
 
     fn read(&self, name: &str, scratch: &Path) -> Result<Option<Vec<u8>>, String> {
-        if !self.download(name, scratch)? {
+        if self.download(name, scratch, TRACE_LIMIT)? == Object::Missing {
             return Ok(None);
         }
         let bytes = fs::read(scratch).map_err(with_path(scratch))?;
@@ -299,8 +321,10 @@ fn fetch_from(
     let scratch = lab.work.join("fetching");
     fs::create_dir_all(&scratch).map_err(with_path(&scratch))?;
     let partial = scratch.join(format!("{key}.{}", std::process::id()));
-    for signer in trusted {
-        let bytes = match cache.read(&trace_name(key, rules, &signer.name), &partial) {
+    // A cache files a trace under its signer's name; keys can share one, as an old and a new.
+    let names: BTreeSet<&str> = trusted.iter().map(|key| key.name.as_str()).collect();
+    for name in names {
+        let bytes = match cache.read(&trace_name(key, rules, name), &partial) {
             Ok(Some(bytes)) => bytes,
             Ok(None) => continue,
             Err(e) => {
@@ -308,67 +332,180 @@ fn fetch_from(
                 return Ok(false);
             }
         };
-        let signed: Signed = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("the trace of {key} by {}: {e}", signer.name))?;
-        if !signer.verifies(&signed) || signed.trace.key != key || signed.trace.rules != rules {
-            return Err(format!(
-                "the trace of {key} isn't signed by {} for that key",
-                signer.name
-            ));
-        }
-        for (path, archived) in &signed.trace.paths {
-            let store_path = StorePath::from_hash(path);
-            if lab.on_host(&store_path).exists() {
+        let signed: Signed = match serde_json::from_slice(&bytes) {
+            Ok(signed) => signed,
+            Err(e) => {
+                warn_once(cache, &format!("it holds traces wrath can't read ({e})"));
                 continue;
             }
-            // A path with a listing comes when something runs or builds with it; its dependents'
-            // keys need only the listing and its references.
-            if archived.listing.is_none() {
-                unpack(lab, cache, path, &archived.archive, &partial)?;
+        };
+        if !signed_by(trusted, name, &signed) {
+            warn_once(
+                cache,
+                &format!("it holds traces signed by a key named {name} that isn't trusted"),
+            );
+            continue;
+        }
+        let trace = match signed.trace() {
+            Ok(trace) => trace,
+            Err(e) => {
+                warn_once(cache, &e);
                 continue;
             }
-            let fetchable = Fetchable {
-                cache: cache.shown(),
-                archived: archived.clone(),
-            };
-            let text = serde_json::to_vec(&fetchable).expect("a fetchable serializes");
-            write_whole(&fetchable_record(lab, path), &text)?;
-            let refs: String = archived.refs.iter().map(|r| format!("{r}\n")).collect();
-            write_whole(
-                &crate::chain::references_record(lab, &store_path),
-                refs.as_bytes(),
-            )?;
+        };
+        let refused = if !names_store_paths(&trace) {
+            Some("it holds a trace naming something that isn't a store path".to_owned())
+        } else if trace
+            .paths
+            .values()
+            .any(|archived| archived.listing.is_none())
+        {
+            Some("it holds traces from an older wrath; push to it again".to_owned())
+        } else if trace.key != key || trace.rules != rules {
+            Some(format!(
+                "a trace filed under {key} is signed for another key"
+            ))
+        } else {
+            None
+        };
+        if let Some(why) = refused {
+            warn_once(cache, &why);
+            continue;
         }
-        write_whole(fixed, signed.trace.record.as_bytes())?;
+        let kept = Kept {
+            cache: cache.shown(),
+            signer: name.to_owned(),
+            signed,
+            fixed: fixed.to_path_buf(),
+        };
+        keep(lab, &kept, &trace)?;
         return Ok(true);
     }
     Ok(false)
 }
 
-/// A path traced from a cache and not in the store yet: where it comes from, and what its trace
-/// says of it.
+/// A trace a trusted key signed, kept in the work directory while what it names isn't all in the
+/// store: where it came from, who signed it, the trace as it came, and the fix-up record it led to.
 #[derive(Serialize, Deserialize)]
-struct Fetchable {
+struct Kept {
     cache: String,
-    archived: Archived,
+    signer: String,
+    signed: Signed,
+    fixed: PathBuf,
 }
 
+impl Kept {
+    /// The name it's kept under, its key and rules.
+    fn id(trace: &Trace) -> String {
+        format!("{}-{}", trace.key, trace.rules)
+    }
+
+    fn file(lab: &Lab, id: &str) -> PathBuf {
+        lab.work.join("traces").join(id)
+    }
+
+    fn read(lab: &Lab, id: &str) -> Option<Self> {
+        serde_json::from_slice(&fs::read(Self::file(lab, id)).ok()?).ok()
+    }
+}
+
+/// Keeps the verified `kept` and what it says: each path it names is fetched later, when
+/// something runs or builds with it, and its dependents' keys need only its listing and
+/// references meanwhile.
+fn keep(lab: &Lab, kept: &Kept, trace: &Trace) -> Result<(), String> {
+    let id = Kept::id(trace);
+    write_whole(
+        &Kept::file(lab, &id),
+        &serde_json::to_vec(kept).expect("a trace serializes"),
+    )?;
+    for (path, archived) in &trace.paths {
+        let store_path = StorePath::from_hash(path);
+        if lab.on_host(&store_path).exists() {
+            continue;
+        }
+        write_whole(&fetchable_record(lab, path), id.as_bytes())?;
+        let refs: String = archived.refs.iter().map(|r| format!("{r}\n")).collect();
+        write_whole(
+            &crate::chain::references_record(lab, &store_path),
+            refs.as_bytes(),
+        )?;
+    }
+    write_whole(&kept.fixed, trace.record.as_bytes())
+}
+
+/// Undoes what keeping the trace `id` recorded, for the paths it names that aren't in the store,
+/// so their package counts as neither built nor fetched and is built the next time.
+fn forget(lab: &Lab, id: &str, kept: &Kept) {
+    if let Ok(trace) = kept.signed.trace() {
+        for path in trace.paths.keys() {
+            let store_path = StorePath::from_hash(path);
+            if !lab.on_host(&store_path).exists() {
+                let _ = fs::remove_file(fetchable_record(lab, path));
+                let _ = fs::remove_file(crate::chain::references_record(lab, &store_path));
+            }
+        }
+    }
+    let _ = fs::remove_file(&kept.fixed);
+    let _ = fs::remove_file(Kept::file(lab, id));
+}
+
+/// Where a path traced and not in the store yet says which kept trace names it.
 fn fetchable_record(lab: &Lab, path: &str) -> PathBuf {
     lab.work.join("fetchable").join(path)
 }
 
-fn fetchable(lab: &Lab, path: &StorePath) -> Option<Fetchable> {
-    let bytes = fs::read(fetchable_record(lab, path.hash())).ok()?;
-    serde_json::from_slice(&bytes).ok()
+/// The kept trace that names `path`, and what it says of it, when `path` is traced and not in the
+/// store yet.
+fn fetchable(lab: &Lab, path: &StorePath) -> Option<(String, Kept, Archived)> {
+    if lab.on_host(path).exists() {
+        return None;
+    }
+    let id = fs::read_to_string(fetchable_record(lab, path.hash())).ok()?;
+    let kept = Kept::read(lab, &id)?;
+    let archived = kept.signed.trace().ok()?.paths.remove(path.hash())?;
+    Some((id, kept, archived))
 }
 
 /// The cache that traced `path` and the size of its archive, when it's traced and not in the
 /// store yet.
 pub fn traced(lab: &Lab, path: &StorePath) -> Option<(String, u64)> {
-    if lab.on_host(path).exists() {
-        return None;
+    fetchable(lab, path).map(|(_, kept, archived)| (kept.cache, archived.size))
+}
+
+/// Whether every path `trace` names, and every one they refer to, is a store path's name: a hash
+/// in hex and a name, nothing that could reach outside the store or the work directory.
+fn names_store_paths(trace: &Trace) -> bool {
+    let shaped = |name: &str| {
+        let (hash, rest) = name.split_at(name.len().min(40));
+        let named = match rest.strip_prefix('-') {
+            Some(rest) => !rest.is_empty() && !rest.contains('/'),
+            None => rest.is_empty(),
+        };
+        hash.len() == 40 && hash.bytes().all(|b| b.is_ascii_hexdigit()) && named
+    };
+    trace
+        .paths
+        .iter()
+        .all(|(path, archived)| shaped(path) && archived.refs.iter().all(|r| shaped(r)))
+}
+
+fn signed_by(trusted: &[TrustedKey], name: &str, signed: &Signed) -> bool {
+    trusted
+        .iter()
+        .filter(|key| key.name == name)
+        .any(|key| key.verifies(signed))
+}
+
+/// Says what's wrong with `cache` once a command, however many traces it shows it in.
+fn warn_once(cache: &Location, what: &str) {
+    static WARNED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    if WARNED
+        .lock()
+        .expect("the warnings are writable")
+        .insert(cache.shown())
+    {
+        eprintln!("warning: cache {}: {what}", cache.shown());
     }
-    fetchable(lab, path).map(|fetchable| (fetchable.cache, fetchable.archived.size))
 }
 
 /// The caches in use, each with whether it couldn't be reached this command.
@@ -407,10 +544,7 @@ fn mark_down(cache: &Location, why: &str) {
 
 /// What a cache's trace lists of `path`, when it's traced and not in the store yet.
 fn listing(lab: &Lab, path: &StorePath) -> Option<Listing> {
-    if lab.on_host(path).exists() {
-        return None;
-    }
-    fetchable(lab, path).and_then(|fetchable| fetchable.archived.listing)
+    fetchable(lab, path).and_then(|(_, _, archived)| archived.listing)
 }
 
 /// Whether `path` has a directory at `relative`, from the store or a cache's listing of it. One
@@ -448,19 +582,28 @@ pub(crate) fn pc_files(lab: &Lab, path: &StorePath) -> Result<BTreeMap<String, S
 /// How many paths, and how many bytes of archives, this command has fetched since it last said.
 static FETCHED: Mutex<(usize, u64)> = Mutex::new((0, 0));
 
-/// Puts `path` into the store from the cache that traced it, when it's traced and not there yet.
+/// Puts `path` into the store, when it's traced and not there yet: from the cache that traced it,
+/// or any other in use, as long as a key trusted now signed its trace. A path no cache can give
+/// takes its trace with it: the package is built the next time, and this command fails saying so.
 /// On a terminal one line says what's being fetched; `--verbose` gives a line per path.
 pub fn materialize(lab: &Lab, path: &StorePath) -> Result<(), String> {
-    if lab.on_host(path).exists() {
-        return Ok(());
-    }
-    let Some(fetchable) = fetchable(lab, path) else {
+    let (caches, trusted) = CACHES
+        .lock()
+        .expect("the caches in use are readable")
+        .clone();
+    materialize_from(lab, path, &caches, &trusted)
+}
+
+/// [`materialize`] from `caches`, trusting `trusted`.
+fn materialize_from(
+    lab: &Lab,
+    path: &StorePath,
+    caches: &[Location],
+    trusted: &[TrustedKey],
+) -> Result<(), String> {
+    let Some((id, kept, archived)) = fetchable(lab, path) else {
         return Ok(());
     };
-    let scratch = lab.work.join("fetching");
-    fs::create_dir_all(&scratch).map_err(with_path(&scratch))?;
-    let partial = scratch.join(format!("{}.{}", path.hash(), std::process::id()));
-    let cache = Location::parse(&fetchable.cache);
     let name = path.name().unwrap_or(path.hash());
     let (count, bytes) = *FETCHED.lock().expect("what was fetched is readable");
     match crate::progress::mode() {
@@ -468,18 +611,49 @@ pub fn materialize(lab: &Lab, path: &StorePath) -> Result<(), String> {
         crate::progress::Mode::Verbose => eprintln!("  fetch  {name}"),
         crate::progress::Mode::Lines => {}
     }
-    unpack(
-        lab,
-        &cache,
-        path.hash(),
-        &fetchable.archived.archive,
-        &partial,
-    )
-    .map_err(|e| format!("cache {}: {e}", cache.shown()))?;
-    *FETCHED.lock().expect("what was fetched is writable") =
-        (count + 1, bytes + fetchable.archived.size);
+    if let Err(why) = fetch_path(lab, path, &kept, &archived, caches, trusted) {
+        forget(lab, &id, &kept);
+        return Err(format!(
+            "{name} couldn't be fetched: {why}; what needs it is built the next time instead"
+        ));
+    }
+    *FETCHED.lock().expect("what was fetched is writable") = (count + 1, bytes + archived.size);
     let _ = fs::remove_file(fetchable_record(lab, path.hash()));
     Ok(())
+}
+
+/// Fetches `path`, which `kept` traced as `archived`, from the caches in use.
+fn fetch_path(
+    lab: &Lab,
+    path: &StorePath,
+    kept: &Kept,
+    archived: &Archived,
+    caches: &[Location],
+    trusted: &[TrustedKey],
+) -> Result<(), String> {
+    if !signed_by(trusted, &kept.signer, &kept.signed) {
+        return Err(format!(
+            "no key trusted now signed its trace, which {} did",
+            kept.signer
+        ));
+    }
+    // The cache that traced it first; any other has the same archive under the same digest.
+    let mut order: Vec<&Location> = caches.iter().filter(|cache| !is_down(cache)).collect();
+    order.sort_by_key(|cache| cache.shown() != kept.cache);
+    if order.is_empty() {
+        return Err("no cache is in use to fetch it from".to_owned());
+    }
+    let scratch = lab.work.join("fetching");
+    fs::create_dir_all(&scratch).map_err(with_path(&scratch))?;
+    let partial = scratch.join(format!("{}.{}", path.hash(), std::process::id()));
+    let mut failed = Vec::new();
+    for cache in order {
+        match unpack(lab, cache, path.hash(), archived, &partial) {
+            Ok(()) => return Ok(()),
+            Err(e) => failed.push(format!("{}: {e}", cache.shown())),
+        }
+    }
+    Err(failed.join("; "))
 }
 
 /// How many paths, and how many bytes, were fetched since this was last asked, clearing the line
@@ -568,25 +742,29 @@ fn entries(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
 }
 
 /// Puts the store path `path` from `cache` into the store, unless it's there, checking its
-/// archive is the one with `digest`.
+/// archive is the one `archived` describes. Nothing of a failed attempt stays in the store, and
+/// another command that put it there first is as good.
 fn unpack(
     lab: &Lab,
     cache: &Location,
     path: &str,
-    digest: &str,
+    archived: &Archived,
     partial: &Path,
 ) -> Result<(), String> {
     let target = lab.on_host(&StorePath::from_hash(path));
     if target.exists() {
         return Ok(());
     }
-    if !cache.download(&archive_name(path), partial)? {
-        return Err(format!("it has a trace naming {path}, but not the path"));
+    if cache.download(&archive_name(path), partial, archived.size)? == Object::Missing {
+        return Err(format!("it doesn't have {path}"));
     }
     let actual = sha256_of(partial)?;
-    if actual != digest {
+    if actual != archived.archive {
         let _ = fs::remove_file(partial);
-        return Err(format!("{path} is {actual}, and its trace says {digest}"));
+        return Err(format!(
+            "{path} is {actual}, and its trace says {}",
+            archived.archive
+        ));
     }
     // Unpacked beside where it goes, so moving it there is one rename within the store.
     let unpacked = target.with_extension(format!("fetching{}", std::process::id()));
@@ -600,8 +778,33 @@ fn unpack(
     };
     let unpacked_now = fs::File::open(partial).and_then(unpack_from);
     let _ = fs::remove_file(partial);
-    unpacked_now.map_err(|e| format!("unpacking {path}: {e}"))?;
-    fs::rename(&unpacked, &target).map_err(with_path(&target))
+    // A trusted signer still gives no setuid program: privileges come from a system's wrappers.
+    let moved = unpacked_now
+        .map_err(|e| format!("unpacking {path}: {e}"))
+        .and_then(|()| crate::settle::settle_modes(&unpacked))
+        .and_then(|()| fs::rename(&unpacked, &target).map_err(with_path(&target)));
+    match moved {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            remove_unpacked(&unpacked);
+            if target.exists() { Ok(()) } else { Err(e) }
+        }
+    }
+}
+
+/// Removes a directory unpacking left, read-only directories and all.
+fn remove_unpacked(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(here) = pending.pop() {
+        let _ = fs::set_permissions(&here, fs::Permissions::from_mode(0o700));
+        for (_, full) in entries(&here).unwrap_or_default() {
+            if full.is_dir() && !full.is_symlink() {
+                pending.push(full);
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(dir);
 }
 
 /// What a push did.
@@ -675,14 +878,21 @@ pub fn push(lab: &Lab, cache: &Location, signer: &SigningKeyFile) -> Result<Push
             paths: archived,
         };
         let file = dir.join(trace_name(key, rules, &signer.name));
-        if let Ok(bytes) = fs::read(&file) {
-            let theirs: Option<Signed> = serde_json::from_slice(&bytes).ok();
-            if theirs.is_none_or(|signed| signed.trace != trace) {
+        // One this wrath can't read, from an older format, is replaced; one that reads and says
+        // something else is a build that came out differently, and stays as it was.
+        let theirs = fs::read(&file).ok().and_then(|bytes| {
+            let signed: Signed = serde_json::from_slice(&bytes).ok()?;
+            signed.trace().ok()
+        });
+        match theirs {
+            Some(theirs) if theirs == trace => continue,
+            Some(_) => {
                 pushed.disagreeing.push(key.to_owned());
+                continue;
             }
-            continue;
+            None => {}
         }
-        let signed = serde_json::to_vec(&signer.sign(trace)).expect("a trace serializes");
+        let signed = serde_json::to_vec(&signer.sign(&trace)).expect("a trace serializes");
         write_whole(&file, &signed)?;
         pushed.traces += 1;
     }
@@ -744,12 +954,56 @@ mod tests {
             record: format!("out={PATH}"),
             paths: Default::default(),
         };
-        let mut signed = key.sign(trace);
+        let mut signed = key.sign(&trace);
         assert!(trusted.verifies(&signed));
-        signed.trace.record = "out=someone-elses".into();
-        assert!(!trusted.verifies(&signed));
+        assert_eq!(signed.trace().unwrap(), trace);
+        // The signature covers the bytes as sent: a field added or one changed doesn't pass.
+        let changed = signed
+            .trace
+            .replacen(&format!("out={PATH}"), "out=someone-elses", 1);
+        let added = signed.trace.replacen('{', "{\"extra\":1,", 1);
+        for trace in [changed, added] {
+            signed.trace = trace;
+            assert!(!trusted.verifies(&signed));
+        }
+        // Nor does the same trace signed without what marks it as one.
+        let bare = Signed {
+            signature: hex(&key
+                .key
+                .sign(serde_json::to_string(&trace).unwrap().as_bytes())
+                .to_bytes()),
+            trace: serde_json::to_string(&trace).unwrap(),
+        };
+        assert!(!trusted.verifies(&bare));
         let other = TrustedKey::parse(&SigningKeyFile::generate("x").unwrap().public()).unwrap();
-        assert!(!other.verifies(&key.sign(signed.trace)));
+        assert!(!other.verifies(&key.sign(&trace)));
+    }
+
+    #[test]
+    fn a_trace_names_only_store_paths() {
+        let trace = |path: &str, refs: &[&str]| Trace {
+            key: KEY.into(),
+            rules: "r".into(),
+            record: String::new(),
+            paths: BTreeMap::from([(
+                path.to_owned(),
+                Archived {
+                    archive: String::new(),
+                    refs: refs.iter().map(|r| (*r).to_owned()).collect(),
+                    size: 0,
+                    listing: None,
+                },
+            )]),
+        };
+        assert!(names_store_paths(&trace(PATH, &[PATH, &PATH[..40]])));
+        for bad in [
+            "../../etc",
+            "0123-x",
+            "0123456789abcdef0123456789abcdef01234567-a/b",
+        ] {
+            assert!(!names_store_paths(&trace(bad, &[])), "{bad}");
+            assert!(!names_store_paths(&trace(PATH, &[bad])), "{bad}");
+        }
     }
 
     #[test]
@@ -785,7 +1039,7 @@ mod tests {
         let archive = dir.path().join("cache").join(archive_name(PATH));
         let size = fs::metadata(archive).unwrap().len();
         assert_eq!(traced(&fresh, &path), Some((cache.shown(), size)));
-        materialize(&fresh, &path).unwrap();
+        materialize_from(&fresh, &path, std::slice::from_ref(&cache), &trusted).unwrap();
         let file = fresh.work.join("store").join(PATH).join("bin/hello");
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
         assert!(!fetchable_record(&fresh, PATH).exists());
@@ -840,26 +1094,48 @@ mod tests {
         let fresh = Lab::new(dir.path().join("fresh"));
         let rules = &crate::fixup::rules()[..16];
         let fixed = fresh.work.join("fixed").join(format!("{KEY}-{rules}"));
+        let trust = |keys: &[&SigningKeyFile]| -> Vec<TrustedKey> {
+            keys.iter()
+                .map(|key| TrustedKey::parse(&key.public()).unwrap())
+                .collect()
+        };
 
-        // Another key of the same name doesn't verify it.
+        // Another key of the same name doesn't verify it, and the cache is only passed over.
         let impostor = SigningKeyFile::generate("home").unwrap();
-        let trusted = vec![TrustedKey::parse(&impostor.public()).unwrap()];
-        let error = fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap_err();
-        assert!(error.contains("isn't signed"), "{error}");
+        assert!(!fetch_from(&fresh, &cache, &trust(&[&impostor]), KEY, rules, &fixed).unwrap());
+        assert!(!fixed.exists());
+        // Next to the key that signed it, as when a key is being replaced, it's found.
+        let both = trust(&[&impostor, &key]);
+        assert!(fetch_from(&fresh, &cache, &both, KEY, rules, &fixed).unwrap());
+        // A key no longer trusted when the path is fetched takes the trace with it.
+        let path = StorePath::from_hash(PATH);
+        let error = materialize_from(&fresh, &path, std::slice::from_ref(&cache), &[]).unwrap_err();
+        assert!(error.contains("no key trusted now"), "{error}");
+        assert!(!fixed.exists() && traced(&fresh, &path).is_none());
         // A key of another name finds no trace of its own.
         let stranger = SigningKeyFile::generate("elsewhere").unwrap();
-        let trusted = vec![TrustedKey::parse(&stranger.public()).unwrap()];
-        assert!(!fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
+        assert!(!fetch_from(&fresh, &cache, &trust(&[&stranger]), KEY, rules, &fixed).unwrap());
 
-        // An archive swapped for another is refused when it's fetched, and nothing reaches the
-        // store.
+        // An archive swapped for another is refused when it's fetched, nothing reaches the store,
+        // and the package counts as neither built nor fetched, to be built the next time.
+        let good = dir.path().join("good");
+        fs::create_dir_all(good.join("paths")).unwrap();
         let archive = dir.path().join("cache").join(archive_name(PATH));
+        fs::copy(&archive, good.join(archive_name(PATH))).unwrap();
         fs::write(&archive, b"something else").unwrap();
-        let trusted = vec![TrustedKey::parse(&key.public()).unwrap()];
+        let trusted = trust(&[&key]);
         assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
-        let error = materialize(&fresh, &StorePath::from_hash(PATH)).unwrap_err();
+        let error =
+            materialize_from(&fresh, &path, std::slice::from_ref(&cache), &trusted).unwrap_err();
         assert!(error.contains("its trace says"), "{error}");
+        assert!(error.contains("built the next time"), "{error}");
         assert!(!fresh.work.join("store").join(PATH).exists());
+        assert!(!fixed.exists() && traced(&fresh, &path).is_none());
+        // Another cache with the archive gives it, whichever traced it.
+        assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
+        let caches = [cache.clone(), Location::Dir(good)];
+        materialize_from(&fresh, &path, &caches, &trusted).unwrap();
+        assert!(fresh.on_host(&path).join("bin/hello").exists());
     }
 
     /// Serves the files in `dir` over HTTP, one request per connection, until the test ends;
@@ -906,7 +1182,13 @@ mod tests {
         let missing = "ffffffffffffffffffffffffffffffffffffffff-nothing-1.0";
         assert!(!fetch_from(&fresh, &cache, &trusted, missing, rules, &fixed).unwrap());
         assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
-        materialize(&fresh, &StorePath::from_hash(PATH)).unwrap();
+        materialize_from(
+            &fresh,
+            &StorePath::from_hash(PATH),
+            std::slice::from_ref(&cache),
+            &trusted,
+        )
+        .unwrap();
         let file = fresh.work.join("store").join(PATH).join("bin/hello");
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
 
@@ -945,7 +1227,13 @@ mod tests {
         let fixed = fresh.work.join("fixed").join(format!("{KEY}-{rules}"));
         let trusted = vec![TrustedKey::parse(&key.public()).unwrap()];
         assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
-        materialize(&fresh, &StorePath::from_hash(PATH)).unwrap();
+        materialize_from(
+            &fresh,
+            &StorePath::from_hash(PATH),
+            std::slice::from_ref(&cache),
+            &trusted,
+        )
+        .unwrap();
         let got = fresh.work.join("store").join(PATH);
         let mode_of = |path: &str| fs::symlink_metadata(got.join(path)).unwrap().mode() & 0o7777;
         assert_eq!(mode_of("bin/hello"), 0o555);

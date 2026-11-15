@@ -90,5 +90,9 @@ fn error_bad_caches() {
             "[caches.home]\nurl = \"/elsewhere\"\n"
         ),
         ("services/flat.toml", "caches = \"/c\"\n"),
+        (
+            "services/s3.toml",
+            "[caches.bucket]\nurl = \"s3://bucket\"\n"
+        ),
     ]));
 }

@@ -733,7 +733,8 @@ fn main() -> ExitCode {
         Command::Cache {
             command: command @ cache::CacheCommand::Check { .. },
         } => {
-            // The caches and keys asked are the configuration's, when there is one.
+            // A check reads locks as a plan does, and asks the configuration's caches and keys.
+            wrath_build::chain::planned_locks();
             if let Ok(config) = config()
                 && evaluate(&config, &modules).is_none()
             {

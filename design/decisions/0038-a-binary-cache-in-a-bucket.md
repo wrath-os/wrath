@@ -161,6 +161,23 @@ source in `share/wrath`, so wrath there has the tree it was built from and finds
 VM applied its configuration with jq added, fetched 5 paths (1.7 MB) into its store and switched in
 3.5 seconds.
 
+Then what an adversarial review found. A signature covers the trace's bytes as sent, after
+`wrath-trace-v1\0`, so a field a later wrath adds doesn't break it; every older trace is refused,
+and a cache is pushed to again. A verified trace is kept in the work directory with where it came
+from and who signed it, and a path is fetched only after that key is checked again, from any cache
+in use that has its archive. A path no cache can give takes its trace and fix-up record with it,
+so its package is built the next time instead of failing for good, and `--offline` fetches
+nothing. Keys of one name are all tried, so a key can be replaced. A cache that answers 403
+lacks the object, as a bucket says it; a lost connection or a server's error is tried twice more
+before the cache is left out. Downloads may take as long as their size needs, and no more bytes
+than the trace says. Names in a trace must be store paths, unpacking clears setuid and setgid,
+an interrupted unpack leaves nothing in the store, and two commands fetching the same path both
+succeed. A plan takes no build locks, counts what builds of missing packages build with and
+whether the seed needs preparing, and a cache URL wrath can't fetch from is an error in the
+configuration. Still open from the review: fetching in parallel, outside the lock builds share;
+keys reading through links into `/wrath/store`, which resolve on a machine and not on a builder;
+trust scoped per cache; and normalized archives.
+
 ## Open
 
 - Who hosts the first public cache, and what it costs: R2 for egress, or a box at home.

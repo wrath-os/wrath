@@ -89,9 +89,19 @@ pub fn print_takes(model: &Model) {
     if crate::cache::offline() || !crate::known::recipes_here() {
         return;
     }
+    // Working it out keeps the traces it asks for, in the work directory; one the user can't write,
+    // as a machine's for anyone but root, leaves the line out with a word on why.
+    let work = crate::places::work();
+    if std::fs::create_dir_all(&work).is_err() || !writable(&work) {
+        println!(
+            "to get there: only someone who can write {} can say",
+            work.display()
+        );
+        return;
+    }
     let takes = crate::places::grapes().and_then(|grapes| {
         let value = serde_json::from_str(&model.canonical()).map_err(|e| e.to_string())?;
-        wrath_build::graph::system_takes(&grapes, &crate::places::work(), &value)
+        wrath_build::graph::system_takes(&grapes, &work, &value)
     });
     match takes {
         Ok(takes) => {
@@ -101,6 +111,11 @@ pub fn print_takes(model: &Model) {
         }
         Err(e) => crate::style::warning(&format!("can't tell what it would build: {e}")),
     }
+}
+
+/// Whether this user can make files in `dir`.
+fn writable(dir: &Path) -> bool {
+    tempfile::tempfile_in(dir).is_ok()
 }
 
 /// What `takes` says, naming each cache by `name_of` where it is, when there's anything to say.
@@ -147,7 +162,12 @@ fn takes_line(
             let them = if nowhere.len() == 1 { "it" } else { "them" };
             named.push_str(&format!("; {with} built with {them}"));
         }
-        parts.push(format!("build {} ({named})", takes.build.len()));
+        let seed = if takes.seed {
+            ", preparing the seed first"
+        } else {
+            ""
+        };
+        parts.push(format!("build {} ({named}){seed}", takes.build.len()));
     }
     (!parts.is_empty()).then(|| format!("to get there: {}", parts.join(", ")))
 }

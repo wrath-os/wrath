@@ -1,6 +1,6 @@
 ---
 source: crates/eval/src/tests/caches.rs
-expression: "err(&[(\"system.toml\",\n\"[system]\\nhostname = \\\"box\\\"\\n\\n[caches.none]\\n\\n[caches.bad]\\nurl = 3\\n\\n\\\n             [caches.typo]\\nurl = \\\"/c\\\"\\nkey = []\\n\\n[caches.short]\\nurl = \\\"/c\\\"\\n\\\n             keys = [\\\"home:abc\\\"]\\n\\n[caches.home]\\nurl = \\\"/c\\\"\\n\",),\n(\"services/other.toml\", \"[caches.home]\\nurl = \\\"/elsewhere\\\"\\n\"),\n(\"services/flat.toml\", \"caches = \\\"/c\\\"\\n\"),])"
+expression: "err(&[(\"system.toml\",\n\"[system]\\nhostname = \\\"box\\\"\\n\\n[caches.none]\\n\\n[caches.bad]\\nurl = 3\\n\\n\\\n             [caches.typo]\\nurl = \\\"/c\\\"\\nkey = []\\n\\n[caches.short]\\nurl = \\\"/c\\\"\\n\\\n             keys = [\\\"home:abc\\\"]\\n\\n[caches.home]\\nurl = \\\"/c\\\"\\n\",),\n(\"services/other.toml\", \"[caches.home]\\nurl = \\\"/elsewhere\\\"\\n\"),\n(\"services/flat.toml\", \"caches = \\\"/c\\\"\\n\"),\n(\"services/s3.toml\", \"[caches.bucket]\\nurl = \\\"s3://bucket\\\"\\n\"),])"
 ---
 error: a cache's `url` is a string, found integer
  --> system.toml:7:7
@@ -43,3 +43,9 @@ error: cache `home` is defined twice, differently
    |
  1 | [caches.home]
    | ^^^^^^^^^^^^^ and again here
+
+error: wrath can't fetch from `s3://bucket`: a cache is a directory or an `http(s)://` URL
+ --> services/s3.toml:2:7
+  |
+2 | url = "s3://bucket"
+  |       ^^^^^^^^^^^^^ not a directory or an HTTP URL
