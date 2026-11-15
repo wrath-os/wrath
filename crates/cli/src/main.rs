@@ -157,7 +157,7 @@ enum Command {
         #[arg(num_args = 0..=2, value_name = "GENERATION")]
         generations: Vec<u32>,
     },
-    /// Remove old generations and what only they used
+    /// Remove old generations and what only they used, disk images of systems among it
     Clean {
         /// How many generations before the current one to keep
         #[arg(long, default_value_t = 3)]

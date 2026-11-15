@@ -677,8 +677,46 @@ pub fn clean(keep: usize, yes: bool, raw: bool) -> Result<ExitCode, String> {
                 crate::counted(forgotten, "build")
             );
         }
+        let (images, bytes) = forget_images(&work)?;
+        if images > 0 {
+            println!(
+                "removed {} of systems no longer kept, {} GB",
+                crate::counted(images, "disk image"),
+                bytes / 1_000_000_000
+            );
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Removes the disk images in `work` whose system the store no longer has, and says how many
+/// and how many bytes. An image is named after its system, and goes with it.
+fn forget_images(work: &Path) -> Result<(usize, u64), String> {
+    let images = work.join("images");
+    let Ok(entries) = std::fs::read_dir(&images) else {
+        return Ok((0, 0));
+    };
+    let (mut count, mut bytes) = (0, 0);
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("{}: {e}", images.display()))?
+            .path();
+        let Some(system) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".img"))
+        else {
+            continue;
+        };
+        if work.join("store").join(system).exists() {
+            continue;
+        }
+        let size = path.metadata().map_or(0, |meta| meta.len());
+        std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        count += 1;
+        bytes += size;
+    }
+    Ok((count, bytes))
 }
 
 /// The generations to remove: all but the current one, the running and booted ones, and the `keep`
@@ -975,6 +1013,25 @@ fn days_since_epoch(date: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_goes_once_the_store_no_longer_has_its_system() {
+        let work = tempfile::tempdir().unwrap();
+        assert_eq!(forget_images(work.path()), Ok((0, 0)));
+        let images = work.path().join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        std::fs::create_dir_all(work.path().join("store/aaa-system")).unwrap();
+        std::fs::write(images.join("aaa-system.img"), "kept").unwrap();
+        std::fs::write(images.join("bbb-system.img"), "gone").unwrap();
+        std::fs::write(images.join("notes.txt"), "not an image").unwrap();
+        assert_eq!(forget_images(work.path()), Ok((1, 4)));
+        let mut left: Vec<String> = std::fs::read_dir(&images)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["aaa-system.img", "notes.txt"]);
+    }
 
     #[test]
     fn building_without_recipes_says_where_to_build_from() {

@@ -92,7 +92,7 @@ wrath history [OPTIONS] [GENERATION]...
 
 ## `wrath clean`
 
-Remove old generations and what only they used
+Remove old generations and what only they used, disk images of systems among it
 
 ```text
 wrath clean [OPTIONS]

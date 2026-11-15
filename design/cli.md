@@ -104,7 +104,7 @@ The machine:
 | `wrath history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
 | `wrath rollback [N]` | Back one generation, or to generation N |
 | `wrath build [PKG...]` | Builds the configuration's system without switching, or the packages named, and prints where each is. `--role` builds another of its roles, `--image` a disk image, and `-o PATH` links the result there, and `--check` runs packages' smoke commands and their own tests |
-| `wrath clean` | Removes old generations and what only they used, after showing how much it frees, and what builds made that nothing left uses (`--raw`: all of it) |
+| `wrath clean` | Removes old generations and what only they used, after showing how much it frees, what builds made that nothing left uses (`--raw`: all of it), and disk images of systems it removed |
 
 Packages:
 
