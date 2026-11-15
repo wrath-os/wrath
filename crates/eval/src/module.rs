@@ -181,6 +181,10 @@ pub fn home_path(user: &str, path: &str) -> String {
 /// Where decrypted secrets are on the machine, one file per secret.
 pub const SECRETS_DIR: &str = "/run/wrath/secrets";
 
+/// Where a system's wrappers are on the machine: `bin` holds the programs that run with more
+/// privileges than their callers, which `PATH` names first.
+pub const WRAPPERS_DIR: &str = "/run/wrath/wrappers";
+
 /// Where a home of its own decrypts its secrets, which the user can do without root.
 pub const HOME_SECRETS_DIR: &str = "~/.local/state/wrath/secrets";
 

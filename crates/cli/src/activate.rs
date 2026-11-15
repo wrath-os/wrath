@@ -60,8 +60,7 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
 
 pub(crate) use wrath_build::image::{CURRENT, GENERATIONS};
 
-/// Where the wrappers are, under the root: `bin` links to the current set, on a filesystem of
-/// their own that allows setuid.
+/// Where the wrappers are, under the root: [`wrath_eval::WRAPPERS_DIR`] on the machine.
 const WRAPPERS: &str = "run/wrath/wrappers";
 
 /// Writes a boot loader entry for generations of the system at `root`, with their kernels and
@@ -540,7 +539,7 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
         "-o",
         "mode=755,nodev",
         "wrappers",
-        &format!("/{WRAPPERS}"),
+        wrath_eval::WRAPPERS_DIR,
     ]))?;
     run(&mut Command::new(programs.join("systemd-sysusers")))?;
     if let Some(state) = &state {
@@ -1773,6 +1772,11 @@ mod tests {
 
         switch_etc(&root, Some(&old), &new).unwrap();
         assert!(fs::symlink_metadata(&private).is_err());
+    }
+
+    #[test]
+    fn wrappers_are_made_where_the_machine_looks_for_them() {
+        assert_eq!(format!("/{WRAPPERS}"), wrath_eval::WRAPPERS_DIR);
     }
 
     #[test]

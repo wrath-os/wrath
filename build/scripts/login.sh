@@ -27,7 +27,7 @@ if wait_for "login: " 180; then
         send 'echo written > ~/probe && echo "HOME-WRITE $(cat ~/probe)"'
         send 'echo "MOUNTS $(findmnt -no SOURCE,OPTIONS /home)"'
         send "printf '%s\\n' '$password' | sudo -S -p '' id -un | sed 's/^/SUDO-AS /'"
-        send 'wrath status 2>&1 | grep -q "it matches the configuration" && echo STATUS-MATCHES'
+        send 'wrath --source grapes=/run/system/grapes status 2>&1 | grep -q "it matches the configuration" && echo STATUS-MATCHES'
         send 'echo "SSHD $(systemctl is-active sshd 2>&1)"'
         if wait_for "HOME-WRITE written" 20 && wait_for "MOUNTS " 10 \
             && wait_for "SUDO-AS root" 20 && wait_for "STATUS-MATCHES" 30; then

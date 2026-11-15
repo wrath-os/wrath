@@ -35,8 +35,8 @@ pub use load::{ConfigKind, DeclaredSource, kind_of, roles, starting_file};
 pub use machines::Machine;
 pub use module::{
     Build, ConfigReader, File, HOME_SECRETS_DIR, Home, Module, ModuleId, Output, ReadError,
-    RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, WRATH_SOURCE,
-    Wrapper, home_path, package_source,
+    RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, WRAPPERS_DIR,
+    WRATH_SOURCE, Wrapper, home_path, package_source,
 };
 pub use path::OptionPath;
 pub use platform::{Platform, declared_source, platform};

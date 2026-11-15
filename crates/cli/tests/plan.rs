@@ -688,3 +688,50 @@ fn another_machine_is_planned_for_as_the_role_it_recorded() {
         "{stderr}"
     );
 }
+
+/// Every `/run/wrath/...` path grapes' modules and recipes name, with where it is in grapes.
+fn per_boot_paths_in_grapes() -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut dirs = vec![grapes().join("modules"), grapes().join("recipes")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (at, _) in text.match_indices("/run/wrath/") {
+                let named: String = text[at..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || "/_-.".contains(*c))
+                    .collect();
+                found.push((named, path.display().to_string()));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn grapes_names_per_boot_paths_only_where_activation_makes_them() {
+    let made = [
+        wrath_eval::WRAPPERS_DIR,
+        wrath_eval::SECRETS_DIR,
+        wrath_build::graph::FILLED,
+    ];
+    for (named, file) in per_boot_paths_in_grapes() {
+        assert!(
+            made.iter().any(|dir| Path::new(&named).starts_with(dir)),
+            "{file} names {named}, which activation doesn't make: it makes {made:?}"
+        );
+    }
+    let wrappers = format!("{}/bin", wrath_eval::WRAPPERS_DIR);
+    let base_system = std::fs::read_to_string(grapes().join("modules/base-system.star")).unwrap();
+    assert!(
+        base_system.contains(&format!("PATH={wrappers}:")),
+        "base-system's PATH has no {wrappers}"
+    );
+}
