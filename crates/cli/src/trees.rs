@@ -127,14 +127,56 @@ fn cache() -> PathBuf {
     base.join("wrath/sources")
 }
 
+/// Where GitHub's API is, the one place a GitHub token is sent.
+const GITHUB_API: &str = "https://api.github.com/";
+
+/// A token to read GitHub with, for private repositories: `GH_TOKEN` or `GITHUB_TOKEN`, or else
+/// the one `gh` is logged in with.
+fn github_token() -> Option<&'static str> {
+    static TOKEN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    TOKEN
+        .get_or_init(|| {
+            let given = ["GH_TOKEN", "GITHUB_TOKEN"]
+                .iter()
+                .filter_map(|name| std::env::var(name).ok())
+                .map(|token| token.trim().to_owned())
+                .find(|token| !token.is_empty());
+            given.or_else(|| {
+                let out = std::process::Command::new("gh")
+                    .args(["auth", "token"])
+                    .stderr(std::process::Stdio::null())
+                    .output()
+                    .ok()
+                    .filter(|out| out.status.success())?;
+                let token = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+                (!token.is_empty()).then_some(token)
+            })
+        })
+        .as_deref()
+}
+
 fn download(url: &str, output: &Path) -> Result<(), String> {
-    match wrath_build::http::download(url, output) {
+    let token = url.starts_with(GITHUB_API).then(github_token).flatten();
+    match wrath_build::http::download_with(url, token, output) {
         Ok(true) => Ok(()),
-        Ok(false) => Err(format!(
-            "couldn't download {url}: there's nothing there (404)"
-        )),
+        Ok(false) => Err(nothing_at(url, token.is_some())),
         Err(e) => Err(format!("couldn't download {e}")),
     }
+}
+
+/// What to say when `url` has nothing there, which on GitHub is also how a private repository
+/// looks to someone who can't read it.
+fn nothing_at(url: &str, token: bool) -> String {
+    let mut message = format!("couldn't download {url}: there's nothing there (404)");
+    if url.starts_with(GITHUB_API) || url.starts_with("https://github.com/") {
+        message.push_str(if token {
+            "; if the repository is private, the GitHub token wrath used can't read it"
+        } else {
+            "; if the repository is private, give a token that can read it in GH_TOKEN, or log \
+             in with `gh auth login`"
+        });
+    }
+    message
 }
 
 /// Unpacks the archive at `url` into a new directory in the cache, dropping its top directory.
@@ -195,12 +237,17 @@ fn keep(tree: &Path) -> Result<(PathBuf, String), String> {
     Ok((kept, hash))
 }
 
-/// The archive URL of `origin` at `rev`, when it has one.
-fn archive_of(origin: &Origin, rev: Option<&str>) -> Option<String> {
+/// The archive URL of `origin` at `rev`, when it has one. With a GitHub token it's the API's,
+/// which reads private repositories too; without one it's the public archive, which has no
+/// rate limit.
+fn archive_of(origin: &Origin, rev: Option<&str>, token: bool) -> Option<String> {
+    let rev = rev.unwrap_or("HEAD");
     match origin {
+        Origin::GitHub { owner, repo, .. } if token => {
+            Some(format!("{GITHUB_API}repos/{owner}/{repo}/tarball/{rev}"))
+        }
         Origin::GitHub { owner, repo, .. } => Some(format!(
-            "https://github.com/{owner}/{repo}/archive/{}.tar.gz",
-            rev.unwrap_or("HEAD")
+            "https://github.com/{owner}/{repo}/archive/{rev}.tar.gz"
         )),
         Origin::Archive(url) => Some(url.clone()),
         Origin::Path(_) => None,
@@ -231,7 +278,8 @@ pub fn follow(url: &str) -> Result<(Source, PathBuf), String> {
     let (path, hash) = match &origin {
         Origin::Path(dir) => (dir.clone(), tree_hash(dir)?),
         Origin::GitHub { .. } | Origin::Archive(_) => {
-            let url = archive_of(&origin, rev.as_deref()).ok_or("no archive to fetch")?;
+            let url = archive_of(&origin, rev.as_deref(), github_token().is_some())
+                .ok_or("no archive to fetch")?;
             keep(&unpack(&url)?)?
         }
     };
@@ -256,7 +304,8 @@ pub fn fetch(source: &Source) -> Result<PathBuf, String> {
     if ours && cached.is_dir() {
         return Ok(cached);
     }
-    let url = archive_of(&origin, source.rev.as_deref()).ok_or("no archive to fetch")?;
+    let url = archive_of(&origin, source.rev.as_deref(), github_token().is_some())
+        .ok_or("no archive to fetch")?;
     let (path, hash) = keep(&unpack(&url)?)?;
     if ours && hash != source.hash {
         return Err("its files changed since the lock pinned them".into());
@@ -338,9 +387,23 @@ mod tests {
         );
         let github = origin("github:o/r").unwrap();
         assert_eq!(
-            archive_of(&github, Some("abc123")).unwrap(),
+            archive_of(&github, Some("abc123"), false).unwrap(),
             "https://github.com/o/r/archive/abc123.tar.gz"
         );
+        assert_eq!(
+            archive_of(&github, Some("abc123"), true).unwrap(),
+            "https://api.github.com/repos/o/r/tarball/abc123"
+        );
+    }
+
+    #[test]
+    fn nothing_on_github_says_how_to_read_a_private_repository() {
+        let api = "https://api.github.com/repos/o/r/commits/HEAD";
+        assert!(nothing_at(api, false).ends_with("in GH_TOKEN, or log in with `gh auth login`"));
+        assert!(nothing_at(api, true).ends_with("the GitHub token wrath used can't read it"));
+        let public = "https://github.com/o/r/archive/HEAD.tar.gz";
+        assert!(nothing_at(public, false).contains("GH_TOKEN"));
+        assert!(!nothing_at("https://example.com/a.tar.gz", false).contains("private"));
     }
 
     #[test]

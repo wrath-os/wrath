@@ -175,6 +175,9 @@ platform = { source = "acme" }
 url = "github:acme/platform"
 ```
 
+A source on GitHub can be a private repository: wrath reads it with a token from `GH_TOKEN` or
+`GITHUB_TOKEN`, or the one `gh auth login` keeps, and sends it only to GitHub's API.
+
 A platform of your own changes only the modules: packages still come from grapes' recipes, so
 something built your own way still gets the same packages, and ones you add with recipes of your
 own.
