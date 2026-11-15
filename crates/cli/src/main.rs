@@ -501,6 +501,8 @@ fn main() -> ExitCode {
                 (None, false, Some(host)) => Against::Host(host),
                 (None, false, None) => Against::Running,
             };
+            // A plan reads grapes' locks and fetches nothing to pin what they lack.
+            wrath_build::chain::planned_locks();
             machine().and_then(|config| plan(&config, against, &modules, json))
         }
         Command::Apply {

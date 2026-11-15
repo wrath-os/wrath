@@ -918,28 +918,56 @@ fn pack(from: &Path, names: &[String], skip: &[&str], to: &Path) -> Result<(), S
 /// Where recipes are, in a repository.
 const RECIPES: &str = "recipes";
 
-/// Whether the set's locks are only read, set once for a pinned set: anything not pinned or
-/// recorded in them is then an error, never written.
-static LOCKS_READ_ONLY: OnceLock<bool> = OnceLock::new();
+/// What becomes of what the set's locks lack: pins, and records of what styles make.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Locks {
+    /// Written into them, as in a checkout.
+    Written,
+    /// An error, as with `--locked` or for a pinned set.
+    ReadOnly,
+    /// An error for a plan, which pins nothing and so fetches nothing.
+    Planned,
+}
+
+impl Locks {
+    /// Why what a lock lacks is an error, unless it's written.
+    fn read_only(self) -> Option<&'static str> {
+        match self {
+            Self::Written => None,
+            Self::ReadOnly => Some(
+                "the locks are only read: with `--locked`, or for a pinned grapes, which was \
+                 committed without running `wrath dev lint`; `wrath dev lint` in a checkout of \
+                 grapes brings its locks up to date",
+            ),
+            Self::Planned => Some(
+                "a plan only reads locks; `wrath dev lint`, or building it, brings a checkout's \
+                 up to date",
+            ),
+        }
+    }
+}
+
+/// How the set's locks are treated, set once for the command.
+static LOCKS: OnceLock<Locks> = OnceLock::new();
 
 /// Makes the set's locks read only, for a set that's pinned rather than a checkout.
 pub fn read_only_locks() {
-    let _ = LOCKS_READ_ONLY.set(true);
+    let _ = LOCKS.set(Locks::ReadOnly);
 }
 
-fn locks_read_only() -> bool {
-    LOCKS_READ_ONLY.get().copied().unwrap_or(false)
+/// Makes the set's locks read only for a plan, unless they're read only already.
+pub fn planned_locks() {
+    let _ = LOCKS.set(Locks::Planned);
 }
 
-/// Why a read-only lock that lacks something is an error, for both ways locks are read only.
-const READ_ONLY: &str = "the locks are only read: with `--locked`, or for a pinned grapes, which \
-                         was committed without running `wrath dev lint`; `wrath dev lint` in a \
-                         checkout of grapes brings its locks up to date";
+fn locks() -> Locks {
+    LOCKS.get().copied().unwrap_or(Locks::Written)
+}
 
-/// The error for `url` missing from `lock` while locks are only read.
-fn unpinned(url: &str, lock: &Lock) -> String {
+/// The error for `url` missing from `lock`, which is only read for `why`.
+fn unpinned(url: &str, lock: &Lock, why: &str) -> String {
     format!(
-        "{url} isn't pinned in {} for `{}`, and {READ_ONLY}",
+        "{url} isn't pinned in {} for `{}`, and {why}",
         lock.file.display(),
         lock.id
     )
@@ -1151,8 +1179,8 @@ pub(crate) struct Sources {
     pins: BTreeMap<String, String>,
     /// What each lock pins: each lock, package id and URL.
     pinned: BTreeSet<(PathBuf, String, String)>,
-    /// Whether the locks are only read, as a pinned set's are.
-    read_only: bool,
+    /// What becomes of what the locks lack.
+    locks: Locks,
 }
 
 impl Sources {
@@ -1182,7 +1210,7 @@ impl Sources {
             repository: repository.to_owned(),
             pins,
             pinned,
-            read_only: locks_read_only(),
+            locks: locks(),
         })
     }
 
@@ -1228,8 +1256,8 @@ impl Sources {
         match known {
             // Pinned by another recipe's lock, it's pinned in this one's too, as fetching does.
             Some(hash) if source.sha256.is_none() && !self.holds(lock, &source.url) => {
-                if self.read_only {
-                    return Err(unpinned(&source.url, lock));
+                if let Some(why) = self.locks.read_only() {
+                    return Err(unpinned(&source.url, lock, why));
                 }
                 self.pin(&source.url, &hash, lock)?;
                 Ok(hash)
@@ -1252,8 +1280,8 @@ impl Sources {
             return self.fetch_tree(lab, tree, &source.include);
         }
         let unpinned_here = source.sha256.is_none() && !self.holds(lock, &source.url);
-        if unpinned_here && self.read_only {
-            return Err(unpinned(&source.url, lock));
+        if unpinned_here && let Some(why) = self.locks.read_only() {
+            return Err(unpinned(&source.url, lock, why));
         }
         let (path, hash) = if source.url.starts_with("git+") {
             self.fetch_git(lab, &source.url)?
@@ -1742,9 +1770,9 @@ fn style_one(
         deps: styled.added_deps(unstyled)?,
     };
     if recorded.as_ref() != Some(&made) {
-        if sources.read_only {
+        if let Some(why) = sources.locks.read_only() {
             return Err(format!(
-                "`{}`'s lock doesn't record what its style makes now, and {READ_ONLY}",
+                "`{}`'s lock doesn't record what its style makes now, and {why}",
                 styled.id
             ));
         }
@@ -2876,6 +2904,7 @@ if command -v strip >/dev/null && command -v find >/dev/null && command -v xargs
   xargs -0r chmod u+w < /build/read-only
   find "$OUT" -type f -print0 | ELF=$(printf '\177ELF') LC_ALL=C bash -c '
     while IFS= read -r -d "" file; do
+      magic=
       IFS= read -r -N 4 magic < "$file" || true
       if [ "$magic" = "$ELF" ]; then printf "%s\0" "$file"; fi
     done' | xargs -0r strip --strip-debug 2>/dev/null || true
@@ -5154,7 +5183,7 @@ mod layout_tests {
             .fetch_source(&lab, &source(url.clone()), first)
             .unwrap();
         let mut locked = Sources::load(dir.path()).unwrap();
-        locked.read_only = true;
+        locked.locks = Locks::ReadOnly;
         let error = locked
             .hash_of(&lab, &source(url.clone()), second)
             .unwrap_err();
@@ -5247,10 +5276,10 @@ style(name = "meson", files = ["meson.build"], build = build)
     }
 
     impl Set {
-        fn styled(&self, code: &str, read_only: bool) -> Result<Package, String> {
+        fn styled(&self, code: &str, locks: Locks) -> Result<Package, String> {
             let styles = [style::load("meson.star", code).unwrap()];
             let mut sources = Sources::load(self.dir.path()).unwrap();
-            sources.read_only = read_only;
+            sources.locks = locks;
             let package = load(self.dir.path(), "ap/app.toml").unwrap().remove(0);
             style_one(&self.lab, self.dir.path(), &styles, &mut sources, package)
         }
@@ -5284,7 +5313,7 @@ style(name = "meson", files = ["meson.build"], build = build)
     #[test]
     fn styling_records_what_the_style_made_in_the_lock() {
         let set = set();
-        let styled = set.styled(MESON, false).unwrap();
+        let styled = set.styled(MESON, Locks::Written).unwrap();
         assert!(!styled.planned);
         assert!(styled.script.ends_with("meson setup\n"));
         let made = set.lock()["app"].made().unwrap();
@@ -5296,10 +5325,10 @@ style(name = "meson", files = ["meson.build"], build = build)
     #[test]
     fn a_recorded_recipe_is_planned_without_its_source_with_the_same_key() {
         let set = set();
-        let styled = set.styled(MESON, false).unwrap();
+        let styled = set.styled(MESON, Locks::Written).unwrap();
         let key = set.key(&styled);
         set.lose_source();
-        let planned = set.styled(MESON, false).unwrap();
+        let planned = set.styled(MESON, Locks::Written).unwrap();
         assert!(planned.planned);
         assert!(planned.dep_ids().unwrap().contains(&"meson".to_owned()));
         assert_eq!(set.key(&planned), key);
@@ -5308,10 +5337,10 @@ style(name = "meson", files = ["meson.build"], build = build)
     #[test]
     fn a_style_changed_to_make_the_same_script_is_styled_again_and_keeps_the_key() {
         let set = set();
-        let before = set.styled(MESON, false).unwrap();
+        let before = set.styled(MESON, Locks::Written).unwrap();
         let from = set.lock()["app"].from.clone();
         let changed = format!("{MESON}\n# Reworded.\n");
-        let after = set.styled(&changed, false).unwrap();
+        let after = set.styled(&changed, Locks::Written).unwrap();
         assert!(!after.planned);
         assert_ne!(set.lock()["app"].from, from);
         assert_eq!(set.key(&after), set.key(&before));
@@ -5320,8 +5349,11 @@ style(name = "meson", files = ["meson.build"], build = build)
     #[test]
     fn a_style_that_makes_something_else_changes_the_record_and_the_key() {
         let set = set();
-        let before = set.styled(MESON, false).unwrap();
-        let after = set.styled(&MESON.replace("meson setup", "meson setup -D x=1"), false);
+        let before = set.styled(MESON, Locks::Written).unwrap();
+        let after = set.styled(
+            &MESON.replace("meson setup", "meson setup -D x=1"),
+            Locks::Written,
+        );
         let after = after.unwrap();
         assert_ne!(after.record, before.record);
         assert_ne!(set.key(&after), set.key(&before));
@@ -5330,10 +5362,10 @@ style(name = "meson", files = ["meson.build"], build = build)
     #[test]
     fn a_pinned_set_whose_lock_is_behind_its_styles_is_refused_and_left_as_it_was() {
         let set = set();
-        set.styled(MESON, false).unwrap();
+        set.styled(MESON, Locks::Written).unwrap();
         let lock = fs::read_to_string(set.dir.path().join("recipes/ap/app.lock")).unwrap();
         let error = set
-            .styled(&format!("{MESON}\n# Reworded.\n"), true)
+            .styled(&format!("{MESON}\n# Reworded.\n"), Locks::ReadOnly)
             .unwrap_err();
         assert!(error.contains("doesn't record"), "{error}");
         let after = fs::read_to_string(set.dir.path().join("recipes/ap/app.lock")).unwrap();
@@ -5343,7 +5375,7 @@ style(name = "meson", files = ["meson.build"], build = build)
     #[test]
     fn a_recipe_that_lists_what_its_style_adds_is_styled_again() {
         let set = set();
-        set.styled(MESON, false).unwrap();
+        set.styled(MESON, Locks::Written).unwrap();
         let file = set.dir.path().join("recipes/ap/app.toml");
         let recipe = fs::read_to_string(&file).unwrap();
         let listed = recipe.replace(
@@ -5351,7 +5383,7 @@ style(name = "meson", files = ["meson.build"], build = build)
             "scope = \"runtime\"\ndeps = [\"meson\"]\n",
         );
         fs::write(&file, listed).unwrap();
-        let again = set.styled(MESON, false).unwrap();
+        let again = set.styled(MESON, Locks::Written).unwrap();
         assert!(!again.planned);
         assert_eq!(set.lock()["app"].made().unwrap().deps, Vec::<String>::new());
     }
@@ -5359,9 +5391,19 @@ style(name = "meson", files = ["meson.build"], build = build)
     #[test]
     fn a_pinned_set_never_pins_a_source() {
         let set = set();
-        let error = set.styled(MESON, true).unwrap_err();
+        let error = set.styled(MESON, Locks::ReadOnly).unwrap_err();
         assert!(error.contains("isn't pinned"), "{error}");
         assert!(!set.dir.path().join("recipes/ap/app.lock").exists());
+    }
+
+    #[test]
+    fn a_plan_fetches_and_pins_nothing_and_says_what_brings_the_lock_up_to_date() {
+        let set = set();
+        let error = set.styled(MESON, Locks::Planned).unwrap_err();
+        assert!(error.contains("isn't pinned"), "{error}");
+        assert!(error.contains("a plan only reads locks"), "{error}");
+        assert!(!set.dir.path().join("recipes/ap/app.lock").exists());
+        assert!(!set.lab.work.join("sources").exists());
     }
 }
 
@@ -5388,7 +5430,7 @@ mod tree_record_tests {
         let lab = Lab::new(dir.path().join("work"));
         for _ in 0..2 {
             let mut sources = Sources::load(dir.path()).unwrap();
-            sources.read_only = true;
+            sources.locks = Locks::ReadOnly;
             let package = load(dir.path(), "pr/project.toml").unwrap().remove(0);
             let styled = style_one(&lab, dir.path(), &styles, &mut sources, package).unwrap();
             assert!(!styled.planned);

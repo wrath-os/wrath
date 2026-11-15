@@ -232,8 +232,6 @@ they still want, most asked first:
   still means forking grapes.
 - **Variants are copy-paste.** gtk4-gir repeats gtk4's recipe to flip one option and builds GTK
   twice; a build of a styled recipe also styles at plan time, fetching its source.
-- **Plans write locks in a checkout** unless given `--locked`. Said per recipe; whether the
-  default should flip is open.
 - **Smaller:** a typo'd group still becomes a new group; `tier` and `platform` keep their
   names; grapes has no CI to run `dev lint --locked`.
 
@@ -255,9 +253,9 @@ engineer finds the search path keying sound and now wants scheduling most; the n
 one `--locked` and `clean` reclaiming images. What they found, fixed the same night: with locks
 only read, a pin in another recipe's lock was accepted for this one, so `dev lint --locked`
 missed a lock lacking it; the error blamed a pinned grapes even in a checkout; `-o` linked an
-image that `clean` could then remove, so it copies an image now. Left for the next world
-rebuild: `STRIP` doesn't reset what it read between files, harmless since `strip` refuses a file
-it can't open anyway.
+image that `clean` could then remove, so it copies an image now. Since: `STRIP` resets what it
+read between files, which changes every key, and a plan pins and records what grapes' locks
+lack for itself only, writing nothing.
 
 ## Order
 

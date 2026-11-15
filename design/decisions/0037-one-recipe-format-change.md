@@ -160,9 +160,10 @@ Where the code differs from the above, or settles what it left open:
   recipe's version, style tables, dependencies, sources and own files, so planning sees any
   change that could change the record. A record that still differs when the build styles the
   recipe means the style isn't deterministic, and the build stops; nothing is rewritten then.
-- A checkout writes a missing or stale record when it plans, and says so per recipe. `wrath dev
-  lint` records every recipe; `wrath update` doesn't write records yet. `--locked` is one flag for
-  every command, so no plan or build writes a lock under it either. `wrath dev lint --locked`
+- A checkout writes a missing or stale record or pin when it builds, and says so per recipe;
+  `wrath plan` only reads locks and fetches nothing. `wrath dev lint` records every recipe;
+  `wrath update` doesn't write records yet. `--locked` is one flag for every command, so no
+  build writes a lock under it either, and what one lacks fails. `wrath dev lint --locked`
   styles every recipe and fails on a missing record or pin: it's the check for grapes' CI, which
   doesn't exist yet.
 - Crate hashes come from a project's `Cargo.lock` through the record, so a cargo recipe's lock
