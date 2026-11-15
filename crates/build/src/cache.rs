@@ -6,7 +6,7 @@
 //! each path it made, the digest of its archive and the paths it refers to. A fetched archive
 //! must match the digest a trusted signer gave, so the cache itself needs no trust.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -35,6 +35,10 @@ struct Archived {
     archive: String,
     /// The store paths it refers to, other than itself.
     refs: Vec<String>,
+    /// What its dependents' keys read of it. Without one, as in a trace from before listings, the
+    /// path is fetched with its trace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    listing: Option<Listing>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -305,13 +309,189 @@ fn fetch_from(
             ));
         }
         for (path, archived) in &signed.trace.paths {
-            unpack(lab, cache, path, &archived.archive, &partial)?;
+            let store_path = StorePath::from_hash(path);
+            if lab.on_host(&store_path).exists() {
+                continue;
+            }
+            // A path with a listing comes when something runs or builds with it; its dependents'
+            // keys need only the listing and its references.
+            if archived.listing.is_none() {
+                unpack(lab, cache, path, &archived.archive, &partial)?;
+                continue;
+            }
+            let fetchable = Fetchable {
+                cache: cache.shown(),
+                archived: archived.clone(),
+            };
+            let text = serde_json::to_vec(&fetchable).expect("a fetchable serializes");
+            write_whole(&fetchable_record(lab, path), &text)?;
+            let refs: String = archived.refs.iter().map(|r| format!("{r}\n")).collect();
+            write_whole(
+                &crate::chain::references_record(lab, &store_path),
+                refs.as_bytes(),
+            )?;
         }
         write_whole(fixed, signed.trace.record.as_bytes())?;
         eprintln!("  fetched {key}");
         return Ok(true);
     }
     Ok(false)
+}
+
+/// A path traced from a cache and not in the store yet: where it comes from, and what its trace
+/// says of it.
+#[derive(Serialize, Deserialize)]
+struct Fetchable {
+    cache: String,
+    archived: Archived,
+}
+
+fn fetchable_record(lab: &Lab, path: &str) -> PathBuf {
+    lab.work.join("fetchable").join(path)
+}
+
+fn fetchable(lab: &Lab, path: &StorePath) -> Option<Fetchable> {
+    let bytes = fs::read(fetchable_record(lab, path.hash())).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// What a cache's trace lists of `path`, when it's traced and not in the store yet.
+fn listing(lab: &Lab, path: &StorePath) -> Option<Listing> {
+    if lab.on_host(path).exists() {
+        return None;
+    }
+    fetchable(lab, path).and_then(|fetchable| fetchable.archived.listing)
+}
+
+/// Whether `path` has a directory at `relative`, from the store or a cache's listing of it. One
+/// under a linked directory, which a listing doesn't follow, brings the path into the store.
+pub(crate) fn has_dir(lab: &Lab, path: &StorePath, relative: &str) -> Result<bool, String> {
+    if let Some(listing) = listing(lab, path) {
+        let under_link = relative
+            .match_indices('/')
+            .any(|(at, _)| listing.linked.contains(&relative[..at]));
+        if !under_link {
+            return Ok(listing.dirs.contains(relative));
+        }
+        materialize(lab, path)?;
+    }
+    Ok(lab.on_host(path).join(relative).is_dir())
+}
+
+/// Whether `path` has a file `name` directly in `lib`, from the store or a cache's listing of it.
+pub(crate) fn has_lib_file(lab: &Lab, path: &StorePath, name: &str) -> bool {
+    match listing(lab, path) {
+        Some(listing) => listing.lib.contains(name),
+        None => lab.on_host(path).join("lib").join(name).exists(),
+    }
+}
+
+/// The `.pc` files of `path`, as each one's path under it and its text, in order of path, from
+/// the store or a cache's listing of it.
+pub(crate) fn pc_files(lab: &Lab, path: &StorePath) -> Result<BTreeMap<String, String>, String> {
+    if let Some(listing) = listing(lab, path) {
+        return Ok(listing.pc);
+    }
+    pc_of(&lab.on_host(path))
+}
+
+/// Puts `path` into the store from the cache that traced it, when it's traced and not there yet.
+pub fn materialize(lab: &Lab, path: &StorePath) -> Result<(), String> {
+    if lab.on_host(path).exists() {
+        return Ok(());
+    }
+    let Some(fetchable) = fetchable(lab, path) else {
+        return Ok(());
+    };
+    let scratch = lab.work.join("fetching");
+    fs::create_dir_all(&scratch).map_err(with_path(&scratch))?;
+    let partial = scratch.join(format!("{}.{}", path.hash(), std::process::id()));
+    let cache = Location::parse(&fetchable.cache);
+    unpack(
+        lab,
+        &cache,
+        path.hash(),
+        &fetchable.archived.archive,
+        &partial,
+    )
+    .map_err(|e| format!("cache {}: {e}", cache.shown()))?;
+    let _ = fs::remove_file(fetchable_record(lab, path.hash()));
+    Ok(())
+}
+
+/// What a store path holds that its dependents' keys read, so a key can be worked out from a
+/// trace without the path itself: its directories, the files directly in `lib`, and its `.pc`
+/// files. Links count as what they point to, as reading through them would find.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Listing {
+    dirs: BTreeSet<String>,
+    /// The directories that are links, which the listing doesn't follow.
+    linked: BTreeSet<String>,
+    lib: BTreeSet<String>,
+    /// Each `.pc` file's text, by its path, under `lib/pkgconfig` or `share/pkgconfig`.
+    pc: BTreeMap<String, String>,
+}
+
+impl Listing {
+    /// The listing of the store path at `dir`.
+    pub(crate) fn of(dir: &Path) -> Result<Self, String> {
+        let mut listing = Self::default();
+        let mut pending = vec![String::new()];
+        while let Some(relative) = pending.pop() {
+            for (name, full) in entries(&dir.join(&relative))? {
+                if !full.is_dir() {
+                    continue;
+                }
+                let path = if relative.is_empty() {
+                    name
+                } else {
+                    format!("{relative}/{name}")
+                };
+                if full.is_symlink() {
+                    listing.linked.insert(path.clone());
+                } else {
+                    pending.push(path.clone());
+                }
+                listing.dirs.insert(path);
+            }
+        }
+        for (name, full) in entries(&dir.join("lib"))? {
+            if full.exists() && !full.is_dir() {
+                listing.lib.insert(name);
+            }
+        }
+        listing.pc = pc_of(dir)?;
+        Ok(listing)
+    }
+}
+
+/// The `.pc` files of the store path at `dir`, by path under it.
+fn pc_of(dir: &Path) -> Result<BTreeMap<String, String>, String> {
+    let mut found = BTreeMap::new();
+    for pc_dir in crate::requires::PC_DIRS {
+        for (name, full) in entries(&dir.join(pc_dir))? {
+            if name.ends_with(".pc") && full.is_file() {
+                let text = fs::read_to_string(&full).map_err(with_path(&full))?;
+                found.insert(format!("{pc_dir}/{name}"), text);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The entries of `dir` by name, through a link if it is one, or none when it isn't a directory.
+fn entries(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    let Ok(read) = fs::read_dir(dir) else {
+        return Ok(Vec::new());
+    };
+    read.map(|entry| {
+        let entry = entry.map_err(with_path(dir))?;
+        Ok((
+            entry.file_name().to_string_lossy().into_owned(),
+            entry.path(),
+        ))
+    })
+    .collect()
 }
 
 /// Puts the store path `path` from `cache` into the store, unless it's there, checking its
@@ -410,6 +590,7 @@ pub fn push(lab: &Lab, cache: &Location, signer: &SigningKeyFile) -> Result<Push
                 Archived {
                     archive: sha256_of(&archive)?,
                     refs,
+                    listing: Some(Listing::of(&lab.on_host(&StorePath::from_hash(path)))?),
                 },
             );
         }
@@ -522,8 +703,53 @@ mod tests {
         let out = StorePath::from_hash(KEY);
         assert!(fetch_from(&fresh, &cache, &trusted, out.hash(), rules, &fixed).unwrap());
         assert_eq!(fs::read_to_string(&fixed).unwrap(), format!("out={PATH}"));
+        // Its trace is enough for a key; the path itself comes when something needs it.
+        let path = StorePath::from_hash(PATH);
+        assert!(!fresh.on_host(&path).exists());
+        assert!(has_dir(&fresh, &path, "bin").unwrap());
+        assert!(!has_dir(&fresh, &path, "lib").unwrap());
+        materialize(&fresh, &path).unwrap();
         let file = fresh.work.join("store").join(PATH).join("bin/hello");
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
+        assert!(!fetchable_record(&fresh, PATH).exists());
+    }
+
+    #[test]
+    fn a_listing_answers_what_a_key_reads_as_the_path_itself_would() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let lab = lab_with(&dir.path().join("built"), PATH);
+        let store = lab.work.join("store").join(PATH);
+        fs::create_dir_all(store.join("lib64/pkgconfig")).unwrap();
+        fs::write(store.join("lib64/pkgconfig/hello.pc"), "Requires: zlib\n").unwrap();
+        fs::write(store.join("lib64/ld-linux-x86-64.so.2"), "elf").unwrap();
+        symlink("lib64", store.join("lib")).unwrap();
+        fs::create_dir_all(store.join("share/pkgconfig")).unwrap();
+        fs::write(store.join("share/pkgconfig/data.pc"), "Name: data\n").unwrap();
+        symlink("missing", store.join("share/gone")).unwrap();
+
+        let listing = Listing::of(&store).unwrap();
+        assert_eq!(listing.linked, BTreeSet::from(["lib".to_owned()]));
+        assert_eq!(
+            listing.lib,
+            BTreeSet::from(["ld-linux-x86-64.so.2".to_owned()])
+        );
+        assert_eq!(pc_of(&store).unwrap(), listing.pc);
+        assert_eq!(
+            listing.pc.keys().collect::<Vec<_>>(),
+            ["lib/pkgconfig/hello.pc", "share/pkgconfig/data.pc"]
+        );
+        for dir in [
+            "bin",
+            "lib",
+            "share",
+            "lib64/pkgconfig",
+            "share/gone",
+            "nothing",
+        ] {
+            let found = store.join(dir).is_dir();
+            assert_eq!(listing.dirs.contains(dir), found, "{dir}");
+        }
     }
 
     #[test]
@@ -547,14 +773,15 @@ mod tests {
         let trusted = vec![TrustedKey::parse(&stranger.public()).unwrap()];
         assert!(!fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
 
-        // An archive swapped for another is refused, and nothing reaches the store.
+        // An archive swapped for another is refused when it's fetched, and nothing reaches the
+        // store.
         let archive = dir.path().join("cache").join(archive_name(PATH));
         fs::write(&archive, b"something else").unwrap();
         let trusted = vec![TrustedKey::parse(&key.public()).unwrap()];
-        let error = fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap_err();
+        assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
+        let error = materialize(&fresh, &StorePath::from_hash(PATH)).unwrap_err();
         assert!(error.contains("its trace says"), "{error}");
         assert!(!fresh.work.join("store").join(PATH).exists());
-        assert!(!fixed.exists());
     }
 
     /// Serves the files in `dir` over HTTP, one request per connection, until the test ends;
@@ -601,6 +828,7 @@ mod tests {
         let missing = "ffffffffffffffffffffffffffffffffffffffff-nothing-1.0";
         assert!(!fetch_from(&fresh, &cache, &trusted, missing, rules, &fixed).unwrap());
         assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
+        materialize(&fresh, &StorePath::from_hash(PATH)).unwrap();
         let file = fresh.work.join("store").join(PATH).join("bin/hello");
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
 
@@ -637,6 +865,7 @@ mod tests {
         let fixed = fresh.work.join("fixed").join(format!("{KEY}-{rules}"));
         let trusted = vec![TrustedKey::parse(&key.public()).unwrap()];
         assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
+        materialize(&fresh, &StorePath::from_hash(PATH)).unwrap();
         let got = fresh.work.join("store").join(PATH);
         let mode_of = |path: &str| fs::symlink_metadata(got.join(path)).unwrap().mode() & 0o7777;
         assert_eq!(mode_of("bin/hello"), 0o555);

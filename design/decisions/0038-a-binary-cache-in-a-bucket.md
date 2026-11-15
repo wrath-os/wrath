@@ -130,13 +130,21 @@ booted from an image did the same in 4 seconds, over its network from this machi
 wrath's own code (ureq, zstd and tar crates), as is fetching a source such as grapes, so a machine
 needs no curl, tar or zstd; pushing and recipes' source downloads still run curl, tar and git,
 which only builders need. Not yet: sets, hints, sources, S3, `cache clean`, checking a
-content-addressed path against its own name, and fetching only what's needed.
+content-addressed path against its own name.
 
 Then `[caches.NAME]` with `url` and `keys`: a system's configuration lists caches and trusts
 keys, a project lists caches by URL only, and `--cache` and `--cache-key` add to them for one
 command. A cache with no key trusted anywhere is warned about once. `wrath cache key` prints the
 table to paste, with `--url` for where machines fetch from. A project trusts only what the command
 line gives so far; reading the keys of the machine's own configuration for it is still to do.
+
+Then fetching only what runs. A trace lists, for each path, what its dependents' keys read of it:
+its directories, the files directly in `lib` and its `.pc` files. A build works out keys down the
+graph from traces alone, and a path comes into the store when something runs it, or when a build
+that missed the cache builds with it. Fetching jq and ripgrep into a fresh work directory went from
+1.6 GB in 3 seconds to 102 MB in under one, at the same store paths; in a VM, from 13.7 seconds to
+2.6. A trace from before listings fetches its paths with it, as before. A path whose archive turns
+out missing or wrong only shows when it's needed, and fails the command then.
 
 ## Open
 

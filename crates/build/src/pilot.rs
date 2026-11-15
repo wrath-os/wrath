@@ -338,6 +338,17 @@ pub(crate) fn build_some(
     let (built, _) = shared
         .into_inner()
         .map_err(|_| "a build stopped partway".to_owned())?;
+    // What was asked for runs, so it and what it runs with are in the store; what only built it
+    // can stay a trace.
+    let asked = built
+        .paths
+        .keys()
+        .filter(|id| wanted.is_none_or(|wanted| wanted.contains(&id.as_str())));
+    for id in asked {
+        for path in built.all_output_paths(id) {
+            chain::runtime_closure(lab, &path)?;
+        }
+    }
     Ok((built, seed, packages))
 }
 
@@ -517,6 +528,9 @@ pub(crate) fn build_and_finish(
     if let Some(prepared) = chain::build_one(lab, repository, package, seed, sources, built)? {
         chain::remove(&prepared.build_dir)?;
         fixup::run(lab, package, &prepared, built, package.fixed_up())?;
+    }
+    for path in built.all_output_paths(&package.id) {
+        chain::runtime_closure(lab, &path)?;
     }
     Ok(())
 }

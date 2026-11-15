@@ -158,7 +158,9 @@ keys = ["home-1:4f0c..."]
 Each package is looked up by the same key that decides whether it's built already, so what comes
 from the cache is what this machine would have built. What's fetched is checked against the
 digest the signer gave before it reaches the store, so the cache itself, and whatever serves it,
-needs no trust. A package the cache doesn't have is built as usual.
+needs no trust. A package the cache doesn't have is built as usual. Only what runs comes into
+the store: what built it stays a few lines in the cache's trace, unless something has to be built
+with it here.
 
 Only a system's configuration trusts keys. A project can list a cache by its `url`, and what it
 holds is fetched when a key the command trusts signed it. For one command, `--cache URL` and

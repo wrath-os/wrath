@@ -6,10 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::chain::Built;
-use crate::store::{Lab, with_path};
+use crate::store::Lab;
 
 /// Where packages keep their `.pc` files.
-const PC_DIRS: [&str; 2] = ["lib/pkgconfig", "share/pkgconfig"];
+pub(crate) const PC_DIRS: [&str; 2] = ["lib/pkgconfig", "share/pkgconfig"];
 
 /// What a built package says about what it brings along.
 #[derive(Debug, Clone, Default)]
@@ -95,21 +95,13 @@ fn operator_length(text: &str) -> usize {
     text.chars().take_while(|c| "<>=!".contains(*c)).count()
 }
 
-/// The `.pc` files of a package's outputs, by module name.
-fn pc_files(lab: &Lab, built: &Built, id: &str) -> Result<BTreeMap<String, PathBuf>, String> {
+/// The `.pc` files of a package's outputs, each one's text by its module name.
+fn pc_files(lab: &Lab, built: &Built, id: &str) -> Result<BTreeMap<String, String>, String> {
     let mut found = BTreeMap::new();
     for path in built.output_paths(id) {
-        let root = lab.on_host(&path);
-        for dir in PC_DIRS {
-            let dir = root.join(dir);
-            let Ok(entries) = fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries {
-                let file = entry.map_err(with_path(&dir))?.path();
-                if let Some(module) = module_name(&file) {
-                    found.entry(module).or_insert(file);
-                }
+        for (file, text) in crate::cache::pc_files(lab, &path)? {
+            if let Some(module) = module_name(Path::new(&file)) {
+                found.entry(module).or_insert(text);
             }
         }
     }
@@ -138,9 +130,8 @@ pub fn requirements(lab: &Lab, built: &mut Built, id: &str) -> Result<Requiremen
         }
     }
     let mut direct = Requirements::new();
-    for (module, file) in &own {
-        let text = fs::read_to_string(file).map_err(with_path(file))?;
-        let (public, mut private) = modules(&text);
+    for (module, text) in &own {
+        let (public, mut private) = modules(text);
         if !provider.private {
             private.clear();
         }
@@ -230,10 +221,8 @@ fn include_subdirs(text: &str) -> Vec<String> {
 /// its `.pc` files add.
 fn header_dirs(lab: &Lab, built: &Built, id: &str) -> Result<Vec<PathBuf>, String> {
     let mut subdirs = Vec::new();
-    for file in pc_files(lab, built, id)?.values() {
-        subdirs.extend(include_subdirs(
-            &fs::read_to_string(file).map_err(with_path(file))?,
-        ));
+    for text in pc_files(lab, built, id)?.values() {
+        subdirs.extend(include_subdirs(text));
     }
     let mut dirs = Vec::new();
     for path in built.output_paths(id) {

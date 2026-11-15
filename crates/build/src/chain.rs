@@ -734,6 +734,14 @@ pub struct Built {
 }
 
 impl Built {
+    /// Every output of package `id`, its docs too.
+    pub fn all_output_paths(&self, id: &str) -> Vec<StorePath> {
+        match self.outputs.get(id) {
+            Some(outputs) => outputs.values().cloned().collect(),
+            None => vec![self.paths[id].clone()],
+        }
+    }
+
     /// What a package's dependents see of it. Documentation isn't part of building against it.
     pub fn output_paths(&self, id: &str) -> Vec<StorePath> {
         match self.outputs.get(id) {
@@ -2583,9 +2591,16 @@ pub(crate) fn begin(
         .filter(|dep| dep.view)
         .map(|dep| (dep.id.as_str(), built.output_paths(&dep.id)))
         .collect();
+    let failed = std::cell::RefCell::new(None);
     let searched = search_path_values(&in_view, declared, |output, file| {
-        lab.on_host(output).join(file).is_dir()
+        crate::cache::has_dir(lab, output, file).unwrap_or_else(|e| {
+            failed.borrow_mut().get_or_insert(e);
+            false
+        })
     });
+    if let Some(e) = failed.into_inner() {
+        return Err(e);
+    }
     let inside = StorePath::temporary_named(&package.store_name()).inside();
     let env = build_env(lab, package, seed, built, &deps, searched, inside)?;
     // What the build runs with is in its key as it runs, whatever made it so: the script around
@@ -2681,6 +2696,10 @@ pub(crate) fn begin(
     }
     // Only a build runs the seed, so a machine that fetches everything never needs it.
     seed::prepare(lab)?;
+    // What it builds with is in the store, though its key only needed what a cache traced of it.
+    for path in &closure {
+        crate::cache::materialize(lab, path)?;
+    }
     // Built before but fixed up by other rules, its build's own output is fixed up again.
     let from_raw = !again && done.exists() && raw_output(lab, &out).is_file();
     // A package planned from its lock is styled now that it builds, and must make what the lock
@@ -2821,18 +2840,18 @@ fn build_env(
     let mut interpreter = format!("{}/{LOADER}", seed.inside());
     for dep in deps.iter().filter(|dep| dep.rpath) {
         let path = built.library_path(&dep.id);
-        let host = lab.on_host(path);
         if dep.skip.iter().any(|skipped| skipped == "lib") {
             continue;
         }
         // The seed may not be unpacked yet, when nothing that runs it has built.
-        if dep.id == "seed" || host.join("lib").is_dir() {
+        if dep.id == "seed" || crate::cache::has_dir(lab, path, "lib")? {
             rpath_dirs.push(format!("{}/lib", path.inside()));
         }
         if dep.id == "seed" {
             rpath_dirs.push(format!("{}/{SEED_GCC_LIBS}", path.inside()));
         }
-        if host.join(LOADER).exists() {
+        let loader = LOADER.strip_prefix("lib/").expect("the loader is in lib");
+        if crate::cache::has_lib_file(lab, path, loader) {
             interpreter = format!("{}/{LOADER}", path.inside());
         }
     }
@@ -3183,7 +3202,7 @@ fn link_flags(interpreter: &str, rpath_dirs: &[String]) -> String {
 }
 
 /// Where the store paths a store path refers to are recorded, beside the store (decision 0021).
-fn references_record(lab: &Lab, path: &StorePath) -> PathBuf {
+pub(crate) fn references_record(lab: &Lab, path: &StorePath) -> PathBuf {
     lab.work.join("refs").join(path.hash())
 }
 
@@ -3276,15 +3295,18 @@ fn scan(
     Ok(())
 }
 
-/// Everything `start` needs at run time, going by the paths its files mention.
+/// Everything `start` needs at run time, going by the paths its files mention, each brought into
+/// the store from the cache that traced it when it isn't there yet.
 pub fn runtime_closure(lab: &Lab, start: &StorePath) -> Result<BTreeSet<StorePath>, String> {
     let mut seen = BTreeSet::new();
     let mut queue = vec![start.clone()];
+    crate::cache::materialize(lab, start)?;
     while let Some(path) = queue.pop() {
         if !seen.insert(path.clone()) {
             continue;
         }
         for next in references_of(lab, &path)? {
+            crate::cache::materialize(lab, &next)?;
             if lab.on_host(&next).exists() && !seen.contains(&next) {
                 queue.push(next);
             }
