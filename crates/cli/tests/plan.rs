@@ -608,7 +608,7 @@ fn check_pins_whats_new_and_with_locked_refuses_to() {
     let adding = wrath(&["--locked", "-C", config, "add", "jq"]);
     assert!(!adding.status.success());
     let stderr = String::from_utf8_lossy(&adding.stderr);
-    assert!(stderr.contains("`--locked` writes none"), "{stderr}");
+    assert!(stderr.contains("`--locked` writes no lock"), "{stderr}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("system.toml")).unwrap(),
         text

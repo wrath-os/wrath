@@ -135,7 +135,8 @@ enum Command {
         /// A disk image of the system, to write to a USB stick or boot in a VM
         #[arg(long, conflicts_with = "packages")]
         image: bool,
-        /// Link what was built at this path, or in this directory under its own name
+        /// Link what was built at this path, or in this directory under its own name; an image is
+        /// copied there instead
         #[arg(short = 'o', long = "link", value_name = "PATH")]
         link: Option<PathBuf>,
         /// Then run each package's smoke commands, and its own tests in a build of it thrown away

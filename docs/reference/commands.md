@@ -75,7 +75,7 @@ wrath build [OPTIONS] [PACKAGES]...
 
 - `[PACKAGES]...`: Packages to build instead of the system, such as `jq`
 - `--image`: A disk image of the system, to write to a USB stick or boot in a VM
-- `-o, --link <PATH>`: Link what was built at this path, or in this directory under its own name
+- `-o, --link <PATH>`: Link what was built at this path, or in this directory under its own name; an image is copied there instead
 - `--check`: Then run each package's smoke commands, and its own tests in a build of it thrown away
 - `--kernel-option <KERNEL_OPTIONS>`: A kernel option for an image's boot entry, instead of the screen and serial consoles
 - `--with-configuration`: Put the configuration in the image's /etc/wrath, so wrath on it can plan

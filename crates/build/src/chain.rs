@@ -931,6 +931,20 @@ fn locks_read_only() -> bool {
     LOCKS_READ_ONLY.get().copied().unwrap_or(false)
 }
 
+/// Why a read-only lock that lacks something is an error, for both ways locks are read only.
+const READ_ONLY: &str = "the locks are only read: with `--locked`, or for a pinned grapes, which \
+                         was committed without running `wrath dev lint`; `wrath dev lint` in a \
+                         checkout of grapes brings its locks up to date";
+
+/// The error for `url` missing from `lock` while locks are only read.
+fn unpinned(url: &str, lock: &Lock) -> String {
+    format!(
+        "{url} isn't pinned in {} for `{}`, and {READ_ONLY}",
+        lock.file.display(),
+        lock.id
+    )
+}
+
 /// Every recipe file under `recipes/`, as a path from there, such as `gh/ghostty.toml`: the file
 /// of one package or of a family, under the first two letters of its name. What's further down is
 /// a recipe's own files.
@@ -1214,9 +1228,10 @@ impl Sources {
         match known {
             // Pinned by another recipe's lock, it's pinned in this one's too, as fetching does.
             Some(hash) if source.sha256.is_none() && !self.holds(lock, &source.url) => {
-                if !self.read_only {
-                    self.pin(&source.url, &hash, lock)?;
+                if self.read_only {
+                    return Err(unpinned(&source.url, lock));
                 }
+                self.pin(&source.url, &hash, lock)?;
                 Ok(hash)
             }
             Some(hash) => Ok(hash),
@@ -1236,20 +1251,16 @@ impl Sources {
         if let Some(tree) = source.url.strip_prefix("tree:") {
             return self.fetch_tree(lab, tree, &source.include);
         }
-        let known = source.sha256.is_some() || self.pins.contains_key(&source.url);
-        if !known && self.read_only {
-            return Err(format!(
-                "{} isn't pinned, and a pinned grapes never pins anything: that version of \
-                 grapes is broken, and a checkout of it pins the source when it builds",
-                source.url
-            ));
+        let unpinned_here = source.sha256.is_none() && !self.holds(lock, &source.url);
+        if unpinned_here && self.read_only {
+            return Err(unpinned(&source.url, lock));
         }
         let (path, hash) = if source.url.starts_with("git+") {
             self.fetch_git(lab, &source.url)?
         } else {
             self.fetch(lab, &source.url, source.sha256.as_deref())?
         };
-        if source.sha256.is_none() && !self.holds(lock, &source.url) && !self.read_only {
+        if unpinned_here {
             self.pin(&source.url, &hash, lock)?;
         }
         Ok((path, hash))
@@ -1733,8 +1744,7 @@ fn style_one(
     if recorded.as_ref() != Some(&made) {
         if sources.read_only {
             return Err(format!(
-                "`{}`'s lock doesn't record what its style makes now, and a pinned grapes never \
-                 records anything: that version of grapes is broken",
+                "`{}`'s lock doesn't record what its style makes now, and {READ_ONLY}",
                 styled.id
             ));
         }
@@ -5128,6 +5138,33 @@ mod layout_tests {
         let mut again = Sources::load(dir.path()).unwrap();
         let lock = &family[0].origin.lock;
         assert_eq!(again.hash_of(&lab, &source(url), lock).unwrap(), hash);
+    }
+
+    #[test]
+    fn with_locks_only_read_a_pin_in_another_recipes_lock_is_not_enough() {
+        let dir = repository();
+        let file = dir.path().join("ghostty.tar.gz");
+        fs::write(&file, "ghostty\n").unwrap();
+        let url = format!("file://{}", file.display());
+        let lab = Lab::new(dir.path().join("work"));
+        let family = load(dir.path(), "gh/ghostty.toml").unwrap();
+        let (first, second) = (&family[0].origin.lock, &family[1].origin.lock);
+        let mut sources = Sources::load(dir.path()).unwrap();
+        sources
+            .fetch_source(&lab, &source(url.clone()), first)
+            .unwrap();
+        let mut locked = Sources::load(dir.path()).unwrap();
+        locked.read_only = true;
+        let error = locked
+            .hash_of(&lab, &source(url.clone()), second)
+            .unwrap_err();
+        assert!(error.contains("isn't pinned in"), "{error}");
+        let error = locked
+            .fetch_source(&lab, &source(url.clone()), second)
+            .unwrap_err();
+        assert!(error.contains("`--locked`"), "{error}");
+        // The one whose lock pins it is fine.
+        assert!(locked.hash_of(&lab, &source(url), first).is_ok());
     }
 
     #[test]

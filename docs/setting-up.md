@@ -269,8 +269,8 @@ its own.
 `wrath clean` removes old generations and what only they used. It keeps the current one, the
 one running and the one that booted (after a boot fell back, those differ), plus the three before
 the current one by default, and asks first. Anything copied into the store in the last hour stays
-too, in case a switch is about to use it. A disk image `wrath build --image` made goes once its
-system is gone, so copy it somewhere, or write it to its stick, before then: `-o` only links to it.
+too, in case a switch is about to use it. Disk images `wrath build --image` made go with their
+systems, except the copy `-o` put where you asked.
 
 ## Starting clean at every boot
 

@@ -16,6 +16,19 @@ pub fn show_built(built: &[(String, PathBuf)], link: Option<&Path>) -> Result<Ex
     }
     if let Some(link) = link {
         for (at, target) in link_places(built, link)? {
+            // A disk image is a file of its own, which `clean` removes with its system, so what
+            // `-o` names gets a copy, sharing the image's blocks where the filesystem can.
+            if target
+                .extension()
+                .is_some_and(|extension| extension == "img")
+            {
+                if at.is_dir() {
+                    return Err(format!("{} is a directory", at.display()));
+                }
+                let _ = std::fs::remove_file(&at);
+                std::fs::copy(&target, &at).map_err(|e| format!("{}: {e}", at.display()))?;
+                continue;
+            }
             if at.symlink_metadata().is_ok_and(|meta| !meta.is_symlink()) {
                 return Err(format!(
                     "{} is there already and isn't a link",
@@ -680,9 +693,9 @@ pub fn clean(keep: usize, yes: bool, raw: bool) -> Result<ExitCode, String> {
         let (images, bytes) = forget_images(&work)?;
         if images > 0 {
             println!(
-                "removed {} of systems no longer kept, {} GB",
+                "removed {} of systems no longer kept, {:.1} GB",
                 crate::counted(images, "disk image"),
-                bytes / 1_000_000_000
+                bytes as f64 / 1e9
             );
         }
     }
@@ -900,17 +913,16 @@ fn follow_newest(
 }
 
 pub(crate) fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
-    if crate::locked() {
-        return Err(format!(
-            "the configuration's lock would change, and `--locked` writes none; \
-             `wrath check` in {} pins what's new",
-            config.display()
-        ));
-    }
     write_lock_file(&config.join(LOCK_FILE), lock)
 }
 
 fn write_lock_file(path: &Path, lock: &Lock) -> Result<(), String> {
+    if crate::locked() {
+        return Err(format!(
+            "{} would change, and `--locked` writes no lock; the same command without it does",
+            path.display()
+        ));
+    }
     std::fs::write(path, lock.to_toml()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -1096,6 +1108,17 @@ mod tests {
         let file = dir.path().join("file");
         std::fs::write(&file, "").unwrap();
         assert!(show_built(&built(&["jq"]), Some(&file)).is_err());
+
+        // An image is copied, over a link or a copy made before, and outlives its original.
+        let image = dir.path().join("abc-system.img");
+        std::fs::write(&image, "disk").unwrap();
+        let stick = dir.path().join("stick.img");
+        std::os::unix::fs::symlink(&image, &stick).unwrap();
+        let built = [("stick.img".to_owned(), image.clone())];
+        show_built(&built, Some(&stick)).unwrap();
+        show_built(&built, Some(&stick)).unwrap();
+        std::fs::remove_file(&image).unwrap();
+        assert_eq!(std::fs::read_to_string(&stick).unwrap(), "disk");
     }
 
     #[test]
