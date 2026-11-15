@@ -2311,7 +2311,7 @@ pub(crate) const TOOLCHAIN: [&str; 6] = [
 
 /// Builds the toolchain, reusing what's already built.
 pub fn build_toolchain(lab: &Lab, repository: &Path) -> Result<Built, String> {
-    let seed = seed::prepare(lab)?;
+    let seed = seed::path(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut built = built_from_seed(&seed);
     let files = recipe_files(repository)?;
@@ -2493,7 +2493,7 @@ pub(crate) fn keys_of(
     repository: &Path,
     packages: Vec<Package>,
 ) -> Result<BTreeMap<String, String>, String> {
-    let seed = seed::prepare(lab)?;
+    let seed = seed::path(lab)?;
     let mut sources = Sources::load(repository)?;
     let mut keys = BTreeMap::from([("seed".to_owned(), seed.hash().to_owned())]);
     let packages = in_order(packages, |id| keys.contains_key(id))?;
@@ -2666,14 +2666,21 @@ pub(crate) fn begin(
     let done = lab.work.join("done").join(out.hash());
     let moved = content_addressed(package);
     let fixed = crate::fixup::fixed_record(lab, &out, moved);
+    let rules = if moved {
+        &crate::fixup::rules()[..16]
+    } else {
+        "built"
+    };
     // Read once the key is ours: a build that waited finds what the other one made.
-    if fixed.exists() && !again {
+    if !again && (fixed.exists() || crate::cache::fetch(lab, &out, rules, &fixed)?) {
         if moved {
             let address = fs::read_to_string(&fixed).map_err(with_path(&fixed))?;
             remember_outputs(built, package, &address);
         }
         return Ok(Begun::Built);
     }
+    // Only a build runs the seed, so a machine that fetches everything never needs it.
+    seed::prepare(lab)?;
     // Built before but fixed up by other rules, its build's own output is fixed up again.
     let from_raw = !again && done.exists() && raw_output(lab, &out).is_file();
     // A package planned from its lock is styled now that it builds, and must make what the lock
@@ -2818,7 +2825,8 @@ fn build_env(
         if dep.skip.iter().any(|skipped| skipped == "lib") {
             continue;
         }
-        if host.join("lib").is_dir() {
+        // The seed may not be unpacked yet, when nothing that runs it has built.
+        if dep.id == "seed" || host.join("lib").is_dir() {
             rpath_dirs.push(format!("{}/lib", path.inside()));
         }
         if dep.id == "seed" {
@@ -3418,6 +3426,33 @@ mod requirement_tests {
         let seen = with_requirements(&lab, &package, &deps, &mut built()).unwrap();
         let ids: Vec<&str> = seen.iter().map(|dep| dep.id.as_str()).collect();
         assert_eq!(ids, ["gtk", "cairo", "pango", "zlib"]);
+    }
+
+    #[test]
+    fn the_seed_s_libraries_are_in_a_build_s_key_before_it_s_unpacked() {
+        let text = "[[package]]\nid = \"m4\"\nscope = \"boot\"\ntoolchain = \"seed\"\n\
+                    script = \"\"\ndeps = [\"seed\"]\n";
+        let package = toml::from_str::<Recipes>(text).unwrap().package.remove(0);
+        let seed = StorePath::derive("seed", &[b"pinned"]);
+        let mut built = built_from_seed(&seed);
+        let wrapper = StorePath::derive("wrapper", &[]);
+        built.paths.insert("wrapper".to_owned(), wrapper);
+        let deps = package.all_deps().unwrap();
+        let lab = Lab::new("/nonexistent");
+        let env = build_env(
+            &lab,
+            &package,
+            &seed,
+            &built,
+            &deps,
+            BTreeMap::new(),
+            String::new(),
+        );
+        let flags = &env.unwrap()["WRATH_LINK_FLAGS"];
+        assert!(
+            flags.contains(&format!("-Wl,-rpath,{}/lib ", seed.inside())),
+            "{flags}"
+        );
     }
 
     #[test]

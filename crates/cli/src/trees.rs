@@ -6,7 +6,6 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use sha2::{Digest, Sha256};
 use wrath_model::Source;
@@ -128,40 +127,13 @@ fn cache() -> PathBuf {
     base.join("wrath/sources")
 }
 
-fn curl(url: &str, output: &Path) -> Result<(), String> {
-    let done = Command::new("curl")
-        .args([
-            "-q",
-            "--fail",
-            "--location",
-            "--silent",
-            "--show-error",
-            "--retry",
-            "3",
-        ])
-        .args(["--max-time", "600", "--output"])
-        .arg(output)
-        .arg(url)
-        .output()
-        .map_err(|e| format!("cannot run curl: {e}"))?;
-    if done.status.success() {
-        return Ok(());
-    }
-    // curl's own words, such as `The requested URL returned error: 404`, in wrath's error.
-    let said = String::from_utf8_lossy(&done.stderr);
-    let reason = said
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .map(|line| {
-            let line = line.trim().trim_start_matches("curl: ");
-            line.strip_prefix('(')
-                .and_then(|rest| rest.split_once(") "))
-                .map_or(line, |(_, words)| words)
-        });
-    match reason {
-        Some(reason) => Err(format!("couldn't download {url}: {reason}")),
-        None => Err(format!("couldn't download {url}")),
+fn download(url: &str, output: &Path) -> Result<(), String> {
+    match wrath_build::http::download(url, output) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(format!(
+            "couldn't download {url}: there's nothing there (404)"
+        )),
+        Err(e) => Err(format!("couldn't download {e}")),
     }
 }
 
@@ -171,21 +143,40 @@ fn unpack(url: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&cache).map_err(at(&cache))?;
     let work = tempfile::tempdir_in(&cache).map_err(at(&cache))?;
     let archive = work.path().join("archive");
-    curl(url, &archive)?;
+    download(url, &archive)?;
+    let unpacked = work.path().join("unpacked");
+    fs::create_dir(&unpacked).map_err(at(&unpacked))?;
+    extract(&archive, &unpacked).map_err(|e| format!("{url}: {e}"))?;
+    let tops: Vec<_> = fs::read_dir(&unpacked)
+        .map_err(at(&unpacked))?
+        .collect::<Result<_, _>>()
+        .map_err(at(&unpacked))?;
+    let [top] = tops.as_slice() else {
+        return Err(format!("{url} doesn't hold everything in one directory"));
+    };
     let tree = work.path().join("tree");
-    fs::create_dir(&tree).map_err(at(&tree))?;
-    let status = Command::new("tar")
-        .arg("-xf")
-        .arg(&archive)
-        .arg("--strip-components=1")
-        .arg("-C")
-        .arg(&tree)
-        .status()
-        .map_err(|e| format!("cannot run tar: {e}"))?;
-    if !status.success() {
-        return Err(format!("{url} isn't an archive tar can read"));
-    }
+    fs::rename(top.path(), &tree).map_err(at(&tree))?;
     Ok(work.keep().join("tree"))
+}
+
+/// Extracts the tar archive at `archive`, compressed with gzip or zstd or not at all, into `dir`.
+fn extract(archive: &Path, dir: &Path) -> Result<(), String> {
+    use std::io::{BufRead, BufReader, Read};
+    let file = fs::File::open(archive).map_err(at(archive))?;
+    let mut reader = BufReader::new(file);
+    let magic = reader.fill_buf().map_err(at(archive))?;
+    let decoded: Box<dyn Read> = if magic.starts_with(&[0x1f, 0x8b]) {
+        Box::new(flate2::bufread::MultiGzDecoder::new(reader))
+    } else if magic.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        Box::new(zstd::Decoder::with_buffer(reader).map_err(at(archive))?)
+    } else if magic.get(257..262) == Some(b"ustar") {
+        Box::new(reader)
+    } else {
+        return Err("it isn't a tar archive, plain or compressed with gzip or zstd".into());
+    };
+    tar::Archive::new(decoded)
+        .unpack(dir)
+        .map_err(|e| format!("unpacking it: {e}"))
 }
 
 /// Moves a fetched tree into the cache by its hash, and returns where it is and the hash.
@@ -230,7 +221,7 @@ pub fn follow(url: &str) -> Result<(Source, PathBuf), String> {
                 reference.as_deref().unwrap_or("HEAD")
             );
             let work = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-            curl(&api, work.path())?;
+            download(&api, work.path())?;
             let text = fs::read_to_string(work.path()).map_err(|e| e.to_string())?;
             let (sha, date) = commit_of(&text)?;
             (Some(sha), date)
@@ -276,6 +267,7 @@ pub fn fetch(source: &Source) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn tree() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -359,5 +351,46 @@ mod tests {
         assert_eq!(path, dir.path());
         assert_eq!(source.hash, tree_hash(dir.path()).unwrap());
         assert_eq!(fetch(&source).unwrap(), dir.path());
+    }
+
+    /// A tar archive of `top/modules/a.star`, as GitHub's archives hold a repository.
+    fn archive() -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_ustar();
+        header.set_size(6);
+        header.set_mode(0o755);
+        builder
+            .append_data(&mut header, "top/modules/a.star", &b"x = 1\n"[..])
+            .unwrap();
+        builder.into_inner().unwrap()
+    }
+
+    #[test]
+    fn an_archive_plain_or_compressed_with_gzip_or_zstd_extracts_and_anything_else_is_refused() {
+        use std::io::Write;
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gzip.write_all(&archive()).unwrap();
+        let formats = [
+            ("plain", archive()),
+            ("gzip", gzip.finish().unwrap()),
+            ("zstd", zstd::encode_all(&archive()[..], 3).unwrap()),
+        ];
+        for (format, bytes) in formats {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("archive");
+            fs::write(&file, bytes).unwrap();
+            let out = dir.path().join("out");
+            fs::create_dir(&out).unwrap();
+            extract(&file, &out).unwrap();
+            let star = out.join("top/modules/a.star");
+            assert_eq!(fs::read_to_string(&star).unwrap(), "x = 1\n", "{format}");
+            let mode = fs::metadata(&star).unwrap().permissions().mode();
+            assert_ne!(mode & 0o111, 0, "{format}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("archive");
+        fs::write(&file, b"<html>not found</html>").unwrap();
+        let error = extract(&file, dir.path()).unwrap_err();
+        assert!(error.contains("isn't a tar archive"), "{error}");
     }
 }

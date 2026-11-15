@@ -117,10 +117,19 @@ fn tarball(lab: &Lab, sha256: &str, url: Option<&str>) -> Result<PathBuf, String
     Ok(path)
 }
 
+/// The seed's store path, which keys name it by, whether it's unpacked or not.
+pub fn path(lab: &Lab) -> Result<StorePath, String> {
+    Ok(named(&pin(lab)?.0))
+}
+
+fn named(sha256: &str) -> StorePath {
+    StorePath::derive("seed", &[sha256.as_bytes()])
+}
+
 /// The seed's store path, unpacked and ready to run. Safe to call from several processes.
 pub fn prepare(lab: &Lab) -> Result<StorePath, String> {
     let (sha256, url) = pin(lab)?;
-    let seed = StorePath::derive("seed", &[sha256.as_bytes()]);
+    let seed = named(&sha256);
     fs::create_dir_all(&lab.work).map_err(with_path(&lab.work))?;
     let lock = File::create(lab.work.join("seed.lock")).map_err(|e| format!("seed.lock: {e}"))?;
     lock.lock().map_err(|e| format!("seed.lock: {e}"))?;

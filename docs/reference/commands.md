@@ -10,6 +10,8 @@
 - `-v, --verbose`: Show everything each build prints, as it prints it
 - `--source <NAME=DIR>`: A source read from a directory instead of where the lock pins it, for this command only, such as `grapes=../grapes` to work on grapes beside a configuration
 - `--locked`: Write no lock: fail where the configuration's lock or a recipe's would change, as CI wants
+- `--cache <URL>`: A binary cache to fetch builds from before building them: a directory or an http(s) URL
+- `--cache-key <KEY>`: A key whose signature on what a cache holds is trusted, as `wrath cache key` printed it
 
 ## `wrath status`
 
@@ -250,6 +252,36 @@ wrath secret rekey [OPTIONS]
 ```
 
 - `--identity <IDENTITY>`: A private key that decrypts the secrets [default: ~/.ssh/id_ed25519]
+
+## `wrath cache`
+
+Sign and push builds to a binary cache, which machines then fetch from
+
+```text
+wrath cache <COMMAND>
+```
+
+## `wrath cache key`
+
+Make a key to sign builds with, and print the public key machines trust it by
+
+```text
+wrath cache key [OPTIONS] <NAME> <FILE>
+```
+
+- `<NAME>`: The key's name, which a cache files what it signs under, such as `home-1`
+- `<FILE>`: Where to keep the key, which only whoever pushes should be able to read
+
+## `wrath cache push`
+
+Push everything built here to a cache, signed, that it doesn't have yet
+
+```text
+wrath cache push [OPTIONS] <CACHE>
+```
+
+- `<CACHE>`: The cache: a directory
+- `--key <KEY>`: The key to sign with, as `wrath cache key` made it
 
 ## `wrath dev`
 

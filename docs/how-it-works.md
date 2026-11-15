@@ -135,6 +135,29 @@ the dynamic loader is, so it runs the libraries it was built with, whatever else
 machine. A package is also split into outputs (programs, libraries, headers, docs), so a running
 system only carries the parts it uses.
 
+### A binary cache
+
+A machine with a fast sibling doesn't have to build what the sibling built. Make a key on the
+machine that builds, and push what it built into a directory:
+
+```sh
+wrath cache key home-1 ~/.config/wrath/cache-key   # prints home-1:4f0c...
+wrath cache push /srv/wrath-cache --key ~/.config/wrath/cache-key
+```
+
+Any build elsewhere then fetches what it would otherwise build, from the directory or from
+whatever serves it over HTTP, when the key that signed it is one you name:
+
+```sh
+wrath --cache http://builder:8080 --cache-key home-1:4f0c... build
+```
+
+Each package is looked up by the same key that decides whether it's built already, so what comes
+from the cache is what this machine would have built. What's fetched is checked against the
+digest the signer gave before it reaches the store, so the cache itself, and whatever serves it,
+needs no trust. A package the cache doesn't have is built as usual. Where caches and keys go in
+the configuration, rather than on the command line, is still to come.
+
 ## Generations
 
 A generation is a built system: one directory in the store that holds or links everything the

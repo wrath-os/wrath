@@ -24,6 +24,9 @@ sha2 = "0.10"
 tempfile.workspace = true
 toml_edit.workspace = true
 ctrlc = "3.4"
+tar = "0.4"
+flate2 = "1"
+zstd = "0.13"
 
 [dev-dependencies]
 insta.workspace = true

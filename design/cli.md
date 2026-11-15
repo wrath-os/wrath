@@ -163,6 +163,12 @@ Understanding the configuration:
 
 Secrets: `wrath secret edit NAME` and `wrath secret rekey`.
 
+Binary caches (0038): `wrath cache key NAME FILE` makes a signing key and prints its public half;
+`wrath cache push DIR --key FILE` pushes everything built here that the cache lacks. Any command
+that builds takes `--cache URL` (a directory or http(s)) and `--cache-key KEY`, repeatable, and
+fetches a package signed by a trusted key instead of building it. The flags stand in until the
+configuration says where caches go.
+
 Setting up a machine: `wrath install -C DIR [--disk NAME=/dev/...] [--role NAME] [--name NAME]`,
 from wrath's image or a checkout with its builder, lays out the disks the configuration describes with
 systemd-repart, encrypts them with a passphrase it asks for, builds the system onto them and

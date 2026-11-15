@@ -15,6 +15,7 @@ use wrath_model::{LOCK_FILE, Lock, Model, Source, WRATH_SOURCE};
 mod activate;
 mod apply_record;
 mod bench;
+mod cache;
 mod checks;
 mod edit;
 mod facts;
@@ -72,11 +73,22 @@ struct Cli {
     root: Option<PathBuf>,
     /// A source read from a directory instead of where the lock pins it, for this command only,
     /// such as `grapes=../grapes` to work on grapes beside a configuration
-    #[arg(long = "source", global = true, value_name = "NAME=DIR")]
+    #[arg(
+        id = "source_dirs",
+        long = "source",
+        global = true,
+        value_name = "NAME=DIR"
+    )]
     sources: Vec<String>,
     /// Write no lock: fail where the configuration's lock or a recipe's would change, as CI wants
     #[arg(long, global = true)]
     locked: bool,
+    /// A binary cache to fetch builds from before building them: a directory or an http(s) URL
+    #[arg(long = "cache", global = true, value_name = "URL")]
+    caches: Vec<String>,
+    /// A key whose signature on what a cache holds is trusted, as `wrath cache key` printed it
+    #[arg(long = "cache-key", global = true, value_name = "KEY")]
+    cache_keys: Vec<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -276,6 +288,11 @@ enum Command {
         #[command(subcommand)]
         command: secret::SecretCommand,
     },
+    /// Sign and push builds to a binary cache, which machines then fetch from
+    Cache {
+        #[command(subcommand)]
+        command: cache::CacheCommand,
+    },
     /// Commands for working on wrath itself
     Dev {
         #[command(subcommand)]
@@ -413,6 +430,10 @@ fn main() -> ExitCode {
     if cli.locked {
         LOCKED.set(true).expect("`--locked` is set once");
         wrath_build::chain::read_only_locks();
+    }
+    if let Err(message) = cache::use_caches(&cli.caches, &cli.cache_keys) {
+        style::error(&message);
+        return ExitCode::FAILURE;
     }
     wrath_build::progress::set(wrath_build::progress::chosen(
         cli.verbose,
@@ -704,6 +725,7 @@ fn main() -> ExitCode {
         Command::Secret { command } => {
             config().and_then(|config| secret::run(command, &config, &modules))
         }
+        Command::Cache { command } => cache::run(command, &places::work()),
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
             DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
@@ -839,6 +861,7 @@ fn runs_pinned(command: &Command) -> bool {
         | Command::Clean { .. }
         | Command::Rollback { .. }
         | Command::Dev { .. }
+        | Command::Cache { .. }
         | Command::Activate { .. }
         | Command::FillTemplates { .. } => false,
     }
@@ -1686,6 +1709,17 @@ fn ending_a_line(text: &str) -> std::borrow::Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sources_update_names_are_apart_from_the_directories_given_with_source() {
+        let cli =
+            Cli::try_parse_from(["wrath", "update", "small", "--source", "grapes=../g"]).unwrap();
+        assert_eq!(cli.sources, ["grapes=../g"]);
+        let Command::Update { sources, .. } = cli.command else {
+            panic!("not update");
+        };
+        assert_eq!(sources, ["small"]);
+    }
 
     #[test]
     fn a_binary_in_the_store_finds_its_files_beside_it() {

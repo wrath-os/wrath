@@ -305,7 +305,7 @@ pub(crate) fn build_some(
     let files = chain::recipe_files(repository)?;
     let recipes = chain::names_of(&files);
     let built = chain::build_toolchain(lab, repository)?;
-    let seed = seed::prepare(lab)?;
+    let seed = seed::path(lab)?;
     let sources = Sources::load(repository)?;
     let loaded = match wanted {
         Some(wanted) => chain::load_reached(lab, repository, &recipes, wanted)?,

@@ -1,6 +1,6 @@
 # 0038: A binary cache in a bucket
 
-Status: proposed, 2026-11-15.
+Status: accepted, 2026-11-15; the first step is built.
 
 ## Context
 
@@ -115,6 +115,22 @@ day, so a push that is still running survives. Everything else goes.
   making content-addressed later.
 - A key that wrath works out differently on two machines, such as from a host path leaking into a
   build, shows up as a cache miss.
+
+## Built so far
+
+The first step, 2026-11-15: traces and paths as above, in a directory, read from a directory or
+over HTTP. `wrath cache key` and `wrath cache push DIR`, which pushes every build the work
+directory keeps under the current fix-up rules; global `--cache` and `--cache-key` flags in place
+of the configuration's side. A build looks up each package before building it, in graph order, so
+a machine fetches the whole build graph, toolchain included, rather than only the runtime closure.
+The seed is unpacked only when something builds, so a machine that fetches everything never needs
+it. Tried on this machine: pushing the world took 39 seconds and 5.7 GB, and a fresh work
+directory fetched jq and ripgrep over HTTP in 3 seconds, at the same store paths as here. A VM
+booted from an image did the same in 4 seconds, over its network from this machine. Fetching is
+wrath's own code (ureq, zstd and tar crates), as is fetching a source such as grapes, so a machine
+needs no curl, tar or zstd; pushing and recipes' source downloads still run curl, tar and git,
+which only builders need. Not yet: sets, hints, sources, S3, `cache clean`, checking a
+content-addressed path against its own name, and fetching only what's needed.
 
 ## Open
 
