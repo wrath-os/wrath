@@ -393,6 +393,10 @@ fn switch_steps(sent: Option<&str>, system: &StorePath, how: Switch) -> String {
         Switch::Apply => format!("{path}/bin/wrath apply --yes {path}"),
         Switch::Try(seconds) => format!("{path}/bin/wrath try --yes --for {seconds}s {path}"),
     };
+    let switch = match crate::config_from::get() {
+        Some(from) => format!("{switch} --config-from {}", from.to_arg()),
+        None => switch,
+    };
     // Unpacked beside the store, on its filesystem, and renamed in one path at a time, so an
     // interrupted copy never leaves a partial path under a name `send` would take as complete,
     // and the store holds nothing else.

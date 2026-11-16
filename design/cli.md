@@ -20,7 +20,10 @@ built" near the end says how far along it is.
 
 A command acts on one configuration, its context, found in this order:
 
-1. `-C DIR`, a configuration directory.
+1. `-C DIR`, a configuration directory, or `-C URL`: `github:owner/repo[/ref]` or an `https://`
+   archive, with `//dir` for a configuration in a subdirectory, such as
+   `github:johnae/machines//framework`. A configuration from a URL is read as it is, at its newest
+   commit, and its lock is never written (0040).
 2. The nearest directory upwards with a `wrath.toml`, a project.
 3. The system's configuration in `/etc/wrath`.
 

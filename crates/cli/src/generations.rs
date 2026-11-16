@@ -406,6 +406,11 @@ pub fn apply(
         && unfinished.is_none()
         && rebuilt.as_ref().is_some_and(Vec::is_empty)
     {
+        // It may have come from elsewhere before, such as a checkout applied by hand.
+        let history = here::history().unwrap_or_default();
+        if let Some(generation) = history.iter().find(|g| g.current) {
+            let _ = crate::config_from::keep(Path::new("/"), generation.number);
+        }
         println!("the running system already has model {}", &hash[..16]);
         return Ok(ExitCode::SUCCESS);
     }
@@ -602,7 +607,8 @@ pub fn status_json(model: &Model) -> serde_json::Value {
     let running = here::running_model_hash();
     let hash = model.hash();
     serde_json::json!({
-        "generation": current.map(|g| g.number),
+        "generation": current.as_ref().map(|g| g.number),
+        "from": current.and_then(|g| g.from).map(|from| from.to_json()),
         "trying": here::trying(),
         "matches": running.as_deref() == Some(hash.as_str()),
         "running": running,
@@ -627,6 +633,7 @@ pub fn history_json() -> Result<serde_json::Value, String> {
             "created": generation.created,
             "current": generation.current,
             "model": generation.model_hash,
+            "from": generation.from.as_ref().map(crate::config_from::ConfigFrom::to_json),
             "changes": changes,
         }));
         before = model;
@@ -649,6 +656,9 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
             "running generation {}, from {}",
             generation.number, generation.created
         );
+        if let Some(from) = &generation.from {
+            println!("its configuration came from {from}");
+        }
     }
     println!("{}", matching(here::running_model_hash().as_deref(), model));
     if let Some(unfinished) = here::unfinished() {
@@ -877,6 +887,9 @@ pub fn history() -> Result<ExitCode, String> {
     let mut before: Option<Model> = None;
     for generation in generations {
         println!("{generation}");
+        if let Some(from) = &generation.from {
+            println!("      from {from}");
+        }
         let model = generation_model(generation.number).ok();
         if let (Some(before), Some(after)) = (&before, &model) {
             println!("      {}", wrath_model::plan(before, after).summary(4));
@@ -1027,6 +1040,9 @@ pub(crate) fn write_lock(config: &Path, lock: &Lock) -> Result<(), String> {
 }
 
 fn write_lock_file(path: &Path, lock: &Lock) -> Result<(), String> {
+    if let Some(url) = crate::config_from::fetched_url() {
+        return Err(crate::config_from::unpinned(url));
+    }
     if crate::locked() {
         return Err(format!(
             "{} would change, and `--locked` writes no lock; the same command without it does",
@@ -1405,6 +1421,7 @@ mod tests {
             current,
             in_use,
             model_hash: None,
+            from: None,
         };
         let generations = [
             generation(1, false, false),

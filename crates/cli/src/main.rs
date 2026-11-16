@@ -17,6 +17,7 @@ mod apply_record;
 mod bench;
 mod cache;
 mod checks;
+mod config_from;
 mod edit;
 mod facts;
 mod fetch;
@@ -53,9 +54,13 @@ const SYSTEM_CONFIG: &str = "/etc/wrath";
 #[derive(Parser)]
 #[command(name = "wrath", version, about = "Declarative system configuration")]
 struct Cli {
-    /// The configuration to act on [default: the system's, in /etc/wrath]
-    #[arg(short = 'C', long = "config", global = true, value_name = "DIR")]
+    /// The configuration to act on: a directory, or a URL such as `github:owner/repo//dir`, read
+    /// as it is [default: the system's, in /etc/wrath]
+    #[arg(short = 'C', long = "config", global = true, value_name = "DIR|URL")]
     config: Option<PathBuf>,
+    /// Where the configuration came from, as `apply --host` passes it to the machine
+    #[arg(long, global = true, hide = true)]
+    config_from: Option<String>,
     /// The role to act as, for a configuration with kinds of machines in `roles/`
     #[arg(long, global = true, value_name = "NAME")]
     role: Option<String>,
@@ -428,9 +433,34 @@ struct TestOptions {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     ROLE.set(cli.role.clone()).expect("the role is set once");
-    if cli.locked {
+    if let Some(given) = &cli.config_from {
+        match config_from::ConfigFrom::from_arg(given) {
+            Some(from) => config_from::set(from),
+            None => {
+                style::error("--config-from isn't what `apply --host` passes");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    // A configuration from a URL is fetched once, then acted on like a directory, read-only.
+    let url = cli
+        .config
+        .as_deref()
+        .and_then(Path::to_str)
+        .filter(|given| config_from::is_url(given))
+        .map(str::to_owned);
+    if let Some(url) = &url {
+        match config_from::fetch(url) {
+            Ok(dir) => cli.config = Some(dir),
+            Err(message) => {
+                style::error(&message);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    if cli.locked || url.is_some() {
         LOCKED.set(true).expect("`--locked` is set once");
         wrath_build::chain::read_only_locks();
     }
@@ -888,13 +918,21 @@ fn runs_pinned(command: &Command) -> bool {
 /// The context goes to stderr first, so output always says which configuration it's about.
 fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
     let config = find_config(given)?;
+    // A URL said so already, and its tree's place in the cache means nothing to anyone.
+    if let Ok(dir) = std::path::absolute(&config) {
+        config_from::set(config_from::ConfigFrom::Dir(dir));
+    }
+    let shown = match config_from::get() {
+        Some(from @ config_from::ConfigFrom::Url { .. }) => from.to_string(),
+        _ => config.display().to_string(),
+    };
     if is_project(&config) {
         eprintln!("{}", project::header(&config));
     } else {
         let kind = if given.is_some() { "config" } else { "system" };
         match given_role() {
-            Some(role) => eprintln!("{kind} {}, role {role}", config.display()),
-            None => eprintln!("{kind} {}", config.display()),
+            Some(role) => eprintln!("{kind} {shown}, role {role}"),
+            None => eprintln!("{kind} {shown}"),
         }
     }
     Ok(config)
@@ -1006,9 +1044,11 @@ fn check_config(root: &Path, config: &Path, modules: &Path) -> Result<ExitCode, 
     }
     match (unpinned, locked()) {
         (false, _) => Ok(ExitCode::SUCCESS),
-        (true, true) => Err(
-            "the lock doesn't pin everything the configuration uses; `wrath check` pins it".into(),
-        ),
+        (true, true) => Err(match config_from::fetched_url() {
+            Some(url) => config_from::unpinned(url),
+            None => "the lock doesn't pin everything the configuration uses; `wrath check` pins it"
+                .into(),
+        }),
         (true, false) => lock(root, config, modules, None),
     }
 }

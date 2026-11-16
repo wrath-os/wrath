@@ -83,6 +83,8 @@ pub struct Generation {
     pub in_use: bool,
     /// The hash of the model it was built from.
     pub model_hash: Option<String>,
+    /// Where its configuration came from, when that was kept.
+    pub from: Option<crate::config_from::ConfigFrom>,
 }
 
 impl std::fmt::Display for Generation {
@@ -169,6 +171,7 @@ fn history_at(root: &Path) -> Result<Vec<Generation>, String> {
                 current: number == current,
                 in_use,
                 model_hash: fs::read_to_string(system.join(MODEL_HASH)).ok(),
+                from: crate::config_from::of(root, number),
             })
         })
         .collect()
@@ -263,6 +266,7 @@ pub fn activate(system: &Path) -> Result<(), String> {
     let root = Path::new(ROOT);
     let _held = lock(root)?;
     let number = add(root, system)?;
+    crate::config_from::keep(root, number)?;
     switch(system, "switch").map_err(|e| switch_failed(number, previous(root).ok(), e))
 }
 
@@ -360,6 +364,7 @@ pub fn remove(root: &Path, numbers: &[u32], grace: Duration) -> Result<usize, St
     for number in numbers {
         let link = root.join(GENERATIONS).join(number.to_string());
         fs::remove_file(&link).map_err(|e| format!("{}: {e}", link.display()))?;
+        crate::config_from::forget(root, *number);
     }
     let (left, _) = generations(root)?;
     let starts = left
@@ -455,6 +460,7 @@ pub fn install(system: &Path, target: &Path) -> Result<(), String> {
         ));
     }
     copy_onto(Path::new(ROOT), system, target)?;
+    crate::config_from::keep(target, 1)?;
     println!("installing the boot loader");
     run(Command::new(system.join("bin/wrath"))
         .args(["activate", "--mode", "install", "--root"])

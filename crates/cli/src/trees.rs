@@ -254,6 +254,27 @@ fn archive_of(origin: &Origin, rev: Option<&str>, token: bool) -> Option<String>
     }
 }
 
+/// Where the cache notes which tree each commit fetched had, so a commit seen before isn't
+/// downloaded again.
+fn revs() -> PathBuf {
+    cache().join("revs")
+}
+
+/// The tree a commit fetched before had, from the cache, and its hash.
+fn kept_at(rev: &str) -> Option<(PathBuf, String)> {
+    let hash = fs::read_to_string(revs().join(rev)).ok()?;
+    let hash = hash.trim();
+    let kept = cache().join(hash);
+    kept.is_dir().then(|| (kept, hash.to_owned()))
+}
+
+fn remember_rev(rev: &str, hash: &str) {
+    let dir = revs();
+    if rev.chars().all(|c| c.is_ascii_hexdigit()) && fs::create_dir_all(&dir).is_ok() {
+        let _ = fs::write(dir.join(rev), hash);
+    }
+}
+
 /// The newest version of the source at `url`, pinned, and where its files are.
 pub fn follow(url: &str) -> Result<(Source, PathBuf), String> {
     let origin = origin(url)?;
@@ -277,10 +298,15 @@ pub fn follow(url: &str) -> Result<(Source, PathBuf), String> {
     };
     let (path, hash) = match &origin {
         Origin::Path(dir) => (dir.clone(), tree_hash(dir)?),
+        Origin::GitHub { .. } if let Some(kept) = rev.as_deref().and_then(kept_at) => kept,
         Origin::GitHub { .. } | Origin::Archive(_) => {
             let url = archive_of(&origin, rev.as_deref(), github_token().is_some())
                 .ok_or("no archive to fetch")?;
-            keep(&unpack(&url)?)?
+            let (path, hash) = keep(&unpack(&url)?)?;
+            if let Some(rev) = &rev {
+                remember_rev(rev, &hash);
+            }
+            (path, hash)
         }
     };
     let source = Source {

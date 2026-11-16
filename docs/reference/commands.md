@@ -4,7 +4,7 @@
 
 ## Options every command takes
 
-- `-C, --config <DIR>`: The configuration to act on [default: the system's, in /etc/wrath]
+- `-C, --config <DIR|URL>`: The configuration to act on: a directory, or a URL such as `github:owner/repo//dir`, read as it is [default: the system's, in /etc/wrath]
 - `--role <NAME>`: The role to act as, for a configuration with kinds of machines in `roles/`
 - `--json`: Print data as JSON instead of text, where a command supports it
 - `-v, --verbose`: Show everything each build prints, as it prints it
