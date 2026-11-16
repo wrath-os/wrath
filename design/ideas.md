@@ -1,6 +1,7 @@
 # Ideas
 
-Ideas that belong to later milestones. Add a line here instead of building them now.
+Ideas that belong to later milestones. Add a line here instead of building them now. The large
+directions, and the products the core has to allow, are in `vision.md`.
 
 - Project dev shells from a `wrath.toml`: packages, environment variables and services, using the
   same package names and lock as the system. Take devenv's ergonomics (direnv, processes,
