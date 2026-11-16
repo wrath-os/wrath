@@ -57,15 +57,17 @@ pub fn image(
 pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), String> {
     let store = root.join("wrath/store");
     fs::create_dir_all(&store).map_err(with_path(&store))?;
-    for path in runtime_closure(lab, generation)? {
+    let closure = runtime_closure(lab, generation)?;
+    for path in &closure {
         run(
             Command::new("cp")
                 .args(["-a", "--reflink=auto"])
-                .arg(lab.on_host(&path))
+                .arg(lab.on_host(path))
                 .arg(&store),
             &format!("copying {}", path.inside()),
         )?;
     }
+    crate::records::copy_system(lab, generation, &closure, &root.join(WORK))?;
     let generations = root.join(GENERATIONS);
     fs::create_dir_all(&generations).map_err(with_path(&generations))?;
     symlink(generation.inside(), generations.join("1")).map_err(with_path(&generations))?;
@@ -82,6 +84,10 @@ pub fn root_tree(lab: &Lab, generation: &StorePath, root: &Path) -> Result<(), S
 /// system in `/wrath/store`, kept beside the store so a root erased at every boot keeps them.
 pub const GENERATIONS: &str = "wrath/system/generations";
 
+/// Where a machine's builder keeps its records, under the root, such as which build made each
+/// path in the store, so it knows what it has without building it again.
+pub const WORK: &str = "wrath/work";
+
 /// The link to the current generation, under the root, as `generations/N`.
 pub const CURRENT: &str = "wrath/system/current";
 
@@ -93,8 +99,9 @@ pub const INSTALL: &str = "wrath/system/install";
 /// wait for disks that aren't there yet, and installs this one.
 pub fn add_install(lab: &Lab, system: &StorePath, root: &Path) -> Result<(), String> {
     let store = root.join("wrath/store");
-    for path in runtime_closure(lab, system)? {
-        let host = lab.on_host(&path);
+    let closure = runtime_closure(lab, system)?;
+    for path in &closure {
+        let host = lab.on_host(path);
         if host
             .file_name()
             .is_some_and(|name| store.join(name).exists())
@@ -109,6 +116,7 @@ pub fn add_install(lab: &Lab, system: &StorePath, root: &Path) -> Result<(), Str
             &format!("copying {}", path.inside()),
         )?;
     }
+    crate::records::copy_system(lab, system, &closure, &root.join(WORK))?;
     let link = root.join(INSTALL);
     symlink(system.inside(), &link).map_err(with_path(&link))
 }
@@ -366,6 +374,35 @@ mod tests {
         );
         assert!(root.join("var/lib").is_dir());
         assert!(!root.join("usr").exists());
+    }
+
+    #[test]
+    fn the_root_brings_the_records_of_the_generations_builds() {
+        let (dir, lab, generation) = store();
+        let record = |path: &str| {
+            let file = dir.path().join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "").unwrap();
+        };
+        // The kernel, a tool that built it and isn't in the image, and a package nothing uses.
+        let (linux, tool, unused) = ("b".repeat(40), "7".repeat(40), "e".repeat(40));
+        for key in [&linux, &tool, &unused] {
+            record(&format!("fixed/{key}-built"));
+        }
+        crate::records::keep(
+            &lab,
+            &generation,
+            [("u1", linux.as_str()), ("u2", tool.as_str())],
+            &Default::default(),
+        )
+        .unwrap();
+        let root = dir.path().join("root");
+        root_tree(&lab, &generation, &root).unwrap();
+        let work = root.join(WORK);
+        assert!(work.join(format!("fixed/{linux}-built")).is_file());
+        assert!(work.join(format!("fixed/{tool}-built")).is_file());
+        assert!(!work.join(format!("fixed/{unused}-built")).exists());
+        assert!(work.join("builds").join(generation.hash()).is_file());
     }
 
     #[test]

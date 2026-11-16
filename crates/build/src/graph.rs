@@ -2115,6 +2115,8 @@ pub struct Outcome {
     pub files: usize,
     /// For each path, the action and the part of the model that made it.
     pub made: BTreeMap<String, Value>,
+    /// What each action made, by its resolved key, as the action database keeps it.
+    pub outputs: BTreeMap<String, String>,
 }
 
 fn materialize(
@@ -2156,15 +2158,19 @@ fn realise(lab: &Lab, db: &mut Db, actions: Vec<Action>) -> Result<Outcome, Stri
     let (mut ran, mut merged) = (0, Entries::new());
     let mut parts: Vec<(String, String)> = Vec::new();
     let mut made: BTreeMap<String, Value> = BTreeMap::new();
+    let mut outputs: BTreeMap<String, String> = BTreeMap::new();
     let (mut unresolved_parts, mut resolved_parts) = (Map::new(), Map::new());
     for action in actions {
         let (unresolved, resolved) = (key_of(&action.unresolved), key_of(&action.resolved));
         put_action(&tx, &unresolved, &action.unresolved)?;
         put_action(&tx, &resolved, &action.resolved)?;
-        // An output whose objects are gone, as after a crash, is made again.
-        let cached = output_of(&tx, &resolved)?.filter(|text| {
-            serde_json::from_str::<Entries>(text).is_ok_and(|entries| objects.hold(&entries))
-        });
+        // A machine installed from an image has what its actions made beside its store, and no
+        // database yet. An output whose objects are gone, as after a crash, is made again.
+        let cached = output_of(&tx, &resolved)?
+            .or_else(|| crate::records::action(lab, &resolved))
+            .filter(|text| {
+                serde_json::from_str::<Entries>(text).is_ok_and(|entries| objects.hold(&entries))
+            });
         let text = match cached {
             Some(text) => text,
             None => {
@@ -2178,6 +2184,7 @@ fn realise(lab: &Lab, db: &mut Db, actions: Vec<Action>) -> Result<Outcome, Stri
         };
         unresolved_parts.insert(unresolved, json!(true));
         resolved_parts.insert(digest(text.as_bytes()), json!(true));
+        outputs.insert(resolved.clone(), text.clone());
         let entries: Entries = serde_json::from_str(&text).map_err(|e| e.to_string())?;
         for (path, entry) in entries {
             let line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
@@ -2225,6 +2232,7 @@ fn realise(lab: &Lab, db: &mut Db, actions: Vec<Action>) -> Result<Outcome, Stri
         materialized,
         files,
         made,
+        outputs,
     })
 }
 
@@ -2471,6 +2479,43 @@ pub fn package_keys(
     chain::keys_of(&lab, repository, packages)
 }
 
+/// Every package a system built from `model` uses, found by its recipe alone (0041), when all of
+/// them are: nothing is resolved, built or fetched, and the toolchain isn't touched. `None` when
+/// any one isn't, and the system is built as before.
+fn found_by_recipe(lab: &Lab, repository: &Path, model: &Value) -> Result<Option<Built>, String> {
+    let wanted = system_packages(model);
+    // Keys are worked out from the toolchain up, though only what the system uses is looked up.
+    let mut roots = chain::TOOLCHAIN.map(str::to_owned).to_vec();
+    roots.extend(wanted.iter().cloned());
+    let mut packages = chain::load_reached(
+        lab,
+        repository,
+        &names_of(&recipe_files(repository)?),
+        &names_of(&roots),
+    )?;
+    let builds = variants(lab, repository, &packages, model)?;
+    let mut ids: BTreeSet<String> = wanted.into_iter().collect();
+    ids.extend(builds.iter().map(|build| build.id.clone()));
+    packages.extend(builds);
+    let keys = chain::keys_of(lab, repository, packages.clone())?;
+    let mut built = Built::default();
+    // As a build has it: what's built at the first stage refers to it.
+    built
+        .paths
+        .insert("seed".to_owned(), crate::seed::path(lab)?);
+    built.closures.insert("seed".to_owned(), BTreeSet::new());
+    // What the system uses must all be found. What it's built with is found where it can be, as
+    // the system shares whatever of it runs, such as gcc's libraries; a tool that only built it
+    // isn't in the store, so nothing could share it.
+    for package in &packages {
+        let found = chain::found_by_recipe(lab, package, &keys[&package.id], &mut built)?;
+        if !found && ids.contains(&package.id) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(built))
+}
+
 /// Builds what the model's `builds` ask for: each a recipe built under the build's name with the
 /// options it gives, which the recipe's script reads as `OPTION_<name>`, and its patches.
 fn build_variants(
@@ -2540,12 +2585,30 @@ pub fn system(
     kept: &Kept,
 ) -> Result<System, String> {
     let lab = Lab::new(work);
-    let wanted = system_packages(model);
-    let (mut built, seed, recipes) = pilot::build_some(&lab, repository, Some(&names_of(&wanted)))?;
-    build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
+    let built = match found_by_recipe(&lab, repository, model)? {
+        Some(built) => built,
+        None => {
+            let wanted = system_packages(model);
+            let (mut built, seed, recipes) =
+                pilot::build_some(&lab, repository, Some(&names_of(&wanted)))?;
+            build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
+            built
+        }
+    };
     let mut db = Db::open(&db_path(&lab))?;
     record_packages(&mut db, &built)?;
-    system_from(&lab, &mut db, &known_packages(&built), model, kept)
+    let system = system_from(&lab, &mut db, &known_packages(&built), model, kept)?;
+    // What it runs is in the store, fetched where a package was found but only traced.
+    chain::runtime_closure(&lab, &StorePath::from_hash(&system.generation))?;
+    if let Some(name) = system.path.file_name() {
+        let keys = built
+            .records
+            .values()
+            .map(|record| (record.unresolved.as_str(), record.resolved.as_str()));
+        let system_path = StorePath::from_hash(&name.to_string_lossy());
+        crate::records::keep(&lab, &system_path, keys, &system.outcome.outputs)?;
+    }
+    Ok(system)
 }
 
 /// What building a system would take: the packages that would be built, and for each cache what
@@ -2564,6 +2627,22 @@ pub struct Takes {
 /// for traces, and nothing else.
 pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Takes, String> {
     let lab = Lab::new(work);
+    // Found by recipe, nothing is built; what runs may still come from a cache.
+    if let Some(built) = found_by_recipe(&lab, repository, model)? {
+        let mut paths = BTreeSet::new();
+        for id in system_packages(model)
+            .iter()
+            .filter(|id| built.paths.contains_key(*id))
+        {
+            for path in built.run_outputs(id).into_iter().filter(|p| there(&lab, p)) {
+                paths.extend(chain::traced_closure(&lab, &path)?);
+            }
+        }
+        return Ok(Takes {
+            fetch: by_cache(&lab, &paths),
+            ..Takes::default()
+        });
+    }
     let wanted = system_packages(model);
     let mut dry = pilot::Dry::of(&lab, repository, &names_of(&wanted))?;
     let mut ids: BTreeSet<String> = wanted.iter().cloned().collect();

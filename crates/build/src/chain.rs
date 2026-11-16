@@ -2297,6 +2297,63 @@ pub(crate) fn content_addressed(package: &Package) -> bool {
     !package.is_boot()
 }
 
+/// Fills in `package`, whose unresolved key is `key`, from the build that key was last worked out
+/// as, when that build is recorded (0041). Nothing about its dependencies is read, so it needs none
+/// of them. Its paths needn't be in the store, as with one a cache traced: what reads them brings
+/// them in. Says whether it was found.
+pub(crate) fn found_by_recipe(
+    lab: &Lab,
+    package: &Package,
+    key: &str,
+    built: &mut Built,
+) -> Result<bool, String> {
+    let Some(resolved) = crate::records::hinted(lab, key) else {
+        return Ok(false);
+    };
+    let out = StorePath::from_hash(&resolved);
+    let moved = content_addressed(package);
+    let Ok(record) = fs::read_to_string(crate::fixup::fixed_record(lab, &out, moved)) else {
+        return Ok(false);
+    };
+    let mut found = Built::default();
+    if moved {
+        if !record
+            .split_whitespace()
+            .any(|part| part.starts_with("out="))
+        {
+            return Ok(false);
+        }
+        remember_outputs(&mut found, package, record.trim());
+    } else {
+        found.paths.insert(package.id.clone(), out.clone());
+    }
+    let id = &package.id;
+    built.paths.insert(id.clone(), found.paths[id].clone());
+    if let Some(outputs) = found.outputs.remove(id) {
+        built.outputs.insert(id.clone(), outputs);
+    }
+    built.records.insert(
+        id.clone(),
+        PackageRecord {
+            unresolved: key.to_owned(),
+            resolved,
+            text: serde_json::json!({ "kind": "package", "id": id, "found": "by recipe" }),
+        },
+    );
+    built.unresolved.insert(id.clone(), key.to_owned());
+    built.temporary.insert(id.clone(), out);
+    built.closures.insert(id.clone(), BTreeSet::new());
+    if !package.indexes.is_empty() {
+        built.indexes.insert(id.clone(), package.indexes.clone());
+    }
+    if !package.search_paths.is_empty() {
+        built
+            .search_paths
+            .insert(id.clone(), package.search_paths.clone());
+    }
+    Ok(true)
+}
+
 /// Sets where a package is from what its record says.
 pub(crate) fn remember_outputs(built: &mut Built, package: &Package, record: &str) {
     let outputs: split::Outputs = record
@@ -2669,6 +2726,7 @@ pub(crate) fn begin(
                 .collect::<BTreeMap<_, _>>(),
         }),
     };
+    crate::records::hint(lab, &unresolved, out.hash());
     built.unresolved.insert(package.id.clone(), unresolved);
     built.records.insert(package.id.clone(), record);
     built.paths.insert(package.id.clone(), out.clone());
@@ -5748,5 +5806,65 @@ mod raw_output_tests {
         assert_eq!(forget_raw_outputs(&lab, true).unwrap(), 1);
         assert!(!raw_output(&lab, &kept).exists());
         assert!(crate::fixup::fixed_record(&lab, &kept, true).exists());
+    }
+}
+
+#[cfg(test)]
+mod found_tests {
+    use super::*;
+
+    const KEY: &str = "unresolved-jq";
+    const RESOLVED: &str = "1111111111111111111111111111111111111111-jq-1.8";
+    const OUT: &str = "2222222222222222222222222222222222222222-jq-1.8";
+
+    fn jq() -> Package {
+        recipe_from_str("[[package]]\nid = \"jq\"\nscope = \"runtime\"\nscript = \"\"\n")
+    }
+
+    /// A work directory where jq was last worked out as `RESOLVED`, recorded as moved to `OUT`.
+    fn work(hinted: bool, recorded: bool, stored: bool) -> (tempfile::TempDir, Lab) {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path());
+        if hinted {
+            crate::records::hint(&lab, KEY, RESOLVED);
+        }
+        if recorded {
+            let record = crate::fixup::fixed_record(&lab, &StorePath::from_hash(RESOLVED), true);
+            fs::create_dir_all(record.parent().unwrap()).unwrap();
+            fs::write(record, format!("out={OUT}\n")).unwrap();
+        }
+        if stored {
+            fs::create_dir_all(lab.on_host(&StorePath::from_hash(OUT))).unwrap();
+        }
+        (dir, lab)
+    }
+
+    #[test]
+    fn a_recipe_last_built_is_found_without_its_dependencies_in_the_store_or_not() {
+        for stored in [true, false] {
+            let (_dir, lab) = work(true, true, stored);
+            let mut built = Built::default();
+            assert!(found_by_recipe(&lab, &jq(), KEY, &mut built).unwrap());
+            assert_eq!(built.paths["jq"], StorePath::from_hash(OUT));
+            assert_eq!(built.unresolved_or_path("jq"), KEY);
+            assert_eq!(built.records["jq"].resolved, RESOLVED);
+            assert_eq!(built.temporary["jq"], StorePath::from_hash(RESOLVED));
+        }
+    }
+
+    #[test]
+    fn a_recipe_is_not_found_without_its_hint_or_its_record() {
+        for (hinted, recorded) in [(false, true), (true, false)] {
+            let (_dir, lab) = work(hinted, recorded, true);
+            let mut built = Built::default();
+            assert!(
+                !found_by_recipe(&lab, &jq(), KEY, &mut built).unwrap(),
+                "{hinted} {recorded}"
+            );
+            assert!(
+                built.paths.is_empty(),
+                "nothing is filled in for one not found"
+            );
+        }
     }
 }

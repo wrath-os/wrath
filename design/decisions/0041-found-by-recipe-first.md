@@ -1,6 +1,6 @@
 # 0041: Builds are found by their recipes first
 
-Status: proposed, 2026-11-16.
+Status: accepted, 2026-11-16.
 
 ## Context
 
@@ -64,6 +64,40 @@ realisations of its inputs.
 3. A hit that's absent and needed: fetch or build it before a dependent reads it.
 4. Images, `install` and `apply --host` bring hints, on top of the records they bring now.
 5. The VM check: an image with no cache plans nothing and switches.
+
+## Built so far
+
+The first cut, 2026-11-16, finds a whole system or nothing:
+
+- Every package worked out keeps its hint. A system build first works out the unresolved keys of
+  what it uses and its builds; when each of them has a hint whose record is there, the system is
+  put together from those, and nothing is resolved, built or fetched, toolchain included. Else it
+  builds as before. A plan does the same, and says only what a cache would bring.
+- A package can be found with its paths missing, as a traced one can: btrfs-progs and cryptsetup
+  go into the initrd, so the running system doesn't refer to them, and a machine doesn't have
+  them. What the system runs is fetched after it's put together, where it isn't there.
+- Putting a system together runs its actions, and a machine installed from an image has no action
+  database, so it ran them all again, the initrd's with packages it doesn't have. What each action
+  made is now kept beside the store too, in `actions/` with its files in `e2e/objects/`, and read
+  when the database lacks it.
+- Each system lists its builds, hints and actions in `builds/<system>`, and images, `install` and
+  `apply --host` bring that list and what it names, with the `refs/` of what they copy.
+- Checked: three configurations, the desktop one among them, put together the same system either
+  way, in 0.15 to 0.18 seconds where resolving took up to 2.9. A VM booted from an image with no
+  cache to reach planned nothing, then upgraded from its repository and switched. Another, switched
+  over SSH with `apply --host` to a configuration adding jq, which its image never had, got jq's
+  hint and record along with it, and planned that configuration with nothing to build.
+
+## Open
+
+- A system where some packages are found and some aren't builds the old way. Finding the rest
+  package by package, and resolving only what changed and what it's built with, is the next step.
+- Cache hints. A trace that names the unresolved key it was built for, under its signature, would
+  let a machine follow a cache's hint without trusting it about which build that is.
+- Build descriptions, like Nix's derivations: writing down what a key hashes, so keys can be
+  compared between machines, checked, and sent to a builder without the recipes. That's its own
+  decision.
+- `install` brings the records by the same code as images, but wasn't run in a VM with them.
 
 ## Alternatives
 

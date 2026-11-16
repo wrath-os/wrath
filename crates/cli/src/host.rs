@@ -159,12 +159,16 @@ impl Remote {
         if !self.quiet {
             eprintln!("copying {} store paths to {}", missing.len(), self.name);
         }
+        // Laid out as the work directory is: the paths in `store`, and beside it the records of
+        // the builds that made the system, so the machine knows it has them.
+        let records = wrath_build::records::of(lab, system, &closure)?;
         let mut tar = Command::new("tar")
             .args(["--owner=0", "--group=0", "--numeric-owner", "-C"])
-            .arg(lab.work.join("store"))
+            .arg(&lab.work)
             .arg("-cf")
             .arg("-")
-            .args(&missing)
+            .args(missing.iter().map(|hash| format!("store/{hash}")))
+            .args(&records)
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|e| format!("cannot run tar: {e}"))?;
@@ -401,13 +405,17 @@ fn switch_steps(sent: Option<&str>, system: &StorePath, how: Switch) -> String {
     };
     // Unpacked beside the store, on its filesystem, and renamed in one path at a time, so an
     // interrupted copy never leaves a partial path under a name `send` would take as complete,
-    // and the store holds nothing else.
+    // and the store holds nothing else. The records of the builds come after every path is in.
     match sent {
         Some(dir) => format!(
             "staged=$(mktemp -d /wrath/incoming.XXXXXX) && tar -C $staged -xf {dir}/system.tar && \
-             for path in $staged/*; do \
+             for path in $staged/store/*; do \
              test -e /wrath/store/${{path##*/}} || mv $path /wrath/store/ || exit; \
-             done && rm -rf $staged {dir} && {switch}"
+             done && for kind in fixed refs hints actions e2e/objects builds; do \
+             test -d $staged/$kind || continue; mkdir -p /wrath/work/$kind || exit; \
+             for record in $staged/$kind/*; do \
+             test -e /wrath/work/$kind/${{record##*/}} || mv $record /wrath/work/$kind/ || exit; \
+             done; done && rm -rf $staged {dir} && {switch}"
         ),
         None => switch,
     }
@@ -519,9 +527,13 @@ mod tests {
             ),
             "sh -c 'staged=$(mktemp -d /wrath/incoming.XXXXXX) && \
              tar -C $staged -xf /var/tmp/wrath.Ab12/system.tar && \
-             for path in $staged/*; do \
+             for path in $staged/store/*; do \
              test -e /wrath/store/${path##*/} || mv $path /wrath/store/ || exit; \
-             done && rm -rf $staged /var/tmp/wrath.Ab12 && \
+             done && for kind in fixed refs hints actions e2e/objects builds; do \
+             test -d $staged/$kind || continue; mkdir -p /wrath/work/$kind || exit; \
+             for record in $staged/$kind/*; do \
+             test -e /wrath/work/$kind/${record##*/} || mv $record /wrath/work/$kind/ || exit; \
+             done; done && rm -rf $staged /var/tmp/wrath.Ab12 && \
              /wrath/store/abc/bin/wrath apply --yes /wrath/store/abc'"
         );
         assert_eq!(

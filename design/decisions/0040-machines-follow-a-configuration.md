@@ -102,10 +102,10 @@ What others got wrong, or what people trip over:
   resumes them; `add` refuses; `--boot` leaves the running system alone, and `status` says which
   generation runs and which boots next; a failed automatic upgrade is kept and shown.
 - Not yet: the failure shown at login, and rebooting into what `--boot` staged, in a VM.
-- Found on the way: a machine knows what its store holds by the records in its work directory or
-  a cache's traces, and an image or install brings no records. A machine booted from an image
-  therefore rebuilds packages it already has, wrath among them, unless a cache has their traces.
-  Images and install should bring the records of everything they put in the store.
+- Found on the way: a machine booted from an image rebuilt packages it already had, wrath among
+  them, unless a cache had their traces. 0041 settles it: machines find builds by their recipes,
+  and images, `install` and `apply --host` bring the records. Upgrading in a VM with no cache now
+  works.
 
 ## Open
 

@@ -490,8 +490,9 @@ fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
     let store = target.join("wrath/store");
     fs::create_dir_all(&store).map_err(|e| format!("{}: {e}", store.display()))?;
     let lab = Lab::new(from.join("wrath"));
-    let missing: Vec<_> = wrath_build::chain::runtime_closure(&lab, &generation)?
-        .into_iter()
+    let closure = wrath_build::chain::runtime_closure(&lab, &generation)?;
+    let missing: Vec<_> = closure
+        .iter()
         .filter(|path| !store.join(path.hash()).exists())
         .collect();
     // A count that moves on a terminal, and one line elsewhere, such as in a log.
@@ -513,6 +514,10 @@ fn copy_onto(from: &Path, system: &Path, target: &Path) -> Result<(), String> {
     if terminal && total > 0 {
         println!();
     }
+    // So the installed machine knows which builds it has, as the one it's installed from does.
+    let work = wrath_build::image::WORK;
+    let records = Lab::new(from.join(work));
+    wrath_build::records::copy_system(&records, &generation, &closure, &target.join(work))?;
     let generations = target.join(GENERATIONS);
     fs::create_dir_all(&generations).map_err(|e| format!("{}: {e}", generations.display()))?;
     let first = generations.join("1");
@@ -752,6 +757,17 @@ mod tests {
         for name in [hash('b'), hash('c')] {
             fs::create_dir_all(from.join("wrath/store").join(name)).unwrap();
         }
+        // The system's build reached b, and a tool d that isn't in its closure; c is no part of it.
+        let fixed = from.join("wrath/work/fixed");
+        fs::create_dir_all(&fixed).unwrap();
+        for name in [hash('b'), hash('c'), hash('d')] {
+            fs::write(fixed.join(format!("{name}-built")), "").unwrap();
+        }
+        let records = Lab::new(from.join("wrath/work"));
+        let (b, d) = (hash('b'), hash('d'));
+        let system = StorePath::from_hash(&hash('a'));
+        let keys = [("u1", b.as_str()), ("u2", d.as_str())];
+        wrath_build::records::keep(&records, &system, keys, &Default::default()).unwrap();
         let target = tempfile::tempdir().unwrap();
         let inside = PathBuf::from(format!("/wrath/store/{}", hash('a')));
         copy_onto(from, &inside, target.path()).unwrap();
@@ -759,6 +775,10 @@ mod tests {
         assert!(store.join(hash('a')).join("etc/wrath/model-hash").is_file());
         assert!(store.join(hash('b')).is_dir());
         assert!(!store.join(hash('c')).exists(), "nothing uses c");
+        let records = target.path().join("wrath/work/fixed");
+        assert!(records.join(format!("{}-built", hash('b'))).is_file());
+        assert!(records.join(format!("{}-built", hash('d'))).is_file());
+        assert!(!records.join(format!("{}-built", hash('c'))).exists());
         let (listed, current) = generations(target.path()).unwrap();
         assert_eq!((listed.len(), current), (1, 1));
         assert_eq!(fs::read_link(&listed[0].1).unwrap(), inside);
