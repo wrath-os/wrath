@@ -302,9 +302,20 @@ pub(crate) fn build_some(
     repository: &Path,
     wanted: Option<&[&str]>,
 ) -> Result<(Built, StorePath, Vec<Package>), String> {
+    let found = chain::built_from_seed(&seed::path(lab)?);
+    build_onto(lab, repository, wanted, found)
+}
+
+/// [`build_some`] onto what's `found` already, as by its recipe, which isn't worked out again.
+pub(crate) fn build_onto(
+    lab: &Lab,
+    repository: &Path,
+    wanted: Option<&[&str]>,
+    found: Built,
+) -> Result<(Built, StorePath, Vec<Package>), String> {
     let files = chain::recipe_files(repository)?;
     let recipes = chain::names_of(&files);
-    let built = chain::build_toolchain(lab, repository)?;
+    let built = chain::build_toolchain_onto(lab, repository, found)?;
     let seed = seed::path(lab)?;
     let sources = Sources::load(repository)?;
     let loaded = match wanted {
@@ -378,6 +389,17 @@ pub(crate) struct Dry {
 impl Dry {
     /// A dry run of [`build_some`] for `wanted`.
     pub(crate) fn of(lab: &Lab, repository: &Path, wanted: &[&str]) -> Result<Self, String> {
+        let found = chain::built_from_seed(&seed::path(lab)?);
+        Self::onto(lab, repository, wanted, found)
+    }
+
+    /// A dry run of [`build_onto`].
+    pub(crate) fn onto(
+        lab: &Lab,
+        repository: &Path,
+        wanted: &[&str],
+        found: Built,
+    ) -> Result<Self, String> {
         let files = chain::recipe_files(repository)?;
         let recipes = chain::names_of(&files);
         let seed = seed::path(lab)?;
@@ -388,7 +410,7 @@ impl Dry {
             .filter(|package| !toolchain_ids.contains(&package.id))
             .collect();
         let mut dry = Self {
-            built: chain::built_from_seed(&seed),
+            built: found,
             seed,
             loaded: Vec::new(),
             missing: BTreeMap::new(),
@@ -398,6 +420,7 @@ impl Dry {
         let all = toolchain
             .into_iter()
             .chain(loaded.iter().cloned())
+            .filter(|package| !dry.built.paths.contains_key(&package.id))
             .collect();
         for package in chain::in_order(all, |id| dry.built.paths.contains_key(id))? {
             dry.add(lab, repository, &package)?;

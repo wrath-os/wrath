@@ -2380,11 +2380,22 @@ pub(crate) const TOOLCHAIN: [&str; 6] = [
 
 /// Builds the toolchain, reusing what's already built.
 pub fn build_toolchain(lab: &Lab, repository: &Path) -> Result<Built, String> {
+    build_toolchain_onto(lab, repository, built_from_seed(&seed::path(lab)?))
+}
+
+/// Builds what of the toolchain `built` doesn't have already, onto it.
+pub(crate) fn build_toolchain_onto(
+    lab: &Lab,
+    repository: &Path,
+    mut built: Built,
+) -> Result<Built, String> {
     let seed = seed::path(lab)?;
     let mut sources = Sources::load(repository)?;
-    let mut built = built_from_seed(&seed);
     let files = recipe_files(repository)?;
-    let reached = load_reached(lab, repository, &names_of(&files), &TOOLCHAIN)?;
+    let reached = load_reached(lab, repository, &names_of(&files), &TOOLCHAIN)?
+        .into_iter()
+        .filter(|package| !built.paths.contains_key(&package.id))
+        .collect();
     let packages = in_order(reached, |id| built.paths.contains_key(id))?;
     for package in &packages {
         if let Some(prepared) =

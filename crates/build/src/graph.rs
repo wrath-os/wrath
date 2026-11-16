@@ -2479,10 +2479,10 @@ pub fn package_keys(
     chain::keys_of(&lab, repository, packages)
 }
 
-/// Every package a system built from `model` uses, found by its recipe alone (0041), when all of
-/// them are: nothing is resolved, built or fetched, and the toolchain isn't touched. `None` when
-/// any one isn't, and the system is built as before.
-fn found_by_recipe(lab: &Lab, repository: &Path, model: &Value) -> Result<Option<Built>, String> {
+/// What of the system `model` describes is found by its recipe (0041), and whether that's all it
+/// uses. A package found that something not found builds with isn't kept: that build reads it,
+/// so it's worked out as before, with what it's built with.
+fn found_by_recipe(lab: &Lab, repository: &Path, model: &Value) -> Result<(Built, bool), String> {
     let wanted = system_packages(model);
     // Keys are worked out from the toolchain up, though only what the system uses is looked up.
     let mut roots = chain::TOOLCHAIN.map(str::to_owned).to_vec();
@@ -2498,22 +2498,46 @@ fn found_by_recipe(lab: &Lab, repository: &Path, model: &Value) -> Result<Option
     ids.extend(builds.iter().map(|build| build.id.clone()));
     packages.extend(builds);
     let keys = chain::keys_of(lab, repository, packages.clone())?;
-    let mut built = Built::default();
-    // As a build has it: what's built at the first stage refers to it.
-    built
-        .paths
-        .insert("seed".to_owned(), crate::seed::path(lab)?);
-    built.closures.insert("seed".to_owned(), BTreeSet::new());
-    // What the system uses must all be found. What it's built with is found where it can be, as
-    // the system shares whatever of it runs, such as gcc's libraries; a tool that only built it
-    // isn't in the store, so nothing could share it.
+    // As a build has it: what's built at the first stage refers to the seed.
+    let seed = crate::seed::path(lab)?;
+    let mut tried = chain::built_from_seed(&seed);
     for package in &packages {
-        let found = chain::found_by_recipe(lab, package, &keys[&package.id], &mut built)?;
-        if !found && ids.contains(&package.id) {
-            return Ok(None);
+        chain::found_by_recipe(lab, package, &keys[&package.id], &mut tried)?;
+    }
+    let missed: Vec<&str> = ids
+        .iter()
+        .filter(|id| !tried.paths.contains_key(*id))
+        .map(String::as_str)
+        .collect();
+    if missed.is_empty() {
+        // What it's built with is found where it can be too, as the system shares whatever of it
+        // runs, such as gcc's libraries; a tool that only built it isn't in the store, so nothing
+        // could share it.
+        return Ok((tried, true));
+    }
+    let worked_out = built_with(&packages, &missed)?;
+    let mut built = chain::built_from_seed(&seed);
+    for package in packages.iter().filter(|p| !worked_out.contains(&p.id)) {
+        chain::found_by_recipe(lab, package, &keys[&package.id], &mut built)?;
+    }
+    Ok((built, false))
+}
+
+/// `missed` and everything among `packages` they're built with, all the way down.
+fn built_with(packages: &[chain::Package], missed: &[&str]) -> Result<BTreeSet<String>, String> {
+    let by_id: BTreeMap<&str, &chain::Package> =
+        packages.iter().map(|p| (p.id.as_str(), p)).collect();
+    let mut reached = BTreeSet::new();
+    let mut next: Vec<String> = missed.iter().map(|id| (*id).to_owned()).collect();
+    while let Some(id) = next.pop() {
+        if !reached.insert(id.clone()) {
+            continue;
+        }
+        if let Some(package) = by_id.get(id.as_str()) {
+            next.extend(package.dep_ids()?);
         }
     }
-    Ok(Some(built))
+    Ok(reached)
 }
 
 /// Builds what the model's `builds` ask for: each a recipe built under the build's name with the
@@ -2528,7 +2552,9 @@ fn build_variants(
 ) -> Result<(), String> {
     let mut sources = chain::Sources::load(repository)?;
     for variant in variants(lab, repository, recipes, model)? {
-        pilot::build_and_finish(lab, repository, &variant, seed, &mut sources, built)?;
+        if !built.paths.contains_key(&variant.id) {
+            pilot::build_and_finish(lab, repository, &variant, seed, &mut sources, built)?;
+        }
     }
     Ok(())
 }
@@ -2586,11 +2612,11 @@ pub fn system(
 ) -> Result<System, String> {
     let lab = Lab::new(work);
     let built = match found_by_recipe(&lab, repository, model)? {
-        Some(built) => built,
-        None => {
+        (built, true) => built,
+        (found, false) => {
             let wanted = system_packages(model);
             let (mut built, seed, recipes) =
-                pilot::build_some(&lab, repository, Some(&names_of(&wanted)))?;
+                pilot::build_onto(&lab, repository, Some(&names_of(&wanted)), found)?;
             build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
             built
         }
@@ -2628,13 +2654,14 @@ pub struct Takes {
 pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Takes, String> {
     let lab = Lab::new(work);
     // Found by recipe, nothing is built; what runs may still come from a cache.
-    if let Some(built) = found_by_recipe(&lab, repository, model)? {
+    let (found, complete) = found_by_recipe(&lab, repository, model)?;
+    if complete {
         let mut paths = BTreeSet::new();
         for id in system_packages(model)
             .iter()
-            .filter(|id| built.paths.contains_key(*id))
+            .filter(|id| found.paths.contains_key(*id))
         {
-            for path in built.run_outputs(id).into_iter().filter(|p| there(&lab, p)) {
+            for path in found.run_outputs(id).into_iter().filter(|p| there(&lab, p)) {
                 paths.extend(chain::traced_closure(&lab, &path)?);
             }
         }
@@ -2644,10 +2671,12 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
         });
     }
     let wanted = system_packages(model);
-    let mut dry = pilot::Dry::of(&lab, repository, &names_of(&wanted))?;
+    let mut dry = pilot::Dry::onto(&lab, repository, &names_of(&wanted), found)?;
     let mut ids: BTreeSet<String> = wanted.iter().cloned().collect();
     for variant in variants(&lab, repository, &dry.loaded, model)? {
-        dry.add(&lab, repository, &variant)?;
+        if !dry.built.paths.contains_key(&variant.id) {
+            dry.add(&lab, repository, &variant)?;
+        }
         ids.insert(variant.id.clone());
     }
     // What runs, and what the builds of what's missing build with.
@@ -2803,6 +2832,37 @@ pub fn packages(repository: &Path, work: &Path, names: &[&str]) -> Result<Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_isnt_found_is_worked_out_with_what_it_builds_with_and_nothing_above() {
+        let package = |id: &str, deps: &str| {
+            chain::recipe_from_str(&format!(
+                "[[package]]\nid = \"{id}\"\nscope = \"runtime\"\ntoolchain = \"seed\"\n\
+                 script = \"\"\ndeps = [{deps}]\n"
+            ))
+        };
+        let packages = [
+            package("zlib", ""),
+            package("oniguruma", ""),
+            package("jq", "\"oniguruma\""),
+            package("curl", "\"zlib\""),
+            package("git", "\"curl\", \"zlib\""),
+        ];
+        let ids = |set: BTreeSet<String>| set.into_iter().collect::<Vec<_>>();
+
+        assert_eq!(
+            ids(built_with(&packages, &["curl"]).unwrap()),
+            ["curl", "zlib"]
+        );
+        assert_eq!(
+            ids(built_with(&packages, &["jq", "git"]).unwrap()),
+            ["curl", "git", "jq", "oniguruma", "zlib"]
+        );
+        assert_eq!(
+            ids(built_with(&packages, &[]).unwrap()),
+            Vec::<String>::new()
+        );
+    }
 
     #[test]
     fn recipes_that_write_a_targets_name_are_pointed_out() {

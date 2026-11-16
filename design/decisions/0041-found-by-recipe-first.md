@@ -67,7 +67,7 @@ realisations of its inputs.
 
 ## Built so far
 
-The first cut, 2026-11-16, finds a whole system or nothing:
+The first cut, 2026-11-16, found a whole system or nothing:
 
 - Every package worked out keeps its hint. A system build first works out the unresolved keys of
   what it uses and its builds; when each of them has a hint whose record is there, the system is
@@ -87,17 +87,23 @@ The first cut, 2026-11-16, finds a whole system or nothing:
   cache to reach planned nothing, then upgraded from its repository and switched. Another, switched
   over SSH with `apply --host` to a configuration adding jq, which its image never had, got jq's
   hint and record along with it, and planned that configuration with nothing to build.
+- Then, 2026-11-17, package by package: when something the system uses isn't found, it and what
+  it's built with, all the way down, are worked out as before, and every other package found is
+  kept. A changed recipe works out the toolchain and the changed package's dependencies, and
+  leaves the rest of the system alone. With the hints of jq and gcc removed, a system came out the
+  same in 0.7 seconds, where everything found took 0.3.
+- `scenarios/native-host.toml` and `native-image-install.toml` check, with no cache, that an image,
+  `install` and `apply --host` bring what the machine needs to plan with nothing to build.
 
 ## Open
 
-- A system where some packages are found and some aren't builds the old way. Finding the rest
-  package by package, and resolving only what changed and what it's built with, is the next step.
+- A machine with no cache and no toolchain can't build what it misses. What it says then hasn't
+  been checked; it should say to reach a cache or build where the toolchain is.
 - Cache hints. A trace that names the unresolved key it was built for, under its signature, would
   let a machine follow a cache's hint without trusting it about which build that is.
 - Build descriptions, like Nix's derivations: writing down what a key hashes, so keys can be
   compared between machines, checked, and sent to a builder without the recipes. That's its own
   decision.
-- `install` brings the records by the same code as images, but wasn't run in a VM with them.
 
 ## Alternatives
 
