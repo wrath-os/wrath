@@ -46,6 +46,8 @@ wrath apply [OPTIONS] [SYSTEM]
 - `--host <NAME>`: Build here and switch another machine, reached with `ssh NAME`
 - `-y, --yes`: Switch without asking first
 - `--watch`: Keep watching: try each save, by itself when it only changes settings, until Ctrl-C
+- `--boot`: Make it the system booted next, without switching to it now
+- `--automatic`: Upgrade from what the system follows, as `updates.switch` says, and keep how it went; what `wrath-upgrade.timer` runs
 
 ## `wrath try`
 

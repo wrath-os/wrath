@@ -1,0 +1,5 @@
+[system]
+hostname = "box"
+
+[updates]
+automatic = "daily"

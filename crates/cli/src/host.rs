@@ -390,7 +390,9 @@ fn missing<'a>(have: &str, closure: impl Iterator<Item = &'a str>) -> Vec<String
 fn switch_steps(sent: Option<&str>, system: &StorePath, how: Switch) -> String {
     let path = system.inside();
     let switch = match how {
-        Switch::Apply => format!("{path}/bin/wrath apply --yes {path}"),
+        // `--automatic` runs on the machine itself, never through `--host`.
+        Switch::Apply | Switch::Automatic => format!("{path}/bin/wrath apply --yes {path}"),
+        Switch::Boot => format!("{path}/bin/wrath apply --boot --yes {path}"),
         Switch::Try(seconds) => format!("{path}/bin/wrath try --yes --for {seconds}s {path}"),
     };
     let switch = match crate::config_from::get() {

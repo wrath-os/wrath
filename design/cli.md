@@ -102,7 +102,7 @@ The machine:
 |---|---|
 | `wrath status` | What's running, whether it matches the configuration, and anything waiting for a login or reboot |
 | `wrath plan` | What would change |
-| `wrath apply` | Shows the plan, asks, switches, and says when the change takes full effect. `-y` skips asking. Also takes a system built before: `wrath apply PATH` |
+| `wrath apply` | Shows the plan, asks, switches, and says when the change takes full effect. `-y` skips asking. Also takes a system built before: `wrath apply PATH`. `--boot` makes it the system booted next without switching now, and `--automatic` is what the upgrade timer runs (0040) |
 | `wrath try` | Like `apply`, but rolls back after five minutes unless you run `wrath keep` |
 | `wrath history [N [M]]` | The generations, each with what changed in it; with N, what changed in generation N, and with two, between them |
 | `wrath rollback [N]` | Back one generation, or to generation N |

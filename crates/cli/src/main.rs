@@ -43,6 +43,7 @@ mod switching;
 mod system;
 mod templates;
 mod trees;
+mod upgrade;
 mod watch;
 
 /// How many times `dev test --determinism` evaluates each configuration.
@@ -128,8 +129,15 @@ enum Command {
         #[arg(short, long)]
         yes: bool,
         /// Keep watching: try each save, by itself when it only changes settings, until Ctrl-C
-        #[arg(long, conflicts_with_all = ["system", "yes"])]
+        #[arg(long, conflicts_with_all = ["system", "yes", "boot"])]
         watch: bool,
+        /// Make it the system booted next, without switching to it now
+        #[arg(long)]
+        boot: bool,
+        /// Upgrade from what the system follows, as `updates.switch` says, and keep how it went;
+        /// what `wrath-upgrade.timer` runs
+        #[arg(long, conflicts_with_all = ["system", "host", "watch", "boot"])]
+        automatic: bool,
     },
     /// Switch to the configuration for a while, then back unless you `wrath keep` it
     Try {
@@ -444,17 +452,76 @@ fn main() -> ExitCode {
             }
         }
     }
+    // With no configuration given, a machine that follows a URL acts on it.
+    let follows = (cli.config.is_none() && current_project().is_none())
+        .then(config_from::running_follows)
+        .flatten();
+    if let Some(follows) = &follows {
+        let changing = match &cli.command {
+            Command::Add { .. } => Some("add"),
+            Command::Remove { .. } => Some("remove"),
+            Command::Update { list: false, .. } => Some("update"),
+            _ => None,
+        };
+        if let Some(verb) = changing {
+            style::error(&config_from::changed_elsewhere(follows, verb));
+            return ExitCode::FAILURE;
+        }
+    }
+    let fetches_follows = matches!(
+        cli.command,
+        Command::Plan {
+            against: None,
+            fresh: false,
+            ..
+        } | Command::Apply { system: None, .. }
+            | Command::Try { system: None, .. }
+            | Command::Check
+            | Command::Build { .. }
+            | Command::Why { .. }
+            | Command::Options { .. }
+            | Command::Update { list: true, .. }
+    );
     // A configuration from a URL is fetched once, then acted on like a directory, read-only.
     let url = cli
         .config
         .as_deref()
         .and_then(Path::to_str)
         .filter(|given| config_from::is_url(given))
-        .map(str::to_owned);
+        .map(str::to_owned)
+        .or_else(|| follows.clone().filter(|_| fetches_follows));
+    let automatic = matches!(
+        cli.command,
+        Command::Apply {
+            automatic: true,
+            ..
+        }
+    );
+    if automatic {
+        let Some(follows) = &follows else {
+            style::error(
+                "the running system names nothing to upgrade from; its configuration says where \
+                 with `updates.from`",
+            );
+            return ExitCode::FAILURE;
+        };
+        let from = generations::current_generation().and_then(|generation| generation.from);
+        match upgrade::pause(Path::new("/"), follows, from.as_ref()) {
+            Ok(true) => return ExitCode::SUCCESS,
+            Ok(false) => {}
+            Err(message) => {
+                style::error(&message);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     if let Some(url) = &url {
         match config_from::fetch(url) {
             Ok(dir) => cli.config = Some(dir),
             Err(message) => {
+                if automatic {
+                    let _ = upgrade::keep(Path::new("/"), upgrade::Kind::Failed, &message);
+                }
                 style::error(&message);
                 return ExitCode::FAILURE;
             }
@@ -538,6 +605,15 @@ fn main() -> ExitCode {
     // Commands that switch the machine, which a project has nothing to do with.
     let machine = || config().and_then(|config| refuse_project(&config).map(|()| config));
     let result = match cli.command {
+        // Stays offline: what the newest commit would change is for `plan`.
+        Command::Status if let Some(follows) = &follows => {
+            generations::warn_degraded();
+            if json {
+                print_serde(&generations::following_json(follows))
+            } else {
+                generations::following(follows)
+            }
+        }
         Command::Status => machine().and_then(|config| {
             generations::warn_degraded();
             match model(&config, &modules) {
@@ -565,11 +641,25 @@ fn main() -> ExitCode {
             watch: true, host, ..
         } => watching(root, host.as_deref(), &machine, &modules),
         Command::Apply {
-            system, host, yes, ..
-        } => match host {
-            Some(host) => on_host(root, &host, Switch::Apply, yes, &machine, &modules),
-            None => switch(root, system, Switch::Apply, yes, &machine, &modules),
-        },
+            automatic: true, ..
+        } => {
+            let follows = follows.as_deref().unwrap_or_default();
+            let result = switch(root, None, Switch::Automatic, true, &machine, &modules);
+            upgrade::finish(Path::new("/"), follows, result)
+        }
+        Command::Apply {
+            system,
+            host,
+            yes,
+            boot,
+            ..
+        } => {
+            let how = if boot { Switch::Boot } else { Switch::Apply };
+            match host {
+                Some(host) => on_host(root, &host, how, yes, &machine, &modules),
+                None => switch(root, system, how, yes, &machine, &modules),
+            }
+        }
         Command::Try {
             system,
             host,

@@ -330,6 +330,40 @@ is filled in on each machine when it switches. A machine knows its role from whe
 installed, and `--role` picks another, such as `wrath build --role worker` to see that it still
 builds. `wrath check` checks every role.
 
+## Upgrading from a repository
+
+Keep the configuration in a repository and say where machines running it upgrade from:
+
+```toml
+[updates]
+from = "github:you/machines//framework"   # `//framework`: the directory it's in
+automatic = "daily"                         # optional: upgrade on a timer
+```
+
+A machine installed from a checkout of that repository then needs no checkout to upgrade.
+`wrath plan` and `wrath apply` with no `-C` fetch the newest commit and compare it with what
+runs, and `wrath status` says which commit runs. Any command takes the URL directly too:
+
+```sh
+wrath plan -C github:you/machines//framework
+```
+
+A machine applies the lock the repository has, so update the lock where you edit the
+configuration (`wrath update`, then commit and push) and every machine picks it up. `wrath add`
+and `wrath update` on a machine that follows a repository say so instead of changing it.
+
+With `automatic`, `switch` says what an upgrade does: `auto`, the default, switches when every
+change takes effect right away or at the next login, and otherwise makes the new system the one
+booted next; `now` always switches, and `boot` always waits for the next boot. wrath never
+reboots by itself. `wrath status` shows how the last automatic upgrade went.
+
+Applying something else by hand, such as a checkout you're trying changes in, pauses automatic
+upgrades so they don't undo it. `wrath status` says so, and `wrath apply` with no `-C` goes back
+to the repository and resumes them.
+
+A private GitHub repository needs a token that can read it, in `GH_TOKEN` or from
+`gh auth login`. The timer can't use one yet.
+
 ## Secrets
 
 Secrets are encrypted with [age](https://age-encryption.org) and kept in `secrets/` next to the

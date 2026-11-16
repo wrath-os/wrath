@@ -1,0 +1,6 @@
+error: machines upgrade from `github:owner/repo//dir`, an `https://` archive or `path:DIR`
+ --> fixtures/bad-configs/updates-bad/system.toml:5:8
+  |
+5 | from = "git@github.com:johnae/machines"
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `updates.from` is set here
+  = reported by modules/updates.star

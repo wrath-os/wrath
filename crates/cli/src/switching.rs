@@ -81,6 +81,8 @@ pub struct Generation {
     /// Whether it's the system running or the one that booted, which can differ from the current
     /// one after a boot fell back to an older generation.
     pub in_use: bool,
+    /// Whether it's the system running now. Several generations can be the same system.
+    pub running: bool,
     /// The hash of the model it was built from.
     pub model_hash: Option<String>,
     /// Where its configuration came from, when that was kept.
@@ -162,14 +164,15 @@ fn history_at(root: &Path) -> Result<Vec<Generation>, String> {
                 .map_or(0, |since| since.as_secs());
             let system = system_of(root, &link)?;
             let target = fs::read_link(&link).ok();
-            let in_use = [RUNNING, BOOTED]
-                .iter()
-                .any(|name| fs::read_link(root.join(name)).ok() == target);
+            let links_here = |name: &str| fs::read_link(root.join(name)).ok() == target;
+            let running = links_here(RUNNING);
+            let in_use = running || links_here(BOOTED);
             Ok(Generation {
                 number,
                 created: utc(seconds),
                 current: number == current,
                 in_use,
+                running,
                 model_hash: fs::read_to_string(system.join(MODEL_HASH)).ok(),
                 from: crate::config_from::of(root, number),
             })
@@ -268,6 +271,17 @@ pub fn activate(system: &Path) -> Result<(), String> {
     let number = add(root, system)?;
     crate::config_from::keep(root, number)?;
     switch(system, "switch").map_err(|e| switch_failed(number, previous(root).ok(), e))
+}
+
+/// Makes `system` the current generation, the one booted next, without switching to it now.
+/// Returns its number. Needs root.
+pub fn activate_boot(system: &Path) -> Result<u32, String> {
+    let root = Path::new(ROOT);
+    let _held = lock(root)?;
+    let number = add(root, system)?;
+    crate::config_from::keep(root, number)?;
+    switch(system, "boot")?;
+    Ok(number)
 }
 
 /// Goes back to generation `to`, or the one before the current one, and switches to it. Needs
@@ -535,6 +549,13 @@ fn run(command: &mut Command) -> Result<(), String> {
         output.status,
         String::from_utf8_lossy(&output.stderr).trim()
     ))
+}
+
+/// Now, as `2026-11-10 14:03:22` in UTC.
+pub fn now_utc() -> String {
+    utc(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs()))
 }
 
 /// Seconds since 1970 as `2026-11-10 14:03:22`, in UTC.

@@ -1,0 +1,6 @@
+[system]
+hostname = "box"
+
+[updates]
+from = "git@github.com:johnae/machines"
+automatic = "daily"

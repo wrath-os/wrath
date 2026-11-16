@@ -1,0 +1,6 @@
+error: upgrading on its own needs `updates.from` to upgrade from
+ --> fixtures/bad-configs/updates-no-from/system.toml:5:13
+  |
+5 | automatic = "daily"
+  |             ^^^^^^^ `updates.automatic` is set here
+  = reported by modules/updates.star

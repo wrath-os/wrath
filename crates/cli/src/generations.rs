@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use wrath_model::{LOCK_FILE, Lock, Model, Source, Tier, WRATH_SOURCE};
 
+use crate::config_from::ConfigFrom;
 use crate::switching::{self as here, Generation};
 
 /// Prints where each of `built`, by name, is, and links it at `link` when given: a directory gets
@@ -369,6 +370,24 @@ pub enum Switch {
     Apply,
     /// Run it for this many seconds, then switch back unless it's kept.
     Try(u64),
+    /// Make it the current generation, the one booted next, without switching to it now.
+    Boot,
+    /// What the configuration's `updates.switch` says, for an automatic upgrade: [`Self::Apply`]
+    /// or [`Self::Boot`], depending on when the changes take effect.
+    Automatic,
+}
+
+impl Switch {
+    /// What this is for `model`, whose changes take effect at `tier`.
+    fn resolved(self, model: &Model, tier: Option<Tier>) -> Self {
+        match self {
+            Self::Automatic if crate::upgrade::switches_now(crate::upgrade::mode(model), tier) => {
+                Self::Apply
+            }
+            Self::Automatic => Self::Boot,
+            Self::Apply | Self::Try(_) | Self::Boot => self,
+        }
+    }
 }
 
 /// Builds the system for `model` and switches to it, unless the running system already has it.
@@ -425,7 +444,7 @@ pub fn apply(
     if let Some(record) = record {
         record.write()?;
     }
-    switched(&system, how, tier)
+    switched(&system, how.resolved(&model, tier), tier)
 }
 
 /// What to say about a switch to the running system that failed partway with `error`.
@@ -448,13 +467,13 @@ pub fn apply_built(system: &Path, how: Switch, yes: bool) -> Result<ExitCode, St
     let model = crate::read_model(&system.join("etc/wrath/model.json"))
         .map_err(|e| format!("{} isn't a system wrath built: {e}", system.display()))?;
     if yes {
-        return switched(system, how, None);
+        return switched(system, how.resolved(&model, None), None);
     }
     let Some(tier) = planned(&model, None, false)? else {
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     };
-    switched(system, how, tier)
+    switched(system, how.resolved(&model, tier), tier)
 }
 
 /// Shows the plan from the running system to `model` and asks whether to switch. Gives the tier
@@ -483,7 +502,9 @@ fn planned(
 
 fn switched(system: &Path, how: Switch, tier: Option<Tier>) -> Result<ExitCode, String> {
     let code = switch_to(system, how)?;
-    if let Some(note) = tier.and_then(full_effect) {
+    if how == Switch::Boot {
+        println!("it takes effect at the next boot");
+    } else if let Some(note) = tier.and_then(full_effect) {
         println!("{note}");
     }
     Ok(code)
@@ -494,8 +515,10 @@ fn switched(system: &Path, how: Switch, tier: Option<Tier>) -> Result<ExitCode, 
 /// from a checkout doesn't.
 pub(crate) fn needs_locking(root: &Path, config: &Path, model: &Model) -> Result<bool, String> {
     let kept = crate::read_lock(config)?.unwrap_or_default().ids;
-    let wrath_unpinned =
-        !model.sources.contains_key(WRATH_SOURCE) && crate::pinned::running(root).is_some();
+    // A configuration read from a URL keeps the wrath its lock pins, as [`locked`] says.
+    let wrath_unpinned = !model.sources.contains_key(WRATH_SOURCE)
+        && crate::pinned::running(root).is_some()
+        && crate::config_from::fetched_url().is_none();
     let unpinned = model.sources.values().any(|source| !source.is_locked());
     Ok(wrath_unpinned || unpinned || kept.merged(&model.ids())? != kept)
 }
@@ -503,25 +526,36 @@ pub(crate) fn needs_locking(root: &Path, config: &Path, model: &Model) -> Result
 /// `model` with its sources pinned: pins what the lock next to `config` doesn't have yet, so the
 /// lock always describes what runs.
 pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, String> {
-    let kept = crate::read_lock(config)?.unwrap_or_default().ids;
+    let existing = crate::read_lock(config)?;
+    let kept = existing
+        .as_ref()
+        .map(|lock| lock.ids.clone())
+        .unwrap_or_default();
     let ids = kept.merged(&model.ids())?;
     if model.is_locked() && ids == kept {
         crate::fetch::record(config)?;
         return Ok(model);
     }
-    let wrath = crate::pinned::for_lock(
-        crate::pinned::running(root),
-        model.sources.get(WRATH_SOURCE),
-        false,
-    );
+    // A configuration read from a URL keeps the wrath its lock pins: the machine running it
+    // isn't where wrath is moved forward.
+    let wrath = match crate::config_from::fetched_url() {
+        Some(_) => model.sources.get(WRATH_SOURCE).cloned(),
+        None => crate::pinned::for_lock(
+            crate::pinned::running(root),
+            model.sources.get(WRATH_SOURCE),
+            false,
+        ),
+    };
     let mut lock = Lock {
         sources: pins(&model)?,
         ids,
     };
-    crate::places::keep_pin(&mut lock.sources, crate::read_lock(config)?.as_ref());
+    crate::places::keep_pin(&mut lock.sources, existing.as_ref());
     lock.sources
         .extend(wrath.map(|d| (WRATH_SOURCE.to_owned(), d)));
-    write_lock(config, &lock)?;
+    if existing.as_ref() != Some(&lock) {
+        write_lock(config, &lock)?;
+    }
     Ok(model.with_lock(&lock))
 }
 
@@ -601,20 +635,20 @@ pub(crate) fn full_effect(tier: Tier) -> Option<&'static str> {
 /// `status` as data: the running generation, whether a system is being tried, the running and
 /// configured models' hashes, and whether the lock pins every source.
 pub fn status_json(model: &Model) -> serde_json::Value {
-    let current = here::history()
-        .ok()
-        .and_then(|generations| generations.into_iter().find(|g| g.current));
+    let generations = here::history().unwrap_or_default();
     let running = here::running_model_hash();
     let hash = model.hash();
     serde_json::json!({
-        "generation": current.as_ref().map(|g| g.number),
-        "from": current.and_then(|g| g.from).map(|from| from.to_json()),
+        "generation": running_of(&generations).map(|g| g.number),
+        "boots_next": generations.iter().find(|g| g.current).map(|g| g.number),
+        "from": running_of(&generations).and_then(|g| g.from.as_ref()).map(ConfigFrom::to_json),
         "trying": here::trying(),
         "matches": running.as_deref() == Some(hash.as_str()),
         "running": running,
         "model": hash,
         "locked": model.is_locked(),
         "replaced_home_files": crate::homes::replaced_in_homes(Path::new("/")),
+        "upgrade": crate::upgrade::shown(Path::new("/"), None, None).map(|o| o.to_json()),
     })
 }
 
@@ -633,7 +667,7 @@ pub fn history_json() -> Result<serde_json::Value, String> {
             "created": generation.created,
             "current": generation.current,
             "model": generation.model_hash,
-            "from": generation.from.as_ref().map(crate::config_from::ConfigFrom::to_json),
+            "from": generation.from.as_ref().map(ConfigFrom::to_json),
             "changes": changes,
         }));
         before = model;
@@ -643,15 +677,79 @@ pub fn history_json() -> Result<serde_json::Value, String> {
 
 /// Says which generation is running and whether it's the configuration's `model`.
 pub fn status(model: &Model) -> Result<ExitCode, String> {
-    let current = here::history()
+    let generations = here::history().unwrap_or_default();
+    print_running(&generations);
+    println!("{}", matching(here::running_model_hash().as_deref(), model));
+    print_notes(crate::upgrade::shown(Path::new("/"), None, None));
+    // wrath from a checkout has no version to pin, so only the configuration's sources count.
+    if model.sources.values().any(|source| !source.is_locked()) {
+        println!("the lock doesn't pin every source yet; `wrath apply` pins them first");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `status` on a machine that upgrades from `follows`, offline: what runs and where it came from.
+pub fn following(follows: &str) -> Result<ExitCode, String> {
+    let generations = here::history().unwrap_or_default();
+    print_running(&generations);
+    // The current generation is the one automatic upgrades compare, as it's the one that boots.
+    let from = generations
+        .iter()
+        .find(|g| g.current)
+        .and_then(|g| g.from.as_ref());
+    if let Some(from) = from.filter(|from| !from.is(follows)) {
+        println!("it came from {from} instead; `wrath apply` goes back to {follows}");
+    } else {
+        println!("upgrades from {follows}; `wrath plan` shows what its newest commit would change");
+    }
+    print_notes(crate::upgrade::shown(Path::new("/"), Some(follows), from));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `following` as data.
+pub fn following_json(follows: &str) -> serde_json::Value {
+    let generations = here::history().unwrap_or_default();
+    let current = generations.iter().find(|g| g.current);
+    let from = current.and_then(|g| g.from.as_ref());
+    serde_json::json!({
+        "generation": running_of(&generations).map(|g| g.number),
+        "boots_next": current.map(|g| g.number),
+        "from": from.map(ConfigFrom::to_json),
+        "follows": follows,
+        "upgrade": crate::upgrade::shown(Path::new("/"), Some(follows), from)
+            .map(|outcome| outcome.to_json()),
+        "trying": here::trying(),
+        "running": here::running_model_hash(),
+    })
+}
+
+pub(crate) fn current_generation() -> Option<Generation> {
+    here::history()
         .ok()
-        .and_then(|generations| generations.into_iter().find(|g| g.current));
+        .and_then(|generations| generations.into_iter().find(|g| g.current))
+}
+
+/// The generation that runs: the current one when it runs, otherwise the newest that's the
+/// running system, as after `apply --boot` or a boot that fell back.
+fn running_of(generations: &[Generation]) -> Option<&Generation> {
+    generations
+        .iter()
+        .find(|g| g.current && g.running)
+        .or_else(|| generations.iter().rev().find(|g| g.running))
+}
+
+/// Says which generation runs and where its configuration came from, or that a system is being
+/// tried, and which generation boots next when that's another.
+fn print_running(generations: &[Generation]) {
     if here::trying() {
         println!(
             "trying a system that isn't a generation yet; it switches back on its own, \
              `wrath keep` keeps it and `wrath rollback` switches back now"
         );
-    } else if let Some(generation) = &current {
+        return;
+    }
+    let running = running_of(generations);
+    if let Some(generation) = running {
         println!(
             "running generation {}, from {}",
             generation.number, generation.created
@@ -660,18 +758,24 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
             println!("its configuration came from {from}");
         }
     }
-    println!("{}", matching(here::running_model_hash().as_deref(), model));
+    let current = generations.iter().find(|g| g.current);
+    if let Some(current) = current.filter(|c| running.is_none_or(|r| r.number != c.number)) {
+        println!("generation {} boots next", current.number);
+    }
+}
+
+/// A switch that didn't finish, files in homes that were replaced, and how the last automatic
+/// upgrade went.
+fn print_notes(upgrade: Option<crate::upgrade::Outcome>) {
+    if let Some(outcome) = upgrade {
+        println!("{outcome}");
+    }
     if let Some(unfinished) = here::unfinished() {
         println!("{}", unfinished_note(&unfinished.error));
     }
     for note in crate::homes::replaced_in_homes(Path::new("/")) {
         println!("{note}");
     }
-    // wrath from a checkout has no version to pin, so only the configuration's sources count.
-    if model.sources.values().any(|source| !source.is_locked()) {
-        println!("the lock doesn't pin every source yet; `wrath apply` pins them first");
-    }
-    Ok(ExitCode::SUCCESS)
 }
 
 /// Says which filesystems the machine runs with a disk missing. It's about the machine, so it's
@@ -724,7 +828,13 @@ fn matching(running: Option<&str>, model: &Model) -> &'static str {
 /// Switches to `system`, already built, as `how` says.
 fn switch_to(system: &Path, how: Switch) -> Result<ExitCode, String> {
     match how {
-        Switch::Apply => activate(system),
+        // Resolved before switching; were it not, switching now is what `apply` does.
+        Switch::Apply | Switch::Automatic => activate(system),
+        Switch::Boot => {
+            let number = here::activate_boot(system)?;
+            println!("generation {number} boots next; what runs now stays as it is until then");
+            Ok(ExitCode::SUCCESS)
+        }
         Switch::Try(seconds) => {
             here::try_system(system, seconds)?;
             println!("trying {}", system.display());
@@ -1414,12 +1524,42 @@ mod tests {
     }
 
     #[test]
+    fn the_running_generation_is_the_current_one_when_it_runs_and_else_the_newest_running() {
+        let generation = |number, current, running| Generation {
+            number,
+            created: String::new(),
+            current,
+            in_use: running,
+            running,
+            model_hash: None,
+            from: None,
+        };
+        let number = |generations: &[Generation]| running_of(generations).map(|g| g.number);
+        // 2 and 4 are the same system; 4 is current and runs.
+        let switched = [
+            generation(2, false, true),
+            generation(3, false, false),
+            generation(4, true, true),
+        ];
+        assert_eq!(number(&switched), Some(4));
+        // After `apply --boot`, 5 boots next while 4 still runs.
+        let boot_next = [
+            generation(2, false, true),
+            generation(4, false, true),
+            generation(5, true, false),
+        ];
+        assert_eq!(number(&boot_next), Some(4));
+        assert_eq!(number(&[generation(1, true, false)]), None);
+    }
+
+    #[test]
     fn clean_keeps_the_current_running_and_booted_generations_and_the_newest_before_them() {
         let generation = |number, current, in_use| Generation {
             number,
             created: String::new(),
             current,
             in_use,
+            running: false,
             model_hash: None,
             from: None,
         };

@@ -83,6 +83,30 @@ What others got wrong, or what people trip over:
 - Install from a URL (`wrath install -C github:...`) comes with this, since install already takes
   `-C`.
 
+## Built so far
+
+- `-C URL` for `github:`, `https://` and `path:`, with `//dir`; read-only, a commit fetched once
+  is kept by its hash, so checking an unchanged repository costs one API call. A configuration
+  read from a URL keeps the wrath its lock pins, and nothing is written when the lock would come
+  out the same.
+- Where each generation's configuration came from, in `/wrath/system/from/N`, passed through
+  `apply --host` too; `status`, `history` and their `--json` show it.
+- grapes' `updates` module: `updates.from`, `updates.automatic` and `updates.switch`, with errors
+  at the TOML line, and `wrath-upgrade.timer` running `/run/system/bin/wrath apply --automatic`.
+- On a machine following a URL: plain `plan`, `apply`, `try`, `check`, `build`, `why` and
+  `options` fetch it; `add`, `remove` and `update` refuse; `status` stays offline.
+- `apply --boot`, and `--automatic` with `switch`, the pause, and the last outcome in
+  `/wrath/system/upgrade.json`, shown by `status`.
+- In a VM following `path:`: the timer is active; an automatic upgrade fetches from the cache and
+  switches; a checkout applied by hand pauses the next one, and plain `wrath apply` goes back and
+  resumes them; `add` refuses; `--boot` leaves the running system alone, and `status` says which
+  generation runs and which boots next; a failed automatic upgrade is kept and shown.
+- Not yet: the failure shown at login, and rebooting into what `--boot` staged, in a VM.
+- Found on the way: a machine knows what its store holds by the records in its work directory or
+  a cache's traces, and an image or install brings no records. A machine booted from an image
+  therefore rebuilds packages it already has, wrath among them, unless a cache has their traces.
+  Images and install should bring the records of everything they put in the store.
+
 ## Open
 
 - The token for private repositories, given from a secret the configuration declares.

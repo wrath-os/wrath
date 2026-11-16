@@ -25,7 +25,7 @@ static FROM: OnceLock<ConfigFrom> = OnceLock::new();
 
 /// Whether `given`, as `-C` takes it, is a URL rather than a directory.
 pub fn is_url(given: &str) -> bool {
-    ["github:", "https://", "http://"]
+    ["github:", "https://", "http://", "path:"]
         .iter()
         .any(|scheme| given.starts_with(scheme))
 }
@@ -47,7 +47,14 @@ fn split_dir(url: &str) -> (&str, Option<&str>) {
 /// returns the directory it's in. The command then acts on it, read-only.
 pub fn fetch(url: &str) -> Result<PathBuf, String> {
     let (base, dir) = split_dir(url);
-    let (source, tree) = crate::trees::follow(base)?;
+    // A directory is read where it is, and hashing it, which a source needs, could take long.
+    let (rev, date, tree) = match base.strip_prefix("path:") {
+        Some(dir) => (None, None, PathBuf::from(dir)),
+        None => {
+            let (source, tree) = crate::trees::follow(base)?;
+            (source.rev, source.date, tree)
+        }
+    };
     let config = match dir {
         Some(dir)
             if Path::new(dir)
@@ -67,8 +74,8 @@ pub fn fetch(url: &str) -> Result<PathBuf, String> {
     }
     set(ConfigFrom::Url {
         url: url.to_owned(),
-        rev: source.rev,
-        date: source.date,
+        rev,
+        date,
     });
     Ok(config)
 }
@@ -91,6 +98,32 @@ pub fn fetched_url() -> Option<&'static str> {
     }
 }
 
+/// The option a configuration says where machines running it upgrade from with.
+const FOLLOWS: &str = "updates.from";
+
+/// Where machines running `model` upgrade from, when it says.
+pub fn follows(model: &wrath_model::Model) -> Option<&str> {
+    match model.options.get(FOLLOWS)? {
+        wrath_eval::Value::Str(url) => Some(url),
+        _ => None,
+    }
+}
+
+/// Where the running system upgrades from, when it says.
+pub fn running_follows() -> Option<String> {
+    let model = crate::read_model(&crate::switching::running_model()?).ok()?;
+    follows(&model).map(str::to_owned)
+}
+
+/// What to say when a machine following `url` is asked to change its configuration or lock
+/// with `verb`.
+pub fn changed_elsewhere(url: &str, verb: &str) -> String {
+    format!(
+        "this machine upgrades from {url}, so its configuration and lock change there: run \
+         `wrath {verb}` in a checkout of it and push, or give a configuration with -C"
+    )
+}
+
 /// What to say when a configuration fetched from `url` would need its lock written.
 pub fn unpinned(url: &str) -> String {
     format!(
@@ -107,6 +140,11 @@ impl ConfigFrom {
             Self::Dir(dir) => json!({ "dir": dir }),
             Self::Url { url, rev, date } => json!({ "url": url, "rev": rev, "date": date }),
         }
+    }
+
+    /// Whether it's the URL `url`, at any commit.
+    pub fn is(&self, url: &str) -> bool {
+        matches!(self, Self::Url { url: from, .. } if from == url)
     }
 
     /// As a command line argument, in hex, so no shell on the way needs it quoted.
@@ -221,6 +259,7 @@ mod tests {
     fn urls_and_directories_are_told_apart() {
         assert!(is_url("github:johnae/machines//framework"));
         assert!(is_url("https://example.com/m.tar.gz"));
+        assert!(is_url("path:/srv/machines//framework"));
         assert!(!is_url("machines/framework"));
         assert!(!is_url("/etc/wrath"));
     }
@@ -239,7 +278,10 @@ mod tests {
             from.to_string(),
             "github:johnae/machines//framework at 0123456789ab (2026-11-16)"
         );
+        assert!(from.is("github:johnae/machines//framework"));
+        assert!(!from.is("github:johnae/machines//desktop"));
         let dir = ConfigFrom::Dir("/home/john/machines/framework".into());
+        assert!(!dir.is("github:johnae/machines//framework"));
         assert_eq!(ConfigFrom::from_json(&dir.to_json()), Some(dir));
         assert_eq!(ConfigFrom::from_json(&json!({})), None);
     }
