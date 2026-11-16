@@ -658,7 +658,14 @@ fn main() -> ExitCode {
             let how = if boot { Switch::Boot } else { Switch::Apply };
             match host {
                 Some(host) => on_host(root, &host, how, yes, &machine, &modules),
-                None => switch(root, system, how, yes, &machine, &modules),
+                None => {
+                    let result = switch(root, system, how, yes, &machine, &modules);
+                    if let (Some(follows), Ok(ExitCode::SUCCESS)) = (&follows, &result) {
+                        let from = generations::current_generation().and_then(|g| g.from);
+                        let _ = upgrade::applied_by_hand(Path::new("/"), follows, from.as_ref());
+                    }
+                    result
+                }
             }
         }
         Command::Try {

@@ -1,0 +1,11 @@
+# A machine that upgrades from a configuration on its own disk, on a timer, and has SSH to log in
+# with.
+[system]
+hostname = "native-follow"
+
+[services.ssh]
+enable = true
+
+[updates]
+from = "path:/srv/m//box"
+automatic = "daily"

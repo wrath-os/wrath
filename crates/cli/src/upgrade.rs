@@ -1,7 +1,8 @@
 //! Automatic upgrades, which `wrath-upgrade.timer` runs as `wrath apply --automatic`: the
 //! newest commit of what the machine follows, switched to now or at the next boot as the
 //! configuration's `updates.switch` says. Each run's outcome is kept for `status`, and runs
-//! pause while the system came from somewhere else, such as a checkout applied by hand.
+//! pause while the system came from somewhere else, such as a checkout applied by hand. A failure
+//! or a pause is also shown as people log in, from a notice PAM reads.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -13,6 +14,10 @@ use crate::config_from::ConfigFrom;
 
 /// Where the machine at `root` keeps the outcome of the last automatic upgrade.
 const OUTCOME: &str = "wrath/system/upgrade.json";
+
+/// What logins show about automatic upgrades, there only while there's something to say. grapes'
+/// `updates` module has PAM show it.
+const NOTICE: &str = "wrath/system/notice";
 
 /// What an automatic upgrade does once it has the new system, as `updates.switch` says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +121,34 @@ pub fn keep(root: &Path, kind: Kind, message: &str) -> Result<(), String> {
         message: message.to_owned(),
     };
     let text = outcome.to_json().to_string();
-    std::fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))?;
+    write_notice(root, Some(&outcome))
+}
+
+/// Shows at login what's left to say once the machine at `root` switched by hand to a system
+/// whose configuration came from `from`: nothing when that's `follows`, as the machine is up to
+/// date with it whatever upgrading on its own did before, and otherwise what [`shown`] says.
+pub fn applied_by_hand(
+    root: &Path,
+    follows: &str,
+    from: Option<&ConfigFrom>,
+) -> Result<(), String> {
+    if from.is_some_and(|from| from.is(follows)) {
+        return write_notice(root, None);
+    }
+    write_notice(root, shown(root, Some(follows), from).as_ref())
+}
+
+fn write_notice(root: &Path, outcome: Option<&Outcome>) -> Result<(), String> {
+    let path = root.join(NOTICE);
+    let failed = |e: std::io::Error| format!("{}: {e}", path.display());
+    match outcome.filter(|outcome| outcome.kind != Kind::Done) {
+        Some(outcome) => std::fs::write(&path, format!("wrath: {outcome}\n")).map_err(failed),
+        None => match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(failed(e)),
+            _ => Ok(()),
+        },
+    }
 }
 
 /// How the last automatic upgrade on the machine at `root` went, when one ran.
@@ -238,6 +270,44 @@ mod tests {
             assert!(shown(root.path(), Some(follows), from).is_some());
             assert!(shown(root.path(), None, from).is_some());
         }
+    }
+
+    #[test]
+    fn logins_show_a_failure_or_a_pause_while_it_holds_and_nothing_once_upgrades_work() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("wrath/system")).unwrap();
+        let notice = || std::fs::read_to_string(root.path().join(NOTICE)).ok();
+        let follows = "github:johnae/machines//framework";
+        let there = ConfigFrom::Url {
+            url: follows.into(),
+            rev: None,
+            date: None,
+        };
+        let checkout = ConfigFrom::Dir("/home/john/machines/framework".into());
+
+        keep(root.path(), Kind::Failed, "no network").unwrap();
+        let failed = notice().unwrap();
+        assert!(
+            failed.starts_with("wrath: the last automatic upgrade failed"),
+            "{failed}"
+        );
+        assert!(failed.contains("no network"), "{failed}");
+        keep(root.path(), Kind::Done, "up to date").unwrap();
+        assert_eq!(notice(), None);
+
+        keep(root.path(), Kind::Paused, "a checkout").unwrap();
+        assert!(notice().unwrap().contains("paused"));
+        applied_by_hand(root.path(), follows, Some(&checkout)).unwrap();
+        assert!(notice().unwrap().contains("paused"));
+        // Applied by hand from what it follows: up to date, so nothing to say, failed or paused.
+        applied_by_hand(root.path(), follows, Some(&there)).unwrap();
+        assert_eq!(notice(), None);
+        keep(root.path(), Kind::Failed, "no network").unwrap();
+        applied_by_hand(root.path(), follows, Some(&checkout)).unwrap();
+        assert!(notice().unwrap().contains("no network"));
+        applied_by_hand(root.path(), follows, Some(&there)).unwrap();
+        assert_eq!(notice(), None);
+        applied_by_hand(root.path(), follows, Some(&there)).unwrap();
     }
 
     #[test]

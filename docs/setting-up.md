@@ -355,11 +355,12 @@ and `wrath update` on a machine that follows a repository say so instead of chan
 With `automatic`, `switch` says what an upgrade does: `auto`, the default, switches when every
 change takes effect right away or at the next login, and otherwise makes the new system the one
 booted next; `now` always switches, and `boot` always waits for the next boot. wrath never
-reboots by itself. `wrath status` shows how the last automatic upgrade went.
+reboots by itself. `wrath status` shows how the last automatic upgrade went, and when one fails,
+logging in on the console or over SSH says so until an upgrade works again.
 
 Applying something else by hand, such as a checkout you're trying changes in, pauses automatic
-upgrades so they don't undo it. `wrath status` says so, and `wrath apply` with no `-C` goes back
-to the repository and resumes them.
+upgrades so they don't undo it. `wrath status` and logins say so, and `wrath apply` with no `-C`
+goes back to the repository and resumes them.
 
 A private GitHub repository needs a token that can read it, in `GH_TOKEN` or from
 `gh auth login`. The timer can't use one yet.

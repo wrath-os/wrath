@@ -553,7 +553,9 @@ pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, 
     crate::places::keep_pin(&mut lock.sources, existing.as_ref());
     lock.sources
         .extend(wrath.map(|d| (WRATH_SOURCE.to_owned(), d)));
-    if existing.as_ref() != Some(&lock) {
+    // No lock is the same as one pinning nothing, which a configuration read from a URL couldn't
+    // write.
+    if existing.unwrap_or_default() != lock {
         write_lock(config, &lock)?;
     }
     Ok(model.with_lock(&lock))

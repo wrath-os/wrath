@@ -1,6 +1,6 @@
 # 0040: Machines follow a configuration
 
-Status: proposed, 2026-11-16.
+Status: accepted, 2026-11-17.
 
 ## Context
 
@@ -101,7 +101,15 @@ What others got wrong, or what people trip over:
   switches; a checkout applied by hand pauses the next one, and plain `wrath apply` goes back and
   resumes them; `add` refuses; `--boot` leaves the running system alone, and `status` says which
   generation runs and which boots next; a failed automatic upgrade is kept and shown.
-- Not yet: the failure shown at login, and rebooting into what `--boot` staged, in a VM.
+- A failed automatic upgrade, or a pause while it holds, is written to `/wrath/system/notice`,
+  which PAM shows at console and SSH logins on machines that upgrade on their own. It goes once an
+  upgrade works, or once the machine is applied by hand from what it follows.
+- `scenarios/native-follow.toml` checks it in a VM with no cache: an automatic upgrade with
+  nothing to do, a broken configuration upstream shown at an SSH login, the notice gone after a
+  fix applied by hand, and a generation staged with `--boot` running after a reboot.
+- Found on the way: a configuration read from a URL with no lock, and nothing to pin, was refused
+  as unpinned, since applying wrote an empty lock where there was none. No lock now counts as an
+  empty one.
 - Found on the way: a machine booted from an image rebuilt packages it already had, wrath among
   them, unless a cache had their traces. 0041 settles it: machines find builds by their recipes,
   and images, `install` and `apply --host` bring the records. Upgrading in a VM with no cache now
@@ -109,6 +117,8 @@ What others got wrong, or what people trip over:
 
 ## Open
 
+- Graphical logins don't show the notice: greetd's session gets no message of the day. A desktop
+  notification, or the greeter showing it, is still to do.
 - The token for private repositories, given from a secret the configuration declares.
 - Upgrading only when nothing needs building (`[updates] build = false`), using what the plan
   says it would fetch and build.

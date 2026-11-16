@@ -83,6 +83,8 @@ pub enum Step {
         /// The public key the initrd must present, relative to the repository.
         ssh_host_key: Option<String>,
     },
+    /// Reboots the VM from inside, as someone would, and waits for it to come back.
+    Reboot,
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -134,7 +136,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 18] = [
+pub const STEP_FIELDS: [&str; 19] = [
     "run_as",
     "apply_config",
     "apply_host",
@@ -153,6 +155,7 @@ pub const STEP_FIELDS: [&str; 18] = [
     "exit",
     "stdout_contains",
     "expect_no_reboot",
+    "reboot",
 ];
 
 #[derive(Deserialize)]
@@ -179,6 +182,7 @@ struct RawStep {
     exit: i32,
     stdout_contains: Option<String>,
     expect_no_reboot: Option<bool>,
+    reboot: Option<bool>,
 }
 
 impl TryFrom<RawStep> for Step {
@@ -198,6 +202,9 @@ impl TryFrom<RawStep> for Step {
                 ssh_key: raw.ssh_key,
                 ssh_host_key: raw.ssh_host_key,
             });
+        }
+        if raw.reboot == Some(true) {
+            return Ok(Self::Reboot);
         }
         if let Some(config) = raw.apply_host {
             return Ok(Self::ApplyHost { config });
@@ -233,8 +240,8 @@ impl TryFrom<RawStep> for Step {
             (None, None, Some(true)) if !run_fields && !apply_fields => Ok(Self::ExpectNoReboot),
             _ => Err(
                 "a step is one of `apply_config` (with `expect_plan`, `try_for` and `exit`), \
-                 `apply_host`, `run` (with `run_as`, `exit` and `stdout_contains`) or \
-                 `expect_no_reboot = true`"
+                 `apply_host`, `run` (with `run_as`, `exit` and `stdout_contains`), \
+                 `reboot = true` or `expect_no_reboot = true`"
                     .into(),
             ),
         }
@@ -780,6 +787,10 @@ impl VmRun<'_> {
                     self.boot_installed(qemu, agent, firmware, &unlock, missing, deadline)?;
                     booted = boot_id(agent, deadline)?;
                 }
+                Step::Reboot => {
+                    *agent = self.reboot(agent, qemu, cid, &booted, deadline)?;
+                    booted = boot_id(agent, deadline)?;
+                }
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
@@ -831,6 +842,31 @@ impl VmRun<'_> {
                 "switching to `{config}` was to exit with {exit}, but exited with {code:?}: {}",
                 stderr.trim()
             )),
+        }
+    }
+
+    /// Reboots the VM with `systemctl reboot` and returns the agent of its next boot, after
+    /// `booted`.
+    fn reboot(
+        &self,
+        agent: &mut Client<VsockStream>,
+        qemu: &mut KillOnDrop,
+        cid: u32,
+        booted: &str,
+        deadline: Instant,
+    ) -> Result<Client<VsockStream>, String> {
+        // The agent goes down with it, so it may never answer.
+        let _ = run_shell(agent, argv(&["systemctl", "reboot"]), deadline);
+        loop {
+            let mut next = self.connect(cid, &mut qemu.0, deadline)?;
+            // Until it goes down, the agent of the boot before still answers.
+            if boot_id(&mut next, deadline).is_ok_and(|id| id != booted) {
+                return Ok(next);
+            }
+            if Instant::now() >= deadline {
+                return Err("the VM didn't come back from its reboot".into());
+            }
+            thread::sleep(Duration::from_secs(1));
         }
     }
 
@@ -1553,6 +1589,7 @@ mod tests {
               { apply_config = "fixtures/configs/basic-changed", expect_plan = ["8081"] },
               { apply_config = "fixtures/configs/basic", try_for = "20s" },
               { apply_host = "fixtures/configs/basic-changed" },
+              { reboot = true },
               { run = "curl localhost", stdout_contains = "200" },
               { expect_no_reboot = true },
             ]
@@ -1586,6 +1623,7 @@ mod tests {
                 Step::ApplyHost {
                     config: "fixtures/configs/basic-changed".into(),
                 },
+                Step::Reboot,
                 Step::Run(Expect {
                     run: "curl localhost".into(),
                     exit: 0,

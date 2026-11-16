@@ -1,0 +1,13 @@
+# native-follow with a file, staged for its next boot.
+[system]
+hostname = "native-follow"
+
+[services.ssh]
+enable = true
+
+[updates]
+from = "path:/srv/m//box"
+automatic = "daily"
+
+[files."/etc/hello"]
+text = "booted\n"

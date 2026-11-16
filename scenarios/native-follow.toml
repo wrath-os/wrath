@@ -1,0 +1,25 @@
+title = "a machine upgrading on its own shows a failure at login until it is up to date, and boots what was staged for its next boot"
+notes = "Without a cache, from the configuration it follows on its own disk. `--source` gives the grapes the machine carries, as the fixture pins none."
+
+[vm]
+config = "scenarios/fixtures/native-follow"
+store = "wrath"
+wait_for = ["agent", "unit:multi-user.target", "unit:sshd.service"]
+steps = [
+  { run = "systemctl is-active wrath-upgrade.timer", stdout_contains = "active" },
+  { run = "mkdir -p /srv/m && cp -r /run/wrath-share/configs/native-follow /srv/m/box && echo copied", stdout_contains = "copied" },
+  { run = "wrath --source grapes=/run/system/grapes apply --automatic 2>&1; test -e /wrath/system/notice || echo nothing to say", stdout_contains = "nothing to say" },
+  # A broken configuration where it follows: the upgrade fails, and logins say so.
+  { run = "echo 'broken = [' >> /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply --automatic >/dev/null 2>&1; cat /wrath/system/notice", stdout_contains = "wrath: the last automatic upgrade failed" },
+  { run = "ssh-keygen -q -t ed25519 -N '' -f /root/key && install -d -m 700 /root/.ssh && cp /root/key.pub /root/.ssh/authorized_keys && echo ok", stdout_contains = "ok" },
+  { run = "echo exit | ssh -tt -i /root/key -o StrictHostKeyChecking=accept-new -o BatchMode=yes root@localhost 2>&1", stdout_contains = "wrath: the last automatic upgrade failed" },
+  # Fixed where it follows, and a change applied by hand from there: up to date, so nothing to say.
+  { run = "cp /run/wrath-share/configs/native-follow/system.toml /srv/m/box/ && printf '\\n[files.\"/etc/hello\"]\\ntext = \"by hand\\\\n\"\\n' >> /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply -y >/dev/null 2>&1; cat /etc/hello; test -e /wrath/system/notice || echo cleared", stdout_contains = "by hand\ncleared" },
+  { run = "echo exit | ssh -tt -i /root/key -o BatchMode=yes root@localhost 2>&1 | grep -q 'wrath: ' && echo shown || echo not shown", stdout_contains = "not shown" },
+  # Staged for the next boot. Built on the host, so the harness reaches it once it boots.
+  { prepare_build = "scenarios/fixtures/native-follow-booted" },
+  { run = "wrath apply --boot -y $(cat /run/wrath-share/system) >/dev/null 2>&1; cat /etc/hello; wrath status | grep -o 'generation 3 boots next'", stdout_contains = "by hand\ngeneration 3 boots next" },
+  { reboot = true },
+  { run = "cat /etc/hello; wrath status | grep -o 'running generation 3'", stdout_contains = "booted\nrunning generation 3" },
+]
+timeout_secs = 900
