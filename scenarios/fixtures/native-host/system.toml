@@ -1,0 +1,9 @@
+# A machine reached over SSH, which `apply --host` switches from the host.
+[system]
+hostname = "native-host"
+
+[networking]
+dhcp = true
+
+[services.ssh]
+enable = true

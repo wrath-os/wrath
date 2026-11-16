@@ -25,5 +25,8 @@ steps = [
   { run = "findmnt -no FSROOT /home", stdout_contains = "/@home" },
   { run = "cat /home/demo/.config/app/settings", stdout_contains = "from the configuration" },
   { run = "stat -c %a /var/lib/wrath/homes/demo", stdout_contains = "644" },
+  # The image's records came with the install: with no cache, the machine finds what it has.
+  { run = "ls /wrath/work/hints | wc -l | grep -qv '^0$' && test -n \"$(ls /wrath/work/builds)\" && echo records", stdout_contains = "records" },
+  { run = "cp -r /etc/wrath /tmp/installed && wrath --source grapes=/run/system/grapes -C /tmp/installed plan 2>&1", stdout_contains = "no changes" },
 ]
 timeout_secs = 1500

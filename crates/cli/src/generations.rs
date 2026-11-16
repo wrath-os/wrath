@@ -688,6 +688,12 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `status` when the configuration can't be read, which said why: what runs, at least.
+pub fn status_unread() -> ExitCode {
+    print_running(&here::history().unwrap_or_default());
+    ExitCode::FAILURE
+}
+
 /// `status` on a machine that upgrades from `follows`, offline: what runs and where it came from.
 pub fn following(follows: &str) -> Result<ExitCode, String> {
     let generations = here::history().unwrap_or_default();

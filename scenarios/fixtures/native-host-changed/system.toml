@@ -1,0 +1,14 @@
+# native-host with a package its image never had, and a file.
+packages = ["jq"]
+
+[system]
+hostname = "native-host"
+
+[networking]
+dhcp = true
+
+[services.ssh]
+enable = true
+
+[files."/etc/hello"]
+text = "from the host\n"

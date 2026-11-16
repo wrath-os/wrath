@@ -619,7 +619,8 @@ fn main() -> ExitCode {
             match model(&config, &modules) {
                 Some(model) if json => print_serde(&generations::status_json(&model)),
                 Some(model) => generations::status(&model),
-                None => Ok(ExitCode::FAILURE),
+                None if json => Ok(ExitCode::FAILURE),
+                None => Ok(generations::status_unread()),
             }
         }),
         Command::Plan {

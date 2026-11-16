@@ -52,6 +52,10 @@ pub enum Step {
         try_for: Option<String>,
         exit: i32,
     },
+    /// Builds `config` on the host and switches the VM to it with `wrath apply --host`, over SSH
+    /// as root with a key made for the run, and leaves the configuration in
+    /// `/run/wrath-share/configs/<name>`. The VM's configuration needs SSH and DHCP.
+    ApplyHost { config: String },
     /// Applies a user's own configuration in the VM as `user`, without root. Wrath's own store
     /// can't do this yet, so the step fails with a reason.
     ApplyHome {
@@ -130,9 +134,10 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 17] = [
+pub const STEP_FIELDS: [&str; 18] = [
     "run_as",
     "apply_config",
+    "apply_host",
     "prepare_build",
     "target",
     "boot_installed",
@@ -154,6 +159,7 @@ pub const STEP_FIELDS: [&str; 17] = [
 #[serde(deny_unknown_fields)]
 struct RawStep {
     apply_config: Option<String>,
+    apply_host: Option<String>,
     prepare_build: Option<String>,
     target: Option<String>,
     boot_installed: Option<bool>,
@@ -193,6 +199,9 @@ impl TryFrom<RawStep> for Step {
                 ssh_host_key: raw.ssh_host_key,
             });
         }
+        if let Some(config) = raw.apply_host {
+            return Ok(Self::ApplyHost { config });
+        }
         if let Some(config) = raw.apply_home {
             let user = raw
                 .as_user
@@ -223,8 +232,9 @@ impl TryFrom<RawStep> for Step {
             })),
             (None, None, Some(true)) if !run_fields && !apply_fields => Ok(Self::ExpectNoReboot),
             _ => Err(
-                "a step is one of `apply_config` (with `expect_plan`, `try_for` and `exit`), `run` \
-                 (with `run_as`, `exit` and `stdout_contains`) or `expect_no_reboot = true`"
+                "a step is one of `apply_config` (with `expect_plan`, `try_for` and `exit`), \
+                 `apply_host`, `run` (with `run_as`, `exit` and `stdout_contains`) or \
+                 `expect_no_reboot = true`"
                     .into(),
             ),
         }
@@ -396,7 +406,7 @@ impl VmRun<'_> {
         let result = self
             .connect(args.cid, &mut qemu.0, deadline)
             .and_then(|mut agent| {
-                let result = self.check(&mut qemu, &mut agent, &firmware, deadline);
+                let result = self.check(&mut qemu, &mut agent, &firmware, args.cid, deadline);
                 if result.is_err() {
                     self.save_journal(&mut agent);
                 }
@@ -432,6 +442,8 @@ impl VmRun<'_> {
         }
         fs::create_dir_all(self.dir).map_err(io_err("the run directory"))?;
         fs::create_dir(self.dir.join(SHARE)).map_err(io_err("the share directory"))?;
+        // The configuration it boots, as later steps share theirs.
+        self.share_config(&self.spec.config)?;
         for (n, size) in self.spec.blank_disks.iter().enumerate() {
             let status = Command::new("qemu-img")
                 .args(["create", "-q", "-f", "qcow2"])
@@ -529,6 +541,16 @@ impl VmRun<'_> {
                         store.display()
                     ),
                 ]);
+                // Only the host reaches it, at its SSH port, and it reaches nothing: no cache.
+                if self.reached_over_ssh() {
+                    argv.extend([
+                        "-nic".into(),
+                        format!(
+                            "user,model=virtio-net-pci,restrict=on,hostfwd=tcp:127.0.0.1:{}-:22",
+                            ssh_port(cid)
+                        ),
+                    ]);
+                }
             }
             Boot::Installed => {
                 // The console takes input, so a passphrase can be typed at it.
@@ -647,6 +669,7 @@ impl VmRun<'_> {
         qemu: &mut KillOnDrop,
         agent: &mut Client<VsockStream>,
         firmware: &FirmwarePaths,
+        cid: u32,
         deadline: Instant,
     ) -> Result<(), String> {
         for condition in &self.spec.wait_for {
@@ -675,7 +698,7 @@ impl VmRun<'_> {
             check_expect(agent, expect, deadline)?;
         }
         if !self.spec.steps.is_empty() {
-            self.run_steps(qemu, agent, firmware, deadline)?;
+            self.run_steps(qemu, agent, firmware, cid, deadline)?;
         }
         Ok(())
     }
@@ -711,6 +734,7 @@ impl VmRun<'_> {
         qemu: &mut KillOnDrop,
         agent: &mut Client<VsockStream>,
         firmware: &FirmwarePaths,
+        cid: u32,
         deadline: Instant,
     ) -> Result<(), String> {
         let mut booted = boot_id(agent, deadline)?;
@@ -730,6 +754,10 @@ impl VmRun<'_> {
                         exit: *exit,
                     };
                     self.apply_config(agent, current, switch, deadline)?;
+                    current = config;
+                }
+                Step::ApplyHost { config } => {
+                    self.apply_host(agent, config, ssh_port(cid), deadline)?;
                     current = config;
                 }
                 Step::ApplyHome { .. } => {
@@ -936,16 +964,80 @@ impl VmRun<'_> {
         deadline: Instant,
     ) -> Result<(), String> {
         let name = self.copy_generation(agent, config, target, deadline)?;
-        let share = self.dir.join(SHARE);
-        fs::write(share.join("system"), format!("{STORE_DIR}/{name}\n"))
-            .map_err(io_err("the system's path"))?;
-        let config_name = Path::new(config)
+        fs::write(
+            self.dir.join(SHARE).join("system"),
+            format!("{STORE_DIR}/{name}\n"),
+        )
+        .map_err(io_err("the system's path"))?;
+        self.share_config(config)
+    }
+
+    /// Copies `config` into `/run/wrath-share/configs/<name>`.
+    fn share_config(&self, config: &str) -> Result<(), String> {
+        let name = Path::new(config)
             .file_name()
             .ok_or("a configuration needs a name")?;
         copy_dir(
             &self.host.workdir.join(config),
-            &share.join("configs").join(config_name),
+            &self.dir.join(SHARE).join("configs").join(name),
         )
+    }
+
+    fn reached_over_ssh(&self) -> bool {
+        self.spec
+            .steps
+            .iter()
+            .any(|step| matches!(step, Step::ApplyHost { .. }))
+    }
+
+    /// Switches the VM to `config` from the host with `wrath apply --host`, over SSH on `port`,
+    /// giving root a key made for the run first.
+    fn apply_host(
+        &self,
+        agent: &mut Client<VsockStream>,
+        config: &str,
+        port: u16,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let key = self.dir.join("ssh-host-key");
+        if !key.exists() {
+            host_command(
+                Command::new("ssh-keygen")
+                    .args(["-q", "-t", "ed25519", "-N", "", "-C", "wrath-check", "-f"])
+                    .arg(&key),
+            )?;
+            let public =
+                fs::read_to_string(key.with_extension("pub")).map_err(io_err("the SSH key"))?;
+            let authorize = format!(
+                "install -d -m 700 /root/.ssh && echo {} >> /root/.ssh/authorized_keys",
+                shell_quote(public.trim())
+            );
+            let (code, _, stderr) =
+                run_shell(agent, argv(&["/bin/sh", "-c", &authorize]), deadline)?;
+            if code != Some(0) {
+                return Err(format!("giving root the SSH key failed: {}", stderr.trim()));
+            }
+        }
+        let ssh = format!(
+            "ssh -p {port} -i {} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+             -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10",
+            key.display()
+        );
+        host_command(
+            Command::new(self.host.wrath)
+                .args([
+                    "apply",
+                    "--config",
+                    config,
+                    "--host",
+                    "root@127.0.0.1",
+                    "-y",
+                ])
+                .env("WRATH_SSH", ssh)
+                .current_dir(self.host.workdir),
+        )
+        .map_err(|e| format!("applying `{config}` over SSH failed: {e}"))?;
+        self.share_config(config)
     }
 
     /// Builds `config` on the host as `target`, copies the generation into the guest's store and
@@ -1003,6 +1095,11 @@ fn copy_command(have: &str, closure: &[&str]) -> Option<String> {
         .map(|hash| format!("{GUEST_STORE}/{hash}"))
         .collect();
     (!missing.is_empty()).then(|| format!("cp -a {} {STORE_DIR}/", missing.join(" ")))
+}
+
+/// The host's port that reaches the VM's SSH, apart for VMs that run at once.
+fn ssh_port(cid: u32) -> u16 {
+    30000 + (cid % 20000) as u16
 }
 
 /// Where the guest sees the host's store, from wrath's own builder.
@@ -1229,7 +1326,12 @@ fn check_expect(
             || "killed by a signal".to_owned(),
             |c| format!("exit code {c}"),
         );
-        let context = stderr.lines().map(str::trim).find(|l| !l.is_empty());
+        // What it said last, as a command that sends errors to stdout says them.
+        let context = stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .or_else(|| stdout.lines().map(str::trim).rfind(|l| !l.is_empty()));
         return Err(match context {
             Some(line) => format!("`{}`: {got}, expected {}: {line}", expect.run, expect.exit),
             None => format!("`{}`: {got}, expected {}", expect.run, expect.exit),
@@ -1450,6 +1552,7 @@ mod tests {
             steps = [
               { apply_config = "fixtures/configs/basic-changed", expect_plan = ["8081"] },
               { apply_config = "fixtures/configs/basic", try_for = "20s" },
+              { apply_host = "fixtures/configs/basic-changed" },
               { run = "curl localhost", stdout_contains = "200" },
               { expect_no_reboot = true },
             ]
@@ -1479,6 +1582,9 @@ mod tests {
                     expect_plan: Vec::new(),
                     try_for: Some("20s".into()),
                     exit: 0,
+                },
+                Step::ApplyHost {
+                    config: "fixtures/configs/basic-changed".into(),
                 },
                 Step::Run(Expect {
                     run: "curl localhost".into(),
