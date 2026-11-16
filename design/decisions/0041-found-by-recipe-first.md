@@ -1,0 +1,75 @@
+# 0041: Builds are found by their recipes first
+
+Status: proposed, 2026-11-16.
+
+## Context
+
+A package has two keys (store.md). Its unresolved key hashes its recipe and its dependencies'
+unresolved keys, so it's known from recipes alone. Its resolved key, which builds and records
+use, hashes its recipe, its dependencies' store paths, and a build environment that depends on
+what's in those paths: the directories that become search paths, whether `lib` and the loader
+are there, and the `.pc` files a dependency's requirements come from (0019). That's how a rebuild
+with identical output stops there: a dependent of zlib keys on zlib's path, not on its recipe.
+
+The cost is that working out one resolved key needs the contents, or a cache's listing, of
+every dependency, all the way down to the seed. A machine booted from an image has the system's
+packages but not gcc, glibc's build or rust. It can't work out wrath's resolved key, so it
+doesn't recognise the wrath it's running, and rebuilds it unless a cache has listings of the
+whole toolchain. The same goes for a machine installed from that image, one switched with
+`apply --host`, and a plan on any machine without a cache: each answers "what do I have" by
+resolving the whole build graph.
+
+Bazel and Nix don't have this. A Bazel action key is a digest of its inputs' digests, and a Nix
+derivation hash is a hash of its inputs, so neither looks inside a dependency to name a build.
+Nix's content-addressed derivations do, and they have the same need: resolving one requires the
+realisations of its inputs.
+
+## Decision
+
+- Every build, and every fetch, keeps a hint beside the store: `hints/<unresolved key>` names the
+  resolved key it built or fetched as, the local form of the hints 0038 lays out for caches.
+- Before resolving a package, a build or plan works out its unresolved key and reads the hint. A
+  hint whose resolved key has a record is a hit: the package's outputs come from the record, and
+  nothing about its dependencies' contents is read. Only a miss resolves, as today.
+- A hit says which build the package is, not that its paths are in the store. A dependent that
+  misses and builds needs what it builds with, so a hit that's absent is fetched or, failing
+  that, built, before anything that reads its contents.
+- Images, `install` and `apply --host` bring the hints of a system's build graph along with its
+  records, as they bring `builds/`, `fixed/` and `refs/` now.
+- Hints are trusted as records are: written by root beside the store, or brought by whoever
+  installs the machine. A cache's hints stay out of this: following an unsigned hint from a
+  cache would let it substitute another signed build, so that waits until hints are signed or
+  checked against the trace.
+
+## Consequences
+
+- A machine recognises everything whose recipes haven't changed without any listing, cache or
+  toolchain, and a plan reads one file per package instead of resolving the graph. Recipes are
+  the same on every machine with the same grapes, so a key that differs between machines, as 0038
+  worries about, matters only for what was changed.
+- Early cutoff stays where it pays: when a recipe changes, its dependents miss by unresolved key,
+  resolve, and stop at the first identical output, as today. Offline, that needs the changed
+  dependency in the store, which building it puts there.
+- The same unresolved key built twice, non-reproducibly, gives two resolved keys. The hint names
+  the last one, and both are consistent closures; `wrath dev repro` is still where that shows.
+- Listings of tools a machine doesn't carry aren't needed in images.
+
+## Work
+
+1. Write hints where records are written: a build's record, a fetched trace. Small.
+2. The early lookup in the chain: work out the unresolved key first, and on a hit fill in what
+   dependents read (paths and outputs, the view and requirements, search paths, indexes,
+   closures) from the record, without the contents. The largest part, in `chain.rs`, with tests
+   for a hit, a miss over hits, and a hit that's absent.
+3. A hit that's absent and needed: fetch or build it before a dependent reads it.
+4. Images, `install` and `apply --host` bring hints, on top of the records they bring now.
+5. The VM check: an image with no cache plans nothing and switches.
+
+## Alternatives
+
+- Images bring listings of every tool in the build graph, which a machine reads as it reads a
+  cache's. It fixes images, `install` and `apply --host`, but every plan still resolves the whole
+  graph, and a machine without an image's listings, or a cache, is back where it started.
+- Images bring the tools themselves. Rust alone is 389 MB.
+- Naming builds by unresolved key only, as Nix does. A change anywhere below would then rebuild
+  everything above it, which store.md measured: a zlib comment rebuilt 23 packages instead of 1.
