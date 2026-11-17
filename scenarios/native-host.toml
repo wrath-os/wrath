@@ -10,6 +10,10 @@ steps = [
   { run = "ls /wrath/work/hints | wc -l | grep -qv '^0$' && test -n \"$(ls /wrath/work/builds)\" && echo records", stdout_contains = "records" },
   { run = "cp -r /run/wrath-share/configs/native-host /tmp/image && wrath --source grapes=/run/system/grapes -C /tmp/image plan 2>&1", stdout_contains = "no changes" },
   { run = "command -v jq || echo no jq", stdout_contains = "no jq" },
+  # Wanting it here, with no cache and no seed to build from, says what to do instead.
+  { run = "cp -r /tmp/image /tmp/jq && sed -i '1i packages = [\"jq\"]' /tmp/jq/system.toml && wrath --source grapes=/run/system/grapes -C /tmp/jq plan 2>&1", stdout_contains = "which needs a seed this machine doesn't have" },
+  { run = "wrath --source grapes=/run/system/grapes -C /tmp/jq apply -y 2>&1; true", stdout_contains = "use a cache that has what's missing, or build where the seed is" },
+  { run = "command -v jq || echo still no jq", stdout_contains = "still no jq" },
   # From the host: a package the image never had, and a file.
   { apply_host = "scenarios/fixtures/native-host-changed" },
   { run = "cat /etc/hello; jq --version", stdout_contains = "from the host\njq-" },

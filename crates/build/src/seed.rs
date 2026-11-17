@@ -91,14 +91,29 @@ fn parse_pin(text: &str) -> (String, Option<String>) {
     (hash, fields.next().map(str::to_owned))
 }
 
+/// What to do when something must be built here and the seed isn't here to build it from.
+pub const MISSING: &str = "building here starts from the seed, and this machine doesn't have \
+it; use a cache that has what's missing, or build where the seed is and apply from there with \
+`wrath apply --host`";
+
+fn tarball_path(lab: &Lab, sha256: &str) -> PathBuf {
+    lab.work.join(format!("seed/{sha256}.tar.xz"))
+}
+
+/// Whether the seed is ready or can be: unpacked, its tarball here, or a URL to download it from.
+pub fn available(lab: &Lab) -> Result<bool, String> {
+    let (sha256, url) = pin(lab)?;
+    Ok(url.is_some() || tarball_path(lab, &sha256).exists() || ready(lab)?)
+}
+
 /// The seed's tarball, downloaded the first time if it has a URL and always checked against its
 /// hash.
 fn tarball(lab: &Lab, sha256: &str, url: Option<&str>) -> Result<PathBuf, String> {
+    let path = tarball_path(lab, sha256);
     let dir = lab.work.join("seed");
     fs::create_dir_all(&dir).map_err(with_path(&dir))?;
-    let path = dir.join(format!("{sha256}.tar.xz"));
     if !path.exists() {
-        let url = url.ok_or_else(|| format!("seed {sha256} isn't in {}", dir.display()))?;
+        let url = url.ok_or(MISSING)?;
         let partial = dir.join("download");
         run(
             Command::new("curl")
@@ -227,5 +242,27 @@ mod tests {
             parse_pin("abc  https://x/y\n"),
             ("abc".to_owned(), Some("https://x/y".to_owned()))
         );
+    }
+
+    #[test]
+    fn the_seed_is_available_with_a_url_its_tarball_or_unpacked_and_otherwise_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let lab = Lab::new(dir.path().join("work"));
+        let pin = dir.path().join("seed.pin");
+        fs::write(&pin, "abc https://x/y\n").unwrap();
+        assert!(available(&lab).unwrap());
+        fs::write(&pin, "abc\n").unwrap();
+        assert!(!available(&lab).unwrap());
+        assert_eq!(
+            tarball(&lab, "abc", None).unwrap_err(),
+            MISSING,
+            "a build says what to do instead"
+        );
+        fs::write(tarball_path(&lab, "abc"), "").unwrap();
+        assert!(available(&lab).unwrap());
+        fs::remove_file(tarball_path(&lab, "abc")).unwrap();
+        let ready = lab.work.join(format!("seed/ready-{}", named("abc").hash()));
+        fs::write(ready, "").unwrap();
+        assert!(available(&lab).unwrap());
     }
 }

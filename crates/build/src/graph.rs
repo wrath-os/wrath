@@ -2643,10 +2643,22 @@ pub fn system(
 pub struct Takes {
     /// What would be built, and why.
     pub build: BTreeMap<String, pilot::Why>,
-    /// Whether those builds would prepare the seed first, which isn't ready here.
-    pub seed: bool,
+    /// Whether those builds need the seed prepared first, or can't have it here.
+    pub seed: Seed,
     /// How many store paths, and how many bytes, by the cache they come from.
     pub fetch: BTreeMap<String, (usize, u64)>,
+}
+
+/// The seed, as what would be built needs it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum Seed {
+    /// Ready, or nothing is built.
+    #[default]
+    Ready,
+    /// Prepared before the first build.
+    Prepare,
+    /// Neither here nor downloadable, so nothing can be built.
+    Missing,
 }
 
 /// What building the system `model` describes would take, building nothing. Caches are asked
@@ -2694,7 +2706,13 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
             paths.extend(chain::traced_closure(&lab, &path)?);
         }
     }
-    let seed = !dry.missing.is_empty() && !crate::seed::ready(&lab)?;
+    let seed = if dry.missing.is_empty() || crate::seed::ready(&lab)? {
+        Seed::Ready
+    } else if crate::seed::available(&lab)? {
+        Seed::Prepare
+    } else {
+        Seed::Missing
+    };
     Ok(Takes {
         fetch: by_cache(&lab, &paths),
         build: dry.missing,

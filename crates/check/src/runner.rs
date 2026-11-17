@@ -87,7 +87,8 @@ fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
         workdir: &ctx.workdir,
     };
     let built = match &ctx.image_override {
-        Some(image) => Ok(image.clone()),
+        // Absolute, as the overlay names it from the run directory.
+        Some(image) => std::path::absolute(image).map_err(|e| format!("{}: {e}", image.display())),
         None => vm::build_config_image(host, &spec.config),
     };
     let image = match built {

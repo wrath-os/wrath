@@ -94,11 +94,12 @@ The first cut, 2026-11-16, found a whole system or nothing:
   same in 0.7 seconds, where everything found took 0.3.
 - `scenarios/native-host.toml` and `native-image-install.toml` check, with no cache, that an image,
   `install` and `apply --host` bring what the machine needs to plan with nothing to build.
+- A machine with no cache and no seed can't build what it misses. Its plan says the builds need a
+  seed it doesn't have, and to use a cache or build where the seed is and apply with
+  `apply --host`; an apply fails with that before changing anything. `native-host` checks both.
 
 ## Open
 
-- A machine with no cache and no toolchain can't build what it misses. What it says then hasn't
-  been checked; it should say to reach a cache or build where the toolchain is.
 - Cache hints. A trace that names the unresolved key it was built for, under its signature, would
   let a machine follow a cache's hint without trusting it about which build that is.
 - Build descriptions, like Nix's derivations: writing down what a key hashes, so keys can be

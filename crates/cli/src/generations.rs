@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use wrath_build::graph::Seed;
 use wrath_model::{LOCK_FILE, Lock, Model, Source, Tier, WRATH_SOURCE};
 
 use crate::config_from::ConfigFrom;
@@ -109,6 +110,9 @@ pub fn print_takes(model: &Model) {
             if let Some(line) = takes_line(&takes, crate::cache::name_of) {
                 println!("{line}");
             }
+            if takes.seed == Seed::Missing {
+                crate::style::warning(wrath_build::seed::MISSING);
+            }
         }
         Err(e) => crate::style::warning(&format!("can't tell what it would build: {e}")),
     }
@@ -163,10 +167,10 @@ fn takes_line(
             let them = if nowhere.len() == 1 { "it" } else { "them" };
             named.push_str(&format!("; {with} built with {them}"));
         }
-        let seed = if takes.seed {
-            ", preparing the seed first"
-        } else {
-            ""
+        let seed = match takes.seed {
+            Seed::Ready => "",
+            Seed::Prepare => ", preparing the seed first",
+            Seed::Missing => ", which needs a seed this machine doesn't have",
         };
         parts.push(format!("build {} ({named}){seed}", takes.build.len()));
     }
@@ -1311,6 +1315,18 @@ mod tests {
             line(&takes)
                 .unwrap()
                 .ends_with(", build 2 (glibc; 1 built with it)")
+        );
+        takes.seed = Seed::Prepare;
+        let prepared = line(&takes).unwrap();
+        assert!(
+            prepared.ends_with("with it), preparing the seed first"),
+            "{prepared}"
+        );
+        takes.seed = Seed::Missing;
+        let missing = line(&takes).unwrap();
+        assert!(
+            missing.ends_with("with it), which needs a seed this machine doesn't have"),
+            "{missing}"
         );
         assert_eq!(size(999), "999 B");
         assert_eq!(size(1_250_000), "1.2 MB");
