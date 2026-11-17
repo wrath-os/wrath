@@ -2355,6 +2355,17 @@ pub(crate) fn found_by_recipe(
 }
 
 /// Sets where a package is from what its record says.
+/// Whether every output of `id` is in the store or traced by a cache, so what its dependents' keys
+/// read of it, its directories, libraries and `.pc` files, can be read.
+fn readable(lab: &Lab, built: &Built, id: &str) -> bool {
+    let there =
+        |path: &StorePath| lab.on_host(path).exists() || crate::cache::traced(lab, path).is_some();
+    match built.outputs.get(id) {
+        Some(outputs) => outputs.values().all(there),
+        None => there(&built.paths[id]),
+    }
+}
+
 pub(crate) fn remember_outputs(built: &mut Built, package: &Package, record: &str) {
     let outputs: split::Outputs = record
         .split(' ')
@@ -2789,8 +2800,14 @@ pub(crate) fn begin(
             let address = fs::read_to_string(&fixed).map_err(with_path(&fixed))?;
             remember_outputs(built, package, &address);
         }
-        crate::records::hint(lab, &unresolved, out.hash());
-        return Ok(Begun::Built);
+        // Recorded as built, as an image's records say of what built it, but neither here nor
+        // traced: what dependents' keys read of it comes from a cache's trace, or it's built.
+        if readable(lab, built, &package.id)
+            || (crate::cache::fetch(lab, &out, rules, &fixed)? && readable(lab, built, &package.id))
+        {
+            crate::records::hint(lab, &unresolved, out.hash());
+            return Ok(Begun::Built);
+        }
     }
     // A dry run hints only at what's here, so a plan never trades a hint for a build that isn't.
     let Some(lock) = lock else {
@@ -5881,5 +5898,28 @@ mod found_tests {
                 "nothing is filled in for one not found"
             );
         }
+    }
+
+    #[test]
+    fn what_was_built_is_readable_only_with_every_output_here_or_traced() {
+        let (_dir, lab) = work(false, false, true);
+        let dev = StorePath::from_hash("3333333333333333333333333333333333333333-jq-1.8-dev");
+        let mut built = Built::default();
+        built.paths.insert("jq".into(), StorePath::from_hash(OUT));
+        assert!(readable(&lab, &built, "jq"));
+        built.outputs.insert(
+            "jq".into(),
+            split::Outputs::from([
+                (split::Class::Out, StorePath::from_hash(OUT)),
+                (split::Class::Dev, dev.clone()),
+            ]),
+        );
+        // An image has what runs, and not its headers and `.pc` files.
+        assert!(!readable(&lab, &built, "jq"));
+        fs::create_dir_all(lab.on_host(&dev)).unwrap();
+        assert!(readable(&lab, &built, "jq"));
+        built.paths.insert("gone".into(), dev);
+        fs::remove_dir(lab.on_host(&built.paths["gone"])).unwrap();
+        assert!(!readable(&lab, &built, "gone"));
     }
 }
