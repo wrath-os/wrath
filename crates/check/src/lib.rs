@@ -7,6 +7,7 @@
 mod runner;
 mod scenario;
 mod scoreboard;
+mod served;
 mod vm;
 
 pub use runner::{Failure, Outcome, RunContext, run};

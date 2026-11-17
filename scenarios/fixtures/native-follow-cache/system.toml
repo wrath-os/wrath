@@ -1,0 +1,12 @@
+# A machine that upgrades on its own from a configuration on its own disk, and leaves building to
+# a cache on its network.
+[system]
+hostname = "native-follow-cache"
+
+[networking]
+dhcp = true
+
+[updates]
+from = "path:/srv/m//box"
+automatic = "daily"
+build = false

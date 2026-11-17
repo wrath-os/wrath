@@ -7,6 +7,8 @@
     pkgs.age
     pkgs.cargo-insta
     pkgs.qemu_kvm
+    # The VM harness: forwarding each of a guest's connections to a cache on the host.
+    pkgs.socat
     pkgs.swtpm
     pkgs.taplo
     # The builder: its sandbox, fetching sources, and making disk images.

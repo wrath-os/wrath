@@ -36,6 +36,9 @@ pub struct VmSpec {
     pub steps: Vec<Step>,
     /// Sizes of empty disks attached to the VM, such as `8G`, for `wrath install` to lay out.
     pub blank_disks: Vec<String>,
+    /// Whether the guest reaches a cache of what the host built, at `http://10.0.2.100`, and finds
+    /// the `[caches]` table that trusts it in `/run/wrath-share/cache.toml`.
+    pub cache: bool,
     /// Limit for booting and checking. Building the image and systems is not counted.
     pub timeout_secs: u64,
 }
@@ -110,6 +113,8 @@ struct RawVmSpec {
     _store: Option<Store>,
     #[serde(default)]
     blank_disks: Vec<String>,
+    #[serde(default)]
+    cache: bool,
     #[serde(default = "default_timeout_secs")]
     timeout_secs: u64,
 }
@@ -130,6 +135,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
                 .map(Step::try_from)
                 .collect::<Result<_, _>>()?,
             blank_disks: raw.blank_disks,
+            cache: raw.cache,
             timeout_secs: raw.timeout_secs,
         })
     }
@@ -451,6 +457,11 @@ impl VmRun<'_> {
         fs::create_dir(self.dir.join(SHARE)).map_err(io_err("the share directory"))?;
         // The configuration it boots, as later steps share theirs.
         self.share_config(&self.spec.config)?;
+        if self.spec.cache {
+            let table = &crate::served::cache(self.host)?.table;
+            fs::write(self.dir.join(SHARE).join("cache.toml"), table)
+                .map_err(io_err("the cache's table"))?;
+        }
         for (n, size) in self.spec.blank_disks.iter().enumerate() {
             let status = Command::new("qemu-img")
                 .args(["create", "-q", "-f", "qcow2"])
@@ -548,15 +559,22 @@ impl VmRun<'_> {
                         store.display()
                     ),
                 ]);
-                // Only the host reaches it, at its SSH port, and it reaches nothing: no cache.
+                // It reaches nothing but the cache it asked for, and only the host reaches it, at
+                // its SSH port.
+                let mut nic = String::from("user,model=virtio-net-pci,restrict=on");
                 if self.reached_over_ssh() {
-                    argv.extend([
-                        "-nic".into(),
-                        format!(
-                            "user,model=virtio-net-pci,restrict=on,hostfwd=tcp:127.0.0.1:{}-:22",
-                            ssh_port(cid)
-                        ),
-                    ]);
+                    nic.push_str(&format!(",hostfwd=tcp:127.0.0.1:{}-:22", ssh_port(cid)));
+                }
+                if self.spec.cache {
+                    let port = crate::served::cache(self.host)?.port;
+                    let guest = crate::served::GUEST;
+                    // A command for each connection: a `tcp:` target is one connection for all.
+                    nic.push_str(&format!(
+                        ",guestfwd=tcp:{guest}:80-cmd:socat - TCP:127.0.0.1:{port}"
+                    ));
+                }
+                if self.reached_over_ssh() || self.spec.cache {
+                    argv.extend(["-nic".into(), nic]);
                 }
             }
             Boot::Installed => {
@@ -1155,7 +1173,7 @@ impl Host<'_> {
     }
 
     /// Runs `wrath` on the host and returns its output.
-    fn wrath(&self, args: &[&str]) -> Result<String, String> {
+    pub(crate) fn wrath(&self, args: &[&str]) -> Result<String, String> {
         host_command(
             Command::new(self.wrath)
                 .args(args)
