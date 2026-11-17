@@ -130,8 +130,9 @@ fn cache() -> PathBuf {
 /// Where GitHub's API is, the one place a GitHub token is sent.
 const GITHUB_API: &str = "https://api.github.com/";
 
-/// A token to read GitHub with, for private repositories: `GH_TOKEN` or `GITHUB_TOKEN`, or else
-/// the one `gh` is logged in with.
+/// A token to read GitHub with, for private repositories: `GH_TOKEN` or `GITHUB_TOKEN`, the one
+/// the running system's configuration gives in `updates.token`, or else the one `gh` is logged in
+/// with.
 fn github_token() -> Option<&'static str> {
     static TOKEN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     TOKEN
@@ -141,16 +142,18 @@ fn github_token() -> Option<&'static str> {
                 .filter_map(|name| std::env::var(name).ok())
                 .map(|token| token.trim().to_owned())
                 .find(|token| !token.is_empty());
-            given.or_else(|| {
-                let out = std::process::Command::new("gh")
-                    .args(["auth", "token"])
-                    .stderr(std::process::Stdio::null())
-                    .output()
-                    .ok()
-                    .filter(|out| out.status.success())?;
-                let token = String::from_utf8(out.stdout).ok()?.trim().to_owned();
-                (!token.is_empty()).then_some(token)
-            })
+            given
+                .or_else(crate::config_from::running_token)
+                .or_else(|| {
+                    let out = std::process::Command::new("gh")
+                        .args(["auth", "token"])
+                        .stderr(std::process::Stdio::null())
+                        .output()
+                        .ok()
+                        .filter(|out| out.status.success())?;
+                    let token = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+                    (!token.is_empty()).then_some(token)
+                })
         })
         .as_deref()
 }
@@ -172,8 +175,8 @@ fn nothing_at(url: &str, token: bool) -> String {
         message.push_str(if token {
             "; if the repository is private, the GitHub token wrath used can't read it"
         } else {
-            "; if the repository is private, give a token that can read it in GH_TOKEN, or log \
-             in with `gh auth login`"
+            "; if the repository is private, give a token that can read it in GH_TOKEN or a \
+             machine's `updates.token`, or log in with `gh auth login`"
         });
     }
     message
@@ -425,7 +428,9 @@ mod tests {
     #[test]
     fn nothing_on_github_says_how_to_read_a_private_repository() {
         let api = "https://api.github.com/repos/o/r/commits/HEAD";
-        assert!(nothing_at(api, false).ends_with("in GH_TOKEN, or log in with `gh auth login`"));
+        assert!(
+            nothing_at(api, false).ends_with("`updates.token`, or log in with `gh auth login`")
+        );
         assert!(nothing_at(api, true).ends_with("the GitHub token wrath used can't read it"));
         let public = "https://github.com/o/r/archive/HEAD.tar.gz";
         assert!(nothing_at(public, false).contains("GH_TOKEN"));

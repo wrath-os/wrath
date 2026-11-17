@@ -366,8 +366,21 @@ Applying something else by hand, such as a checkout you're trying changes in, pa
 upgrades so they don't undo it. `wrath status` and logins say so, and `wrath apply` with no `-C`
 goes back to the repository and resumes them.
 
-A private GitHub repository needs a token that can read it, in `GH_TOKEN` or from
-`gh auth login`. The timer can't use one yet.
+A private GitHub repository needs a token that can read it, and so do the private sources its
+lock pins. On your own machine wrath uses `GH_TOKEN` or the token `gh auth login` gave it. A
+machine upgrading on its own reads one from a secret:
+
+```toml
+[updates]
+from = "github:you/machines//framework"
+automatic = "daily"
+token = { secret = "github-token" }
+
+[secrets.github-token]
+```
+
+`wrath secret edit github-token` keeps it encrypted next to the configuration, and `wrath status`
+on the machine says which token it reads its upgrades with.
 
 ## Secrets
 

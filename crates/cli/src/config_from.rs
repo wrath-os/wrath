@@ -115,6 +115,33 @@ pub fn running_follows() -> Option<String> {
     follows(&model).map(str::to_owned)
 }
 
+/// The file with the token machines running `model` read what they upgrade from with: a path, or
+/// a secret's, which the machine decrypts.
+pub fn token_file(model: &wrath_model::Model) -> Option<PathBuf> {
+    use wrath_eval::{RuntimePart, Value};
+    match model.options.get("updates.token")? {
+        Value::Str(path) => Some(PathBuf::from(path)),
+        Value::Runtime(parts) => match parts.as_slice() {
+            [RuntimePart::Secret(name)] => Some(Path::new(wrath_eval::SECRETS_DIR).join(name)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The running system's [`token_file`], when its configuration gives one.
+pub fn running_token_file() -> Option<PathBuf> {
+    let model = crate::read_model(&crate::switching::running_model()?).ok()?;
+    token_file(&model)
+}
+
+/// The token the running system's configuration gives for reading what it upgrades from, when
+/// it gives one and this user can read it.
+pub fn running_token() -> Option<String> {
+    let token = std::fs::read_to_string(running_token_file()?).ok()?;
+    Some(token.trim().to_owned()).filter(|token| !token.is_empty())
+}
+
 /// What to say when a machine following `url` is asked to change its configuration or lock
 /// with `verb`.
 pub fn changed_elsewhere(url: &str, verb: &str) -> String {
@@ -230,6 +257,22 @@ pub fn forget(root: &Path, number: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_token_is_a_secret_the_machine_decrypts_or_a_path() {
+        use wrath_eval::{RuntimePart, Value};
+        let mut model = wrath_model::Model::default();
+        assert_eq!(token_file(&model), None);
+        let secret = Value::Runtime(vec![RuntimePart::Secret("github-token".into())]);
+        model.options.insert("updates.token".into(), secret);
+        assert_eq!(
+            token_file(&model),
+            Some(PathBuf::from("/run/wrath/secrets/github-token"))
+        );
+        let path = Value::Str("/root/token".into());
+        model.options.insert("updates.token".into(), path);
+        assert_eq!(token_file(&model), Some(PathBuf::from("/root/token")));
+    }
 
     #[test]
     fn a_double_slash_names_the_directory_a_configuration_is_in() {

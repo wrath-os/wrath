@@ -16,5 +16,10 @@ steps = [
   { run = "wrath status 2>&1 | grep -o 'the last automatic upgrade, .*'", stdout_contains = "up to date with" },
   # Nothing was built here: the seed was never needed.
   { run = "ls /wrath/work/seed/ready-* 2>/dev/null || echo no seed", stdout_contains = "no seed" },
+  # A token to read private repositories with, from a secret encrypted to the fixture key in
+  # fixtures/configs/secrets, made for tests only, which the step puts in place.
+  { run = "mkdir -p /etc/wrath-test && printf '%s\\n' 'AGE-SECRET-KEY-1230EQ7RDPZ24LFM247UGU3MZGZF53CX20QMC8VQUEFE0MMGE5HHS0UY6A7' > /etc/wrath-test/identity.txt && sed -i 's|^hostname = .*|&\\nsecret_identities = [\"/etc/wrath-test/identity.txt\"]\\nsecret_recipients = [\"age1752tz55mdpnqrasdfja6pzw76jhqf532f2dhr5jpkngrfhz5ec0sax8ykl\"]|' /srv/m/box/system.toml && sed -i 's|^build = false|&\\ntoken = { secret = \"github-token\" }|' /srv/m/box/system.toml && printf '\\n[secrets.github-token]\\n' >> /srv/m/box/system.toml && echo ready", stdout_contains = "ready" },
+  { run = "wrath --source grapes=/run/system/grapes apply --automatic 2>&1 | tail -3; cat /run/wrath/secrets/github-token", stdout_contains = "test-token" },
+  { run = "wrath status 2>&1 | grep -o 'it reads it with the token in .*'", stdout_contains = "it reads it with the token in /run/wrath/secrets/github-token" },
 ]
 timeout_secs = 600

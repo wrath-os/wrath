@@ -728,6 +728,15 @@ pub fn following(follows: &str) -> Result<ExitCode, String> {
     } else {
         println!("upgrades from {follows}; `wrath plan` shows what its newest commit would change");
     }
+    if let Some(file) = crate::config_from::running_token_file() {
+        match std::fs::metadata(&file) {
+            Ok(_) => println!("it reads it with the token in {}", file.display()),
+            Err(e) => crate::style::warning(&format!(
+                "the token it reads it with, {}, isn't there: {e}",
+                file.display()
+            )),
+        }
+    }
     print_notes(crate::upgrade::shown(Path::new("/"), Some(follows), from));
     Ok(ExitCode::SUCCESS)
 }

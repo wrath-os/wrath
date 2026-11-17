@@ -78,8 +78,8 @@ What others got wrong, or what people trip over:
   pushed to them.
 - A machine applies exactly the lock its repository has. Moving sources forward happens in the
   repository, by a person or by CI running `wrath update`, building and pushing to the cache.
-- A machine following a private repository needs a token; how a configuration gives one, from
-  its secrets, is still open.
+- A machine following a private repository needs a token. The configuration gives one from its
+  secrets, as `updates.token`.
 - Install from a URL (`wrath install -C github:...`) comes with this, since install already takes
   `-C`.
 
@@ -119,12 +119,15 @@ What others got wrong, or what people trip over:
   logins say nothing of it. `native-follow` checks it with a package no cache has.
 - Found on the way: a plan replaced the hints of what was found with keys of builds that weren't
   there, so the next apply rebuilt them. Only what's found or built is hinted now.
+- `[updates] token = { secret = "github-token" }`: what the machine follows, and the private
+  sources its lock pins, are read with the token from that secret, when there's no `GH_TOKEN`.
+  `status` names the token. `native-follow-cache` checks both; nothing in a VM reaches GitHub,
+  so sending the token there is only unit tested.
 
 ## Open
 
 - Graphical logins don't show the notice: greetd's session gets no message of the day. A desktop
   notification, or the greeter showing it, is still to do.
-- The token for private repositories, given from a secret the configuration declares.
 - A reboot window for changes that wait for one.
 - Rolling out to many machines in stages, with canaries.
 
