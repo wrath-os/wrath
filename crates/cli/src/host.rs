@@ -484,6 +484,8 @@ pub fn apply(
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     }
+    // sudo asks now, while someone's there to answer, rather than after the build and the copy.
+    remote.hold_root()?;
     let built = generations::build_generation(&model, false)?;
     remote.switch_built(root, &built, how)?;
     if let Some(note) = running.and(plan.tier()).and_then(generations::full_effect) {
