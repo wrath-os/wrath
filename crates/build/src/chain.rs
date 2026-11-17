@@ -2737,8 +2737,9 @@ pub(crate) fn begin(
                 .collect::<BTreeMap<_, _>>(),
         }),
     };
-    crate::records::hint(lab, &unresolved, out.hash());
-    built.unresolved.insert(package.id.clone(), unresolved);
+    built
+        .unresolved
+        .insert(package.id.clone(), unresolved.clone());
     built.records.insert(package.id.clone(), record);
     built.paths.insert(package.id.clone(), out.clone());
     built.temporary.insert(package.id.clone(), out.clone());
@@ -2788,11 +2789,14 @@ pub(crate) fn begin(
             let address = fs::read_to_string(&fixed).map_err(with_path(&fixed))?;
             remember_outputs(built, package, &address);
         }
+        crate::records::hint(lab, &unresolved, out.hash());
         return Ok(Begun::Built);
     }
+    // A dry run hints only at what's here, so a plan never trades a hint for a build that isn't.
     let Some(lock) = lock else {
         return Ok(Begun::Missing(closure));
     };
+    crate::records::hint(lab, &unresolved, out.hash());
     // Only a build runs the seed, so a machine that fetches everything never needs it.
     seed::prepare(lab)?;
     // What it builds with is in the store, though its key only needed what a cache traced of it.
