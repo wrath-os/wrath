@@ -147,21 +147,37 @@ impl<F: ConfigFs> ConfigFs for Sourced<F> {
 /// Adds the sources fetched for files to the lock next to `config`, when it doesn't have them at
 /// those versions yet.
 pub fn record(config: &Path) -> Result<(), String> {
-    let fetched = fetched();
     let mut lock = crate::read_lock(config)?.unwrap_or_default();
-    if fetched
-        .iter()
-        .all(|(name, source)| lock.sources.get(name) == Some(source))
-    {
+    if recorded(&lock) {
         return Ok(());
     }
-    lock.sources.extend(fetched);
+    lock.sources.extend(fetched());
     crate::generations::write_lock(config, &lock)
+}
+
+/// Whether `lock` pins every source this command read, at the version it read it.
+pub fn recorded(lock: &Lock) -> bool {
+    pins_all(lock, &fetched())
+}
+
+fn pins_all(lock: &Lock, read: &BTreeMap<String, Source>) -> bool {
+    read.iter()
+        .all(|(name, source)| lock.sources.get(name) == Some(source))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lock_records_what_was_read_only_at_the_version_read() {
+        let locked = lock(URL);
+        let read = |url| lock(url).sources;
+        assert!(pins_all(&locked, &read(URL)));
+        assert!(pins_all(&locked, &BTreeMap::new()));
+        assert!(!pins_all(&locked, &read("github:acme/elsewhere")));
+        assert!(!pins_all(&Lock::default(), &read(URL)));
+    }
 
     const URL: &str = "github:acme/templates";
 

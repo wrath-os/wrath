@@ -528,17 +528,19 @@ fn switched(system: &Path, how: Switch, tier: Option<Tier>) -> Result<ExitCode, 
     Ok(code)
 }
 
-/// Whether the lock next to `config` lacks something `model` needs pinned: a source, or a uid or
-/// gid. wrath itself is only pinned by a build of it that knows where it came from, which one built
-/// from a checkout doesn't.
+/// Whether the lock next to `config` lacks something `model` needs pinned: a source, a uid or
+/// gid, or grapes as this command read it. wrath itself is only pinned by a build of it that knows
+/// where it came from, which one built from a checkout doesn't.
 pub(crate) fn needs_locking(root: &Path, config: &Path, model: &Model) -> Result<bool, String> {
-    let kept = crate::read_lock(config)?.unwrap_or_default().ids;
+    let lock = crate::read_lock(config)?.unwrap_or_default();
     // A configuration read from a URL keeps the wrath its lock pins, as [`locked`] says.
     let wrath_unpinned = !model.sources.contains_key(WRATH_SOURCE)
         && crate::pinned::running(root).is_some()
         && crate::config_from::fetched_url().is_none();
     let unpinned = model.sources.values().any(|source| !source.is_locked());
-    Ok(wrath_unpinned || unpinned || kept.merged(&model.ids())? != kept)
+    let unread = !crate::fetch::recorded(&lock);
+    let ids_unkept = lock.ids.merged(&model.ids())? != lock.ids;
+    Ok(wrath_unpinned || unpinned || unread || ids_unkept)
 }
 
 /// `model` with its sources pinned: pins what the lock next to `config` doesn't have yet, so the
