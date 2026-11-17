@@ -9,6 +9,9 @@ steps = [
   { run = "systemctl is-active wrath-upgrade.timer", stdout_contains = "active" },
   { run = "mkdir -p /srv/m && cp -r /run/wrath-share/configs/native-follow /srv/m/box && echo copied", stdout_contains = "copied" },
   { run = "wrath --source grapes=/run/system/grapes apply --automatic 2>&1; test -e /wrath/system/notice || echo nothing to say", stdout_contains = "nothing to say" },
+  # A package no cache has, where it follows, with building left to a cache: it waits.
+  { run = "sed -i '1i packages = [\"jq\"]' /srv/m/box/system.toml && sed -i 's/^automatic = .*/&\\nbuild = false/' /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply --automatic 2>&1 | grep -o 'not upgrading yet: it would build'", stdout_contains = "not upgrading yet: it would build" },
+  { run = "wrath status 2>&1 | grep -o 'the last automatic upgrade waited'; command -v jq || echo no jq; test -e /wrath/system/notice || echo nothing to say", stdout_contains = "the last automatic upgrade waited\nno jq\nnothing to say" },
   # A broken configuration where it follows: the upgrade fails, and logins say so.
   { run = "echo 'broken = [' >> /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply --automatic >/dev/null 2>&1; cat /wrath/system/notice", stdout_contains = "wrath: the last automatic upgrade failed" },
   { run = "ssh-keygen -q -t ed25519 -N '' -f /root/key && install -d -m 700 /root/.ssh && cp /root/key.pub /root/.ssh/authorized_keys && echo ok", stdout_contains = "ok" },

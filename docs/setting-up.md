@@ -358,6 +358,10 @@ booted next; `now` always switches, and `boot` always waits for the next boot. w
 reboots by itself. `wrath status` shows how the last automatic upgrade went, and when one fails,
 logging in on the console or over SSH says so until an upgrade works again.
 
+A machine that builds slowly, or can't build, can leave building to a cache with `build = false`
+under `[updates]`. An upgrade that would build anything then waits, says what it would build, and
+tries again on its next run.
+
 Applying something else by hand, such as a checkout you're trying changes in, pauses automatic
 upgrades so they don't undo it. `wrath status` and logins say so, and `wrath apply` with no `-C`
 goes back to the repository and resumes them.

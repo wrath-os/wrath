@@ -114,14 +114,17 @@ What others got wrong, or what people trip over:
   them, unless a cache had their traces. 0041 settles it: machines find builds by their recipes,
   and images, `install` and `apply --host` bring the records. Upgrading in a VM with no cache now
   works.
+- `[updates] build = false`: an automatic upgrade that would build something works that out the
+  way a plan does, and waits instead, saying what it would build. `status` shows the wait, and
+  logins say nothing of it. `native-follow` checks it with a package no cache has.
+- Found on the way: a plan replaced the hints of what was found with keys of builds that weren't
+  there, so the next apply rebuilt them. Only what's found or built is hinted now.
 
 ## Open
 
 - Graphical logins don't show the notice: greetd's session gets no message of the day. A desktop
   notification, or the greeter showing it, is still to do.
 - The token for private repositories, given from a secret the configuration declares.
-- Upgrading only when nothing needs building (`[updates] build = false`), using what the plan
-  says it would fetch and build.
 - A reboot window for changes that wait for one.
 - Rolling out to many machines in stages, with canaries.
 

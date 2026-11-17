@@ -101,11 +101,7 @@ pub fn print_takes(model: &Model) {
         );
         return;
     }
-    let takes = crate::places::grapes().and_then(|grapes| {
-        let value = serde_json::from_str(&model.canonical()).map_err(|e| e.to_string())?;
-        wrath_build::graph::system_takes(&grapes, &work, &value)
-    });
-    match takes {
+    match system_takes(model) {
         Ok(takes) => {
             if let Some(line) = takes_line(&takes, crate::cache::name_of) {
                 println!("{line}");
@@ -116,6 +112,12 @@ pub fn print_takes(model: &Model) {
         }
         Err(e) => crate::style::warning(&format!("can't tell what it would build: {e}")),
     }
+}
+
+/// What getting to `model` takes, asking caches for traces and building nothing.
+fn system_takes(model: &Model) -> Result<wrath_build::graph::Takes, String> {
+    let value = serde_json::from_str(&model.canonical()).map_err(|e| e.to_string())?;
+    wrath_build::graph::system_takes(&crate::places::grapes()?, &crate::places::work(), &value)
 }
 
 /// Whether this user can make files in `dir`.
@@ -150,31 +152,37 @@ fn takes_line(
     if !fetched.is_empty() {
         parts.push(format!("fetch {}", fetched.join(" and ")));
     }
-    if !takes.build.is_empty() {
-        // What no cache has, by name; the rest is only built with it.
-        let nowhere: Vec<&str> = takes
-            .build
-            .iter()
-            .filter(|(_, why)| **why == wrath_build::pilot::Why::Nowhere)
-            .map(|(id, _)| id.as_str())
-            .collect();
-        let mut named = nowhere[..nowhere.len().min(5)].join(", ");
-        if nowhere.len() > 5 {
-            named.push_str(&format!(" and {} more", nowhere.len() - 5));
-        }
-        let with = takes.build.len() - nowhere.len();
-        if with > 0 {
-            let them = if nowhere.len() == 1 { "it" } else { "them" };
-            named.push_str(&format!("; {with} built with {them}"));
-        }
-        let seed = match takes.seed {
-            Seed::Ready => "",
-            Seed::Prepare => ", preparing the seed first",
-            Seed::Missing => ", which needs a seed this machine doesn't have",
-        };
-        parts.push(format!("build {} ({named}){seed}", takes.build.len()));
-    }
+    parts.extend(builds(takes));
     (!parts.is_empty()).then(|| format!("to get there: {}", parts.join(", ")))
+}
+
+/// What `takes` builds, such as `build 2 (glibc; 1 built with it)`, when it builds anything.
+fn builds(takes: &wrath_build::graph::Takes) -> Option<String> {
+    if takes.build.is_empty() {
+        return None;
+    }
+    // What no cache has, by name; the rest is only built with it.
+    let nowhere: Vec<&str> = takes
+        .build
+        .iter()
+        .filter(|(_, why)| **why == wrath_build::pilot::Why::Nowhere)
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let mut named = nowhere[..nowhere.len().min(5)].join(", ");
+    if nowhere.len() > 5 {
+        named.push_str(&format!(" and {} more", nowhere.len() - 5));
+    }
+    let with = takes.build.len() - nowhere.len();
+    if with > 0 {
+        let them = if nowhere.len() == 1 { "it" } else { "them" };
+        named.push_str(&format!("; {with} built with {them}"));
+    }
+    let seed = match takes.seed {
+        Seed::Ready => "",
+        Seed::Prepare => ", preparing the seed first",
+        Seed::Missing => ", which needs a seed this machine doesn't have",
+    };
+    Some(format!("build {} ({named}){seed}", takes.build.len()))
 }
 
 /// `bytes` as people read sizes, such as `40 MB` or `1.2 GB`.
@@ -444,6 +452,12 @@ pub fn apply(
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     };
+    if how == Switch::Automatic
+        && !crate::upgrade::builds(&model)
+        && let Some(builds) = builds(&system_takes(&model)?)
+    {
+        return Ok(crate::upgrade::wait(&builds));
+    }
     let system = build_generation(&model, false)?;
     if let Some(record) = record {
         record.write()?;

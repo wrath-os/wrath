@@ -37,6 +37,26 @@ pub fn mode(model: &Model) -> Mode {
     }
 }
 
+/// Whether automatic upgrades to `model` may build what no cache has, as `updates.build` says.
+pub fn builds(model: &Model) -> bool {
+    !matches!(
+        model.options.get("updates.build"),
+        Some(wrath_eval::Value::Bool(false))
+    )
+}
+
+/// Why this automatic upgrade waited instead of building, which [`finish`] keeps.
+static WAITED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Leaves this automatic upgrade for a later run, as it would build `builds`, such as
+/// `build 2 (jq; 1 built with it)`, and building is left to a cache.
+pub fn wait(builds: &str) -> ExitCode {
+    let why = format!("it would {builds}, and `updates.build` is off, so it waits for a cache");
+    println!("not upgrading yet: {why}");
+    let _ = WAITED.set(why);
+    ExitCode::SUCCESS
+}
+
 /// Whether an automatic upgrade in `mode`, whose changes take effect at `tier`, switches now
 /// rather than at the next boot.
 pub fn switches_now(mode: Mode, tier: Option<Tier>) -> bool {
@@ -59,6 +79,8 @@ pub struct Outcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Done,
+    /// Not upgraded yet: it would build, which `updates.build = false` leaves to a cache.
+    Waiting,
     Paused,
     Failed,
 }
@@ -67,13 +89,14 @@ impl Kind {
     fn name(self) -> &'static str {
         match self {
             Self::Done => "done",
+            Self::Waiting => "waiting",
             Self::Paused => "paused",
             Self::Failed => "failed",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        [Self::Done, Self::Paused, Self::Failed]
+        [Self::Done, Self::Waiting, Self::Paused, Self::Failed]
             .into_iter()
             .find(|kind| kind.name() == name)
     }
@@ -91,6 +114,11 @@ impl std::fmt::Display for Outcome {
             Kind::Done => write!(
                 f,
                 "the last automatic upgrade, {}: {}",
+                self.at, self.message
+            ),
+            Kind::Waiting => write!(
+                f,
+                "the last automatic upgrade waited, {}: {}",
                 self.at, self.message
             ),
             Kind::Paused => write!(
@@ -142,7 +170,7 @@ pub fn applied_by_hand(
 fn write_notice(root: &Path, outcome: Option<&Outcome>) -> Result<(), String> {
     let path = root.join(NOTICE);
     let failed = |e: std::io::Error| format!("{}: {e}", path.display());
-    match outcome.filter(|outcome| outcome.kind != Kind::Done) {
+    match outcome.filter(|outcome| matches!(outcome.kind, Kind::Failed | Kind::Paused)) {
         Some(outcome) => std::fs::write(&path, format!("wrath: {outcome}\n")).map_err(failed),
         None => match std::fs::remove_file(&path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(failed(e)),
@@ -202,6 +230,7 @@ pub fn finish(
             Kind::Failed,
             "it stopped with errors; `journalctl -u wrath-upgrade` has them".to_owned(),
         ),
+        Ok(_) if let Some(why) = WAITED.get() => (Kind::Waiting, why.clone()),
         Ok(_) => (
             Kind::Done,
             match crate::config_from::get() {
@@ -308,6 +337,35 @@ mod tests {
         applied_by_hand(root.path(), follows, Some(&there)).unwrap();
         assert_eq!(notice(), None);
         applied_by_hand(root.path(), follows, Some(&there)).unwrap();
+    }
+
+    #[test]
+    fn waiting_for_a_cache_is_kept_for_status_and_logins_say_nothing_of_it() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("wrath/system")).unwrap();
+        keep(root.path(), Kind::Failed, "no network").unwrap();
+        keep(root.path(), Kind::Waiting, "it would build 1 (jq)").unwrap();
+        assert!(!root.path().join(NOTICE).exists());
+        let last = last(root.path()).unwrap();
+        assert_eq!(last.kind, Kind::Waiting);
+        assert!(
+            last.to_string()
+                .starts_with("the last automatic upgrade waited, ")
+        );
+    }
+
+    #[test]
+    fn automatic_upgrades_build_unless_the_configuration_says_not_to() {
+        let mut model = Model::default();
+        assert!(builds(&model));
+        model
+            .options
+            .insert("updates.build".into(), wrath_eval::Value::Bool(false));
+        assert!(!builds(&model));
+        model
+            .options
+            .insert("updates.build".into(), wrath_eval::Value::Bool(true));
+        assert!(builds(&model));
     }
 
     #[test]
