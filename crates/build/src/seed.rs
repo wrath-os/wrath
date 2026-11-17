@@ -56,7 +56,13 @@ pub(crate) fn sha256_of(path: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn run(command: &mut Command, what: &str) -> Result<(), String> {
-    let output = command.output().map_err(|e| format!("{what}: {e}"))?;
+    let output = command.output().map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => format!(
+            "{what}: it needs `{}`, which isn't on PATH",
+            command.get_program().to_string_lossy()
+        ),
+        _ => format!("{what}: {e}"),
+    })?;
     if output.status.success() {
         Ok(())
     } else {
@@ -230,6 +236,15 @@ pub fn prepare(lab: &Lab) -> Result<StorePath, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_program_that_isnt_there_is_named() {
+        let error = run(&mut Command::new("wrath-not-a-program"), "making it").unwrap_err();
+        assert_eq!(
+            error,
+            "making it: it needs `wrath-not-a-program`, which isn't on PATH"
+        );
+    }
 
     #[test]
     fn a_pin_may_have_no_url() {
