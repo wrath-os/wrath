@@ -147,7 +147,11 @@ wrath cache push /srv/wrath-cache --key ~/.config/wrath/cache-key
 
 `cache key` prints the table a machine trusts the key with. Paste it into the machine's
 configuration, and its builds fetch what they would otherwise build, from the directory or from
-whatever serves it over HTTP:
+whatever serves it over HTTP, such as wrath itself:
+
+```sh
+wrath cache serve /srv/wrath-cache --listen 0.0.0.0:8080
+```
 
 ```toml
 [caches.home-1]

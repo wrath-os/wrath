@@ -1,4 +1,5 @@
-//! `wrath cache`: the keys that sign what goes into a binary cache, and pushing builds to one.
+//! `wrath cache`: the keys that sign what goes into a binary cache, pushing builds to one, and
+//! serving it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,14 @@ pub enum CacheCommand {
         /// The key to sign with, as `wrath cache key` made it
         #[arg(long)]
         key: PathBuf,
+    },
+    /// Serve a cache in a directory over HTTP, for machines on the network to fetch from
+    Serve {
+        /// The cache: a directory `wrath cache push` filled
+        cache: PathBuf,
+        /// The address and port to listen on
+        #[arg(long, default_value = "0.0.0.0:8080")]
+        listen: String,
     },
 }
 
@@ -71,7 +80,26 @@ pub fn run(command: CacheCommand, work: &Path) -> Result<ExitCode, String> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        CacheCommand::Serve { cache, listen } => serve(&cache, &listen),
     }
+}
+
+/// Serves `cache` on `listen` until stopped.
+fn serve(cache: &Path, listen: &str) -> Result<ExitCode, String> {
+    if !cache.join("traces").is_dir() {
+        return Err(format!(
+            "{} isn't a cache: `wrath cache push` fills one",
+            cache.display()
+        ));
+    }
+    let listener =
+        std::net::TcpListener::bind(listen).map_err(|e| format!("listening on {listen}: {e}"))?;
+    println!(
+        "serving {} on http://{listen} until stopped",
+        cache.display()
+    );
+    wrath_build::http::serve_dir(listener, cache);
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Makes builds fetch from `caches` what a key in `keys` signed, or a key a configuration this
@@ -217,11 +245,15 @@ fn toml_string(text: &str) -> String {
 fn write_private(file: &Path, text: &str) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(file)
+    let dir = file.parent().filter(|dir| !dir.as_os_str().is_empty());
+    dir.map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(file)
+        })
         .and_then(|mut opened| opened.write_all(text.as_bytes()))
         .map_err(|e| format!("{}: {e}", file.display()))
 }

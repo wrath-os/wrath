@@ -111,11 +111,88 @@ fn object_once(url: &str, file: &Path, limit: u64) -> Result<Object, Failure> {
     Ok(Object::Got)
 }
 
+/// Serves the files under `root` to whoever connects to `listener`, as a static file server does,
+/// until the process ends: enough for a cache in a directory.
+pub fn serve_dir(listener: std::net::TcpListener, root: &Path) {
+    for stream in listener.incoming().flatten() {
+        let root = root.to_path_buf();
+        std::thread::spawn(move || {
+            let _ = answer(stream, &root);
+        });
+    }
+}
+
+/// Answers one request for a file under `root`.
+fn answer(mut stream: std::net::TcpStream, root: &Path) -> std::io::Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    let mut lines = BufReader::new(stream.try_clone()?).lines();
+    let request = lines.next().transpose()?.unwrap_or_default();
+    while lines
+        .next()
+        .transpose()?
+        .is_some_and(|line| !line.is_empty())
+    {}
+    match file_named(root, &request).and_then(|path| fs::File::open(path).ok()) {
+        Some(mut file) => {
+            let length = file.metadata()?.len();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
+            )?;
+            std::io::copy(&mut file, &mut stream)?;
+        }
+        None => write!(
+            stream,
+            "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        )?,
+    }
+    Ok(())
+}
+
+/// The file a `GET` request line names under `root`, if it names one there.
+fn file_named(root: &Path, request: &str) -> Option<std::path::PathBuf> {
+    let path = request.strip_prefix("GET ")?.split(' ').next()?;
+    let relative = path.strip_prefix('/')?;
+    let inside = relative
+        .split('/')
+        .all(|part| !part.is_empty() && part != "." && part != "..");
+    inside.then(|| root.join(relative))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn requests_name_files_under_the_directory_and_nothing_outside_it() {
+        let root = Path::new("/c");
+        assert_eq!(
+            file_named(root, "GET /traces/ab HTTP/1.1"),
+            Some(std::path::PathBuf::from("/c/traces/ab"))
+        );
+        assert_eq!(file_named(root, "GET /../etc/passwd HTTP/1.1"), None);
+        assert_eq!(file_named(root, "GET /a//b HTTP/1.1"), None);
+        assert_eq!(file_named(root, "POST /a HTTP/1.1"), None);
+        assert_eq!(file_named(root, ""), None);
+    }
+
+    #[test]
+    fn a_served_directory_gives_its_files_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("traces")).unwrap();
+        fs::write(dir.path().join("traces/ab"), "trace").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let root = dir.path().to_path_buf();
+        std::thread::spawn(move || serve_dir(listener, &root));
+        let file = dir.path().join("got");
+        assert!(download(&format!("{url}/traces/ab"), &file).unwrap());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "trace");
+        assert!(!download(&format!("{url}/traces/none"), &file).unwrap());
+        assert!(!download(&format!("{url}/../got"), &file).unwrap());
+    }
 
     /// Answers one request with `answer`, given the request's Authorization header, or "none".
     fn serve(answer: impl Fn(&str) -> String + Send + 'static) -> u16 {

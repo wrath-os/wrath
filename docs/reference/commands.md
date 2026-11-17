@@ -297,6 +297,17 @@ wrath cache push [OPTIONS] <CACHE>
 - `<CACHE>`: The cache: a directory
 - `--key <KEY>`: The key to sign with, as `wrath cache key` made it
 
+## `wrath cache serve`
+
+Serve a cache in a directory over HTTP, for machines on the network to fetch from
+
+```text
+wrath cache serve [OPTIONS] <CACHE>
+```
+
+- `<CACHE>`: The cache: a directory `wrath cache push` filled
+- `--listen <LISTEN>`: The address and port to listen on
+
 ## `wrath dev`
 
 Commands for working on wrath itself
