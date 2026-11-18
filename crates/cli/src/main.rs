@@ -562,33 +562,25 @@ fn main() -> ExitCode {
         style::error("--json works with plan, status, history and update --list so far");
         return ExitCode::FAILURE;
     }
-    // A wrath told where its files are is being developed, and runs as it is.
-    let developing = cli.root.is_some() || cli.modules.is_some();
     let root = find_root(cli.root, std::env::var_os("WRATH_ROOT").map(PathBuf::from));
-    if !developing
-        && runs_pinned(&cli.command)
-        && let Ok(config) = find_config(cli.config.as_deref())
-    {
-        match read_lock(&config) {
-            Ok(lock) => pinned::warn_if_other(&root, lock.as_ref()),
-            Err(message) => {
-                style::error(&message);
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-    let grapes = match source_dirs(&cli.sources) {
-        Ok(grapes) => grapes,
+    let dirs = match source_dirs(&cli.sources) {
+        Ok(dirs) => dirs,
         Err(message) => {
             style::error(&message);
             return ExitCode::FAILURE;
         }
     };
     let configured = find_config(cli.config.as_deref()).ok();
-    places::init(&root, grapes, configured.as_deref(), cli.config.is_some());
-    if let Ok(checkout) = std::path::absolute(&root) {
-        wrath_build::chain::set_wrath_tree(&checkout);
-    }
+    places::init(
+        &root,
+        dirs.grapes,
+        configured.as_deref(),
+        cli.config.is_some(),
+    );
+    let running = std::path::absolute(&root).unwrap_or_else(|_| root.clone());
+    wrath_build::chain::set_wrath_tree(move || {
+        places::wrath_tree(dirs.wrath.as_deref(), configured.as_deref(), &running)
+    });
     // Only commands that evaluate read the modules, so only they find grapes.
     let given_modules = cli.modules;
     let modules = std::cell::LazyCell::new(move || given_modules.unwrap_or_else(places::modules));
@@ -640,7 +632,7 @@ fn main() -> ExitCode {
             automatic: true, ..
         } => {
             let follows = follows.as_deref().unwrap_or_default();
-            let result = switch(root, None, Switch::Automatic, true, &machine, &modules);
+            let result = switch(None, Switch::Automatic, true, &machine, &modules);
             upgrade::finish(Path::new("/"), follows, result)
         }
         Command::Apply {
@@ -654,7 +646,7 @@ fn main() -> ExitCode {
             match host {
                 Some(host) => on_host(root, &host, how, yes, &machine, &modules),
                 None => {
-                    let result = switch(root, system, how, yes, &machine, &modules);
+                    let result = switch(system, how, yes, &machine, &modules);
                     if let (Some(follows), Ok(ExitCode::SUCCESS)) = (&follows, &result) {
                         let from = generations::current_generation().and_then(|g| g.from);
                         let _ = upgrade::applied_by_hand(Path::new("/"), follows, from.as_ref());
@@ -672,7 +664,7 @@ fn main() -> ExitCode {
             let how = Switch::Try(seconds);
             match host {
                 Some(host) => on_host(root, &host, how, yes, &machine, &modules),
-                None => switch(root, system, how, yes, &machine, &modules),
+                None => switch(system, how, yes, &machine, &modules),
             }
         }),
         Command::Keep => generations::keep(),
@@ -754,10 +746,12 @@ fn main() -> ExitCode {
         }
         Command::Shell { packages } => package_context(cli.config.as_deref(), &modules)
             .and_then(|(model, project)| run::shell(model, &packages, project.as_deref())),
-        Command::Add { packages, home } => config()
-            .and_then(|config| edit::add(root, &config, &modules, home.as_deref(), &packages)),
-        Command::Remove { packages, home } => config()
-            .and_then(|config| edit::remove(root, &config, &modules, home.as_deref(), &packages)),
+        Command::Add { packages, home } => {
+            config().and_then(|config| edit::add(&config, &modules, home.as_deref(), &packages))
+        }
+        Command::Remove { packages, home } => {
+            config().and_then(|config| edit::remove(&config, &modules, home.as_deref(), &packages))
+        }
         Command::Install {
             disks,
             name,
@@ -789,7 +783,7 @@ fn main() -> ExitCode {
                     })?)
                 }
                 None => model(&config, &modules)
-                    .map(|model| generations::locked(root, &config, model))
+                    .map(|model| generations::locked(&config, model))
                     .transpose()?,
             };
             let Some(model) = model else {
@@ -815,7 +809,7 @@ fn main() -> ExitCode {
         Command::Update {
             sources,
             list: false,
-        } => config().and_then(|config| lock(root, &config, &modules, Some(&sources))),
+        } => config().and_then(|config| lock(&config, &modules, Some(&sources))),
         // What the lock pins, read without evaluating or fetching anything.
         Command::Update { list: true, .. } => config().and_then(|config| {
             let mut model = Model {
@@ -832,7 +826,7 @@ fn main() -> ExitCode {
                 generations::sources(&model)
             }
         }),
-        Command::Check => config().and_then(|config| check_config(root, &config, &modules)),
+        Command::Check => config().and_then(|config| check_config(&config, &modules)),
         Command::Options {
             prefix,
             schema,
@@ -976,39 +970,6 @@ fn machine_role(config: &Path) -> Option<String> {
     Some(role)
 }
 
-/// Whether `command` reads the configuration, so it says when the lock pins another version of
-/// wrath. Commands on built generations, and updates that move wrath's own pin, don't.
-fn runs_pinned(command: &Command) -> bool {
-    match command {
-        Command::Update { sources, list } => {
-            *list || (!sources.is_empty() && !sources.iter().any(|name| name == WRATH_SOURCE))
-        }
-        Command::Status
-        | Command::Plan { .. }
-        | Command::Apply { .. }
-        | Command::Try { .. }
-        | Command::Build { .. }
-        | Command::Run { .. }
-        | Command::Up
-        | Command::Shell { .. }
-        | Command::Add { .. }
-        | Command::Remove { .. }
-        | Command::Install { .. }
-        | Command::Check
-        | Command::Options { .. }
-        | Command::Why { .. }
-        | Command::Secret { .. } => true,
-        Command::Keep
-        | Command::History { .. }
-        | Command::Clean { .. }
-        | Command::Rollback { .. }
-        | Command::Dev { .. }
-        | Command::Cache { .. }
-        | Command::Activate { .. }
-        | Command::FillTemplates { .. } => false,
-    }
-}
-
 /// The configuration a command acts on, as [`find_config`] finds it.
 /// The context goes to stderr first, so output always says which configuration it's about.
 fn config_dir(given: Option<&Path>) -> Result<PathBuf, String> {
@@ -1116,7 +1077,7 @@ fn print_apply_record(config: &Path, modules: &Path) -> Result<ExitCode, String>
 
 /// Checks every role, or the one `--role` names, then pins what's new in the lock, or with
 /// `--locked` fails when something isn't pinned.
-fn check_config(root: &Path, config: &Path, modules: &Path) -> Result<ExitCode, String> {
+fn check_config(config: &Path, modules: &Path) -> Result<ExitCode, String> {
     let roles = match given_role() {
         Some(role) => vec![Some(role.to_owned())],
         None => all_roles(config)?,
@@ -1135,7 +1096,7 @@ fn check_config(root: &Path, config: &Path, modules: &Path) -> Result<ExitCode, 
     }
     let mut unpinned = false;
     for model in &models {
-        unpinned |= generations::needs_locking(root, config, model)?;
+        unpinned |= generations::needs_locking(config, model)?;
     }
     match (unpinned, locked()) {
         (false, _) => Ok(ExitCode::SUCCESS),
@@ -1144,7 +1105,7 @@ fn check_config(root: &Path, config: &Path, modules: &Path) -> Result<ExitCode, 
             None => "the lock doesn't pin everything the configuration uses; `wrath check` pins it"
                 .into(),
         }),
-        (true, false) => lock(root, config, modules, None),
+        (true, false) => lock(config, modules, None),
     }
 }
 
@@ -1165,7 +1126,7 @@ fn check_role(config: &Path, modules: &Path, role: Option<&str>) -> Option<Model
     let pinned = match (model.sources.contains_key(WRATH_SOURCE), all_pinned) {
         (_, false) => "sources not pinned yet",
         (true, true) => "sources pinned",
-        (false, true) => "wrath unpinned, since it was built from a checkout",
+        (false, true) => "wrath unpinned until `wrath update wrath`",
     };
     println!(
         "no errors: {}, {}, {pinned}, model {}",
@@ -1437,23 +1398,34 @@ fn load_scenario(root: &Path, file: &Path) -> Result<Scenario, String> {
     wrath_check::parse_scenario(&path, &id, &milestone, &text).map_err(|e| e.to_string())
 }
 
-/// Grapes' directory from `--source` arguments, `NAME=DIR` each. Only grapes can be given so far.
-fn source_dirs(given: &[String]) -> Result<Option<PathBuf>, String> {
-    let mut grapes = None;
+/// The directories `--source` arguments give, `NAME=DIR` each, for grapes and for wrath itself,
+/// the only sources read from a directory so far.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SourceDirs {
+    grapes: Option<PathBuf>,
+    wrath: Option<PathBuf>,
+}
+
+fn source_dirs(given: &[String]) -> Result<SourceDirs, String> {
+    let mut dirs = SourceDirs::default();
     for source in given {
         let Some((name, dir)) = source.split_once('=') else {
             return Err(format!(
                 "`--source {source}` needs a name and a directory, NAME=DIR"
             ));
         };
-        if name != "grapes" {
-            return Err(format!(
-                "only grapes can be read from a directory so far, not `{name}`"
-            ));
-        }
-        grapes = Some(PathBuf::from(dir));
+        let slot = match name {
+            places::GRAPES_SOURCE => &mut dirs.grapes,
+            WRATH_SOURCE => &mut dirs.wrath,
+            _ => {
+                return Err(format!(
+                    "only grapes and wrath can be read from a directory so far, not `{name}`"
+                ));
+            }
+        };
+        *slot = Some(PathBuf::from(dir));
     }
-    Ok(grapes)
+    Ok(dirs)
 }
 
 /// Evaluates a configuration for the role to act as, or prints why it can't and returns
@@ -1574,12 +1546,7 @@ fn read_lock_file(path: &Path) -> Result<Option<Lock>, String> {
     }
 }
 
-fn lock(
-    root: &Path,
-    config: &Path,
-    modules: &Path,
-    update: Option<&[String]>,
-) -> Result<ExitCode, String> {
+fn lock(config: &Path, modules: &Path, update: Option<&[String]>) -> Result<ExitCode, String> {
     if is_project(config) && project::has_local(config) {
         let shared = system::evaluate_shared(config, modules)
             .inspect_err(|errors| style::print_report(&ending_a_line(errors)))
@@ -1590,7 +1557,7 @@ fn lock(
         };
         // What the local file removes is still locked for everyone else.
         model.packages.extend(shared.packages.iter().cloned());
-        return generations::lock(root, config, &[(None, model)], update, Some(&shared));
+        return generations::lock(config, &[(None, model)], update, Some(&shared));
     }
     // One lock serves every role, so every role is locked, whichever `--role` says.
     let mut models = Vec::new();
@@ -1600,7 +1567,7 @@ fn lock(
         };
         models.push((role, model));
     }
-    generations::lock(root, config, &models, update, None)
+    generations::lock(config, &models, update, None)
 }
 
 /// What a plan compares a configuration against.
@@ -1731,7 +1698,6 @@ fn find_root(given: Option<PathBuf>, from_env: Option<PathBuf>) -> PathBuf {
 
 /// Switches to `system`, already built, or else builds the configuration and switches to it.
 fn switch(
-    root: &Path,
     system: Option<PathBuf>,
     how: Switch,
     yes: bool,
@@ -1768,7 +1734,7 @@ fn switch(
         &model.machine,
         templates::facts(),
     )?;
-    generations::apply(root, &config, model, how, yes, record)
+    generations::apply(&config, model, how, yes, record)
 }
 
 /// Builds the configuration here and switches the machine `host` to it, as `how` says.
@@ -1872,6 +1838,21 @@ mod tests {
             panic!("not update");
         };
         assert_eq!(sources, ["small"]);
+    }
+
+    #[test]
+    fn grapes_and_wrath_can_be_read_from_directories_and_nothing_else_yet() {
+        let given = ["grapes=../grapes".to_owned(), "wrath=.".to_owned()];
+        assert_eq!(
+            source_dirs(&given),
+            Ok(SourceDirs {
+                grapes: Some(PathBuf::from("../grapes")),
+                wrath: Some(PathBuf::from(".")),
+            })
+        );
+        assert_eq!(source_dirs(&[]), Ok(SourceDirs::default()));
+        assert!(source_dirs(&["acme=.".to_owned()]).is_err());
+        assert!(source_dirs(&["grapes".to_owned()]).is_err());
     }
 
     #[test]

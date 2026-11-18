@@ -128,7 +128,7 @@ impl Watching<'_> {
     }
 
     fn offer(&mut self, model: Model) -> Result<(), String> {
-        let model = generations::locked(self.root, self.config, model)?;
+        let model = generations::locked(self.config, model)?;
         let plan = wrath_model::plan(self.running.as_ref().unwrap_or(&Model::default()), &model);
         if plan.is_empty() {
             println!("nothing to try: it runs this already");

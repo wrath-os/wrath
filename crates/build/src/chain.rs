@@ -784,16 +784,29 @@ impl Built {
     }
 }
 
-/// The wrath checkout running the build, which `tree:@wrath` sources read: grapes carries the
-/// recipe for wrath, built from the tool's own files (0036). Set once by the command.
-static WRATH: OnceLock<PathBuf> = OnceLock::new();
+/// Finds the tree of wrath that `tree:@wrath` sources read: grapes carries the recipe for wrath,
+/// built from the tool's own files (0036). Set once by the command, and asked only when wrath is
+/// built, since finding it may fetch.
+type FindWrath = Box<dyn Fn() -> Result<PathBuf, String> + Send + Sync>;
+static WRATH: OnceLock<FindWrath> = OnceLock::new();
+static WRATH_FOUND: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 
 /// What a `tree:` source starts with to name the wrath checkout instead of grapes.
 const WRATH_TREE: &str = "@wrath";
 
-/// Says where the wrath checkout running this command is, for `tree:@wrath` sources.
-pub fn set_wrath_tree(dir: &Path) {
-    let _ = WRATH.set(dir.to_path_buf());
+/// Says how to find the tree of wrath this command builds wrath from, for `tree:@wrath` sources.
+pub fn set_wrath_tree(find: impl Fn() -> Result<PathBuf, String> + Send + Sync + 'static) {
+    let _ = WRATH.set(Box::new(find));
+}
+
+/// The tree of wrath this command builds wrath from, found the first time it's needed.
+fn wrath_tree() -> Result<PathBuf, String> {
+    WRATH_FOUND
+        .get_or_init(|| match WRATH.get() {
+            Some(find) => find(),
+            None => Err("only a checkout of wrath can build wrath from `tree:@wrath`".to_owned()),
+        })
+        .clone()
 }
 /// A listed dependency another one brings, and the one that brings it.
 pub(crate) type Redundant = (String, String);
@@ -1323,10 +1336,9 @@ impl Sources {
     ) -> Result<(PathBuf, String), String> {
         let repository = &self.repository;
         let from = match tree.strip_prefix(WRATH_TREE) {
-            Some(rest) if rest.is_empty() || rest.starts_with('/') => WRATH
-                .get()
-                .ok_or("only a checkout of wrath can build wrath from `tree:@wrath`")?
-                .join(rest.trim_start_matches('/')),
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+                wrath_tree()?.join(rest.trim_start_matches('/'))
+            }
             Some(_) | None => repository.join(tree),
         };
         let mut include = include.to_vec();

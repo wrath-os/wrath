@@ -123,6 +123,12 @@ What others got wrong, or what people trip over:
   sources its lock pins, are read with the token from that secret, when there's no `GH_TOKEN`.
   `status` names the token. `native-follow-cache` checks both; nothing in a VM reaches GitHub,
   so sending the token there is only unit tested.
+- wrath upgrades like a package: `wrath update wrath` pins the newest commit of
+  `github:wrath-os/wrath` (or where the lock pinned it from), and systems built from a lock that
+  pins wrath carry that version, built from its fetched tree, so a machine following the
+  repository gets it with the next upgrade. Before, wrath was only pinned by a build that knew
+  its own revision, which nothing made, so machines kept the wrath they were installed with.
+  `--source wrath=DIR` builds a checkout instead.
 - The pause went. On the first real machine, a fresh install recorded `/etc/wrath` as its
   origin, so automatic upgrades paused from the start, and a pause nobody lifts stops upgrades
   for good. Rules for when a pause ends (a new commit upstream, a time limit) were each more to

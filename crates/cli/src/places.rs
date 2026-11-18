@@ -138,6 +138,37 @@ fn origin(given: Option<&Path>, config: Option<&Path>) -> Origin {
     }
 }
 
+/// Where wrath lives when a lock pins it and says nowhere else.
+pub const WRATH_URL: &str = "github:wrath-os/wrath";
+
+/// The tree of wrath a system's wrath is built from: `given`, from `--source wrath=DIR`; else the
+/// version the lock of the configuration at `config` pins, so a machine upgrades wrath like any
+/// other package when the lock moves it; else the running wrath's own tree, `running`, which is
+/// a checkout or the tree a packaged wrath carries.
+pub fn wrath_tree(
+    given: Option<&Path>,
+    config: Option<&Path>,
+    running: &Path,
+) -> Result<PathBuf, String> {
+    if let Some(dir) = given {
+        return Ok(dir.to_path_buf());
+    }
+    let pinned = config
+        .and_then(|config| crate::read_lock(config).ok().flatten())
+        .and_then(|lock| lock.sources.get(wrath_model::WRATH_SOURCE).cloned())
+        .filter(|pin| pin.is_locked() && !pin.url.is_empty());
+    match pinned {
+        Some(pin) => crate::trees::fetch(&pin).map_err(|e| {
+            format!(
+                "cannot fetch the wrath the lock pins from {}: {e}; to build wrath from a \
+                 checkout, give `--source wrath=DIR`",
+                pin.url
+            )
+        }),
+        None => Ok(running.to_path_buf()),
+    }
+}
+
 /// The URL the configuration at `config` follows grapes at: the one it declares, or grapes' own.
 pub fn grapes_url(config: &Path) -> String {
     wrath_eval::declared_source(&wrath_eval::DirFs::new(config), None, GRAPES_SOURCE)
@@ -424,6 +455,32 @@ mod tests {
         let mut sources = BTreeMap::new();
         keep_pin(&mut sources, None);
         assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn wrath_is_built_from_a_given_tree_then_the_pinned_one_then_the_running_one() {
+        let config = config("[system]\nhostname = \"a\"\n");
+        let pinned = tempfile::tempdir().unwrap();
+        let running = Path::new("/run/wrath-tree");
+        let given = Path::new("/src/wrath");
+        assert_eq!(
+            wrath_tree(None, Some(config.path()), running),
+            Ok(running.to_path_buf())
+        );
+        assert_eq!(wrath_tree(None, None, running), Ok(running.to_path_buf()));
+        let mut lock = Lock::default();
+        let url = format!("path:{}", pinned.path().display());
+        lock.sources
+            .insert(wrath_model::WRATH_SOURCE.into(), pin(&url, "aaaaaaa"));
+        std::fs::write(config.path().join("wrath.lock"), lock.to_toml()).unwrap();
+        assert_eq!(
+            wrath_tree(None, Some(config.path()), running),
+            Ok(pinned.path().to_path_buf())
+        );
+        assert_eq!(
+            wrath_tree(Some(given), Some(config.path()), running),
+            Ok(given.to_path_buf())
+        );
     }
 
     #[test]

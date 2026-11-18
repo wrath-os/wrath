@@ -352,6 +352,10 @@ A machine applies the lock the repository has, so update the lock where you edit
 configuration (`wrath update`, then commit and push) and every machine picks it up. `wrath add`
 and `wrath update` on a machine that follows a repository say so instead of changing it.
 
+wrath itself moves the same way. `wrath update wrath` pins its newest commit, and machines build
+that version into their next system, or fetch it from a cache, so the wrath on a machine is the
+one its lock says. Until the lock pins wrath, a machine keeps the wrath it runs.
+
 With `automatic`, `switch` says what an upgrade does: `auto`, the default, switches when every
 change takes effect right away or at the next login, and otherwise makes the new system the one
 booted next; `now` always switches, and `boot` always waits for the next boot. wrath never

@@ -15,7 +15,6 @@ use crate::{evaluate, run};
 /// Adds `packages` to the system's packages, or to `home`'s, and locks them. Nothing is kept
 /// when they can't be locked, such as a package that doesn't exist.
 pub fn add(
-    root: &Path,
     config: &Path,
     modules: &Path,
     home: Option<&str>,
@@ -59,13 +58,12 @@ pub fn add(
     edits.packages(&file, change, &names);
     let shown = shown_path(config, &file);
     println!("added {} to {option} in {shown}", names.join(", "));
-    edits.apply_and_lock(root, config, modules)
+    edits.apply_and_lock(config, modules)
 }
 
 /// Removes `packages` from the system's packages, or from `home`'s, wherever the configuration
 /// sets them, and locks again.
 pub fn remove(
-    root: &Path,
     config: &Path,
     modules: &Path,
     home: Option<&str>,
@@ -120,7 +118,7 @@ pub fn remove(
         );
         edits.packages(&file, Change::Exclude(keys), &excluded);
     }
-    edits.apply_and_lock(root, config, modules)
+    edits.apply_and_lock(config, modules)
 }
 
 /// The option that holds the packages: `packages`, or a user's `users.<name>.packages`.
@@ -326,17 +324,12 @@ impl Edits {
 
     /// Writes the edited files, then locks the configuration. If it doesn't evaluate or can't
     /// be locked, the files are put back as they were.
-    fn apply_and_lock(
-        self,
-        root: &Path,
-        config: &Path,
-        modules: &Path,
-    ) -> Result<ExitCode, String> {
+    fn apply_and_lock(self, config: &Path, modules: &Path) -> Result<ExitCode, String> {
         let texts = self.texts()?;
         for (file, (_, edited)) in &texts {
             std::fs::write(file, edited).map_err(|e| format!("{}: {e}", file.display()))?;
         }
-        let locked = crate::lock(root, config, modules, None).and_then(|code| {
+        let locked = crate::lock(config, modules, None).and_then(|code| {
             if code == ExitCode::FAILURE {
                 Err("the edited configuration has errors".to_owned())
             } else {

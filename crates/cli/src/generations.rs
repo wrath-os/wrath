@@ -423,14 +423,13 @@ impl Switch {
 /// switching; when it changes, the machine switches again even to the same model, so files are
 /// filled in with the new values.
 pub fn apply(
-    root: &Path,
     config: &Path,
     model: Model,
     how: Switch,
     yes: bool,
     record: Option<crate::machine::Record>,
 ) -> Result<ExitCode, String> {
-    let model = locked(root, config, model)?;
+    let model = locked(config, model)?;
     let hash = model.hash();
     let rebuilt = rebuilt(&model, here::running_built_from().as_deref());
     let current = here::history()
@@ -544,23 +543,18 @@ fn switched(system: &Path, how: Switch, tier: Option<Tier>) -> Result<ExitCode, 
 }
 
 /// Whether the lock next to `config` lacks something `model` needs pinned: a source, a uid or
-/// gid, or grapes as this command read it. wrath itself is only pinned by a build of it that knows
-/// where it came from, which one built from a checkout doesn't.
-pub(crate) fn needs_locking(root: &Path, config: &Path, model: &Model) -> Result<bool, String> {
+/// gid, or grapes as this command read it. wrath itself is pinned only by `wrath update`.
+pub(crate) fn needs_locking(config: &Path, model: &Model) -> Result<bool, String> {
     let lock = crate::read_lock(config)?.unwrap_or_default();
-    // A configuration read from a URL keeps the wrath its lock pins, as [`locked`] says.
-    let wrath_unpinned = !model.sources.contains_key(WRATH_SOURCE)
-        && crate::pinned::running(root).is_some()
-        && crate::config_from::fetched_url().is_none();
     let unpinned = model.sources.values().any(|source| !source.is_locked());
     let unread = !crate::fetch::recorded(&lock);
     let ids_unkept = lock.ids.merged(&model.ids())? != lock.ids;
-    Ok(wrath_unpinned || unpinned || unread || ids_unkept)
+    Ok(unpinned || unread || ids_unkept)
 }
 
 /// `model` with its sources pinned: pins what the lock next to `config` doesn't have yet, so the
 /// lock always describes what runs.
-pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, String> {
+pub(crate) fn locked(config: &Path, model: Model) -> Result<Model, String> {
     let existing = crate::read_lock(config)?;
     let kept = existing
         .as_ref()
@@ -571,16 +565,12 @@ pub(crate) fn locked(root: &Path, config: &Path, model: Model) -> Result<Model, 
         crate::fetch::record(config)?;
         return Ok(model);
     }
-    // A configuration read from a URL keeps the wrath its lock pins: the machine running it
-    // isn't where wrath is moved forward.
-    let wrath = match crate::config_from::fetched_url() {
-        Some(_) => model.sources.get(WRATH_SOURCE).cloned(),
-        None => crate::pinned::for_lock(
-            crate::pinned::running(root),
-            model.sources.get(WRATH_SOURCE),
-            false,
-        ),
-    };
+    // wrath keeps its pin, which only `wrath update` moves.
+    let wrath = model
+        .sources
+        .get(WRATH_SOURCE)
+        .filter(|source| source.is_locked())
+        .cloned();
     let mut lock = Lock {
         sources: pins(&model)?,
         ids,
@@ -1110,19 +1100,18 @@ pub fn rollback(to: Option<u32>) -> Result<ExitCode, String> {
 /// single role, `None`. A project with a local file passes `shared`, the project without it:
 /// what that uses goes in `wrath.lock`, and the rest in `wrath.local.lock`.
 pub fn lock(
-    root: &Path,
     config: &Path,
     models: &[(Option<String>, Model)],
     update: Option<&[String]>,
     shared: Option<&Model>,
 ) -> Result<ExitCode, String> {
     let wrath = crate::pinned::for_lock(
-        crate::pinned::running(root),
         models
             .first()
             .and_then(|(_, model)| model.sources.get(WRATH_SOURCE)),
         update.is_some_and(|names| names.is_empty() || names.iter().any(|n| n == WRATH_SOURCE)),
-    );
+        |url| crate::trees::follow(url).map(|(pin, _)| pin),
+    )?;
     let models = match update {
         Some(names) => follow_newest(models, names)?,
         None => models.to_vec(),

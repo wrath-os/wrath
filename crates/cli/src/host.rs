@@ -453,7 +453,7 @@ pub fn apply(
     how: Switch,
     yes: bool,
 ) -> Result<ExitCode, String> {
-    let model = generations::locked(root, config, model)?;
+    let model = generations::locked(config, model)?;
     // After a switch that failed partway, the plan is from where it started, so switching again
     // does all it didn't.
     let (running, unfinished) = match remote.unfinished()? {

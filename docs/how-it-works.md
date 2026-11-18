@@ -56,6 +56,11 @@ under you:
 declare grapes yourself: the lock pins it the first time a command reads the configuration, and
 `--source grapes=DIR` builds from a checkout of it for one command instead.
 
+wrath is pinned once you run `wrath update wrath`, and from then on every system the
+configuration builds carries that version of wrath, built from its source like any package.
+Without a pin, a system carries the wrath that built it. `--source wrath=DIR` builds wrath from a
+checkout instead, which is how you try a change to wrath on a machine.
+
 ## The plan
 
 `wrath plan` compares the model you'd get from your TOML with the model of the running system,
