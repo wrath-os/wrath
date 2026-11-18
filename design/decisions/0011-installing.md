@@ -109,6 +109,13 @@ and also to a passphrase. Install asks for that passphrase when it isn't given `
 machine installed at its own console, where none of the recipients' keys is, still gets its host
 key, and nobody's private key has to be copied to the machine being installed.
 
+Added 2026-11-18: a generic installer, `installer/` in wrath's repository, which one stick serves
+every machine with. It logs root in on the screen, joins wifi with iwd and has the tools install
+needs, and nothing of any machine: `wrath install -C github:owner/repo//NAME` fetches the
+configuration, records it as the machine's origin, and fetches the system from the caches it
+names, asking for a GitHub token on the terminal when the repository is private. Its lock pins
+grapes, so it builds from its URL. `native-installer` checks it with a `path:` URL and a cache.
+
 ### Where install runs
 
 `distro install --config DIR|URL --role NAME --identity FILE` runs from any Linux with Nix, such as

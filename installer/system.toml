@@ -1,0 +1,24 @@
+# A stick that installs wrath on any machine from a configuration repository. Build it once:
+#
+#   wrath build --image -C github:wrath-os/wrath//installer -o installer.img
+#
+# Boot a machine from it, join a network if it isn't wired (`iwctl station wlan0 connect NAME`),
+# and install what the repository describes for that machine:
+#
+#   wrath install -C github:you/machines//NAME
+#
+# What gets installed is fetched from the caches that configuration names, so the stick carries
+# none of it. It logs root in on the screen by itself: copy this directory and set
+# `services.ssh` with your key to install over SSH instead.
+
+packages = ["cryptsetup", "btrfs-progs", "dosfstools", "age", "parted"]
+
+[system]
+hostname = "wrath-installer"
+console_autologin = "root"
+
+[networking.wireless]
+enable = true
+
+[hardware]
+firmware = ["linux-firmware"]

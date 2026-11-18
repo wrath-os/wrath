@@ -90,6 +90,9 @@ pub enum Step {
     Reboot,
     /// Soft-reboots the VM, starting its userspace again on the same kernel, and waits for it.
     SoftReboot,
+    /// Shares `config` in `/run/wrath-share/configs/<name>` with the scenario's cache in it, and
+    /// builds that on the host and pushes it to the cache, for the guest to fetch.
+    CacheBuild { config: String },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -144,7 +147,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 20] = [
+pub const STEP_FIELDS: [&str; 21] = [
     "run_as",
     "apply_config",
     "apply_host",
@@ -165,6 +168,7 @@ pub const STEP_FIELDS: [&str; 20] = [
     "expect_no_reboot",
     "reboot",
     "soft_reboot",
+    "cache_build",
 ];
 
 #[derive(Deserialize)]
@@ -193,6 +197,7 @@ struct RawStep {
     expect_no_reboot: Option<bool>,
     reboot: Option<bool>,
     soft_reboot: Option<bool>,
+    cache_build: Option<String>,
 }
 
 impl TryFrom<RawStep> for Step {
@@ -218,6 +223,9 @@ impl TryFrom<RawStep> for Step {
         }
         if raw.soft_reboot == Some(true) {
             return Ok(Self::SoftReboot);
+        }
+        if let Some(config) = raw.cache_build {
+            return Ok(Self::CacheBuild { config });
         }
         if let Some(config) = raw.apply_host {
             return Ok(Self::ApplyHost { config });
@@ -817,6 +825,7 @@ impl VmRun<'_> {
                     booted = boot_id(agent, deadline)?;
                 }
                 Step::SoftReboot => *agent = self.soft_reboot(agent, qemu, cid, deadline)?,
+                Step::CacheBuild { config } => self.cache_build(config)?,
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
@@ -1056,6 +1065,32 @@ impl VmRun<'_> {
         )
         .map_err(io_err("the system's path"))?;
         self.share_config(config)
+    }
+
+    /// Shares `config` with the scenario's cache in it, builds that on the host as a test
+    /// generation and pushes it to the cache, so the guest installing or applying the shared
+    /// configuration fetches all of it.
+    fn cache_build(&self, config: &str) -> Result<(), String> {
+        if !self.spec.cache {
+            return Err("`cache_build` needs the scenario's cache: `cache = true`".into());
+        }
+        self.share_config(config)?;
+        let name = Path::new(config)
+            .file_name()
+            .ok_or("a configuration needs a name")?;
+        let shared = std::path::absolute(self.dir.join(SHARE).join("configs").join(name))
+            .map_err(io_err("the shared configuration"))?;
+        let system = shared.join("system.toml");
+        let text = fs::read_to_string(&system).map_err(io_err("the shared configuration"))?;
+        let table = &crate::served::cache(self.host)?.table;
+        fs::write(&system, format!("{text}\n{table}"))
+            .map_err(io_err("the shared configuration"))?;
+        // Locked as a repository is before it's pushed, since a configuration read from a URL is
+        // read as it is.
+        let shared = shared.display().to_string();
+        self.host.wrath(&["check", "--config", &shared])?;
+        self.host.wrath(&["build", "--config", &shared, "--test"])?;
+        crate::served::push(self.host)
     }
 
     /// Copies `config` into `/run/wrath-share/configs/<name>`.

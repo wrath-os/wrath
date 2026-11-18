@@ -31,13 +31,22 @@ pub fn cache(host: Host<'_>) -> Result<&'static Served, String> {
         .map_err(Clone::clone)
 }
 
+/// Pushes what the host built since into the cache, as when a step built something for a guest
+/// to fetch. The server serves the directory, so it has it at once.
+pub fn push(host: Host<'_>) -> Result<(), String> {
+    let dir = host.workdir.join("target/wrath-check");
+    let (root, key_file) = (dir.join("cache"), dir.join("cache-key"));
+    key(&key_file)?;
+    let (root_arg, key_arg) = (root.display().to_string(), key_file.display().to_string());
+    host.wrath(&["cache", "push", &root_arg, "--key", &key_arg])
+        .map(drop)
+}
+
 fn start(host: Host<'_>) -> Result<Served, String> {
     let dir = host.workdir.join("target/wrath-check");
     let root = dir.join("cache");
-    let key_file = dir.join("cache-key");
-    let key = key(&key_file)?;
-    let (root_arg, key_arg) = (root.display().to_string(), key_file.display().to_string());
-    host.wrath(&["cache", "push", &root_arg, "--key", &key_arg])?;
+    let key = key(&dir.join("cache-key"))?;
+    push(host)?;
     let listener =
         TcpListener::bind("127.0.0.1:0").map_err(|e| format!("serving the cache: {e}"))?;
     let port = listener

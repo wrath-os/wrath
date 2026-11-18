@@ -1,0 +1,6 @@
+# The generic installer, as installer/system.toml has it, without the wifi a VM has no use for.
+packages = ["cryptsetup", "btrfs-progs", "dosfstools", "age", "parted"]
+
+[system]
+hostname = "wrath-installer"
+console_autologin = "root"

@@ -48,12 +48,39 @@ do Secure Boot yet. So anyone with the machine in their hands can boot something
 key. Fine for a desktop at home, not fine for a laptop you travel with. A passphrase doesn't have
 that problem.
 
-## From a USB stick
+## From a configuration repository
 
-Build an image of the machine's configuration, with the configuration inside it. Any Linux
-machine that can run wrath's builder can do this (see [Getting started](getting-started.md) for
-what it needs). The first build compiles everything from source and takes roughly an hour on a
-fast machine:
+The simplest way: one installer stick for every machine, with each machine's configuration in a
+repository and what it runs in a cache. Build the installer once, on any Linux machine that can
+run wrath's builder (see [Getting started](getting-started.md)):
+
+```sh
+wrath build --image -C github:wrath-os/wrath//installer -o installer.img
+sudo dd if=installer.img of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+Boot the machine from it. It logs root in on the screen. Join a network if it isn't wired
+(`iwctl station wlan0 connect "My Network"`), then install what the repository describes for it:
+
+```sh
+wrath install -C github:you/machines//framework --disk /dev/nvme0n1
+```
+
+The configuration is fetched, and the system with it from the caches it names (`[caches]`, see
+[How it works](how-it-works.md)), so the stick carries none of it. The machine records the
+repository as where it came from, and upgrades from there, with `[updates]`, from its first
+boot. A private repository asks for a GitHub token that can read it. The installer can't
+build what the caches don't have, so build the configuration where the cache is filled, and push
+it, first.
+
+To install over SSH instead, copy `installer/` from wrath's repository, add your key under
+`[services.ssh]`, and build that.
+
+## From an image of the machine
+
+An image of one machine's configuration carries the configuration and the system, built,
+which suits a machine with no network, or no cache to fetch from. The first build compiles
+everything from source and takes roughly an hour on a fast machine:
 
 ```sh
 ./target/release/wrath -C ~/framework build --image --with-configuration -o framework.img
@@ -81,20 +108,12 @@ Install copies the configuration directory to `/etc/wrath` on the new disks. Tha
 installed machine applies from, so after the first boot you edit it there (or copy your own
 checkout over it) and run `wrath apply`, which builds what's new on the machine itself.
 
-Grapes isn't published yet, so a stick built from a checkout leaves the lock without a pinned
-grapes, and the first apply on the machine has nowhere to fetch it from. Every system carries the
-grapes it was built from, so give it that one until you pin your own:
-
-```sh
-wrath apply --source grapes=/run/system/grapes
-```
-
 `--name` records the machine's name on it. It's the hostname when `system.hostname` isn't set,
 and it's how a configuration shared by several machines tells them apart. `--role` picks which
 of the configuration's `roles/` this machine is, for a configuration with roles, and is recorded
 too, so later commands on the machine default to it.
 
-### Secrets from the first boot
+## Secrets from the first boot
 
 A machine decrypts its secrets with its SSH host key, and a fresh install makes a new one, so
 secrets encrypted to the old key don't decrypt until you add the new one and re-encrypt them.
@@ -111,7 +130,7 @@ system, so its secrets decrypt at the first boot and SSH doesn't warn about a ch
 after a reinstall. `--identity FILE`, with a key it's encrypted to, works instead of the
 passphrase, and `--key-passphrase-file FILE` gives the passphrase without asking.
 
-### Getting online
+## Getting online
 
 A wired connection works out of the box, with DHCP. For wifi, turn it on in the configuration
 before you build the image, along with the firmware most laptop wifi cards need:
@@ -161,7 +180,7 @@ switches it with the new system's own wrath. `NAME` is whatever `ssh NAME` reach
 
 ## What's missing
 
-- A proper live installer image you can download. Today you build your own.
-- Installing a system other than the one on the stick, which needs wrath's builder and grapes
-  on the stick too.
+- An installer image you can download. Today you build it, once.
+- Installing onto the disks directly: what install fetches goes into the stick's store first and
+  is copied from there, so the stick needs room for the whole system.
 - Secure Boot, and with it a TPM unlock that's actually hard to get around.

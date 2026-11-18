@@ -274,6 +274,9 @@ enum Command {
         /// Go ahead without asking
         #[arg(short, long)]
         yes: bool,
+        /// Install a test generation, which the scenario harness can reach once it boots
+        #[arg(long, hide = true)]
+        test: bool,
     },
     /// Move sources to their newest versions and lock them
     Update {
@@ -762,6 +765,7 @@ fn main() -> ExitCode {
             wipe,
             yes,
             system,
+            test,
         } => machine().and_then(|config| {
             let system = system.or_else(|| fs::read_link(Path::new("/").join(INSTALL)).ok());
             // A system built already is installed as it is, with the disks its own model
@@ -803,6 +807,7 @@ fn main() -> ExitCode {
                     wipe,
                     yes,
                     prebuilt: system.as_deref(),
+                    test,
                 },
             )
         }),

@@ -130,10 +130,16 @@ fn cache() -> PathBuf {
 /// Where GitHub's API is, the one place a GitHub token is sent.
 const GITHUB_API: &str = "https://api.github.com/";
 
-/// A token to read GitHub with, for private repositories: `GH_TOKEN` or `GITHUB_TOKEN`, the one
-/// the running system's configuration gives in `updates.token`, or else the one `gh` is logged in
-/// with.
+/// A token typed in on the terminal for this command, when GitHub showed nothing without one.
+static TYPED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// A token to read GitHub with, for private repositories: one typed in for this command,
+/// `GH_TOKEN` or `GITHUB_TOKEN`, the one the running system's configuration gives in
+/// `updates.token`, or else the one `gh` is logged in with.
 fn github_token() -> Option<&'static str> {
+    if let Some(typed) = TYPED.get() {
+        return Some(typed);
+    }
     static TOKEN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     TOKEN
         .get_or_init(|| {
@@ -170,7 +176,37 @@ fn download(url: &str, output: &Path) -> Result<(), String> {
     if token.is_some() && wrath_build::http::download_with(url, None, output) == Ok(true) {
         return Ok(());
     }
+    // A private repository looks like nothing to anyone who can't read it: on a terminal, as when
+    // installing from a stick, someone can type in a token that can.
+    if url.starts_with(GITHUB_API) && ask_token(url) {
+        return download(url, output);
+    }
     Err(tried)
+}
+
+/// Asks on the terminal, once per command, for a token that can read the GitHub repository `url`
+/// is about. Whether one was typed in.
+fn ask_token(url: &str) -> bool {
+    use std::io::IsTerminal;
+    if TYPED.get().is_some() || !std::io::stdin().is_terminal() {
+        return false;
+    }
+    eprintln!(
+        "GitHub shows nothing at {}, as it does for a private repository",
+        repository_of(url)
+    );
+    let typed = crate::host::read_password("a token that can read it, or nothing to give up: ")
+        .map(|typed| typed.trim().to_owned())
+        .unwrap_or_default();
+    !typed.is_empty() && TYPED.set(typed).is_ok()
+}
+
+/// The `owner/repo` a GitHub API `url` is about.
+fn repository_of(url: &str) -> String {
+    url.strip_prefix(GITHUB_API)
+        .and_then(|rest| rest.strip_prefix("repos/"))
+        .map(|rest| rest.split('/').take(2).collect::<Vec<_>>().join("/"))
+        .unwrap_or_else(|| url.to_owned())
 }
 
 /// What to say when `url` has nothing there, which on GitHub is also how a private repository
@@ -352,6 +388,18 @@ pub fn fetch(source: &Source) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn a_github_api_url_names_its_repository() {
+        assert_eq!(
+            repository_of("https://api.github.com/repos/johnae/machines/commits/HEAD"),
+            "johnae/machines"
+        );
+        assert_eq!(
+            repository_of("https://example.com/x"),
+            "https://example.com/x"
+        );
+    }
 
     fn tree() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

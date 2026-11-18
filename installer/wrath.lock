@@ -1,0 +1,9 @@
+# The versions of the sources this configuration uses, written by `wrath check` and
+# moved to newer ones by `wrath update`.
+version = 4
+
+[sources.grapes]
+url = "github:wrath-os/grapes"
+rev = "958e54a47d8d5c120a93b5221845019fde4d1d65"
+hash = "sha256-b6e371ef44ae0a387d30be63154162de4f7ac836356a1c565fbe1bbd7c790efc"
+date = "2026-11-18"

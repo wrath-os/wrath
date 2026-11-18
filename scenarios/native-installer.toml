@@ -1,0 +1,20 @@
+title = "a generic installer installs a machine from a configuration it fetches, and what it describes from a cache"
+notes = "The installer carries nothing of the machine: the configuration comes from a `path:` URL, as from a repository, and the system from the cache it names. The machine's host key was made ahead, so its passphrase is given too."
+
+[vm]
+config = "scenarios/fixtures/native-installer"
+store = "wrath"
+tpm = true
+cache = true
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { run = "systemctl cat getty@tty1.service | grep -o 'autologin root'", stdout_contains = "autologin root" },
+  { cache_build = "scenarios/fixtures/native-install" },
+  { run = "mkdir -p /srv/m && cp -r /run/wrath-share/configs/native-install /srv/m/box && test ! -e /wrath/system/install && echo nothing carried", stdout_contains = "nothing carried" },
+  { run = "printf 'correct horse' > /tmp/passphrase && printf 'battery staple' > /tmp/keypass && wrath --source grapes=/run/system/grapes install -C path:/srv/m//box --disk /dev/vdb --passphrase-file /tmp/passphrase --key-passphrase-file /tmp/keypass --test -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { boot_installed = true },
+  { run = "findmnt -no SOURCE /; wrath status 2>&1 | grep -o 'came from path:/srv/m//box'", stdout_contains = "/dev/mapper/main0-system[/@root]\ncame from path:/srv/m//box" },
+  { run = "cut -d' ' -f2 /etc/ssh/ssh_host_ed25519_key.pub | grep -qxF \"$(cut -d' ' -f2 /etc/wrath/secrets/machines/t-01/ssh_host_ed25519_key.pub)\" && echo same", stdout_contains = "same" },
+]
+timeout_secs = 1500

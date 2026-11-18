@@ -115,6 +115,8 @@ pub struct Install<'a> {
     pub yes: bool,
     /// A system already built and in the store, installed instead of building one.
     pub prebuilt: Option<&'a Path>,
+    /// Build a test generation, which the scenario harness can reach once it boots.
+    pub test: bool,
 }
 
 /// The devices given with `--disk`, by the disk of the layout they're for. One given without a
@@ -188,7 +190,7 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
         .map_err(|e| format!("cannot keep the passphrase: {e}"))?;
     let system = match how.prebuilt {
         Some(system) => system.to_path_buf(),
-        None => generations::build_generation(&model, false)?,
+        None => generations::build_generation(&model, how.test)?,
     };
     let result = lay_out(&partitions, storage, how, &key, work.path())
         // Before the boot loader: it copies the initrd's SSH key into the initrd.
@@ -870,6 +872,7 @@ mod tests {
             wipe: false,
             yes: true,
             prebuilt: None,
+            test: false,
         };
 
         // No keys made ahead, or no name to find them by: nothing to place.
