@@ -88,6 +88,8 @@ pub enum Step {
     },
     /// Reboots the VM from inside, as someone would, and waits for it to come back.
     Reboot,
+    /// Soft-reboots the VM, starting its userspace again on the same kernel, and waits for it.
+    SoftReboot,
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
     /// The VM has not rebooted since it booted for the scenario.
@@ -142,7 +144,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 19] = [
+pub const STEP_FIELDS: [&str; 20] = [
     "run_as",
     "apply_config",
     "apply_host",
@@ -162,6 +164,7 @@ pub const STEP_FIELDS: [&str; 19] = [
     "stdout_contains",
     "expect_no_reboot",
     "reboot",
+    "soft_reboot",
 ];
 
 #[derive(Deserialize)]
@@ -189,6 +192,7 @@ struct RawStep {
     stdout_contains: Option<String>,
     expect_no_reboot: Option<bool>,
     reboot: Option<bool>,
+    soft_reboot: Option<bool>,
 }
 
 impl TryFrom<RawStep> for Step {
@@ -211,6 +215,9 @@ impl TryFrom<RawStep> for Step {
         }
         if raw.reboot == Some(true) {
             return Ok(Self::Reboot);
+        }
+        if raw.soft_reboot == Some(true) {
+            return Ok(Self::SoftReboot);
         }
         if let Some(config) = raw.apply_host {
             return Ok(Self::ApplyHost { config });
@@ -809,6 +816,7 @@ impl VmRun<'_> {
                     *agent = self.reboot(agent, qemu, cid, &booted, deadline)?;
                     booted = boot_id(agent, deadline)?;
                 }
+                Step::SoftReboot => *agent = self.soft_reboot(agent, qemu, cid, deadline)?,
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
@@ -883,6 +891,30 @@ impl VmRun<'_> {
             }
             if Instant::now() >= deadline {
                 return Err("the VM didn't come back from its reboot".into());
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    /// Soft-reboots the VM with `systemctl soft-reboot` and returns the agent of the userspace it
+    /// starts, which keeps the boot's id: systemd counts soft reboots instead.
+    fn soft_reboot(
+        &self,
+        agent: &mut Client<VsockStream>,
+        qemu: &mut KillOnDrop,
+        cid: u32,
+        deadline: Instant,
+    ) -> Result<Client<VsockStream>, String> {
+        let before = soft_reboots(agent, deadline)?;
+        // The agent goes down with userspace, so it may never answer.
+        let _ = run_shell(agent, argv(&["systemctl", "soft-reboot"]), deadline);
+        loop {
+            let mut next = self.connect(cid, &mut qemu.0, deadline)?;
+            if soft_reboots(&mut next, deadline).is_ok_and(|count| count > before) {
+                return Ok(next);
+            }
+            if Instant::now() >= deadline {
+                return Err("the VM didn't come back from its soft reboot".into());
             }
             thread::sleep(Duration::from_secs(1));
         }
@@ -1234,6 +1266,24 @@ fn boot_id(agent: &mut Client<VsockStream>, deadline: Instant) -> Result<String,
         deadline,
     )?;
     Ok(stdout.trim().to_owned())
+}
+
+/// How many times the VM's userspace was soft-rebooted since it booted.
+fn soft_reboots(agent: &mut Client<VsockStream>, deadline: Instant) -> Result<u32, String> {
+    let (_, stdout, _) = run_shell(
+        agent,
+        argv(&[
+            "systemctl",
+            "show",
+            "--value",
+            "--property=SoftRebootsCount",
+        ]),
+        deadline,
+    )?;
+    stdout
+        .trim()
+        .parse()
+        .map_err(|_| format!("systemd says it soft-rebooted {:?} times", stdout.trim()))
 }
 
 fn argv(args: &[&str]) -> Vec<String> {

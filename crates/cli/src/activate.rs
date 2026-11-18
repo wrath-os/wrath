@@ -32,6 +32,9 @@ pub enum Mode {
     Install,
     /// Put users' homes in place at boot, once /home is mounted, as `wrath-homes.service` does.
     Homes,
+    /// Set up again what the first program sets up before systemd, after a soft reboot started
+    /// systemd again without it, as `wrath-soft-reboot.service` does.
+    SoftReboot,
 }
 
 /// Accounts are copied into /etc rather than linked, so systemd-sysusers can add the system's
@@ -48,6 +51,7 @@ pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
         Mode::Test => switch(root, system),
         Mode::Init => init(system),
         Mode::Homes => crate::on_machine::homes(system),
+        Mode::SoftReboot => soft_reboot(root, system),
         Mode::Install => {
             let esp = root.join("boot");
             run(Command::new("bootctl")
@@ -532,20 +536,37 @@ fn put_in_place(root: &Path, system: &Path) -> Result<(), String> {
     replace_link(&programs.join("env"), &root.join("usr/bin/env"))?;
     link_kernel_modules(root, system)?;
     link_foreign(root, system)?;
-    // /run doesn't allow setuid programs, so the wrappers get a filesystem of their own.
-    run(Command::new(programs.join("mount")).args([
+    mount_wrappers(system)?;
+    run(&mut Command::new(programs.join("systemd-sysusers")))?;
+    if let Some(state) = &state {
+        state.save_accounts(root);
+    }
+    warn(make_wrappers(root, system, &model)?);
+    crate::on_machine::at_boot(system)
+}
+
+/// Gives the wrappers a filesystem of their own, with `system`'s mount, as /run doesn't allow
+/// setuid programs.
+fn mount_wrappers(system: &Path) -> Result<(), String> {
+    run(Command::new(system.join("bin/mount")).args([
         "-t",
         "tmpfs",
         "-o",
         "mode=755,nodev",
         "wrappers",
         wrath_eval::WRAPPERS_DIR,
-    ]))?;
-    run(&mut Command::new(programs.join("systemd-sysusers")))?;
-    if let Some(state) = &state {
-        state.save_accounts(root);
-    }
-    warn(make_wrappers(root, system, &model)?);
+    ]))
+}
+
+/// After a soft reboot, which stopped every unit, took down the filesystems the first program
+/// made under /run/wrath and started systemd again without it: the running system, `system`,
+/// becomes the booted one and gets its wrappers, secrets and filled-in files back.
+fn soft_reboot(root: &Path, system: &Path) -> Result<(), String> {
+    // Given as /run/system, a link the booted one mustn't point through.
+    let system = &fs::canonicalize(system).map_err(|e| format!("{}: {e}", system.display()))?;
+    point_at(root, system, &[BOOTED])?;
+    mount_wrappers(system)?;
+    warn(make_wrappers(root, system, &model_of(system)?)?);
     crate::on_machine::at_boot(system)
 }
 

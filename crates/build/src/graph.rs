@@ -872,6 +872,15 @@ const HOMES_UNIT: &str = "[Unit]\nDescription=Put users' homes in place\n\
     Before=systemd-user-sessions.service shutdown.target\nConflicts=shutdown.target\n\n\
     [Service]\nType=oneshot\nRemainAfterExit=yes\n\
     ExecStart=/run/system-booted/bin/wrath activate --mode homes /run/system-booted\n";
+
+/// What the first program sets up before systemd starts, set up again after a soft reboot, which
+/// stops every unit, takes down the filesystems it made under /run/wrath and starts systemd again
+/// without it. A boot that ran the first program has the wrappers' filesystem, so it skips this.
+const SOFT_REBOOT_UNIT: &str = "[Unit]\nDescription=Set up again what boot sets up before systemd\n\
+    DefaultDependencies=no\nConditionPathIsMountPoint=!/run/wrath/wrappers\nAfter=local-fs.target\n\
+    Before=sysinit.target wrath-homes.service shutdown.target\nConflicts=shutdown.target\n\n\
+    [Service]\nType=oneshot\nRemainAfterExit=yes\n\
+    ExecStart=/run/system/bin/wrath activate --mode soft-reboot /run/system\n";
 const SWITCH_TO: &str = include_str!("../system/switch-to-configuration");
 
 /// The label of the file system a system's root is on.
@@ -1155,6 +1164,14 @@ fn lower<'a>(
             "etc/systemd/system/wrath-homes.service",
             0o644,
             HOMES_UNIT.to_owned(),
+            &[],
+            packages,
+        )?,
+        text(
+            base,
+            "etc/systemd/system/wrath-soft-reboot.service",
+            0o644,
+            SOFT_REBOOT_UNIT.to_owned(),
             &[],
             packages,
         )?,
@@ -1978,7 +1995,7 @@ const LINKED: [&str; 2] = ["systemd", "linux"];
 
 /// Links every system has, where `@id@` stands for the path of package `id`, one of [`LINKED`].
 /// They're part of the action's key, so changing one changes the action.
-const FIXED_LINKS: [(&str, &str); 7] = [
+const FIXED_LINKS: [(&str, &str); 8] = [
     // wrath starts systemd from here at boot.
     ("systemd", "@systemd@"),
     // The modules of the kernel, which wrath links at /lib/modules when the system boots.
@@ -1991,6 +2008,11 @@ const FIXED_LINKS: [(&str, &str); 7] = [
     (
         "etc/systemd/system/multi-user.target.wants/wrath-homes.service",
         "../wrath-homes.service",
+    ),
+    // What boot sets up before systemd, again after a soft reboot.
+    (
+        "etc/systemd/system/sysinit.target.wants/wrath-soft-reboot.service",
+        "../wrath-soft-reboot.service",
     ),
     (
         "etc/systemd/system/default.target",
