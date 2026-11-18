@@ -97,7 +97,7 @@ wrath history [OPTIONS] [GENERATION]...
 
 ## `wrath clean`
 
-Remove old generations and what only they used, disk images of systems among it
+Remove old generations and what only they used, and what builds left behind, such as disk images
 
 ```text
 wrath clean [OPTIONS]

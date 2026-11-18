@@ -108,7 +108,14 @@ fn run_vm(scenario: &Scenario, spec: &VmSpec, ctx: &RunContext) -> Outcome {
         host,
     };
     match run.execute() {
-        Ok(()) => Outcome::Pass,
+        Ok(()) => {
+            // Each run builds its image again, so one that passed isn't kept; one given with
+            // `--image` isn't the harness's to remove.
+            if ctx.image_override.is_none() {
+                let _ = std::fs::remove_file(&image);
+            }
+            Outcome::Pass
+        }
         Err(reason) => {
             let relative = |path: &Path| {
                 path.strip_prefix(&ctx.workdir)

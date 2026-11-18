@@ -10,39 +10,54 @@ use wrath_model::{LOCK_FILE, Lock, Model, Source, Tier, WRATH_SOURCE};
 use crate::config_from::ConfigFrom;
 use crate::switching::{self as here, Generation};
 
-/// Prints where each of `built`, by name, is, and links it at `link` when given: a directory gets
-/// one link per name in it, any other path one link, which replaces a link already there.
+/// Prints where each of `built`, by name, is, or links it at `link` when given and prints the
+/// link: a directory gets one link per name in it, any other path one link, which replaces a link
+/// already there. A disk image is moved there instead, and that's what's printed.
 pub fn show_built(built: &[(String, PathBuf)], link: Option<&Path>) -> Result<ExitCode, String> {
-    for (_, path) in built {
-        println!("{}", path.display());
-    }
-    if let Some(link) = link {
-        for (at, target) in link_places(built, link)? {
-            // A disk image is a file of its own, which `clean` removes with its system, so what
-            // `-o` names gets a copy, sharing the image's blocks where the filesystem can.
-            if target
-                .extension()
-                .is_some_and(|extension| extension == "img")
-            {
-                if at.is_dir() {
-                    return Err(format!("{} is a directory", at.display()));
-                }
-                let _ = std::fs::remove_file(&at);
-                std::fs::copy(&target, &at).map_err(|e| format!("{}: {e}", at.display()))?;
-                continue;
-            }
-            if at.symlink_metadata().is_ok_and(|meta| !meta.is_symlink()) {
-                return Err(format!(
-                    "{} is there already and isn't a link",
-                    at.display()
-                ));
-            }
-            let _ = std::fs::remove_file(&at);
-            std::os::unix::fs::symlink(&target, &at)
-                .map_err(|e| format!("{}: {e}", at.display()))?;
+    let Some(link) = link else {
+        for (_, path) in built {
+            println!("{}", path.display());
         }
+        return Ok(ExitCode::SUCCESS);
+    };
+    for (at, target) in link_places(built, link)? {
+        // A disk image is a file of its own, made again by each build of it, so it moves to
+        // what `-o` names rather than staying behind as well.
+        if target
+            .extension()
+            .is_some_and(|extension| extension == "img")
+        {
+            if at.is_dir() {
+                return Err(format!("{} is a directory", at.display()));
+            }
+            move_file(&target, &at)?;
+            println!("{}", at.display());
+            continue;
+        }
+        if at.symlink_metadata().is_ok_and(|meta| !meta.is_symlink()) {
+            return Err(format!(
+                "{} is there already and isn't a link",
+                at.display()
+            ));
+        }
+        let _ = std::fs::remove_file(&at);
+        std::os::unix::fs::symlink(&target, &at).map_err(|e| format!("{}: {e}", at.display()))?;
+        println!("{} -> {}", at.display(), target.display());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Moves `from` to `to`, replacing what's there, by renaming it, or by copying it when they're on
+/// different filesystems.
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    let failed = |e: std::io::Error| format!("{}: {e}", to.display());
+    match std::fs::rename(from, to) {
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            std::fs::copy(from, to).map_err(failed)?;
+            std::fs::remove_file(from).map_err(|e| format!("{}: {e}", from.display()))
+        }
+        renamed => renamed.map_err(failed),
+    }
 }
 
 /// Where each link to `built` goes for `link`, with what it points at.
@@ -926,25 +941,28 @@ fn duration(seconds: u64) -> String {
 }
 
 /// Removes old generations, keeping the current one and the `keep` before it, and what only
-/// they used, after saying which and asking.
+/// they used, after saying which and asking, then what the builder left in its work directory.
+/// A machine with no generations, such as one building from a checkout, only gets the latter.
 pub fn clean(keep: usize, yes: bool, raw: bool) -> Result<ExitCode, String> {
-    let generations = here::history()?;
-    let old = to_remove(&generations, keep);
-    if old.is_empty() {
-        println!("no generations to remove; collecting what nothing uses");
-    } else {
-        let listed: Vec<String> = old.iter().map(u32::to_string).collect();
-        println!(
-            "removes generations {}, keeping the current one and the {keep} before it",
-            listed.join(", ")
-        );
-        if !confirmed(yes, "remove them?")? {
-            println!("nothing changed");
-            return Ok(ExitCode::SUCCESS);
+    if here::here_in_store() {
+        let generations = here::history()?;
+        let old = to_remove(&generations, keep);
+        if old.is_empty() {
+            println!("no generations to remove; collecting what nothing uses");
+        } else {
+            let listed: Vec<String> = old.iter().map(u32::to_string).collect();
+            println!(
+                "removes generations {}, keeping the current one and the {keep} before it",
+                listed.join(", ")
+            );
+            if !confirmed(yes, "remove them?")? {
+                println!("nothing changed");
+                return Ok(ExitCode::SUCCESS);
+            }
         }
+        let freed = here::clean(&old)?;
+        println!("{freed}");
     }
-    let freed = here::clean(&old)?;
-    println!("{freed}");
     // What builds here made before their fix-ups goes with the last package made from it, or
     // all of it with `raw`.
     let work = crate::places::work();
@@ -960,7 +978,7 @@ pub fn clean(keep: usize, yes: bool, raw: bool) -> Result<ExitCode, String> {
         let (images, bytes) = forget_images(&work)?;
         if images > 0 {
             println!(
-                "removed {} of systems no longer kept, {:.1} GB",
+                "removed {} that builds left, {:.1} GB",
                 crate::counted(images, "disk image"),
                 bytes as f64 / 1e9
             );
@@ -969,8 +987,8 @@ pub fn clean(keep: usize, yes: bool, raw: bool) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Removes the disk images in `work` whose system the store no longer has, and says how many
-/// and how many bytes. An image is named after its system, and goes with it.
+/// Removes the disk images builds left in `work`, and says how many and how many bytes. Each build
+/// of an image makes it again, so none is worth keeping once it has been copied or booted.
 fn forget_images(work: &Path) -> Result<(usize, u64), String> {
     let images = work.join("images");
     let Ok(entries) = std::fs::read_dir(&images) else {
@@ -981,17 +999,13 @@ fn forget_images(work: &Path) -> Result<(usize, u64), String> {
         let path = entry
             .map_err(|e| format!("{}: {e}", images.display()))?
             .path();
-        let Some(system) = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .and_then(|name| name.strip_suffix(".img"))
-        else {
-            continue;
-        };
-        if work.join("store").join(system).exists() {
+        if path.extension().is_none_or(|extension| extension != "img") {
             continue;
         }
-        let size = path.metadata().map_or(0, |meta| meta.len());
+        // What it takes on disk: an image is sparse, so its length says more than that.
+        let size = path.metadata().map_or(0, |meta| {
+            std::os::unix::fs::MetadataExt::blocks(&meta) * 512
+        });
         std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         count += 1;
         bytes += size;
@@ -1359,22 +1373,21 @@ mod tests {
     }
 
     #[test]
-    fn an_image_goes_once_the_store_no_longer_has_its_system() {
+    fn every_image_a_build_left_goes_and_nothing_else() {
         let work = tempfile::tempdir().unwrap();
         assert_eq!(forget_images(work.path()), Ok((0, 0)));
         let images = work.path().join("images");
         std::fs::create_dir_all(&images).unwrap();
-        std::fs::create_dir_all(work.path().join("store/aaa-system")).unwrap();
-        std::fs::write(images.join("aaa-system.img"), "kept").unwrap();
-        std::fs::write(images.join("bbb-system.img"), "gone").unwrap();
+        std::fs::write(images.join("aaa-system.img"), "one").unwrap();
+        std::fs::write(images.join("bbb-system.img"), "two").unwrap();
         std::fs::write(images.join("notes.txt"), "not an image").unwrap();
-        assert_eq!(forget_images(work.path()), Ok((1, 4)));
+        assert_eq!(forget_images(work.path()).map(|(count, _)| count), Ok(2));
         let mut left: Vec<String> = std::fs::read_dir(&images)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         left.sort();
-        assert_eq!(left, ["aaa-system.img", "notes.txt"]);
+        assert_eq!(left, ["notes.txt"]);
     }
 
     #[test]
@@ -1441,16 +1454,17 @@ mod tests {
         std::fs::write(&file, "").unwrap();
         assert!(show_built(&built(&["jq"]), Some(&file)).is_err());
 
-        // An image is copied, over a link or a copy made before, and outlives its original.
+        // An image moves, over a link or an image put there before, leaving nothing behind.
         let image = dir.path().join("abc-system.img");
-        std::fs::write(&image, "disk").unwrap();
         let stick = dir.path().join("stick.img");
         std::os::unix::fs::symlink(&image, &stick).unwrap();
         let built = [("stick.img".to_owned(), image.clone())];
-        show_built(&built, Some(&stick)).unwrap();
-        show_built(&built, Some(&stick)).unwrap();
-        std::fs::remove_file(&image).unwrap();
-        assert_eq!(std::fs::read_to_string(&stick).unwrap(), "disk");
+        for disk in ["one", "two"] {
+            std::fs::write(&image, disk).unwrap();
+            show_built(&built, Some(&stick)).unwrap();
+            assert!(!image.exists());
+            assert_eq!(std::fs::read_to_string(&stick).unwrap(), disk);
+        }
     }
 
     #[test]

@@ -20,7 +20,7 @@ use crate::activate::{BOOTED, CURRENT, GENERATIONS, RUNNING, Unfinished, generat
 const ROOT: &str = "/";
 
 /// Whether this machine's generations are in wrath's store, which its first `apply` starts.
-fn here_in_store() -> bool {
+pub fn here_in_store() -> bool {
     Path::new(ROOT).join(GENERATIONS).is_dir()
 }
 
