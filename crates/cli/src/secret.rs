@@ -26,6 +26,15 @@ pub enum SecretCommand {
         #[command(flatten)]
         options: Options,
     },
+    /// Make a machine's SSH host key before installing it, kept encrypted in
+    /// `secrets/machines/NAME`, so its secrets decrypt from its first boot
+    Machine {
+        /// The machine, as `wrath install --name` or its hostname calls it
+        name: String,
+        /// A file with the passphrase install asks for, instead of asking for it here
+        #[arg(long, value_name = "FILE")]
+        passphrase_file: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, clap::Args)]
@@ -44,6 +53,13 @@ pub fn run(command: SecretCommand, config: &Path, modules: &Path) -> Result<Exit
         SecretCommand::Rekey { options } => {
             let secrets = Secrets::load(config, modules)?;
             secrets.rekey(&identities(options.identity)?)
+        }
+        SecretCommand::Machine {
+            name,
+            passphrase_file,
+        } => {
+            let secrets = Secrets::load(config, modules)?;
+            secrets.make_host_key(config, &name, passphrase_file.as_deref())
         }
     }
 }
@@ -123,6 +139,73 @@ impl Secrets {
         Ok(ExitCode::SUCCESS)
     }
 
+    /// Makes machine `name`'s SSH host key and keeps it under `secrets/machines/NAME` in the
+    /// configuration at `config`, encrypted to the recipients and to a passphrase, with its
+    /// public half beside it. A key it has already is never replaced.
+    fn make_host_key(
+        &self,
+        config: &Path,
+        name: &str,
+        passphrase_file: Option<&Path>,
+    ) -> Result<ExitCode, String> {
+        if name.is_empty() || name.contains('/') || name.starts_with('.') {
+            return Err(format!("`{name}` isn't a machine's name"));
+        }
+        let dir = crate::machine_keys::dir(config, name);
+        let key = crate::machine_keys::HOST_KEY;
+        let encrypted = crate::machine_keys::to_recipients(&dir, key);
+        let locked = crate::machine_keys::to_passphrase(&dir, key);
+        if encrypted.exists() || locked.exists() {
+            return Err(format!(
+                "{name} has a host key already, in {}; remove it first to make a new one",
+                dir.display()
+            ));
+        }
+        self.check_recipients()?;
+        let passphrase = match passphrase_file {
+            Some(file) => crate::machine_keys::read_passphrase(file)?,
+            None => crate::machine_keys::new_passphrase(&format!("{name}'s keys at install"))?,
+        };
+        let made = private_dir()?;
+        let private = made.path().join(key);
+        let generated = Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-C"])
+            .arg(format!("root@{name}"))
+            .arg("-f")
+            .arg(&private)
+            .output()
+            .map_err(|e| format!("cannot run ssh-keygen: {e}"))?;
+        if !generated.status.success() {
+            return Err(format!(
+                "ssh-keygen: {}",
+                String::from_utf8_lossy(&generated.stderr).trim()
+            ));
+        }
+        let secret = std::fs::read(&private).map_err(|e| format!("{}: {e}", private.display()))?;
+        let public = std::fs::read_to_string(private.with_extension("pub"))
+            .map_err(|e| format!("{key}.pub: {e}"))?;
+        self.encrypt(&format!("{name}'s host key"), &secret, &encrypted)?;
+        let partial = locked.with_extension("partial");
+        std::fs::write(&partial, crate::machine_keys::lock(&secret, &passphrase)?)
+            .and_then(|()| std::fs::rename(&partial, &locked))
+            .map_err(|e| format!("{}: {e}", locked.display()))?;
+        let pub_file = dir.join(format!("{key}.pub"));
+        std::fs::write(&pub_file, &public).map_err(|e| format!("{}: {e}", pub_file.display()))?;
+        // The public key without its comment, as recipients are written.
+        let recipient = public
+            .split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!("encrypted it to the passphrase too, for installing where none of their keys is");
+        println!("{name}'s host key is {recipient}");
+        println!(
+            "add it to `system.secret_recipients`, in place of any key {name} had before, and \
+             `wrath secret rekey` encrypts its secrets to it"
+        );
+        Ok(ExitCode::SUCCESS)
+    }
+
     fn check_recipients(&self) -> Result<(), String> {
         if self.recipients.is_empty() {
             return Err(
@@ -194,11 +277,7 @@ fn age(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Opens `contents` in $VISUAL or $EDITOR and returns what was saved.
 fn edit_in_editor(name: &str, contents: &[u8]) -> Result<Vec<u8>, String> {
-    let dir = match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(runtime) => tempfile::tempdir_in(runtime),
-        None => tempfile::tempdir(),
-    }
-    .map_err(|e| format!("cannot create a private directory: {e}"))?;
+    let dir = private_dir()?;
     let path = dir.path().join(name);
     std::fs::write(&path, contents).map_err(|e| format!("{}: {e}", path.display()))?;
     let editor = std::env::var("VISUAL")
@@ -216,6 +295,16 @@ fn edit_in_editor(name: &str, contents: &[u8]) -> Result<Vec<u8>, String> {
         return Err(format!("the editor failed ({status}); {name} is unchanged"));
     }
     std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// A directory only this user can read, preferably on the user's runtime tmpfs, for decrypted
+/// contents.
+fn private_dir() -> Result<tempfile::TempDir, String> {
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(runtime) => tempfile::tempdir_in(runtime),
+        None => tempfile::tempdir(),
+    }
+    .map_err(|e| format!("cannot create a private directory: {e}"))
 }
 
 /// A configuration whose secrets may not exist yet, as when creating one.

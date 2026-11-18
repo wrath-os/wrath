@@ -15,10 +15,14 @@ steps = [
   # What it carries is the configured system, as a build of the configuration makes it.
   { prepare_build = "scenarios/fixtures/native-install" },
   { run = '[ "$(readlink /wrath/system/install)" = "$(cat /run/wrath-share/system)" ] && echo carried', stdout_contains = "carried" },
-  { run = "cp -r /run/wrath-share/configs/native-install /tmp/config && printf 'correct horse' > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  # The fixture's host key was made ahead with `wrath secret machine t-01`. Installed with no
+  # identity, its passphrase decrypts it into the new system.
+  { run = "cp -r /run/wrath-share/configs/native-install /tmp/config && printf 'correct horse' > /tmp/passphrase && printf 'battery staple' > /tmp/keypass && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --key-passphrase-file /tmp/keypass -y 2>&1; echo exit=$?", stdout_contains = "placed the machine's /mnt/etc/ssh/ssh_host_ed25519_key" },
   # No passphrase typed: the TPM unlocked the disk the image installed.
   { boot_installed = true },
   { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+  # The host key it boots with is the one made ahead.
+  { run = "cut -d' ' -f2 /etc/ssh/ssh_host_ed25519_key.pub | grep -qxF \"$(cut -d' ' -f2 /etc/wrath/secrets/machines/t-01/ssh_host_ed25519_key.pub)\" && echo same", stdout_contains = "same" },
   { run = "grep -q root=LABEL=wrath-root /proc/cmdline && echo image || echo installed", stdout_contains = "installed" },
   # Homes are a subvolume of their own, mounted after the first program runs: the user's files
   # are linked into the mounted one, not under it.

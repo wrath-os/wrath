@@ -166,3 +166,45 @@ fn a_failed_edit_keeps_the_secret() {
     insta::assert_snapshot!(err(&out), @"error: the editor failed (exit status: 1); api-token is unchanged");
     assert_eq!(setup.decrypt("test-identity.txt"), "one\n");
 }
+
+#[test]
+fn a_machines_host_key_is_made_once_encrypted_to_the_recipients_and_its_passphrase() {
+    let setup = Setup::new(&[FIRST]);
+    let passphrase = setup.config().join("passphrase");
+    fs::write(&passphrase, "horse battery\n").unwrap();
+    let make = || {
+        Command::new(env!("CARGO_BIN_EXE_wrath"))
+            .args(["secret", "machine", "box", "--passphrase-file"])
+            .arg(&passphrase)
+            .arg("--config")
+            .arg(setup.config())
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .output()
+            .unwrap()
+    };
+
+    let out = ok(&make());
+
+    let dir = setup.config().join("secrets/machines/box");
+    let public = fs::read_to_string(dir.join("ssh_host_ed25519_key.pub")).unwrap();
+    let recipient: Vec<&str> = public.split_whitespace().take(2).collect();
+    assert!(
+        out.contains(&format!("box's host key is {}\n", recipient.join(" "))),
+        "{out}"
+    );
+    assert!(dir.join("ssh_host_ed25519_key.passphrase.age").is_file());
+    let decrypted = Command::new("age")
+        .args(["-d", "-i"])
+        .arg(fixture("test-identity.txt"))
+        .arg(dir.join("ssh_host_ed25519_key.age"))
+        .output()
+        .unwrap();
+    let key = String::from_utf8(decrypted.stdout).unwrap();
+    assert!(
+        key.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"),
+        "{key}"
+    );
+
+    let again = err(&make());
+    assert!(again.contains("box has a host key already"), "{again}");
+}

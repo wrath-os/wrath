@@ -176,8 +176,9 @@ Setting up a machine: `wrath install -C DIR [--disk NAME=/dev/...] [--role NAME]
 from wrath's image or a checkout with its builder, lays out the disks the configuration describes with
 systemd-repart, encrypts them with a passphrase it asks for, builds the system onto them and
 records the machine's role and name. It refuses disks that have partitions unless given `--wipe`.
-The machine's SSH host key and initrd key, kept encrypted in `secrets/machines/NAME/`, are
-decrypted into it with `--identity FILE`, which stays where install runs. Without `--disk`, it finds
+The machine's SSH host key and initrd key, kept encrypted in `secrets/machines/NAME/` (`wrath secret
+machine NAME` makes the host key), are decrypted into it with `--identity FILE`, which stays where
+install runs, or with the passphrase they were also encrypted to. Without `--disk`, it finds
 the disks the configuration describes by kind and size, refusing to guess when more than enough
 fit, and records them on the machine.
 With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SSH.

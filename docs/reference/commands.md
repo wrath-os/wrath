@@ -179,7 +179,8 @@ wrath install [OPTIONS]
 - `--disk <DEVICE>`: A disk to install on, as `NAME=/dev/...` for the configuration's disk NAME, or just the device when it has one disk. Repeat it for a disk with several devices. Without it, the machine's disks are matched to what the configuration describes
 - `--name <NAME>`: The machine's name, recorded on it
 - `--passphrase-file <FILE>`: A file with the disks' passphrase, instead of asking for it
-- `--identity <FILE>`: An age identity that decrypts the machine's keys under `secrets/machines/NAME`
+- `--identity <FILE>`: An age identity that decrypts the machine's keys under `secrets/machines/NAME`; without it, install asks for the passphrase `wrath secret machine` encrypted them to
+- `--key-passphrase-file <FILE>`: A file with that passphrase, instead of asking for it
 - `--target <TARGET>`: Where the new system is mounted while it's installed
 - `--wipe`: Erase disks that have partitions already
 - `--system <PATH>`: A system already built and in /wrath/store, to install instead of building one [default: the one an image of a configuration with disks carries to install]
@@ -255,6 +256,17 @@ wrath secret rekey [OPTIONS]
 ```
 
 - `--identity <IDENTITY>`: A private key that decrypts the secrets [default: ~/.ssh/id_ed25519]
+
+## `wrath secret machine`
+
+Make a machine's SSH host key before installing it, kept encrypted in `secrets/machines/NAME`, so its secrets decrypt from its first boot
+
+```text
+wrath secret machine [OPTIONS] <NAME>
+```
+
+- `<NAME>`: The machine, as `wrath install --name` or its hostname calls it
+- `--passphrase-file <FILE>`: A file with the passphrase install asks for, instead of asking for it here
 
 ## `wrath cache`
 

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
@@ -106,6 +106,8 @@ pub struct Install<'a> {
     pub passphrase: Option<&'a Path>,
     /// An age identity that decrypts the machine's keys, which stays where install runs.
     pub identity: Option<&'a Path>,
+    /// Where the passphrase the machine's keys are encrypted to is, instead of asking for it.
+    pub key_passphrase: Option<&'a Path>,
     /// Where the new system is mounted while it's installed.
     pub target: &'a Path,
     /// Lay out disks that have partitions already, destroying them.
@@ -167,12 +169,15 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
     let key = work.path().join("key");
     let passphrase = match how.passphrase {
-        Some(file) => std::fs::read_to_string(file)
-            .map_err(|e| format!("{}: {e}", file.display()))?
-            .trim_end_matches('\n')
-            .to_owned(),
-        None => ask_passphrase()?,
+        Some(file) => crate::machine_keys::read_passphrase(file)?,
+        None => crate::machine_keys::new_passphrase("the disks")?,
     };
+    // The machine's name, or its hostname, says which keys made ahead are its.
+    let hostname = match model.options.get("system.hostname") {
+        Some(Value::Str(hostname)) => Some(hostname.as_str()),
+        _ => None,
+    };
+    let keys = machine_keys(how, how.name.or(hostname))?;
     // Readable only by root, as systemd-repart and cryptsetup require of a key file.
     std::fs::OpenOptions::new()
         .write(true)
@@ -187,7 +192,7 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
     };
     let result = lay_out(&partitions, storage, how, &key, work.path())
         // Before the boot loader: it copies the initrd's SSH key into the initrd.
-        .and_then(|()| place_keys(how))
+        .and_then(|()| place_keys(how.target, &keys))
         .and_then(|()| crate::switching::install(&system, how.target))
         .and_then(|()| record(how))
         .and_then(|()| match crate::state::State::of(&model) {
@@ -397,16 +402,6 @@ fn check_disks(storage: &Value, given: &BTreeMap<String, Vec<PathBuf>>) -> Resul
     Ok(())
 }
 
-/// Asks on the terminal, without showing what's typed, and twice, so a typo can't lock the disks.
-fn ask_passphrase() -> Result<String, String> {
-    use crate::host::read_password as ask;
-    let passphrase = ask("Passphrase for the disks: ")?;
-    if passphrase.is_empty() || passphrase != ask("The same passphrase again: ")? {
-        return Err("the passphrases were empty or didn't match".into());
-    }
-    Ok(passphrase)
-}
-
 /// Partitions each device with systemd-repart, opens what's encrypted, creates the filesystems
 /// that span partitions, and mounts everything under the target.
 fn lay_out(
@@ -522,42 +517,94 @@ fn lay_out(
     Ok(())
 }
 
-/// The machine's keys, made before install and kept encrypted in the configuration, by the file
-/// each is decrypted to on the machine.
-const KEYS: [(&str, &str); 2] = [
-    ("ssh_host_ed25519_key.age", "etc/ssh/ssh_host_ed25519_key"),
-    ("initrd_ed25519_key.age", "etc/ssh/initrd_ed25519_key"),
-];
-
-/// Decrypts the machine's keys from `secrets/machines/<name>/` into the new system, with the
-/// identity install was given, and writes their public halves beside them. The identity isn't
-/// copied anywhere.
-fn place_keys(how: &Install) -> Result<(), String> {
-    let Some(name) = how.name else {
-        return Ok(());
+/// The machine's keys, made before install and kept encrypted in `secrets/machines/<name>/`,
+/// decrypted, with the file each goes to in the new system: with the identity install was given,
+/// which isn't copied anywhere, or else with the passphrase they were also encrypted to, from
+/// `--key-passphrase-file` or asked for. Done before anything is written to the disks, so a key
+/// that can't be decrypted stops install while nothing has changed.
+fn machine_keys(how: &Install, name: Option<&str>) -> Result<Vec<(&'static str, Vec<u8>)>, String> {
+    let Some(name) = name else {
+        return Ok(Vec::new());
     };
-    let dir = how.config.join("secrets/machines").join(name);
-    for (encrypted, file) in KEYS {
-        let source = dir.join(encrypted);
-        if !source.is_file() {
-            continue;
+    let dir = crate::machine_keys::dir(how.config, name);
+    let mut passphrase = how
+        .key_passphrase
+        .map(crate::machine_keys::read_passphrase)
+        .transpose()?;
+    let mut keys = Vec::new();
+    for (key, file) in crate::machine_keys::KEYS {
+        let encrypted = crate::machine_keys::to_recipients(&dir, key);
+        let locked = crate::machine_keys::to_passphrase(&dir, key);
+        let decrypted = match how.identity {
+            Some(identity) if encrypted.is_file() => decrypt(&encrypted, identity)?,
+            _ if locked.is_file() => unlock(&locked, name, &mut passphrase)?,
+            _ if encrypted.is_file() => {
+                return Err(format!(
+                    "{} is encrypted; give `--identity` with a key that decrypts it",
+                    encrypted.display()
+                ));
+            }
+            _ => continue,
+        };
+        keys.push((file, decrypted));
+    }
+    Ok(keys)
+}
+
+/// `file` decrypted with the age identity at `identity`.
+fn decrypt(file: &Path, identity: &Path) -> Result<Vec<u8>, String> {
+    let output = Command::new("age")
+        .args(["--decrypt", "--identity"])
+        .arg(identity)
+        .arg(file)
+        .output()
+        .map_err(|e| format!("cannot run age: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cannot decrypt {}: {}",
+            file.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output.stdout)
+}
+
+/// `file` decrypted with `passphrase`, asking for it on the terminal, three times at most, when
+/// there's none yet. The passphrase that works is kept for the machine's other keys.
+fn unlock(file: &Path, name: &str, passphrase: &mut Option<String>) -> Result<Vec<u8>, String> {
+    let ciphertext = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    if let Some(given) = passphrase {
+        return crate::machine_keys::unlock(&ciphertext, given)?
+            .ok_or_else(|| format!("the passphrase doesn't decrypt {}", file.display()));
+    }
+    for _ in 0..3 {
+        let tried = crate::host::read_password(&format!("Passphrase for {name}'s keys: "))?;
+        if let Some(plaintext) = crate::machine_keys::unlock(&ciphertext, &tried)? {
+            *passphrase = Some(tried);
+            return Ok(plaintext);
         }
-        let identity = how.identity.ok_or_else(|| {
-            format!(
-                "{} is encrypted; give `--identity` with a key that decrypts it",
-                source.display()
-            )
-        })?;
-        let key = how.target.join(file);
+        eprintln!("that passphrase doesn't decrypt them");
+    }
+    Err(format!(
+        "no passphrase given decrypts {}; `--identity` with a key it's encrypted to does too",
+        file.display()
+    ))
+}
+
+/// Writes the machine's decrypted `keys` into the new system at `target`, readable only by root,
+/// with their public halves beside them.
+fn place_keys(target: &Path, keys: &[(&str, Vec<u8>)]) -> Result<(), String> {
+    for (file, secret) in keys {
+        let key = target.join(file);
         let parent = key.parent().expect("keys are in a directory");
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        run(Command::new("age")
-            .args(["--decrypt", "--identity"])
-            .arg(identity)
-            .arg("--output")
-            .arg(&key)
-            .arg(&source))?;
-        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600))
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&key)
+            .and_then(|mut written| written.write_all(secret))
             .map_err(|e| format!("{}: {e}", key.display()))?;
         let public = Command::new("ssh-keygen")
             .args(["-y", "-f"])
@@ -565,7 +612,7 @@ fn place_keys(how: &Install) -> Result<(), String> {
             .output()
             .map_err(|e| format!("cannot run ssh-keygen: {e}"))?;
         if !public.status.success() {
-            return Err(format!("{} isn't an SSH key", source.display()));
+            return Err(format!("{file} isn't an SSH key"));
         }
         let pub_file = key.with_extension("pub");
         std::fs::write(&pub_file, public.stdout)
@@ -802,29 +849,45 @@ mod tests {
     }
 
     #[test]
-    fn a_machine_whose_keys_are_encrypted_needs_an_identity() {
+    fn a_machines_keys_decrypt_with_an_identity_or_their_passphrase_before_any_disk_changes() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("config");
         let keys = config.join("secrets/machines/w-01");
         std::fs::create_dir_all(&keys).unwrap();
-        let install = |name| Install {
+        let right = dir.path().join("right");
+        let wrong = dir.path().join("wrong");
+        std::fs::write(&right, "horse battery\n").unwrap();
+        std::fs::write(&wrong, "staple\n").unwrap();
+        let install = |key_passphrase| Install {
             config: &config,
             disks: BTreeMap::new(),
-            name,
+            name: None,
             role: None,
             passphrase: None,
             identity: None,
+            key_passphrase,
             target: dir.path(),
             wipe: false,
             yes: true,
             prebuilt: None,
         };
 
-        assert_eq!(place_keys(&install(Some("w-01"))), Ok(()));
+        // No keys made ahead, or no name to find them by: nothing to place.
+        assert_eq!(machine_keys(&install(None), Some("w-01")), Ok(Vec::new()));
         std::fs::write(keys.join("ssh_host_ed25519_key.age"), "").unwrap();
-        let err = place_keys(&install(Some("w-01"))).unwrap_err();
+        assert_eq!(machine_keys(&install(None), None), Ok(Vec::new()));
+        // Encrypted only to keys: an identity has to be given.
+        let err = machine_keys(&install(None), Some("w-01")).unwrap_err();
         assert!(err.contains("give `--identity`"), "{err}");
-        assert_eq!(place_keys(&install(None)), Ok(()));
+        // Encrypted to a passphrase too: that decrypts it, and nothing else does.
+        let locked = crate::machine_keys::lock(b"host key", "horse battery").unwrap();
+        std::fs::write(keys.join("ssh_host_ed25519_key.passphrase.age"), locked).unwrap();
+        assert_eq!(
+            machine_keys(&install(Some(&right)), Some("w-01")),
+            Ok(vec![("etc/ssh/ssh_host_ed25519_key", b"host key".to_vec())])
+        );
+        let err = machine_keys(&install(Some(&wrong)), Some("w-01")).unwrap_err();
+        assert!(err.contains("doesn't decrypt"), "{err}");
     }
 
     const LSBLK: &str = r#"{"blockdevices": [

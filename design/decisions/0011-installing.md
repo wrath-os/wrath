@@ -103,6 +103,12 @@ machine's own secrets afterwards, as today.
 A machine that makes its own key at install, for machines nobody names ahead of time, comes later:
 its public key is enrolled and the secrets re-encrypted from another machine.
 
+Added 2026-11-18, after reinstalling the Framework left its secrets undecryptable:
+`wrath secret machine NAME` makes the host key and encrypts it to the configuration's recipients
+and also to a passphrase. Install asks for that passphrase when it isn't given `--identity`, so a
+machine installed at its own console, where none of the recipients' keys is, still gets its host
+key, and nobody's private key has to be copied to the machine being installed.
+
 ### Where install runs
 
 `distro install --config DIR|URL --role NAME --identity FILE` runs from any Linux with Nix, such as

@@ -27,6 +27,7 @@ mod host;
 mod install;
 mod known;
 mod machine;
+mod machine_keys;
 mod on_machine;
 mod options;
 mod pinned;
@@ -252,9 +253,13 @@ enum Command {
         /// A file with the disks' passphrase, instead of asking for it
         #[arg(long, value_name = "FILE")]
         passphrase_file: Option<PathBuf>,
-        /// An age identity that decrypts the machine's keys under `secrets/machines/NAME`
+        /// An age identity that decrypts the machine's keys under `secrets/machines/NAME`; without
+        /// it, install asks for the passphrase `wrath secret machine` encrypted them to
         #[arg(long, value_name = "FILE")]
         identity: Option<PathBuf>,
+        /// A file with that passphrase, instead of asking for it
+        #[arg(long, value_name = "FILE")]
+        key_passphrase_file: Option<PathBuf>,
         /// Where the new system is mounted while it's installed
         #[arg(long, default_value = "/mnt")]
         target: PathBuf,
@@ -757,6 +762,7 @@ fn main() -> ExitCode {
             name,
             passphrase_file,
             identity,
+            key_passphrase_file,
             target,
             wipe,
             yes,
@@ -797,6 +803,7 @@ fn main() -> ExitCode {
                     role: given_role(),
                     passphrase: passphrase_file.as_deref(),
                     identity: identity.as_deref(),
+                    key_passphrase: key_passphrase_file.as_deref(),
                     target: &target,
                     wipe,
                     yes,

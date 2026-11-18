@@ -92,9 +92,24 @@ wrath apply --source grapes=/run/system/grapes
 `--name` records the machine's name on it. It's the hostname when `system.hostname` isn't set,
 and it's how a configuration shared by several machines tells them apart. `--role` picks which
 of the configuration's `roles/` this machine is, for a configuration with roles, and is recorded
-too, so later commands on the machine default to it. If you keep SSH host keys for the machine
-encrypted in the configuration (`secrets/machines/NAME/`), `--identity FILE` decrypts them into
-the new system, so its host key is known before it ever boots.
+too, so later commands on the machine default to it.
+
+### Secrets from the first boot
+
+A machine decrypts its secrets with its SSH host key, and a fresh install makes a new one, so
+secrets encrypted to the old key don't decrypt until you add the new one and re-encrypt them.
+Make the host key before you build the image instead, and every install uses that one:
+
+```sh
+wrath secret machine framework -C ~/machines/framework
+```
+
+That keeps the key in `secrets/machines/framework/`, encrypted to `system.secret_recipients` and
+to a passphrase it asks for, and prints its public half to add to `secret_recipients`. Install
+finds the key by `--name` or the hostname, asks for the passphrase, and puts the key in the new
+system, so its secrets decrypt at the first boot and SSH doesn't warn about a changed host key
+after a reinstall. `--identity FILE`, with a key it's encrypted to, works instead of the
+passphrase, and `--key-passphrase-file FILE` gives the passphrase without asking.
 
 ### Getting online
 
