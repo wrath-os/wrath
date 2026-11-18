@@ -48,6 +48,14 @@ do Secure Boot yet. So anyone with the machine in their hands can boot something
 key. Fine for a desktop at home, not fine for a laptop you travel with. A passphrase doesn't have
 that problem.
 
+The TPM only unlocks the disks while the boot looks the same to it. A firmware update, or a
+machine's first boot from a unified kernel image (wrath says so when it switches), changes that,
+and the next boot asks for the passphrase. Once it's up, have the TPM unlock them again:
+
+```sh
+sudo wrath unlock enroll
+```
+
 ### Unlocking over SSH
 
 A server in a rack, or any machine you're not sitting at, can ask for its passphrase over SSH

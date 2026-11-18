@@ -213,7 +213,7 @@ pub fn esp_tree(
         .map_err(|e| format!("{}: {e}", stub.display()))?;
         let at = esp.join("EFI/wrath").join(IMAGE_UKI);
         fs::write(&at, image).map_err(with_path(&at))?;
-        format!("uki /EFI/wrath/{IMAGE_UKI}\n")
+        crate::uki::entry_line(&read(&loader)?, &format!("/EFI/wrath/{IMAGE_UKI}"))
     } else {
         copy(&kernel, &esp.join("EFI/wrath").join(&kernel_name))?;
         copy(&initrd, &esp.join("EFI/wrath").join(&initrd_name))?;
@@ -498,6 +498,11 @@ mod tests {
         let systemd = lab.on_host(&StorePath::from_hash(&"d".repeat(40)));
         let stub = systemd.join("lib/systemd/boot/efi/linuxx64.efi.stub");
         fs::write(stub, crate::uki::tests::stub()).unwrap();
+        fs::write(
+            systemd.join("lib/systemd/boot/efi/systemd-bootx64.efi"),
+            "#### LoaderInfo: systemd-boot 262.2 ####",
+        )
+        .unwrap();
         let esp = dir.path().join("esp");
         esp_tree(&lab, &generation, "console=ttyS0", &esp).unwrap();
         let entry = fs::read_to_string(esp.join("loader/entries/wrath-1.conf")).unwrap();

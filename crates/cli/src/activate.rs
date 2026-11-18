@@ -43,6 +43,9 @@ const ACCOUNTS: [&str; 3] = ["passwd", "group", "shadow"];
 
 /// Switches the machine at `root`, normally `/`, to `system`. Needs root.
 pub fn activate(system: &Path, mode: Mode, root: &Path) -> Result<(), String> {
+    if matches!(mode, Mode::Boot | Mode::Switch) {
+        warn_of_new_measurements(root, system);
+    }
     match mode {
         Mode::Boot => boot_entries(root, false),
         // The entries come first, so a switch that fails partway, such as on a unit that needs the
@@ -88,6 +91,13 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     for dir in [&kernels, &entries] {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
+    if let Some((_, link)) = generations.iter().find(|(number, _)| *number == current) {
+        update_loader(&esp, &inside(root, link));
+    }
+    let loader = [LOADER, FALLBACK_LOADER]
+        .iter()
+        .find_map(|path| fs::read(esp.join(path)).ok())
+        .unwrap_or_default();
     let mut booting = Vec::new();
     for (number, link) in generations {
         let system = inside(root, &link);
@@ -209,7 +219,9 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
             "wrath-other"
         };
         let starts = match files.as_slice() {
-            [OnEsp::Image { name, .. }] => format!("uki /EFI/wrath/{name}\n"),
+            [OnEsp::Image { name, .. }] => {
+                wrath_build::uki::entry_line(&loader, &format!("/EFI/wrath/{name}"))
+            }
             [kernel, initrd] => format!(
                 "linux /EFI/wrath/{}\ninitrd /EFI/wrath/{}\noptions {params}\n",
                 kernel.name(),
@@ -276,6 +288,55 @@ fn seal_credentials(
         file.strip_suffix(".cred")
             .is_some_and(|name| name.starts_with("wrath.") && !credentials.contains_key(name))
     })
+}
+
+/// systemd's stub says it started the running system by setting this.
+const STUB_INFO: &str = "sys/firmware/efi/efivars/StubInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f";
+
+/// Says so when the machine at `root` didn't boot through systemd's stub and `system` will, on
+/// disks the TPM unlocks: a system started from the stub measures itself into the PCRs before the
+/// disks unlock, so their TPM key, sealed to the PCRs of a boot without it, no longer fits.
+fn warn_of_new_measurements(root: &Path, system: &Path) {
+    let crypttab = fs::read_to_string(root.join("etc/crypttab")).unwrap_or_default();
+    if root.join(STUB_INFO).exists()
+        || !system.join(STUB).is_file()
+        || !crypttab.contains("tpm2-device=")
+    {
+        return;
+    }
+    crate::style::note(
+        "this system boots from a unified kernel image, which the TPM sees differently, so the \
+         next boot asks for the disks' passphrase once; after it, `sudo wrath unlock enroll` \
+         lets the TPM unlock them again",
+    );
+}
+
+/// systemd-boot on an ESP set up with `bootctl install`, and the copy the firmware starts when
+/// it has no entry of its own, which is all an image's ESP has.
+const LOADER: &str = "EFI/systemd/systemd-bootx64.efi";
+const FALLBACK_LOADER: &str = "EFI/BOOT/BOOTX64.EFI";
+
+/// Brings systemd-boot on the ESP at `esp` up to the one in `system`, as `bootctl update` does:
+/// one set up by an older systemd may not read the entries a newer one writes. Nothing changes
+/// when it's as new already. A loader that can't be updated is said, and its entries are written
+/// so it reads them.
+fn update_loader(esp: &Path, system: &Path) {
+    let bootctl = system.join("systemd/bin/bootctl");
+    if !bootctl.is_file() || !esp.join(LOADER).is_file() {
+        return;
+    }
+    let updated = Command::new(&bootctl)
+        .arg(format!("--esp-path={}", esp.display()))
+        .args(["--no-variables", "--graceful", "update"])
+        .output();
+    match updated {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => eprintln!(
+            "wrath: could not update the boot loader: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+        Err(e) => eprintln!("wrath: could not run {}: {e}", bootctl.display()),
+    }
 }
 
 /// systemd's EFI stub, in a system, which unified kernel images start from.
@@ -1653,6 +1714,10 @@ mod tests {
         fs::create_dir_all(&efi).unwrap();
         fs::write(efi.join("linuxx64.efi.stub"), tiny_stub()).unwrap();
         fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
+        // The ESP's boot loader reads `uki` lines.
+        let loader = root.join("boot/EFI/systemd/systemd-bootx64.efi");
+        fs::create_dir_all(loader.parent().unwrap()).unwrap();
+        fs::write(&loader, "#### LoaderInfo: systemd-boot 262.2 ####").unwrap();
 
         boot_entries(root, false).unwrap();
 
@@ -1670,6 +1735,11 @@ mod tests {
         boot_entries(root, false).unwrap();
         let again = fs::read_to_string(root.join("boot/EFI/wrath/bbb.efi")).unwrap();
         assert_eq!(again, "made before");
+        // One too old for them, which couldn't be updated, is given `efi` lines it reads.
+        fs::write(&loader, "#### LoaderInfo: systemd-boot 257.8 ####").unwrap();
+        boot_entries(root, false).unwrap();
+        let entry = fs::read_to_string(entries.join("wrath-2+3.conf")).unwrap();
+        assert!(entry.ends_with("efi /EFI/wrath/bbb.efi\n"), "{entry}");
     }
 
     fn entry_names(root: &Path) -> Vec<String> {

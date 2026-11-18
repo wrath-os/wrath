@@ -45,6 +45,7 @@ mod system;
 mod templates;
 mod timing;
 mod trees;
+mod unlock;
 mod upgrade;
 mod watch;
 
@@ -316,6 +317,11 @@ enum Command {
     Secret {
         #[command(subcommand)]
         command: secret::SecretCommand,
+    },
+    /// How the machine's encrypted disks unlock, such as enrolling its TPM again
+    Unlock {
+        #[command(subcommand)]
+        command: unlock::UnlockCommand,
     },
     /// Sign and push builds to a binary cache, which machines then fetch from
     Cache {
@@ -878,6 +884,7 @@ fn run() -> ExitCode {
         Command::Secret { command } => {
             config().and_then(|config| secret::run(command, &config, &modules))
         }
+        Command::Unlock { command } => unlock::run(command),
         Command::Cache {
             command: command @ cache::CacheCommand::Check { .. },
         } => {

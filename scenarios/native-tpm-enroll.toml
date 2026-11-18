@@ -1,0 +1,25 @@
+title = "after the boot measures differently the disks ask for their passphrase, and enrolling the TPM again lets it unlock them"
+notes = "A machine moving to unified kernel images, or getting new firmware, sees PCR 7 change under its disks' TPM key. This seals the key to a PCR 7 the next boot won't have, as such a change does."
+
+[vm]
+config = "scenarios/fixtures/native-state-installer"
+store = "wrath"
+tpm = true
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { prepare_build = "scenarios/fixtures/native-tpm" },
+  { run = "cp -r /run/wrath-share/configs/native-tpm /tmp/config && printf 'correct horse' > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name t-01 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { boot_installed = true },
+  # The key sealed to a PCR 7 no boot has (a VM's stays all zeros). The old key goes first, as
+  # systemd-cryptenroll leaves one for the same PCRs alone.
+  { run = "systemd-cryptenroll --wipe-slot=tpm2 /dev/disk/by-partlabel/main0-system && PASSWORD='correct horse' systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7:sha256=1111111111111111111111111111111111111111111111111111111111111111 /dev/disk/by-partlabel/main0-system 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  # The TPM refuses, so the boot asks at the console.
+  { boot_installed = true, passphrase = "correct horse" },
+  { run = "PASSWORD='correct horse' wrath unlock enroll 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pcrs":\[[0-9,]*\]' ''', stdout_contains = '"tpm2-pcrs":[7]' },
+  # No passphrase: the TPM unlocks the disk again.
+  { boot_installed = true },
+  { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+]
+timeout_secs = 1500

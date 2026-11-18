@@ -269,6 +269,22 @@ wrath secret machine [OPTIONS] <NAME>
 - `<NAME>`: The machine, as `wrath install --name` or its hostname calls it
 - `--passphrase-file <FILE>`: A file with the passphrase install asks for, instead of asking for it here
 
+## `wrath unlock`
+
+How the machine's encrypted disks unlock, such as enrolling its TPM again
+
+```text
+wrath unlock <COMMAND>
+```
+
+## `wrath unlock enroll`
+
+Let the TPM unlock the disks again, as the machine boots now: it asks for the disks' passphrase and replaces their TPM key, after the boot measured differently and asked
+
+```text
+wrath unlock enroll [OPTIONS]
+```
+
 ## `wrath cache`
 
 Sign and push builds to a binary cache, which machines then fetch from

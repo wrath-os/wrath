@@ -10,6 +10,31 @@ pub struct Parts<'a> {
     pub linux: &'a [u8],
 }
 
+/// The first systemd-boot that reads an entry's `uki` line, and counts tries for it.
+const UKI_LINES_SINCE: u32 = 258;
+
+/// The line of a boot entry that starts the image at `path` on the ESP, for the systemd-boot in
+/// `loader`: `uki`, or `efi` for one too old to know `uki`, which starts it all the same but
+/// counts no tries. A loader whose version can't be read gets `efi` too.
+pub fn entry_line(loader: &[u8], path: &str) -> String {
+    let marker = b"#### LoaderInfo: systemd-boot ";
+    let major = loader
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .map(|at| &loader[at + marker.len()..])
+        .and_then(|rest| {
+            let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+            std::str::from_utf8(&rest[..digits])
+                .ok()?
+                .parse::<u32>()
+                .ok()
+        });
+    match major {
+        Some(major) if major >= UKI_LINES_SINCE => format!("uki {path}\n"),
+        _ => format!("efi {path}\n"),
+    }
+}
+
 const SECTION_HEADER: usize = 40;
 /// Initialized data, readable.
 const DATA: u32 = 0x4000_0040;
@@ -198,6 +223,25 @@ pub(crate) mod tests {
         let optional = u32_at(&image, 0x3c).unwrap() as usize + 24;
         assert_eq!(u32_at(&image, optional + 56).unwrap(), 0x7000);
         assert_eq!(image.len() % 0x200, 0);
+    }
+
+    #[test]
+    fn a_boot_loader_too_old_for_uki_lines_gets_efi_lines() {
+        let loader = |version: &str| format!("\0#### LoaderInfo: systemd-boot {version} ####\0");
+        let at = "/EFI/wrath/a.efi";
+        assert_eq!(
+            entry_line(loader("262.2").as_bytes(), at),
+            "uki /EFI/wrath/a.efi\n"
+        );
+        assert_eq!(
+            entry_line(loader("258").as_bytes(), at),
+            "uki /EFI/wrath/a.efi\n"
+        );
+        assert_eq!(
+            entry_line(loader("257.8").as_bytes(), at),
+            "efi /EFI/wrath/a.efi\n"
+        );
+        assert_eq!(entry_line(b"another loader", at), "efi /EFI/wrath/a.efi\n");
     }
 
     #[test]
