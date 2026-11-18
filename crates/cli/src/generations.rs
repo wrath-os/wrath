@@ -670,7 +670,7 @@ pub fn status_json(model: &Model) -> serde_json::Value {
         "model": hash,
         "locked": model.is_locked(),
         "replaced_home_files": crate::homes::replaced_in_homes(Path::new("/")),
-        "upgrade": crate::upgrade::shown(Path::new("/"), None, None).map(|o| o.to_json()),
+        "upgrade": crate::upgrade::last(Path::new("/")).map(|o| o.to_json()),
     })
 }
 
@@ -702,7 +702,7 @@ pub fn status(model: &Model) -> Result<ExitCode, String> {
     let generations = here::history().unwrap_or_default();
     print_running(&generations);
     println!("{}", matching(here::running_model_hash().as_deref(), model));
-    print_notes(crate::upgrade::shown(Path::new("/"), None, None));
+    print_notes(crate::upgrade::last(Path::new("/")));
     // wrath from a checkout has no version to pin, so only the configuration's sources count.
     if model.sources.values().any(|source| !source.is_locked()) {
         println!("the lock doesn't pin every source yet; `wrath apply` pins them first");
@@ -726,7 +726,7 @@ pub fn following(follows: &str) -> Result<ExitCode, String> {
         .find(|g| g.current)
         .and_then(|g| g.from.as_ref());
     if let Some(from) = from.filter(|from| !from.is(follows)) {
-        println!("it came from {from} instead; `wrath apply` goes back to {follows}");
+        println!("it came from {from}; upgrades go back to {follows}");
     } else {
         println!("upgrades from {follows}; `wrath plan` shows what its newest commit would change");
     }
@@ -739,7 +739,7 @@ pub fn following(follows: &str) -> Result<ExitCode, String> {
             )),
         }
     }
-    print_notes(crate::upgrade::shown(Path::new("/"), Some(follows), from));
+    print_notes(crate::upgrade::last(Path::new("/")));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -753,7 +753,7 @@ pub fn following_json(follows: &str) -> serde_json::Value {
         "boots_next": current.map(|g| g.number),
         "from": from.map(ConfigFrom::to_json),
         "follows": follows,
-        "upgrade": crate::upgrade::shown(Path::new("/"), Some(follows), from)
+        "upgrade": crate::upgrade::last(Path::new("/"))
             .map(|outcome| outcome.to_json()),
         "trying": here::trying(),
         "running": here::running_model_hash(),

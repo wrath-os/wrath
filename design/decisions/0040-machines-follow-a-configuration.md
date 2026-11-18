@@ -68,9 +68,9 @@ What others got wrong, or what people trip over:
   wrath never reboots by itself.
 - Each automatic run's result is kept, and `status` shows the last one. A failure also shows at
   login, so a machine that stopped upgrading doesn't go unnoticed.
-- Automatic upgrades pause while the running system came from somewhere other than `from`, such
-  as a checkout applied by hand, and `status` and login say so with the date. `wrath apply` with
-  no `-C` goes back to `from` and resumes them.
+- Automatic upgrades run whatever the running system came from, as NixOS's do. Someone trying a
+  checkout by hand stops `wrath-upgrade.timer` meanwhile, which the docs say. (At first they
+  paused while the system came from somewhere other than `from`; see Built so far.)
 
 ## Consequences
 
@@ -123,6 +123,10 @@ What others got wrong, or what people trip over:
   sources its lock pins, are read with the token from that secret, when there's no `GH_TOKEN`.
   `status` names the token. `native-follow-cache` checks both; nothing in a VM reaches GitHub,
   so sending the token there is only unit tested.
+- The pause went. On the first real machine, a fresh install recorded `/etc/wrath` as its
+  origin, so automatic upgrades paused from the start, and a pause nobody lifts stops upgrades
+  for good. Rules for when a pause ends (a new commit upstream, a time limit) were each more to
+  explain than stopping the timer by hand while trying something.
 
 ## Open
 

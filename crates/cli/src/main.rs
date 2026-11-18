@@ -497,23 +497,12 @@ fn main() -> ExitCode {
             ..
         }
     );
-    if automatic {
-        let Some(follows) = &follows else {
-            style::error(
-                "the running system names nothing to upgrade from; its configuration says where \
-                 with `updates.from`",
-            );
-            return ExitCode::FAILURE;
-        };
-        let from = generations::current_generation().and_then(|generation| generation.from);
-        match upgrade::pause(Path::new("/"), follows, from.as_ref()) {
-            Ok(true) => return ExitCode::SUCCESS,
-            Ok(false) => {}
-            Err(message) => {
-                style::error(&message);
-                return ExitCode::FAILURE;
-            }
-        }
+    if automatic && follows.is_none() {
+        style::error(
+            "the running system names nothing to upgrade from; its configuration says where with \
+             `updates.from`",
+        );
+        return ExitCode::FAILURE;
     }
     if let Some(url) = &url {
         match config_from::fetch(url) {

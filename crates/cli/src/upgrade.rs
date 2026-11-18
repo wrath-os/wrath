@@ -1,8 +1,8 @@
 //! Automatic upgrades, which `wrath-upgrade.timer` runs as `wrath apply --automatic`: the
 //! newest commit of what the machine follows, switched to now or at the next boot as the
-//! configuration's `updates.switch` says. Each run's outcome is kept for `status`, and runs
-//! pause while the system came from somewhere else, such as a checkout applied by hand. A failure
-//! or a pause is also shown as people log in, from a notice PAM reads.
+//! configuration's `updates.switch` says, whatever the running system came from. Each run's
+//! outcome is kept for `status`, and a failure is also shown as people log in, from a notice PAM
+//! reads.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -81,7 +81,6 @@ pub enum Kind {
     Done,
     /// Not upgraded yet: it would build, which `updates.build = false` leaves to a cache.
     Waiting,
-    Paused,
     Failed,
 }
 
@@ -90,13 +89,12 @@ impl Kind {
         match self {
             Self::Done => "done",
             Self::Waiting => "waiting",
-            Self::Paused => "paused",
             Self::Failed => "failed",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        [Self::Done, Self::Waiting, Self::Paused, Self::Failed]
+        [Self::Done, Self::Waiting, Self::Failed]
             .into_iter()
             .find(|kind| kind.name() == name)
     }
@@ -121,11 +119,6 @@ impl std::fmt::Display for Outcome {
                 "the last automatic upgrade waited, {}: {}",
                 self.at, self.message
             ),
-            Kind::Paused => write!(
-                f,
-                "automatic upgrades are paused since {}: {}",
-                self.at, self.message
-            ),
             Kind::Failed => write!(
                 f,
                 "the last automatic upgrade failed, {}: {}",
@@ -135,16 +128,11 @@ impl std::fmt::Display for Outcome {
     }
 }
 
-/// Keeps `kind` with `message` as the outcome of the automatic upgrade that ran now. A pause
-/// keeps the time it started.
+/// Keeps `kind` with `message` as the outcome of the automatic upgrade that ran now.
 pub fn keep(root: &Path, kind: Kind, message: &str) -> Result<(), String> {
-    let at = match last(root) {
-        Some(last) if kind == Kind::Paused && last.kind == Kind::Paused => last.at,
-        _ => crate::switching::now_utc(),
-    };
     let path = root.join(OUTCOME);
     let outcome = Outcome {
-        at,
+        at: crate::switching::now_utc(),
         kind,
         message: message.to_owned(),
     };
@@ -153,24 +141,25 @@ pub fn keep(root: &Path, kind: Kind, message: &str) -> Result<(), String> {
     write_notice(root, Some(&outcome))
 }
 
-/// Shows at login what's left to say once the machine at `root` switched by hand to a system
-/// whose configuration came from `from`: nothing when that's `follows`, as the machine is up to
-/// date with it whatever upgrading on its own did before, and otherwise what [`shown`] says.
+/// Clears what logins show once the machine at `root` switched by hand to a system whose
+/// configuration came from `from`, when that's `follows`: the machine is up to date with it,
+/// whatever upgrading on its own did before.
 pub fn applied_by_hand(
     root: &Path,
     follows: &str,
     from: Option<&ConfigFrom>,
 ) -> Result<(), String> {
     if from.is_some_and(|from| from.is(follows)) {
-        return write_notice(root, None);
+        write_notice(root, None)
+    } else {
+        Ok(())
     }
-    write_notice(root, shown(root, Some(follows), from).as_ref())
 }
 
 fn write_notice(root: &Path, outcome: Option<&Outcome>) -> Result<(), String> {
     let path = root.join(NOTICE);
     let failed = |e: std::io::Error| format!("{}: {e}", path.display());
-    match outcome.filter(|outcome| matches!(outcome.kind, Kind::Failed | Kind::Paused)) {
+    match outcome.filter(|outcome| outcome.kind == Kind::Failed) {
         Some(outcome) => std::fs::write(&path, format!("wrath: {outcome}\n")).map_err(failed),
         None => match std::fs::remove_file(&path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(failed(e)),
@@ -188,35 +177,6 @@ pub fn last(root: &Path) -> Option<Outcome> {
         kind: Kind::from_name(value["kind"].as_str()?)?,
         message: value["message"].as_str()?.to_owned(),
     })
-}
-
-/// The last outcome, to show on a machine that upgrades from `follows`, whose current generation's
-/// configuration came from `from`. A pause no longer holds once the machine is back on `follows`,
-/// or follows nothing.
-pub fn shown(root: &Path, follows: Option<&str>, from: Option<&ConfigFrom>) -> Option<Outcome> {
-    last(root).filter(|outcome| {
-        outcome.kind != Kind::Paused || follows.is_some_and(|f| paused(f, from).is_some())
-    })
-}
-
-/// Why automatic upgrades from `follows` pause, when the running system's configuration, as
-/// `from` says, came from somewhere else.
-pub fn paused(follows: &str, from: Option<&ConfigFrom>) -> Option<String> {
-    let from = from.filter(|from| !from.is(follows))?;
-    Some(format!(
-        "the system came from {from}; `wrath apply` goes back to {follows} and resumes them"
-    ))
-}
-
-/// Says and keeps that automatic upgrades from `follows` are paused, when they are, before
-/// anything is fetched. `from` is where the running system's configuration came from.
-pub fn pause(root: &Path, follows: &str, from: Option<&ConfigFrom>) -> Result<bool, String> {
-    let Some(why) = paused(follows, from) else {
-        return Ok(false);
-    };
-    println!("not upgrading: {why}");
-    keep(root, Kind::Paused, &why)?;
-    Ok(true)
 }
 
 /// Keeps how an automatic upgrade from `follows` went, as `result` says, and passes it on.
@@ -264,45 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn upgrades_pause_while_the_system_came_from_elsewhere() {
-        let follows = "github:johnae/machines//framework";
-        let there = ConfigFrom::Url {
-            url: follows.into(),
-            rev: Some("abc".into()),
-            date: None,
-        };
-        let checkout = ConfigFrom::Dir("/home/john/machines/framework".into());
-        assert_eq!(paused(follows, Some(&there)), None);
-        // A generation from before origins were kept doesn't stop upgrades.
-        assert_eq!(paused(follows, None), None);
-        let why = paused(follows, Some(&checkout)).unwrap();
-        assert!(why.contains("/home/john/machines/framework"), "{why}");
-    }
-
-    #[test]
-    fn a_pause_shows_only_while_the_system_still_came_from_elsewhere() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("wrath/system")).unwrap();
-        let follows = "github:johnae/machines//framework";
-        let there = ConfigFrom::Url {
-            url: follows.into(),
-            rev: None,
-            date: None,
-        };
-        let checkout = ConfigFrom::Dir("/home/john/machines/framework".into());
-        keep(root.path(), Kind::Paused, "a checkout").unwrap();
-        assert!(shown(root.path(), Some(follows), Some(&checkout)).is_some());
-        assert_eq!(shown(root.path(), Some(follows), Some(&there)), None);
-        assert_eq!(shown(root.path(), None, Some(&checkout)), None);
-        keep(root.path(), Kind::Failed, "no network").unwrap();
-        for from in [Some(&there), Some(&checkout), None] {
-            assert!(shown(root.path(), Some(follows), from).is_some());
-            assert!(shown(root.path(), None, from).is_some());
-        }
-    }
-
-    #[test]
-    fn logins_show_a_failure_or_a_pause_while_it_holds_and_nothing_once_upgrades_work() {
+    fn logins_show_a_failure_until_upgrades_work_or_what_is_followed_is_applied_by_hand() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("wrath/system")).unwrap();
         let notice = || std::fs::read_to_string(root.path().join(NOTICE)).ok();
@@ -324,19 +246,15 @@ mod tests {
         keep(root.path(), Kind::Done, "up to date").unwrap();
         assert_eq!(notice(), None);
 
-        keep(root.path(), Kind::Paused, "a checkout").unwrap();
-        assert!(notice().unwrap().contains("paused"));
-        applied_by_hand(root.path(), follows, Some(&checkout)).unwrap();
-        assert!(notice().unwrap().contains("paused"));
-        // Applied by hand from what it follows: up to date, so nothing to say, failed or paused.
-        applied_by_hand(root.path(), follows, Some(&there)).unwrap();
-        assert_eq!(notice(), None);
+        // Applied by hand from somewhere else, the failure stays; from what it follows, it's up
+        // to date, so there's nothing to say.
         keep(root.path(), Kind::Failed, "no network").unwrap();
         applied_by_hand(root.path(), follows, Some(&checkout)).unwrap();
         assert!(notice().unwrap().contains("no network"));
         applied_by_hand(root.path(), follows, Some(&there)).unwrap();
         assert_eq!(notice(), None);
         applied_by_hand(root.path(), follows, Some(&there)).unwrap();
+        assert_eq!(notice(), None);
     }
 
     #[test]
@@ -369,27 +287,14 @@ mod tests {
     }
 
     #[test]
-    fn a_pause_keeps_when_it_started_and_anything_else_replaces_it() {
+    fn a_pause_kept_by_an_older_wrath_is_no_outcome() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("wrath/system")).unwrap();
-        assert_eq!(last(root.path()), None);
-        keep(root.path(), Kind::Paused, "a checkout").unwrap();
-        let started = last(root.path()).unwrap();
         std::fs::write(
             root.path().join(OUTCOME),
-            std::fs::read_to_string(root.path().join(OUTCOME))
-                .unwrap()
-                .replace(&started.at, "2026-01-01 00:00:00"),
+            r#"{"at":"2026-11-18 00:41:28","kind":"paused","message":"a checkout"}"#,
         )
         .unwrap();
-        keep(root.path(), Kind::Paused, "a checkout").unwrap();
-        assert_eq!(last(root.path()).unwrap().at, "2026-01-01 00:00:00");
-        keep(root.path(), Kind::Failed, "no network").unwrap();
-        let failed = last(root.path()).unwrap();
-        assert_eq!(
-            (failed.kind, failed.message.as_str()),
-            (Kind::Failed, "no network")
-        );
-        assert_ne!(failed.at, "2026-01-01 00:00:00");
+        assert_eq!(last(root.path()), None);
     }
 }

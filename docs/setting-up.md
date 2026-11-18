@@ -362,9 +362,14 @@ A machine that builds slowly, or can't build, can leave building to a cache with
 under `[updates]`. An upgrade that would build anything then waits, says what it would build, and
 tries again on its next run.
 
-Applying something else by hand, such as a checkout you're trying changes in, pauses automatic
-upgrades so they don't undo it. `wrath status` and logins say so, and `wrath apply` with no `-C`
-goes back to the repository and resumes them.
+Automatic upgrades go on whatever the running system came from, so the next one replaces
+something you applied by hand, such as a checkout you're trying changes in. Stop the timer while
+you try things. It stays stopped until you start it again or the machine boots:
+
+```sh
+sudo systemctl stop wrath-upgrade.timer
+sudo systemctl start wrath-upgrade.timer
+```
 
 A private GitHub repository needs a token that can read it, and so do the private sources its
 lock pins. On your own machine wrath uses `GH_TOKEN` or the token `gh auth login` gave it. A
