@@ -377,11 +377,10 @@ fn plan_shows_packages_and_where_wrath_moved() {
 
     insta::assert_snapshot!(plan(&before, &after).to_string(), @"
     packages
-      ~ source wrath (tier: soft-reboot)
+      ~ source wrath (tier: live)
           github:johnae/wrath: aaaaaaa1 -> bbbbbbb2
-          the base system, such as systemd and D-Bus, runs fully after a soft reboot
       + htop (tier: live)
-    2 changes, tier: soft-reboot
+    2 changes, tier: live
     ");
     insta::assert_snapshot!(plan(&Model::default(), &before).to_string(), @"
     packages

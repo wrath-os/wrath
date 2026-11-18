@@ -5,7 +5,7 @@ use std::fmt;
 
 use wrath_eval::{Template, Unit, UnitAction, Value, Wrapper, home_path};
 
-use crate::{File, Model, Secret, Source, WRATH_SOURCE};
+use crate::{File, Model, Secret, Source};
 
 /// How much applying a change disrupts the running system, least first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -457,7 +457,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
             };
             (vec![detail], None)
         }),
-        packages: diff_with_names(&before.sources, &after.sources, source_change)
+        packages: diff(&before.sources, &after.sources, source_change)
             .into_iter()
             .map(|change| Change {
                 name: format!("source {}", change.name),
@@ -669,14 +669,9 @@ fn builds(before: &Model, after: &Model) -> Vec<Change> {
     .collect()
 }
 
-/// How a package source changed. The base system comes from the default source too, and a
-/// switch can't restart all of it, so moving that source to another locked version needs a soft
-/// reboot. Locking a source for the first time pins what's already running.
-fn source_change(
-    name: &str,
-    before: Option<&Source>,
-    after: Option<&Source>,
-) -> (Vec<String>, Option<Tier>) {
+/// How a package source changed. Moving one takes effect right away: what it changes in the
+/// system shows as the packages that changed, each with when it takes effect.
+fn source_change(before: Option<&Source>, after: Option<&Source>) -> (Vec<String>, Option<Tier>) {
     let version = |source: &Source| match &source.rev {
         Some(rev) => rev[..rev.len().min(12)].to_owned(),
         None if source.is_locked() => source.hash.clone(),
@@ -691,15 +686,7 @@ fn source_change(
         (None, Some(source)) | (Some(source), None) => describe(source),
         (None, None) => String::new(),
     };
-    let moved = before
-        .zip(after)
-        .is_some_and(|(old, new)| old.is_locked() && new.is_locked());
-    if moved && name == WRATH_SOURCE {
-        let reboot = "the base system, such as systemd and D-Bus, runs fully after a soft reboot";
-        (vec![detail, reboot.to_owned()], Some(Tier::SoftReboot))
-    } else {
-        (vec![detail], Some(Tier::Live))
-    }
+    (vec![detail], Some(Tier::Live))
 }
 
 /// The system's units, and each user's as `name (for user)`.
