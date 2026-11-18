@@ -99,36 +99,46 @@ fn parse_pin(text: &str) -> (String, Option<String>) {
 
 /// What to do when something must be built here and the seed isn't here to build it from.
 pub const MISSING: &str = "building here starts from the seed, and this machine doesn't have \
-it; use a cache that has what's missing, or build where the seed is and apply from there with \
-`wrath apply --host`";
+it; use a cache that has what's missing or the seed, or build where the seed is and apply from \
+there with `wrath apply --host`";
 
 fn tarball_path(lab: &Lab, sha256: &str) -> PathBuf {
     lab.work.join(format!("seed/{sha256}.tar.xz"))
 }
 
-/// Whether the seed is ready or can be: unpacked, its tarball here, or a URL to download it from.
+/// Whether the seed is ready or can be: unpacked, its tarball here, a URL to download it from, or
+/// a cache in use that has it.
 pub fn available(lab: &Lab) -> Result<bool, String> {
     let (sha256, url) = pin(lab)?;
-    Ok(url.is_some() || tarball_path(lab, &sha256).exists() || ready(lab)?)
+    Ok(url.is_some()
+        || tarball_path(lab, &sha256).exists()
+        || ready(lab)?
+        || crate::cache::has_seed(&sha256))
 }
 
-/// The seed's tarball, downloaded the first time if it has a URL and always checked against its
-/// hash.
+/// The seed's tarball, downloaded the first time from its URL or else a cache in use that has
+/// it, and always checked against its hash.
 fn tarball(lab: &Lab, sha256: &str, url: Option<&str>) -> Result<PathBuf, String> {
     let path = tarball_path(lab, sha256);
     let dir = lab.work.join("seed");
     fs::create_dir_all(&dir).map_err(with_path(&dir))?;
     if !path.exists() {
-        let url = url.ok_or(MISSING)?;
         let partial = dir.join("download");
-        run(
-            Command::new("curl")
-                .args(["-q", "--fail", "--location", "--silent", "--show-error"])
-                .args(["--max-time", "600", "--output"])
-                .arg(&partial)
-                .arg(url),
-            "downloading the seed",
-        )?;
+        match url {
+            Some(url) => run(
+                Command::new("curl")
+                    .args(["-q", "--fail", "--location", "--silent", "--show-error"])
+                    .args(["--max-time", "600", "--output"])
+                    .arg(&partial)
+                    .arg(url),
+                "downloading the seed",
+            )?,
+            None => {
+                if !crate::cache::fetch_seed(sha256, &partial)? {
+                    return Err(MISSING.to_owned());
+                }
+            }
+        }
         fs::rename(&partial, &path).map_err(with_path(&path))?;
     }
     let actual = sha256_of(&path)?;

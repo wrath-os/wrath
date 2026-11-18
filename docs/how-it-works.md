@@ -180,6 +180,10 @@ to get there: fetch 122 paths from home (458 MB), build 1 (wrath)
 A cache that can't be reached is said once and left out for the rest of the command, and what it
 has is built instead. `--offline` asks no cache at all.
 
+`cache push` also puts the seed there, named by its hash. A machine that has to build something
+no cache has, and has no seed, fetches the seed from a cache it uses and checks it against the
+hash grapes pins, so any machine with a cache can build.
+
 Something built that you expected fetched says why: `build 3 (wrath; 2 built with it)` names what
 no cache has and counts what's only built because it builds with that. `wrath cache check PKG`
 goes through one package: its key, whether it's here, what it would fetch from where, or what it

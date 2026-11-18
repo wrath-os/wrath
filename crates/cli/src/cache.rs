@@ -65,8 +65,12 @@ pub fn run(command: CacheCommand, work: &Path) -> Result<ExitCode, String> {
         CacheCommand::Push { cache, key } => {
             let key = SigningKeyFile::read(&key)?;
             let pushed = wrath_build::cache::push(&Lab::new(work), &Location::parse(&cache), &key)?;
+            let seeds = match pushed.seeds {
+                0 => String::new(),
+                n => format!(", and {}", crate::counted(n, "seed")),
+            };
             println!(
-                "pushed {} and {}",
+                "pushed {} and {}{seeds}",
                 crate::counted(pushed.traces, "build"),
                 crate::counted(pushed.archives, "store path")
             );

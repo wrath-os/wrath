@@ -66,6 +66,21 @@ pub fn download_with(url: &str, token: Option<&str>, file: &Path) -> Result<bool
     Ok(true)
 }
 
+/// Whether there's something at `url`, asked without fetching it: 403 counts as nothing, as a
+/// bucket answers whoever may not list it.
+pub fn exists(url: &str) -> Result<bool, String> {
+    counted();
+    let response = agent()
+        .head(url)
+        .call()
+        .map_err(|e| format!("{url}: {e}"))?;
+    match response.status().as_u16() {
+        200 => Ok(true),
+        403 | 404 => Ok(false),
+        code => Err(format!("{url}: {code}")),
+    }
+}
+
 /// What fetching an object from a cache found.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Object {
@@ -154,7 +169,10 @@ fn answer(mut stream: std::net::TcpStream, root: &Path) -> std::io::Result<()> {
                 stream,
                 "HTTP/1.1 200 OK\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
             )?;
-            std::io::copy(&mut file, &mut stream)?;
+            // HEAD asks whether it's there, as a machine asks a cache for the seed.
+            if !request.starts_with("HEAD ") {
+                std::io::copy(&mut file, &mut stream)?;
+            }
         }
         None => write!(
             stream,
@@ -164,9 +182,12 @@ fn answer(mut stream: std::net::TcpStream, root: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The file a `GET` request line names under `root`, if it names one there.
+/// The file a `GET` or `HEAD` request line names under `root`, if it names one there.
 fn file_named(root: &Path, request: &str) -> Option<std::path::PathBuf> {
-    let path = request.strip_prefix("GET ")?.split(' ').next()?;
+    let rest = request
+        .strip_prefix("GET ")
+        .or_else(|| request.strip_prefix("HEAD "))?;
+    let path = rest.split(' ').next()?;
     let relative = path.strip_prefix('/')?;
     let inside = relative
         .split('/')
@@ -207,6 +228,8 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "trace");
         assert!(!download(&format!("{url}/traces/none"), &file).unwrap());
         assert!(!download(&format!("{url}/../got"), &file).unwrap());
+        assert_eq!(exists(&format!("{url}/traces/ab")), Ok(true));
+        assert_eq!(exists(&format!("{url}/traces/none")), Ok(false));
     }
 
     /// Answers one request with `answer`, given the request's Authorization header, or "none".

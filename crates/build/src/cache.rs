@@ -883,6 +883,8 @@ fn remove_unpacked(dir: &Path) {
 pub struct Pushed {
     pub traces: usize,
     pub archives: usize,
+    /// Seed tarballs, which a machine with none fetches to build from.
+    pub seeds: usize,
     /// Traces the cache had already, from this signer, saying something else.
     pub disagreeing: Vec<String>,
 }
@@ -967,7 +969,85 @@ pub fn push(lab: &Lab, cache: &Location, signer: &SigningKeyFile) -> Result<Push
         write_whole(&file, &signed)?;
         pushed.traces += 1;
     }
+    pushed.seeds = push_seeds(lab, dir)?;
     Ok(pushed)
+}
+
+/// Where a cache keeps the seed tarball whose SHA-256 is `sha256`. The name is the hash, so what's
+/// fetched is checked against it and the cache needs no trust.
+fn seed_name(sha256: &str) -> String {
+    format!("seed/{sha256}.tar.xz")
+}
+
+/// The most a seed tarball may be.
+const SEED_LIMIT: u64 = 1 << 30;
+
+/// Copies the seed tarballs `lab` has into the cache at `dir`, each only when it's what its name
+/// says, so a machine without the seed can fetch it there and build. How many went up.
+fn push_seeds(lab: &Lab, dir: &Path) -> Result<usize, String> {
+    let seeds = lab.work.join("seed");
+    let Ok(entries) = fs::read_dir(&seeds) else {
+        return Ok(0);
+    };
+    let mut pushed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(sha256) = name.strip_suffix(".tar.xz") else {
+            continue;
+        };
+        let target = dir.join(seed_name(sha256));
+        let hashed = sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit());
+        if !hashed || target.exists() || sha256_of(&entry.path())? != sha256 {
+            continue;
+        }
+        let parent = target.parent().expect("a seed is in a directory");
+        fs::create_dir_all(parent).map_err(with_path(parent))?;
+        let partial = target.with_extension(format!("partial{}", std::process::id()));
+        fs::copy(entry.path(), &partial).map_err(with_path(&partial))?;
+        fs::rename(&partial, &target).map_err(with_path(&target))?;
+        pushed += 1;
+    }
+    Ok(pushed)
+}
+
+/// Fetches the seed tarball whose SHA-256 is `sha256` into `file` from the first cache in use
+/// that has it, which the caller checks against the hash. Whether one had it.
+pub fn fetch_seed(sha256: &str, file: &Path) -> Result<bool, String> {
+    fetch_seed_from(&caches_in_use(), sha256, file)
+}
+
+fn caches_in_use() -> Vec<Location> {
+    let using = CACHES.lock().expect("the caches in use are readable");
+    using.0.clone()
+}
+
+fn fetch_seed_from(caches: &[Location], sha256: &str, file: &Path) -> Result<bool, String> {
+    let mut failed = Vec::new();
+    for cache in caches.iter().filter(|cache| !is_down(cache)) {
+        match cache.download(&seed_name(sha256), file, SEED_LIMIT) {
+            Ok(Object::Got) => return Ok(true),
+            Ok(Object::Missing) => {}
+            Err(e) => failed.push(format!("{}: {e}", cache.shown())),
+        }
+    }
+    if failed.is_empty() {
+        Ok(false)
+    } else {
+        Err(format!("fetching the seed: {}", failed.join("; ")))
+    }
+}
+
+/// Whether a cache in use has the seed tarball whose SHA-256 is `sha256`, asked without fetching
+/// it.
+pub fn has_seed(sha256: &str) -> bool {
+    let name = seed_name(sha256);
+    caches_in_use()
+        .iter()
+        .filter(|cache| !is_down(cache))
+        .any(|cache| match cache {
+            Location::Dir(dir) => dir.join(&name).is_file(),
+            Location::Http(base) => crate::http::exists(&format!("{base}/{name}")) == Ok(true),
+        })
 }
 
 /// Archives the store path `path` at `archive`, as [`unpack`] reads it.
@@ -1145,6 +1225,31 @@ mod tests {
         assert_eq!(fs::read_to_string(library).unwrap(), "elf");
         // Asked again, everything is here and nothing is fetched.
         materialize_all_from(&fresh, &paths, &[], &trusted).unwrap();
+    }
+
+    #[test]
+    fn the_seed_goes_up_with_a_push_and_comes_back_by_its_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let built = lab_with(&dir.path().join("built"), PATH);
+        let seeds = built.work.join("seed");
+        fs::create_dir_all(&seeds).unwrap();
+        let tarball = seeds.join("good.tar.xz");
+        fs::write(&tarball, "compilers").unwrap();
+        let sha256 = sha256_of(&tarball).unwrap();
+        fs::rename(&tarball, seeds.join(format!("{sha256}.tar.xz"))).unwrap();
+        // One that isn't what its name says stays behind.
+        let wrong = "0".repeat(64);
+        fs::write(seeds.join(format!("{wrong}.tar.xz")), "something else").unwrap();
+        let cache = Location::Dir(dir.path().join("cache"));
+        let key = SigningKeyFile::generate("home").unwrap();
+        assert_eq!(push(&built, &cache, &key).unwrap().seeds, 1);
+        assert_eq!(push(&built, &cache, &key).unwrap().seeds, 0);
+
+        let file = dir.path().join("fetched");
+        assert!(fetch_seed_from(std::slice::from_ref(&cache), &sha256, &file).unwrap());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "compilers");
+        assert!(!fetch_seed_from(std::slice::from_ref(&cache), &wrong, &file).unwrap());
+        assert!(!fetch_seed_from(&[], &sha256, &file).unwrap());
     }
 
     #[test]
