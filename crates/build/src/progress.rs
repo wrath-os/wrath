@@ -26,7 +26,8 @@ pub fn set(mode: Mode) {
     let _ = MODE.set(mode);
 }
 
-pub(crate) fn mode() -> Mode {
+/// How builds are shown, as the command line chose.
+pub fn mode() -> Mode {
     match MODE.get().copied().unwrap_or(Mode::Lines) {
         Mode::Live if RUNNING.load(Ordering::Relaxed) > 1 => Mode::Lines,
         mode => mode,

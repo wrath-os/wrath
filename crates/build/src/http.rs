@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// One agent for the command, so requests to the same host reuse its connections. Each request
@@ -20,6 +21,18 @@ fn agent() -> &'static ureq::Agent {
     })
 }
 
+/// How many requests this command made, for `-v` to say.
+static REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+/// How many requests over HTTP this command made so far.
+pub fn requests() -> usize {
+    REQUESTS.load(Ordering::Relaxed)
+}
+
+fn counted() {
+    REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
 /// How long a download of a source of unknown size may take.
 const SOURCE_TIME: Duration = Duration::from_secs(1800);
 
@@ -32,6 +45,7 @@ pub fn download(url: &str, file: &Path) -> Result<bool, String> {
 /// Downloads `url` into `file` as [`download`] does, sending `token` as a bearer token. The token
 /// goes only to `url` itself: a redirect is followed without it.
 pub fn download_with(url: &str, token: Option<&str>, file: &Path) -> Result<bool, String> {
+    counted();
     let mut request = agent()
         .get(url)
         .config()
@@ -86,6 +100,7 @@ enum Failure {
 }
 
 fn object_once(url: &str, file: &Path, limit: u64) -> Result<Object, Failure> {
+    counted();
     // A minute, and as long again as `limit` takes at 100 KB/s.
     let time = Duration::from_secs(60 + limit / 100_000);
     let request = agent().get(url).config().timeout_global(Some(time)).build();

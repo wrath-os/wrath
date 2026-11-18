@@ -7,7 +7,7 @@
 - `-C, --config <DIR|URL>`: The configuration to act on: a directory, or a URL such as `github:owner/repo//dir`, read as it is [default: the system's, in /etc/wrath]
 - `--role <NAME>`: The role to act as, for a configuration with kinds of machines in `roles/`
 - `--json`: Print data as JSON instead of text, where a command supports it
-- `-v, --verbose`: Show everything each build prints, as it prints it
+- `-v, --verbose`: Show everything each build prints, as it prints it, and how long each step took
 - `--source <NAME=DIR>`: A source read from a directory instead of where the lock pins it, for this command only, such as `grapes=../grapes` to work on grapes beside a configuration
 - `--locked`: Write no lock: fail where the configuration's lock or a recipe's would change, as CI wants
 - `--cache <URL>`: A binary cache to fetch builds from before building them: a directory or an http(s) URL

@@ -43,6 +43,7 @@ mod style;
 mod switching;
 mod system;
 mod templates;
+mod timing;
 mod trees;
 mod upgrade;
 mod watch;
@@ -69,7 +70,7 @@ struct Cli {
     /// Print data as JSON instead of text, where a command supports it
     #[arg(long, global = true)]
     json: bool,
-    /// Show everything each build prints, as it prints it
+    /// Show everything each build prints, as it prints it, and how long each step took
     #[arg(short, long, global = true)]
     verbose: bool,
     /// Directory of modules [default: modules under the root]
@@ -450,6 +451,13 @@ struct TestOptions {
 }
 
 fn main() -> ExitCode {
+    timing::start();
+    let code = run();
+    timing::report();
+    code
+}
+
+fn run() -> ExitCode {
     let mut cli = Cli::parse();
     ROLE.set(cli.role.clone()).expect("the role is set once");
     if let Some(given) = &cli.config_from {
@@ -515,7 +523,10 @@ fn main() -> ExitCode {
     }
     if let Some(url) = &url {
         match config_from::fetch(url) {
-            Ok(dir) => cli.config = Some(dir),
+            Ok(dir) => {
+                timing::done("fetching the configuration");
+                cli.config = Some(dir);
+            }
             Err(message) => {
                 if automatic {
                     let _ = upgrade::keep(Path::new("/"), upgrade::Kind::Failed, &message);
@@ -1595,6 +1606,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
     let Some(after) = model_as(config, modules, role.as_deref()) else {
         return Ok(ExitCode::FAILURE);
     };
+    timing::done("evaluating");
     // What the system compared against was built from, for a system that was built.
     let (before, compared, built_from) = match against {
         Against::Nothing => (Model::default(), None, None),
@@ -1627,6 +1639,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
         },
     };
     let rebuilt = built_from.and_then(|text| generations::rebuilt(&after, text.as_deref()));
+    timing::done("comparing what was built");
     let plan = generations::with_rebuilt(wrath_model::plan(&before, &after), rebuilt);
     if json {
         let Value::Table(mut fields) = plan.to_value() else {
@@ -1642,6 +1655,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
     }
     crate::print_plan(&plan);
     generations::print_takes(&after);
+    timing::done("working out what it takes");
     Ok(ExitCode::SUCCESS)
 }
 
