@@ -3456,6 +3456,21 @@ pub(crate) fn traced_closure(lab: &Lab, start: &StorePath) -> Result<BTreeSet<St
     closure_with(lab, start, |_| Ok(()))
 }
 
+/// Brings what caches traced of the run-time closures of `starts` into the store all at once, a
+/// few paths at a time, rather than one after another as [`runtime_closure`] walks each.
+pub(crate) fn fetch_closures<'a>(
+    lab: &Lab,
+    starts: impl IntoIterator<Item = &'a StorePath>,
+) -> Result<(), String> {
+    let mut traced = BTreeSet::new();
+    for start in starts {
+        if !traced.contains(start) {
+            traced.extend(traced_closure(lab, start)?);
+        }
+    }
+    crate::cache::materialize_all(lab, &traced)
+}
+
 fn closure_with(
     lab: &Lab,
     start: &StorePath,

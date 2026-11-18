@@ -612,7 +612,7 @@ fn materialize_from(
         return Ok(());
     };
     let name = path.name().unwrap_or(path.hash());
-    let (count, bytes) = *FETCHED.lock().expect("what was fetched is readable");
+    let (count, _) = *FETCHED.lock().expect("what was fetched is readable");
     match crate::progress::mode() {
         crate::progress::Mode::Live => eprint!("\r\x1b[2K  fetch  {name}  ({count} so far)"),
         crate::progress::Mode::Verbose => eprintln!("  fetch  {name}"),
@@ -624,9 +624,73 @@ fn materialize_from(
             "{name} couldn't be fetched: {why}; what needs it is built the next time instead"
         ));
     }
-    *FETCHED.lock().expect("what was fetched is writable") = (count + 1, bytes + archived.size);
+    // Added to as it is now, since others may have fetched meanwhile.
+    let mut fetched = FETCHED.lock().expect("what was fetched is writable");
+    *fetched = (fetched.0 + 1, fetched.1 + archived.size);
+    drop(fetched);
     let _ = fs::remove_file(fetchable_record(lab, path.hash()));
     Ok(())
+}
+
+/// How many paths are fetched at once: enough to keep a link busy while each waits on its
+/// request, few enough that a cache serving many machines isn't flooded.
+const FETCHING_AT_ONCE: usize = 8;
+
+/// Puts every one of `paths` a cache traced and the store lacks into it, as [`materialize`] does
+/// one, a few at a time, since each mostly waits on its request.
+pub fn materialize_all<'a>(
+    lab: &Lab,
+    paths: impl IntoIterator<Item = &'a StorePath>,
+) -> Result<(), String> {
+    let (caches, trusted) = CACHES
+        .lock()
+        .expect("the caches in use are readable")
+        .clone();
+    materialize_all_from(lab, paths, &caches, &trusted)
+}
+
+/// [`materialize_all`] from `caches`, trusting `trusted`. The first error is the one returned,
+/// once the fetches already under way are done.
+fn materialize_all_from<'a>(
+    lab: &Lab,
+    paths: impl IntoIterator<Item = &'a StorePath>,
+    caches: &[Location],
+    trusted: &[TrustedKey],
+) -> Result<(), String> {
+    // The biggest first, so the last to finish isn't a big one started late.
+    let mut pending: Vec<(u64, &StorePath)> = paths
+        .into_iter()
+        .filter_map(|path| traced(lab, path).map(|(_, size)| (size, path)))
+        .collect();
+    pending.sort_by_key(|&(size, _)| std::cmp::Reverse(size));
+    let pending: Vec<&StorePath> = pending.into_iter().map(|(_, path)| path).collect();
+    if pending.len() > 1 && crate::progress::mode() == crate::progress::Mode::Verbose {
+        let at_once = FETCHING_AT_ONCE.min(pending.len());
+        eprintln!("  fetch  {} paths, {at_once} at a time", pending.len());
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let failed: Mutex<Option<String>> = Mutex::new(None);
+    std::thread::scope(|scope| {
+        for _ in 0..FETCHING_AT_ONCE.min(pending.len()) {
+            scope.spawn(|| {
+                while failed.lock().is_ok_and(|failed| failed.is_none()) {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(path) = pending.get(at) else {
+                        break;
+                    };
+                    if let Err(e) = materialize_from(lab, path, caches, trusted)
+                        && let Ok(mut failed) = failed.lock()
+                    {
+                        failed.get_or_insert(e);
+                    }
+                }
+            });
+        }
+    });
+    match failed.into_inner() {
+        Ok(Some(e)) => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// Fetches `path`, which `kept` traced as `archived`, from the caches in use.
@@ -1052,6 +1116,35 @@ mod tests {
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
         assert!(!fetchable_record(&fresh, PATH).exists());
         assert_eq!(traced(&fresh, &path), None);
+    }
+
+    #[test]
+    fn what_a_cache_traced_is_fetched_together_and_what_is_here_is_left() {
+        const LIB: &str = "89abcdef0123456789abcdef0123456789abcdef-hello-1.0";
+        let dir = tempfile::tempdir().unwrap();
+        let built = lab_with(&dir.path().join("built"), PATH);
+        let lib = built.work.join("store").join(LIB).join("lib");
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join("libhello.so"), "elf").unwrap();
+        let rules = &crate::fixup::rules()[..16];
+        let record = built.work.join("fixed").join(format!("{KEY}-{rules}"));
+        fs::write(&record, format!("out={PATH} lib={LIB}")).unwrap();
+        let cache = Location::Dir(dir.path().join("cache"));
+        let key = SigningKeyFile::generate("home").unwrap();
+        push(&built, &cache, &key).unwrap();
+
+        let fresh = Lab::new(dir.path().join("fresh"));
+        let fixed = fresh.work.join("fixed").join(format!("{KEY}-{rules}"));
+        let trusted = vec![TrustedKey::parse(&key.public()).unwrap()];
+        assert!(fetch_from(&fresh, &cache, &trusted, KEY, rules, &fixed).unwrap());
+        let paths = [StorePath::from_hash(PATH), StorePath::from_hash(LIB)];
+        assert!(paths.iter().all(|path| !fresh.on_host(path).exists()));
+        materialize_all_from(&fresh, &paths, std::slice::from_ref(&cache), &trusted).unwrap();
+        assert!(paths.iter().all(|path| fresh.on_host(path).exists()));
+        let library = fresh.work.join("store").join(LIB).join("lib/libhello.so");
+        assert_eq!(fs::read_to_string(library).unwrap(), "elf");
+        // Asked again, everything is here and nothing is fetched.
+        materialize_all_from(&fresh, &paths, &[], &trusted).unwrap();
     }
 
     #[test]

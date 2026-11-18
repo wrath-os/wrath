@@ -351,15 +351,22 @@ fn sharing<'a>(
     named: &[&'a str],
     packages: &'a Packages,
 ) -> Result<Vec<&'a str>, String> {
-    let mut reached = BTreeSet::new();
+    // An output neither here nor in a cache, such as a main output a split left empty, which
+    // nothing refers to and so nothing pushes, is nothing the system runs.
+    let mut outputs = Vec::new();
     for id in named {
-        for output in &package(packages, id)?.outputs {
-            // An output neither here nor in a cache, such as a main output a split left empty,
-            // which nothing refers to and so nothing pushes, is nothing the system runs. One a
-            // cache has is fetched by finding its closure.
-            if !reached.contains(output) && there(lab, output) {
-                reached.extend(chain::runtime_closure(lab, output)?);
-            }
+        outputs.extend(
+            package(packages, id)?
+                .outputs
+                .iter()
+                .filter(|o| there(lab, o)),
+        );
+    }
+    chain::fetch_closures(lab, outputs.iter().copied())?;
+    let mut reached = BTreeSet::new();
+    for output in outputs {
+        if !reached.contains(output) {
+            reached.extend(chain::runtime_closure(lab, output)?);
         }
     }
     Ok(packages

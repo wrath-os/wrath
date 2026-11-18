@@ -351,14 +351,15 @@ pub(crate) fn build_onto(
         .map_err(|_| "a build stopped partway".to_owned())?;
     // What was asked for runs, so it and what it runs with are in the store; what only built it
     // can stay a trace.
-    let asked = built
+    let outputs: Vec<StorePath> = built
         .paths
         .keys()
-        .filter(|id| wanted.is_none_or(|wanted| wanted.contains(&id.as_str())));
-    for id in asked {
-        for path in built.run_outputs(id) {
-            chain::runtime_closure(lab, &path)?;
-        }
+        .filter(|id| wanted.is_none_or(|wanted| wanted.contains(&id.as_str())))
+        .flat_map(|id| built.run_outputs(id))
+        .collect();
+    chain::fetch_closures(lab, &outputs)?;
+    for path in &outputs {
+        chain::runtime_closure(lab, path)?;
     }
     Ok((built, seed, packages))
 }
