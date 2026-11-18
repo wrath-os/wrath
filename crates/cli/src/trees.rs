@@ -1,4 +1,4 @@
-//! Fetching sources as trees of files, without Nix: a GitHub repository at a commit, an archive at
+//! Fetching sources as trees of files: a GitHub repository at a commit, an archive at
 //! a URL, or a local directory. A tree is pinned by the hash of its files in a fixed order, so the
 //! same files have the same hash however they were fetched, and a pinned tree is kept in a cache
 //! by that hash.
@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use wrath_model::Source;
 
-/// How a source's hash is written, so a hash from before wrath fetched sources itself, which
-/// was Nix's, is told apart.
+/// How a source's hash is written, so a hash in some other form, from an older lock, is told
+/// apart.
 const HASH_PREFIX: &str = "sha256-";
 
 /// The hash of the files under `dir`: each path, whether it's executable, and its contents, or

@@ -950,7 +950,7 @@ fn disks_are_laid_out_and_mounted_by_name() {
          partitions.system = { size = \"rest\", encrypt = true }\n\n\
          [filesystems.root]\nraid = \"raid1\"\non = [\"nvme.system\"]\n\
          subvolumes.\"@root\" = { mount = \"/\" }\n\
-         subvolumes.\"@nix\" = { mount = \"/nix\", options = [\"noatime\"] }\n\
+         subvolumes.\"@data\" = { mount = \"/data\", options = [\"noatime\"] }\n\
          subvolumes.\"@persist\" = {}\n",
     )
     .unwrap();
@@ -984,11 +984,11 @@ fn disks_are_laid_out_and_mounted_by_name() {
           "device": "/dev/mapper/nvme0-system",
           "format": "btrfs",
           "options": [
-            "subvol=@nix",
+            "subvol=@data",
             "noatime",
             "degraded"
           ],
-          "path": "/nix"
+          "path": "/data"
         }
       ],
       "partitions": [
@@ -1028,7 +1028,7 @@ fn disks_are_laid_out_and_mounted_by_name() {
           "name": "root",
           "raid": "raid1",
           "subvolumes": [
-            "@nix",
+            "@data",
             "@persist",
             "@root"
           ]
@@ -1437,7 +1437,7 @@ partitions.system = { size = "rest" }
 
 [filesystems.root]
 on = ["main.system"]
-subvolumes."@nix" = { mount = "/nix" }
+subvolumes."@cache" = { mount = "/cache" }
 subvolumes."@keep" = { mount = "/keep" }
 "#;
 
@@ -1470,8 +1470,8 @@ fn state_has_to_be_kept_somewhere_mounted_and_stay_inside() {
     );
 
     let on_disk = STATE_DISKS.replace(
-        "subvolumes.\"@nix\"",
-        "subvolumes.\"@r\" = { mount = \"/\" }\nsubvolumes.\"@nix\"",
+        "subvolumes.\"@cache\"",
+        "subvolumes.\"@r\" = { mount = \"/\" }\nsubvolumes.\"@cache\"",
     );
     let both = state_error(&format!("{on_disk}\n[state]\npath = \"/keep\"\n"));
     assert!(both.contains("erased at every boot"), "{both}");

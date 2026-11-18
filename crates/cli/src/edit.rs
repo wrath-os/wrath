@@ -604,13 +604,13 @@ mod tests {
         let mut edits = Edits::default();
         edits.packages(&file, Change::Remove(first), &["git".into()]);
         edits.packages(&file, Change::Extend(second), &["stable#rg".into()]);
-        edits.source(&file, "stable", "github:NixOS/nixpkgs/nixos-25.11");
+        edits.source(&file, "stable", "github:wrath-os/grapes/rel-25.11");
         let (_, edited) = edits.texts().unwrap().remove(&file).unwrap();
 
         assert_eq!(
             edited,
             "packages = []\n[users.john]\npackages = [\"git\", \"jq\", \"stable#rg\"]\n\n\
-             [sources.stable]\nurl = \"github:NixOS/nixpkgs/nixos-25.11\"\n"
+             [sources.stable]\nurl = \"github:wrath-os/grapes/rel-25.11\"\n"
         );
     }
 
@@ -619,8 +619,8 @@ mod tests {
         let free = |_: &str| false;
         assert_eq!(source_name("github:jqlang/jq", free), "jq");
         assert_eq!(
-            source_name("github:NixOS/nixpkgs/nixos-25.05", free),
-            "nixos-25.05"
+            source_name("github:wrath-os/grapes/rel-25.05", free),
+            "rel-25.05"
         );
         assert_eq!(
             source_name("git+https://example.com/Tools.git?ref=main", free),

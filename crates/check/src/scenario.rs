@@ -175,28 +175,7 @@ pub fn parse_scenario(
     })
 }
 
-/// Why a `[vm]` table can't run now that wrath builds without Nix, if it can't: it names a Nix
-/// image, the host's Nix store, or no store, which meant a prebuilt Nix image.
-fn needs_nix(table: &toml::Table) -> Option<String> {
-    let store = table.get("store");
-    let what = if table.contains_key("image") {
-        "a Nix image"
-    } else if store.and_then(toml::Value::as_str) == Some("host") {
-        "`store = \"host\"`"
-    } else if store.is_none() {
-        "a `[vm]` without `store = \"wrath\"`"
-    } else {
-        return None;
-    };
-    Some(format!(
-        "{what} needs the Nix store, which wrath no longer uses"
-    ))
-}
-
 fn vm_runner(path: &Path, table: toml::Table) -> Result<Runner, LoadError> {
-    if let Some(reason) = needs_nix(&table) {
-        return Ok(Runner::Pending { reason });
-    }
     // Scenarios for later milestones use steps that don't exist yet; they wait for them.
     let steps = table.get("steps").and_then(toml::Value::as_array);
     let unknown = steps
@@ -365,35 +344,6 @@ mod tests {
                 reason: "no `nspawn` runner yet".into()
             }
         );
-    }
-
-    #[test]
-    fn vm_that_needs_nix_is_pending() {
-        let cases = [
-            (
-                "image = \"factory/nix#fixture\"\n",
-                "a Nix image needs the Nix store, which wrath no longer uses",
-            ),
-            (
-                "config = \"x\"\nstore = \"host\"\nsteps = [{ run = \"a\" }]\n",
-                "`store = \"host\"` needs the Nix store, which wrath no longer uses",
-            ),
-            (
-                "config = \"x\"\n",
-                "a `[vm]` without `store = \"wrath\"` needs the Nix store, \
-                 which wrath no longer uses",
-            ),
-        ];
-        for (vm, reason) in cases {
-            let scenario = parse(&format!("title = \"t\"\n[vm]\n{vm}")).unwrap();
-            assert_eq!(
-                scenario.runner,
-                Runner::Pending {
-                    reason: reason.into()
-                },
-                "{vm}"
-            );
-        }
     }
 
     #[test]

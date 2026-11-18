@@ -237,8 +237,8 @@ rev = "1d06008aaaaaaaaaaaa"
 hash = "sha256-abc"
 
 [packages]
-nginx = { version = "1.29.1", id = "/nix/store/aaa-nginx-1.29.1" }
-unused = { version = "1", id = "/nix/store/bbb-unused-1" }
+nginx = { version = "1.29.1", id = "/wrath/store/aaa-nginx-1.29.1" }
+unused = { version = "1", id = "/wrath/store/bbb-unused-1" }
 "#;
 
 #[test]
@@ -263,7 +263,7 @@ fn plan_shows_what_the_lock_pins() {
 
 #[test]
 fn a_broken_lock_is_an_error_naming_the_file() {
-    let config = basic_with_lock("version = 2\n[sources.nixpkgs]\n");
+    let config = basic_with_lock("version = 2\n[sources.extra]\n");
     let output = wrath(&[
         "plan",
         "--config",

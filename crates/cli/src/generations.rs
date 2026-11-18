@@ -1554,7 +1554,7 @@ mod tests {
         model.sources.insert(
             "stable".into(),
             Source {
-                url: "github:NixOS/nixpkgs/nixos-25.11".into(),
+                url: "github:wrath-os/grapes/rel-25.11".into(),
                 rev: Some("b6018f87da91".into()),
                 hash: "sha256-abc".into(),
                 date: Some("2026-10-30".into()),
@@ -1567,7 +1567,7 @@ mod tests {
         insta::assert_snapshot!(sources_table(&model, today), @"
         wrath   the running wrath's
         jq      github:jqlang/jq                  not locked yet
-        stable  github:NixOS/nixpkgs/nixos-25.11  b6018f8, 2026-10-30, 7 days old
+        stable  github:wrath-os/grapes/rel-25.11  b6018f8, 2026-10-30, 7 days old
         ");
     }
 

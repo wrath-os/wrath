@@ -10,12 +10,12 @@ fn sources_are_read_from_any_local_file() {
     let evaluation = ok(&[
         (
             "system.toml",
-            "[system]\nhostname = \"box\"\n\n[sources.stable]\nurl = \"github:NixOS/nixpkgs/nixos-25.11\"\n",
+            "[system]\nhostname = \"box\"\n\n[sources.stable]\nurl = \"github:wrath-os/grapes/rel-25.11\"\n",
         ),
         (
             "services/edge.toml",
-            "[sources.edge]\nurl = \"github:NixOS/nixpkgs/nixos-unstable\"\n\n\
-             [sources.stable]\nurl = \"github:NixOS/nixpkgs/nixos-25.11\"\n",
+            "[sources.edge]\nurl = \"github:wrath-os/grapes/main\"\n\n\
+             [sources.stable]\nurl = \"github:wrath-os/grapes/rel-25.11\"\n",
         ),
     ]);
 
@@ -33,8 +33,8 @@ fn sources_are_read_from_any_local_file() {
     assert_eq!(
         sources,
         [
-            "edge github:NixOS/nixpkgs/nixos-unstable (services/edge.toml:2:7)",
-            "stable github:NixOS/nixpkgs/nixos-25.11 (system.toml:5:7)",
+            "edge github:wrath-os/grapes/main (services/edge.toml:2:7)",
+            "stable github:wrath-os/grapes/rel-25.11 (system.toml:5:7)",
         ]
     );
 }
