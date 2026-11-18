@@ -67,11 +67,13 @@ pub(crate) use wrath_build::image::{CURRENT, GENERATIONS};
 /// Where the wrappers are, under the root: [`wrath_eval::WRAPPERS_DIR`] on the machine.
 const WRAPPERS: &str = "run/wrath/wrappers";
 
-/// Writes a boot loader entry for generations of the system at `root`, with their kernels and
-/// initrds copied to the ESP at `/boot`, and makes the current generation the default. The current
+/// Writes a boot loader entry for generations of the system at `root`, each starting a unified
+/// kernel image made on the ESP at `/boot` from the generation's stub, kernel, initrd and command
+/// line, and makes the current generation the default. A generation whose systemd has no EFI stub
+/// has its kernel and initrd copied there instead, with the command line in the entry. The current
 /// generation and the running one always get entries, and older ones as long as their files fit;
-/// the rest stay in the store, without an entry. Kernels and entries no generation with an entry
-/// has are removed first, so their space is there for what's copied. A machine without an ESP, such
+/// the rest stay in the store, without an entry. Files and entries no generation with an entry has
+/// are removed first, so their space is there for what's written. A machine without an ESP, such
 /// as a test VM booted directly, has nothing to write. An older generation that can't boot, such as
 /// one whose kernel is gone, loses its entry with a warning. With `renew`, the current generation
 /// gets fresh tries if it had run out: switching to it says to try it again.
@@ -88,7 +90,8 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     }
     let mut booting = Vec::new();
     for (number, link) in generations {
-        let boot = match Boot::of(&inside(root, &link)) {
+        let system = inside(root, &link);
+        let boot = match Boot::of(&system) {
             Ok(boot) => boot,
             Err(e) if number != current => {
                 eprintln!("wrath: generation {number} can't boot, so it has no entry: {e}");
@@ -96,20 +99,46 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
             }
             Err(e) => return Err(e),
         };
-        let files = [&boot.kernel, &boot.initrd]
-            .into_iter()
-            .map(|path| {
-                // Named after the store path, so a kernel shared by generations is copied once.
-                let name = path
-                    .strip_prefix(STORE_DIR)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .replace('/', "-");
-                let under_root = root.join(path.strip_prefix("/").unwrap_or(path));
-                (name, inside(root, &under_root))
-            })
-            .collect::<Vec<_>>();
-        booting.push((number, link, boot, files));
+        let named = |path: &Path| {
+            path.strip_prefix(STORE_DIR)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('/', "-")
+        };
+        let in_store =
+            |path: &Path| inside(root, &root.join(path.strip_prefix("/").unwrap_or(path)));
+        let (kernel, initrd) = (in_store(&boot.kernel), in_store(&boot.initrd));
+        let stub = system.join(STUB);
+        let target = fs::read_link(&link).map_err(|e| format!("{}: {e}", link.display()))?;
+        let files = if stub.is_file() {
+            // Named after the system, which decides everything in it.
+            let name = format!("{}.efi", named(&target));
+            vec![OnEsp::Image {
+                name,
+                stub,
+                kernel,
+                initrd,
+                system,
+            }]
+        } else {
+            // Named after the store path, so a kernel shared by generations is copied once.
+            vec![
+                OnEsp::Copy {
+                    name: named(&boot.kernel),
+                    from: kernel,
+                },
+                OnEsp::Copy {
+                    name: named(&boot.initrd),
+                    from: initrd,
+                },
+            ]
+        };
+        let mut params = boot.params.join(" ");
+        // A system from wrath's store can't name itself in its own files, so the entry does.
+        if !params.split(' ').any(|param| param.starts_with("init=")) {
+            params.push_str(&format!(" init={}/init", target.display()));
+        }
+        booting.push((number, link, params, files));
     }
 
     let mut wanted = BTreeSet::from([current]);
@@ -121,11 +150,10 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     ));
     let mut sizes = Vec::new();
     for (number, _, _, files) in &booting {
-        let mut sized = Vec::new();
-        for (name, from) in files {
-            let size = fs::metadata(from).map_err(|e| format!("{}: {e}", from.display()))?;
-            sized.push((name.clone(), size.len()));
-        }
+        let sized = files
+            .iter()
+            .map(|file| Ok((file.name().to_owned(), file.size()?)))
+            .collect::<Result<_, String>>()?;
         sizes.push((*number, sized));
     }
     let chosen = fitting(&sizes, &wanted, room(&kernels)?)?;
@@ -142,76 +170,46 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         ));
     }
     booting.retain(|(number, ..)| chosen.contains(number));
-    let mut kept: BTreeSet<String> = booting
+    let kept: BTreeSet<&str> = booting
         .iter()
-        .flat_map(|(_, _, _, files)| files.iter().map(|(name, _)| name.clone()))
+        .flat_map(|(.., files)| files.iter().map(OnEsp::name))
         .collect();
-    kept.extend(booting.iter().map(|(number, ..)| secrets_name(*number)));
     remove_others(&kernels, |name| !kept.contains(name))?;
 
     let mut written = BTreeSet::new();
-    for (number, link, boot, files) in booting {
-        for (name, from) in &files {
-            let copy = kernels.join(name);
-            // Named by the store path, so one of the right size is the same file. One cut short,
-            // such as by a power cut, is copied again.
-            let size = |path: &Path| fs::metadata(path).map(|meta| meta.len()).ok();
-            let have = size(&copy);
-            if have.is_none() || have != size(from) {
-                copy_replacing(from, &copy)?;
-            }
-        }
-        let mut names: Vec<String> = files.into_iter().map(|(name, _)| name).collect();
-        // Secrets the initrd needs from the disk, such as its SSH host key, go in an initrd of
-        // their own made here, so they never go in the store.
-        let secrets = boot
-            .secrets
-            .iter()
-            .map(|path| {
-                let file = root.join(path.trim_start_matches('/'));
-                fs::read(&file)
-                    .map(|bytes| (path.as_str(), bytes))
-                    .map_err(|e| format!("{}: {e}", file.display()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if !secrets.is_empty() {
-            let name = secrets_name(number);
-            write_replacing(&kernels.join(&name), cpio(&secrets), 0o600)?;
-            names.push(name);
-        }
-        let mut params = boot.params.join(" ");
-        // A system from wrath's store can't name itself in its own files, so the entry does.
-        if !params.split(' ').any(|param| param.starts_with("init=")) {
-            let named = fs::read_link(&link).map_err(|e| format!("{}: {e}", link.display()))?;
-            params.push_str(&format!(" init={}/init", named.display()));
+    for (number, link, params, files) in &booting {
+        for file in files {
+            file.write(&kernels, params)?;
         }
         // An entry the boot loader is counting tries for keeps its name, which holds the count.
         // A new one gets its tries; a boot that comes up marks it good, and one that runs out of
         // tries is booted only when nothing else is left.
         let fresh = format!("wrath-{number}+{BOOT_TRIES}.conf");
-        let entry = match counted_entry(&entries, number)? {
-            Some(name) if renew && number == current && out_of_tries(&name) => fresh,
+        let entry = match counted_entry(&entries, *number)? {
+            Some(name) if renew && *number == current && out_of_tries(&name) => fresh,
             Some(name) => name,
             None => fresh,
         };
-        let initrds: String = names[1..]
-            .iter()
-            .map(|file| format!("initrd /EFI/wrath/{file}\n"))
-            .collect();
         // The current generation sorts first, so the boot loader starts it unless it ran out of
         // tries, and then the newest of the others.
-        let sort_key = if number == current {
+        let sort_key = if *number == current {
             "wrath-current"
         } else {
             "wrath-other"
         };
+        let starts = match files.as_slice() {
+            [OnEsp::Image { name, .. }] => format!("uki /EFI/wrath/{name}\n"),
+            [kernel, initrd] => format!(
+                "linux /EFI/wrath/{}\ninitrd /EFI/wrath/{}\noptions {params}\n",
+                kernel.name(),
+                initrd.name()
+            ),
+            _ => unreachable!("a generation boots from an image, or a kernel and an initrd"),
+        };
         let release = fs::read_to_string(link.join("etc/os-release")).unwrap_or_default();
         let text = format!(
-            "title {}\nversion generation {number}\nsort-key {sort_key}\n\
-             linux /EFI/wrath/{}\n{initrds}options {}\n",
+            "title {}\nversion generation {number}\nsort-key {sort_key}\n{starts}",
             wrath_build::image::release_name(&release),
-            names[0],
-            params
         );
         write_replacing(&entries.join(&entry), &text, 0o644)?;
         written.insert(entry);
@@ -228,8 +226,98 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     sync_tree(&esp.join("loader"))
 }
 
-fn secrets_name(number: u32) -> String {
-    format!("secrets-{number}.cpio")
+/// systemd's EFI stub, in a system, which unified kernel images start from.
+const STUB: &str = "systemd/lib/systemd/boot/efi/linuxx64.efi.stub";
+
+/// A file a generation boots from on the ESP.
+enum OnEsp {
+    /// A unified kernel image, made from the system's stub, kernel and initrd.
+    Image {
+        name: String,
+        stub: PathBuf,
+        kernel: PathBuf,
+        initrd: PathBuf,
+        system: PathBuf,
+    },
+    /// A kernel or an initrd, copied from the store.
+    Copy { name: String, from: PathBuf },
+}
+
+impl OnEsp {
+    fn name(&self) -> &str {
+        match self {
+            Self::Image { name, .. } | Self::Copy { name, .. } => name,
+        }
+    }
+
+    /// The bytes it takes on the ESP, or close to it for an image not made yet.
+    fn size(&self) -> Result<u64, String> {
+        let size = |path: &Path| {
+            fs::metadata(path)
+                .map(|meta| meta.len())
+                .map_err(|e| format!("{}: {e}", path.display()))
+        };
+        match self {
+            // The parts, and a page each for the padding between them.
+            Self::Image {
+                stub,
+                kernel,
+                initrd,
+                ..
+            } => Ok(size(stub)? + size(kernel)? + size(initrd)? + (5 << 12)),
+            Self::Copy { from, .. } => size(from),
+        }
+    }
+
+    /// Puts it in `dir`, unless it's there. An image starts the system with `params`.
+    fn write(&self, dir: &Path, params: &str) -> Result<(), String> {
+        let at = dir.join(self.name());
+        match self {
+            // Named after the system, and written whole before it takes the name, so one that's
+            // there is the same image.
+            Self::Image {
+                stub,
+                kernel,
+                initrd,
+                system,
+                ..
+            } => {
+                if at.exists() {
+                    return Ok(());
+                }
+                let read =
+                    |path: &Path| fs::read(path).map_err(|e| format!("{}: {e}", path.display()));
+                let image = wrath_build::uki::assemble(
+                    &read(stub)?,
+                    &wrath_build::uki::Parts {
+                        os_release: &fs::read(system.join("etc/os-release")).unwrap_or_default(),
+                        cmdline: params.as_bytes(),
+                        initrd: &read(initrd)?,
+                        linux: &read(kernel)?,
+                    },
+                )
+                .map_err(|e| format!("{}: {e}", stub.display()))?;
+                let temporary = at.with_extension("wrath-new");
+                let written = fs::write(&temporary, image)
+                    .and_then(|()| fs::File::open(&temporary)?.sync_all());
+                if let Err(e) = written {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(format!("{}: {e}", at.display()));
+                }
+                fs::rename(&temporary, &at).map_err(|e| format!("{}: {e}", at.display()))
+            }
+            // Named by the store path, so one of the right size is the same file. One cut short,
+            // such as by a power cut, is copied again.
+            Self::Copy { from, .. } => {
+                let size = |path: &Path| fs::metadata(path).map(|meta| meta.len()).ok();
+                let have = size(&at);
+                if have.is_none() || have != size(from) {
+                    copy_replacing(from, &at)?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// The generations whose systems run now or were booted, which keep their entries so the machine
@@ -257,7 +345,7 @@ fn room(kernels: &Path) -> Result<u64, String> {
         let entry = entry.map_err(|e| format!("{}: {e}", kernels.display()))?;
         room += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
     }
-    // Room for the boot loader's entries and the secrets initrds, which are small.
+    // Room for the boot loader's entries, which are small.
     Ok(room.saturating_sub(1 << 20))
 }
 
@@ -339,15 +427,12 @@ fn counted_entry(entries: &Path, number: u32) -> Result<Option<String>, String> 
     Ok(None)
 }
 
-/// What boots a generation, from its `kernel` and `initrd` links, its `kernel-params` and its
-/// `initrd-secrets`.
+/// What boots a generation, from its `kernel` and `initrd` links and its `kernel-params`.
 #[derive(Debug, PartialEq)]
 struct Boot {
     kernel: PathBuf,
     initrd: PathBuf,
     params: Vec<String>,
-    /// Files on the machine that go in an initrd of their own.
-    secrets: Vec<String>,
 }
 
 impl Boot {
@@ -358,16 +443,10 @@ impl Boot {
             move |e: io::Error| format!("{}: {e}", path.display())
         };
         let params = fs::read_to_string(at("kernel-params")).map_err(error("kernel-params"))?;
-        let secrets = fs::read_to_string(at("initrd-secrets")).unwrap_or_default();
         Ok(Self {
             kernel: fs::read_link(at("kernel")).map_err(error("kernel"))?,
             initrd: fs::read_link(at("initrd")).map_err(error("initrd"))?,
             params: params.split_whitespace().map(str::to_owned).collect(),
-            secrets: secrets
-                .lines()
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect(),
         })
     }
 }
@@ -389,42 +468,6 @@ fn sync_tree(dir: &Path) -> Result<(), String> {
         }
     }
     sync(dir)
-}
-
-/// An uncompressed cpio archive, in the `newc` format the kernel unpacks an initrd from, holding
-/// `files` by absolute path, readable only by root, with the directories they're in.
-fn cpio(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
-    fn entry(out: &mut Vec<u8>, name: &str, mode: u32, data: &[u8]) {
-        let (size, name_size) = (data.len() as u32, name.len() as u32 + 1);
-        let fields = [0, mode, 0, 0, 1, 0, size, 0, 0, 0, 0, name_size, 0];
-        out.extend_from_slice(b"070701");
-        for field in fields {
-            out.extend_from_slice(format!("{field:08x}").as_bytes());
-        }
-        out.extend_from_slice(name.as_bytes());
-        out.push(0);
-        out.resize(out.len().next_multiple_of(4), 0);
-        out.extend_from_slice(data);
-        out.resize(out.len().next_multiple_of(4), 0);
-    }
-    let mut out = Vec::new();
-    let mut directories = BTreeSet::new();
-    for (path, data) in files {
-        let path = path.trim_start_matches('/');
-        let parents: Vec<&Path> = Path::new(path)
-            .ancestors()
-            .skip(1)
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .collect();
-        for dir in parents.into_iter().rev() {
-            if directories.insert(dir) {
-                entry(&mut out, &dir.to_string_lossy(), 0o040_755, &[]);
-            }
-        }
-        entry(&mut out, path, 0o100_600, data);
-    }
-    entry(&mut out, "TRAILER!!!", 0, &[]);
-    out
 }
 
 /// The generations of the machine at `root`, by number with the link to each, oldest first, and
@@ -1524,6 +1567,50 @@ mod tests {
         );
     }
 
+    /// The smallest EFI program systemd's stub could be: PE32+ headers with room for more
+    /// sections, and none of its own.
+    fn tiny_stub() -> Vec<u8> {
+        let mut bytes = vec![0; 0x400];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c] = 0x80;
+        bytes[0x80..0x84].copy_from_slice(b"PE\0\0");
+        bytes[0x94] = 240;
+        bytes[0x98..0x9a].copy_from_slice(&0x20b_u16.to_le_bytes());
+        for (at, value) in [(32, 0x1000_u32), (36, 0x200), (56, 0x1000), (60, 0x400)] {
+            bytes[0x98 + at..0x98 + at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn a_generation_with_a_stub_boots_an_image_of_its_own_with_its_command_line() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        store_machine(root, &[(1, "aaa"), (2, "bbb")], 2);
+        // Generation 2's systemd has the stub, 1's is from before.
+        let efi = root.join("wrath/store/bbb/systemd/lib/systemd/boot/efi");
+        fs::create_dir_all(&efi).unwrap();
+        fs::write(efi.join("linuxx64.efi.stub"), tiny_stub()).unwrap();
+        fs::create_dir_all(root.join("boot/loader/entries")).unwrap();
+
+        boot_entries(root, false).unwrap();
+
+        let entries = root.join("boot/loader/entries");
+        let entry = fs::read_to_string(entries.join("wrath-2+3.conf")).unwrap();
+        assert!(entry.ends_with("uki /EFI/wrath/bbb.efi\n"), "{entry}");
+        let image = fs::read(root.join("boot/EFI/wrath/bbb.efi")).unwrap();
+        let has = |part: &[u8]| image.windows(part.len()).any(|w| w == part);
+        assert!(has(b"root=LABEL=wrath-root rw init=/wrath/store/bbb/init"));
+        assert!(has(b".linux\0\0") && has(b"k2"));
+        let old = fs::read_to_string(entries.join("wrath-1+3.conf")).unwrap();
+        assert!(old.contains("linux /EFI/wrath/k1-bzImage\n"), "{old}");
+        // An image there is the same one, and is left alone.
+        fs::write(root.join("boot/EFI/wrath/bbb.efi"), "made before").unwrap();
+        boot_entries(root, false).unwrap();
+        let again = fs::read_to_string(root.join("boot/EFI/wrath/bbb.efi")).unwrap();
+        assert_eq!(again, "made before");
+    }
+
     fn entry_names(root: &Path) -> Vec<String> {
         let mut names: Vec<String> = fs::read_dir(root.join("boot/loader/entries"))
             .unwrap()
@@ -1575,17 +1662,6 @@ mod tests {
         assert_eq!(old.kernel, Path::new("/wrath/store/old/bzImage"));
         assert_eq!(old.initrd, Path::new("/wrath/store/old/initrd"));
         assert_eq!(old.params, ["quiet", "rw"]);
-        assert!(old.secrets.is_empty());
-
-        fs::write(
-            system.join("initrd-secrets"),
-            "/etc/ssh/initrd_ed25519_key\n\n",
-        )
-        .unwrap();
-        assert_eq!(
-            Boot::of(system).unwrap().secrets,
-            ["/etc/ssh/initrd_ed25519_key"]
-        );
     }
 
     #[test]
@@ -1656,13 +1732,6 @@ mod tests {
         system("aaa-wrath-system", "k1");
         system("bbb-wrath-system", "k1");
         system("ccc-wrath-system", "k2");
-        fs::write(
-            store.join("ccc-wrath-system/initrd-secrets"),
-            "/etc/ssh/initrd_ed25519_key\n",
-        )
-        .unwrap();
-        fs::create_dir_all(root.join("etc/ssh")).unwrap();
-        fs::write(root.join("etc/ssh/initrd_ed25519_key"), "key\n").unwrap();
         let generations = root.join(GENERATIONS);
         fs::create_dir_all(&generations).unwrap();
         for (number, name) in [(1, "aaa"), (2, "bbb"), (3, "ccc")] {
@@ -1706,44 +1775,11 @@ mod tests {
         );
         assert!(!esp.join("loader/entries/wrath-9.conf").exists());
         let kernels = fs::read_dir(esp.join("EFI/wrath")).unwrap().count();
-        assert_eq!(
-            kernels, 5,
-            "two kernels and two initrds, each copied once, and the secrets"
-        );
+        assert_eq!(kernels, 4, "two kernels and two initrds, each copied once");
         assert_eq!(
             fs::read_to_string(esp.join("EFI/wrath/k1-initrd-initrd")).unwrap(),
             "initrd"
         );
-    }
-
-    #[test]
-    fn the_secrets_initrd_is_a_cpio_archive_of_the_files_readable_by_root() {
-        let archive = cpio(&[("/etc/ssh/initrd_ed25519_key", b"secret\n".to_vec())]);
-        assert!(archive.starts_with(b"070701"));
-        assert_eq!(archive.len() % 4, 0);
-        let text = String::from_utf8_lossy(&archive);
-        let names: Vec<&str> = [
-            "etc\0",
-            "etc/ssh\0",
-            "etc/ssh/initrd_ed25519_key\0",
-            "TRAILER!!!\0",
-        ]
-        .into_iter()
-        .filter(|name| text.contains(name))
-        .collect();
-        assert_eq!(names.len(), 4, "{text:?}");
-        assert!(text.contains(&format!("{:08x}", 0o100_600)));
-        let work = tempfile::tempdir().unwrap();
-        fs::write(work.path().join("a.cpio"), &archive).unwrap();
-        if let Ok(output) = Command::new("cpio")
-            .args(["-itv", "-F"])
-            .arg(work.path().join("a.cpio"))
-            .output()
-        {
-            let listing = String::from_utf8_lossy(&output.stdout);
-            assert!(listing.contains("-rw-------"), "{listing}");
-            assert!(listing.contains("etc/ssh/initrd_ed25519_key"), "{listing}");
-        }
     }
 
     #[test]

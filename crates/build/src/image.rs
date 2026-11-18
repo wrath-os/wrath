@@ -1,5 +1,5 @@
 //! A bootable disk image of one generation: a GPT with an EFI system partition holding
-//! systemd-boot, the kernel, the initrd and a boot entry, and an ext4 root with the store and the
+//! systemd-boot, a unified kernel image and a boot entry, and an ext4 root with the store and the
 //! generation as generation 1. Written to a USB stick, it boots a PC; the VM tests boot it too.
 
 use std::fs;
@@ -152,21 +152,9 @@ fn boot_file(lab: &Lab, generation: &StorePath, name: &str) -> Result<(PathBuf, 
     Ok((lab.work.join("store").join(inside), on_esp))
 }
 
-/// The boot entry for `generation`, as wrath on the machine would write it for generation 1,
-/// titled `title`.
-pub fn entry(
-    title: &str,
-    kernel: &str,
-    initrd: &str,
-    params: &str,
-    generation: &StorePath,
-) -> String {
-    format!(
-        "title {title}\nversion generation 1\nsort-key wrath\nlinux /EFI/wrath/{kernel}\n\
-         initrd /EFI/wrath/{initrd}\noptions {params} init={}/init\n",
-        generation.inside()
-    )
-}
+/// The image's own unified kernel image on the ESP. The machine makes its own once it switches,
+/// named after the system, and this one goes then.
+const IMAGE_UKI: &str = "wrath-1.efi";
 
 /// What a system calls itself in the boot menu, from its `/etc/os-release`: its `PRETTY_NAME`, or
 /// its `NAME`, or `wrath`.
@@ -183,8 +171,9 @@ pub fn release_name(os_release: &str) -> String {
         .unwrap_or_else(|| "wrath".to_owned())
 }
 
-/// The ESP's files: systemd-boot as the firmware's default loader, the kernel and the initrd,
-/// and an entry starting the generation with `options` after its own kernel options.
+/// The ESP's files: systemd-boot as the firmware's default loader, and an entry starting the
+/// generation with `options` after its own kernel options, from a unified kernel image made from
+/// its systemd's stub, or from its kernel and initrd when that has none.
 pub fn esp_tree(
     lab: &Lab,
     generation: &StorePath,
@@ -197,22 +186,45 @@ pub fn esp_tree(
     let (systemd, _) = boot_file(lab, generation, "systemd")?;
     let loader = systemd.join("lib/systemd/boot/efi/systemd-bootx64.efi");
     copy(&loader, &esp.join("EFI/BOOT/BOOTX64.EFI"))?;
-    let mut names = Vec::new();
-    for part in ["kernel", "initrd"] {
-        let (from, name) = boot_file(lab, generation, part)?;
-        copy(&from, &esp.join("EFI/wrath").join(&name))?;
-        names.push(name);
-    }
-    let params_file = lab.on_host(generation).join("kernel-params");
+    let system = lab.on_host(generation);
+    let params_file = system.join("kernel-params");
     let own = fs::read_to_string(&params_file).map_err(with_path(&params_file))?;
     let params = [own.trim(), options.trim()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    let release = fs::read_to_string(lab.on_host(generation).join("etc/os-release"));
-    let title = release_name(&release.unwrap_or_default());
-    let text = entry(&title, &names[0], &names[1], &params, generation);
+    let params = format!("{params} init={}/init", generation.inside());
+    let release = fs::read_to_string(system.join("etc/os-release")).unwrap_or_default();
+    let (kernel, kernel_name) = boot_file(lab, generation, "kernel")?;
+    let (initrd, initrd_name) = boot_file(lab, generation, "initrd")?;
+    let stub = systemd.join("lib/systemd/boot/efi/linuxx64.efi.stub");
+    let starts = if stub.is_file() {
+        let read = |path: &Path| fs::read(path).map_err(with_path(path));
+        let image = crate::uki::assemble(
+            &read(&stub)?,
+            &crate::uki::Parts {
+                os_release: release.as_bytes(),
+                cmdline: params.as_bytes(),
+                initrd: &read(&initrd)?,
+                linux: &read(&kernel)?,
+            },
+        )
+        .map_err(|e| format!("{}: {e}", stub.display()))?;
+        let at = esp.join("EFI/wrath").join(IMAGE_UKI);
+        fs::write(&at, image).map_err(with_path(&at))?;
+        format!("uki /EFI/wrath/{IMAGE_UKI}\n")
+    } else {
+        copy(&kernel, &esp.join("EFI/wrath").join(&kernel_name))?;
+        copy(&initrd, &esp.join("EFI/wrath").join(&initrd_name))?;
+        format!(
+            "linux /EFI/wrath/{kernel_name}\ninitrd /EFI/wrath/{initrd_name}\noptions {params}\n"
+        )
+    };
+    let text = format!(
+        "title {}\nversion generation 1\nsort-key wrath\n{starts}",
+        release_name(&release)
+    );
     write(&esp.join("loader/entries/wrath-1.conf"), &text)?;
     write(
         &esp.join("loader/loader.conf"),
@@ -478,5 +490,25 @@ mod tests {
             "{entry}"
         );
         assert!(read("loader/loader.conf").starts_with("default wrath-1.conf\n"));
+    }
+
+    #[test]
+    fn the_esp_boots_an_image_with_the_command_line_inside_when_systemd_has_a_stub() {
+        let (dir, lab, generation) = store();
+        let systemd = lab.on_host(&StorePath::from_hash(&"d".repeat(40)));
+        let stub = systemd.join("lib/systemd/boot/efi/linuxx64.efi.stub");
+        fs::write(stub, crate::uki::tests::stub()).unwrap();
+        let esp = dir.path().join("esp");
+        esp_tree(&lab, &generation, "console=ttyS0", &esp).unwrap();
+        let entry = fs::read_to_string(esp.join("loader/entries/wrath-1.conf")).unwrap();
+        assert!(entry.ends_with("uki /EFI/wrath/wrath-1.efi\n"), "{entry}");
+        let image = fs::read(esp.join("EFI/wrath/wrath-1.efi")).unwrap();
+        let cmdline = format!(
+            "root=LABEL=wrath-root rw console=ttyS0 init={}/init",
+            generation.inside()
+        );
+        let has = |part: &[u8]| image.windows(part.len()).any(|w| w == part);
+        assert!(has(cmdline.as_bytes()) && has(b"kernel") && has(b"initrd"));
+        assert_eq!(fs::read_dir(esp.join("EFI/wrath")).unwrap().count(), 1);
     }
 }

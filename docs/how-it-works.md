@@ -264,14 +264,16 @@ network or SSH settings on a remote machine.
 
 ## Booting
 
-Each generation gets a systemd-boot entry, with the current one as the default. New entries count
-their boot attempts, and a generation that fails to boot three times in a row stops being the
-default, so a broken update falls back to the last one that worked. The ESP fills up eventually,
-so the oldest generations lose their entries first.
+Each generation boots from one file on the ESP, a unified kernel image: systemd's EFI stub with
+the generation's kernel, initrd and kernel command line inside, put together on the machine when
+it switches. Every generation gets a systemd-boot entry, with the current one as the default.
+New entries count their boot attempts, and a generation that fails to boot three times in a row
+stops being the default, so a broken update falls back to the last one that worked. The ESP fills
+up eventually, so the oldest generations lose their entries first.
 
 ## What it doesn't manage
 
 wrath manages the system and leaves your data alone: `/home`, `/var` and anything a service
 keeps in `/var/lib`. That also means a rollback doesn't roll back data. If a service migrated
-its database when it upgraded, going back to the old version won't undo that. NixOS has the same
-gap, and I haven't solved it yet.
+its database when it upgraded, going back to the old version won't undo that. I haven't solved
+that yet.

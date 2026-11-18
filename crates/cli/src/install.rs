@@ -193,7 +193,7 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
         None => generations::build_generation(&model, how.test)?,
     };
     let result = lay_out(&partitions, storage, how, &key, work.path())
-        // Before the boot loader: it copies the initrd's SSH key into the initrd.
+        // Before switching, which decrypts the secrets with them.
         .and_then(|()| place_keys(how.target, &keys))
         .and_then(|()| crate::switching::install(&system, how.target))
         .and_then(|()| record(how))
