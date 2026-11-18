@@ -2454,6 +2454,36 @@ fn system_from(
     })
 }
 
+/// The recipes the model's `builds` start from, such as `locales` for a system's own locales,
+/// which nothing the system runs may reach otherwise.
+fn build_bases(model: &Value) -> Vec<String> {
+    model["builds"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(_, build)| build["package"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// The recipes [`build_bases`] names, with what they reach, for working out the builds made
+/// from them without building the recipes themselves.
+fn build_base_recipes(
+    lab: &Lab,
+    repository: &Path,
+    model: &Value,
+) -> Result<Vec<chain::Package>, String> {
+    let bases = build_bases(model);
+    if bases.is_empty() {
+        return Ok(Vec::new());
+    }
+    chain::load_reached(
+        lab,
+        repository,
+        &names_of(&recipe_files(repository)?),
+        &names_of(&bases),
+    )
+}
+
 /// The recipes the model's `builds` make: each a recipe under the build's name, with the
 /// options and patches it gives, styled again when its recipe has a style.
 fn variants(
@@ -2500,6 +2530,7 @@ pub fn package_keys(
     let lab = Lab::new(work);
     let mut wanted = chain::TOOLCHAIN.map(str::to_owned).to_vec();
     wanted.extend(system_packages(model));
+    wanted.extend(build_bases(model));
     let mut packages = chain::load_reached(
         &lab,
         repository,
@@ -2519,6 +2550,7 @@ fn found_by_recipe(lab: &Lab, repository: &Path, model: &Value) -> Result<(Built
     // Keys are worked out from the toolchain up, though only what the system uses is looked up.
     let mut roots = chain::TOOLCHAIN.map(str::to_owned).to_vec();
     roots.extend(wanted.iter().cloned());
+    roots.extend(build_bases(model));
     let mut packages = chain::load_reached(
         lab,
         repository,
@@ -2647,8 +2679,9 @@ pub fn system(
         (built, true) => built,
         (found, false) => {
             let wanted = system_packages(model);
-            let (mut built, seed, recipes) =
+            let (mut built, seed, mut recipes) =
                 pilot::build_onto(&lab, repository, Some(&names_of(&wanted)), found)?;
+            recipes.extend(build_base_recipes(&lab, repository, model)?);
             build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
             built
         }
@@ -2717,7 +2750,9 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
     let wanted = system_packages(model);
     let mut dry = pilot::Dry::onto(&lab, repository, &names_of(&wanted), found)?;
     let mut ids: BTreeSet<String> = wanted.iter().cloned().collect();
-    for variant in variants(&lab, repository, &dry.loaded, model)? {
+    let mut loaded = dry.loaded.clone();
+    loaded.extend(build_base_recipes(&lab, repository, model)?);
+    for variant in variants(&lab, repository, &loaded, model)? {
         if !dry.built.paths.contains_key(&variant.id) {
             dry.add(&lab, repository, &variant)?;
         }

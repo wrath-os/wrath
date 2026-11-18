@@ -15,9 +15,10 @@ steps = [
   { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pcrs":\[[0-9,]*\]' ''', stdout_contains = '"tpm2-pcrs":[7]' },
   # The first boot came up, so its entry lost its count of tries.
   { run = "ls /boot/loader/entries", stdout_contains = "wrath-1.conf" },
-  # An entry out of tries is passed over for a fresh one, which a good boot marks good in turn.
+  # An entry out of tries is passed over for a fresh one, which a good boot marks good in turn:
+  # wrath-50+3.conf boots, which systemd-boot records without its count, and becomes wrath-50.conf.
   { run = '''cd /boot/loader/entries && sed 's/^sort-key .*/sort-key wrath-current/; s/^version .*/version generation 99/' wrath-1.conf > wrath-99+0-3.conf && sed 's/^sort-key .*/sort-key wrath-current/; s/^version .*/version generation 50/' wrath-1.conf > wrath-50+3.conf && sed -i 's/^sort-key .*/sort-key wrath-other/' wrath-1.conf && sync && echo ready''', stdout_contains = "ready" },
   { boot_installed = true },
-  { run = '''tr -cd '[:print:]' < /sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; echo; ls /boot/loader/entries''', stdout_contains = "wrath-50+3.conf\nwrath-1.conf\nwrath-50.conf\nwrath-99+0-3.conf" },
+  { run = '''tr -cd '[:print:]' < /sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f; echo; ls /boot/loader/entries''', stdout_contains = "wrath-50.conf\nwrath-1.conf\nwrath-50.conf\nwrath-99+0-3.conf" },
 ]
 timeout_secs = 1500
