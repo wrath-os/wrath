@@ -110,7 +110,18 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         let (kernel, initrd) = (in_store(&boot.kernel), in_store(&boot.initrd));
         let stub = system.join(STUB);
         let target = fs::read_link(&link).map_err(|e| format!("{}: {e}", link.display()))?;
-        let files = if stub.is_file() {
+        let images = stub.is_file();
+        // Only an image passes the boot loader's credentials on to the initrd.
+        let credentials: Vec<(String, (String, PathBuf))> = if images {
+            let creds = system.join("systemd/bin/systemd-creds");
+            boot.credentials
+                .iter()
+                .map(|(name, path)| (name.clone(), (path.clone(), creds.clone())))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let files = if images {
             // Named after the system, which decides everything in it.
             let name = format!("{}.efi", named(&target));
             vec![OnEsp::Image {
@@ -138,7 +149,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         if !params.split(' ').any(|param| param.starts_with("init=")) {
             params.push_str(&format!(" init={}/init", target.display()));
         }
-        booting.push((number, link, params, files));
+        booting.push((number, link, params, files, credentials));
     }
 
     let mut wanted = BTreeSet::from([current]);
@@ -149,7 +160,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
             .map(|(number, link, ..)| (*number, link.as_path())),
     ));
     let mut sizes = Vec::new();
-    for (number, _, _, files) in &booting {
+    for (number, _, _, files, _) in &booting {
         let sized = files
             .iter()
             .map(|file| Ok((file.name().to_owned(), file.size()?)))
@@ -172,12 +183,12 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     booting.retain(|(number, ..)| chosen.contains(number));
     let kept: BTreeSet<&str> = booting
         .iter()
-        .flat_map(|(.., files)| files.iter().map(OnEsp::name))
+        .flat_map(|(_, _, _, files, _)| files.iter().map(OnEsp::name))
         .collect();
     remove_others(&kernels, |name| !kept.contains(name))?;
 
     let mut written = BTreeSet::new();
-    for (number, link, params, files) in &booting {
+    for (number, link, params, files, _) in &booting {
         for file in files {
             file.write(&kernels, params)?;
         }
@@ -214,6 +225,11 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         write_replacing(&entries.join(&entry), &text, 0o644)?;
         written.insert(entry);
     }
+    let credentials: BTreeMap<String, (String, PathBuf)> = booting
+        .into_iter()
+        .flat_map(|(.., credentials)| credentials)
+        .collect();
+    seal_credentials(root, &esp.join("loader/credentials"), &credentials)?;
     write_replacing(
         &esp.join("loader/loader.conf"),
         "default wrath-*\ntimeout 3\neditor no\n",
@@ -224,6 +240,42 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     })?;
     sync_tree(&kernels)?;
     sync_tree(&esp.join("loader"))
+}
+
+/// Seals each of `credentials`, by name with the file on the machine it's made from and the
+/// `systemd-creds` that seals it, into `dir`, where the boot loader finds them and systemd's stub
+/// passes them to the initrd. Each is sealed to the machine's TPM where it has one, and is only
+/// for an initrd: `auto-initrd`. Credentials wrath sealed that none of `credentials` names go.
+/// They're sealed again every time, so a changed file, or a machine's new TPM, is picked up.
+fn seal_credentials(
+    root: &Path,
+    dir: &Path,
+    credentials: &BTreeMap<String, (String, PathBuf)>,
+) -> Result<(), String> {
+    if credentials.is_empty() && !dir.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for (name, (path, sealer)) in credentials {
+        let from = root.join(path.trim_start_matches('/'));
+        if !from.is_file() {
+            return Err(format!(
+                "{path} is missing, and the initrd needs it as credential {name}"
+            ));
+        }
+        let sealed = dir.join(format!("{name}.cred"));
+        let temporary = sealed.with_extension("wrath-new");
+        run(Command::new(sealer)
+            .args(["encrypt", "--with-key=auto-initrd"])
+            .arg(format!("--name={name}"))
+            .arg(&from)
+            .arg(&temporary))?;
+        fs::rename(&temporary, &sealed).map_err(|e| format!("{}: {e}", sealed.display()))?;
+    }
+    remove_others(dir, |file| {
+        file.strip_suffix(".cred")
+            .is_some_and(|name| name.starts_with("wrath.") && !credentials.contains_key(name))
+    })
 }
 
 /// systemd's EFI stub, in a system, which unified kernel images start from.
@@ -427,12 +479,15 @@ fn counted_entry(entries: &Path, number: u32) -> Result<Option<String>, String> 
     Ok(None)
 }
 
-/// What boots a generation, from its `kernel` and `initrd` links and its `kernel-params`.
+/// What boots a generation, from its `kernel` and `initrd` links, its `kernel-params` and its
+/// `initrd-credentials`.
 #[derive(Debug, PartialEq)]
 struct Boot {
     kernel: PathBuf,
     initrd: PathBuf,
     params: Vec<String>,
+    /// The credentials its initrd takes from the machine, each with the file it's made from.
+    credentials: Vec<(String, String)>,
 }
 
 impl Boot {
@@ -447,6 +502,12 @@ impl Boot {
             kernel: fs::read_link(at("kernel")).map_err(error("kernel"))?,
             initrd: fs::read_link(at("initrd")).map_err(error("initrd"))?,
             params: params.split_whitespace().map(str::to_owned).collect(),
+            credentials: fs::read_to_string(at("initrd-credentials"))
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| line.split_once(' '))
+                .map(|(name, path)| (name.to_owned(), path.to_owned()))
+                .collect(),
         })
     }
 }
@@ -1686,6 +1747,45 @@ mod tests {
             "{entry}"
         );
         assert_eq!(fs::read_dir(esp.join("EFI/wrath")).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn the_initrds_credentials_are_sealed_next_to_the_boot_loader_and_old_ones_go() {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        // Stands in for systemd-creds: writes what it was asked to seal, and from what.
+        let sealer = root.join("systemd-creds");
+        fs::write(
+            &sealer,
+            "#!/bin/sh\necho \"$1 $2 $3 $(cat \"$4\")\" > \"$5\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&sealer, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::create_dir_all(root.join("etc/ssh")).unwrap();
+        fs::write(root.join("etc/ssh/initrd_ed25519_key"), "key").unwrap();
+        let dir = root.join("boot/loader/credentials");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("wrath.old.cred"), "").unwrap();
+        fs::write(dir.join("someone-elses.cred"), "").unwrap();
+        let wanted = BTreeMap::from([(
+            "wrath.initrd-ssh-key".to_owned(),
+            ("/etc/ssh/initrd_ed25519_key".to_owned(), sealer.clone()),
+        )]);
+
+        seal_credentials(root, &dir, &wanted).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("wrath.initrd-ssh-key.cred")).unwrap(),
+            "encrypt --with-key=auto-initrd --name=wrath.initrd-ssh-key key\n"
+        );
+        assert!(!dir.join("wrath.old.cred").exists());
+        assert!(dir.join("someone-elses.cred").exists());
+        fs::remove_file(root.join("etc/ssh/initrd_ed25519_key")).unwrap();
+        let missing = seal_credentials(root, &dir, &wanted).unwrap_err();
+        assert!(
+            missing.contains("/etc/ssh/initrd_ed25519_key is missing"),
+            "{missing}"
+        );
     }
 
     #[test]

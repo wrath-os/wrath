@@ -1,0 +1,17 @@
+# One encrypted disk that unlocks over SSH in the initrd, with the key below, from anywhere the
+# machine is reachable. Test key only: its private half is next to this file.
+[system]
+hostname = "t-02"
+secret_recipients = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEsvCVFchd5JcLM993ACyAonhYpHHoJX0tTIY57rptT8"]
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest", encrypt = true }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+subvolumes."@wrath" = { mount = "/wrath" }
+
+[unlock.ssh]
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEsvCVFchd5JcLM993ACyAonhYpHHoJX0tTIY57rptT8 unlock test key"]

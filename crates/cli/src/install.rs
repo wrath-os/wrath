@@ -193,8 +193,9 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
         None => generations::build_generation(&model, how.test)?,
     };
     let result = lay_out(&partitions, storage, how, &key, work.path())
-        // Before switching, which decrypts the secrets with them.
+        // Before switching, which decrypts the secrets with them and seals the initrd's key.
         .and_then(|()| place_keys(how.target, &keys))
+        .and_then(|()| initrd_ssh_key(how.target, &system))
         .and_then(|()| crate::switching::install(&system, how.target))
         .and_then(|()| record(how))
         .and_then(|()| match crate::state::State::of(&model) {
@@ -621,6 +622,29 @@ fn place_keys(target: &Path, keys: &[(&str, Vec<u8>)]) -> Result<(), String> {
             .map_err(|e| format!("{}: {e}", pub_file.display()))?;
         println!("placed the machine's {}", key.display());
     }
+    Ok(())
+}
+
+/// Makes the key the initrd's SSH server presents, for a machine whose disks unlock over SSH and
+/// that had none made ahead, and prints its public half to check the first login against.
+fn initrd_ssh_key(target: &Path, system: &Path) -> Result<(), String> {
+    let key = target.join(wrath_build::graph::INITRD_SSH_KEY.trim_start_matches('/'));
+    let wanted = std::fs::read_to_string(system.join("initrd-credentials")).unwrap_or_default();
+    if !wanted.contains(wrath_build::graph::INITRD_SSH_KEY) || key.exists() {
+        return Ok(());
+    }
+    let parent = key.parent().expect("keys are in a directory");
+    std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let made = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "initrd", "-f"])
+        .arg(&key)
+        .status()
+        .map_err(|e| format!("cannot run ssh-keygen: {e}"))?;
+    if !made.success() {
+        return Err(format!("ssh-keygen could not make {}", key.display()));
+    }
+    let public = std::fs::read_to_string(key.with_extension("pub")).unwrap_or_default();
+    println!("made the initrd's SSH key: {}", public.trim());
     Ok(())
 }
 

@@ -1,0 +1,23 @@
+title = "an installed machine's disks unlock over SSH in the initrd, which presents the key made ahead from a credential"
+notes = "The machine has a TPM but its disks aren't enrolled, so only the passphrase typed over SSH unlocks them. The initrd's host key is a credential sealed to the TPM next to the boot loader, and SSH checks it is the one `wrath secret machine` made."
+
+[vm]
+config = "scenarios/fixtures/native-ssh-unlock"
+store = "wrath"
+tpm = true
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { prepare_build = "scenarios/fixtures/native-ssh-unlock" },
+  { run = "cp -r /run/wrath-share/configs/native-ssh-unlock /tmp/config && printf 'correct horse' > /tmp/passphrase && printf 'battery staple' > /tmp/keypass && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --key-passphrase-file /tmp/keypass -y 2>&1; echo exit=$?", stdout_contains = "placed the machine's /mnt/etc/ssh/initrd_ed25519_key" },
+  # Nothing at the console: the passphrase goes over SSH, to an initrd presenting the made-ahead
+  # key, or the login is refused.
+  { boot_installed = true, passphrase = "correct horse", ssh_key = "scenarios/fixtures/native-ssh-unlock/unlock_key", ssh_host_key = "scenarios/fixtures/native-ssh-unlock/secrets/machines/t-02/initrd_ed25519_key.pub" },
+  { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+  { run = "ls /boot/loader/credentials /boot/loader/entries", stdout_contains = "wrath.initrd-ssh-key.cred" },
+  { run = "grep -c '^uki ' /boot/loader/entries/wrath-1*.conf", stdout_contains = "1" },
+  # The key isn't readable on the ESP, and unseals with this machine's TPM into the one made ahead.
+  { run = "grep -c 'OPENSSH PRIVATE KEY' /boot/loader/credentials/wrath.initrd-ssh-key.cred; true", stdout_contains = "0" },
+  { run = "systemd-creds decrypt --name=wrath.initrd-ssh-key /boot/loader/credentials/wrath.initrd-ssh-key.cred /tmp/k && chmod 600 /tmp/k && ssh-keygen -y -f /tmp/k | cut -d' ' -f2 | grep -qxF \"$(cut -d' ' -f2 /etc/ssh/initrd_ed25519_key.pub)\" && echo same", stdout_contains = "same" },
+]
+timeout_secs = 1500

@@ -1331,6 +1331,18 @@ fn lower<'a>(
             actions.push(text("base.storage", path, 0o644, contents, &[], packages)?);
         }
     }
+    // What the initrd takes from the machine, as credentials the boot loader passes it: each
+    // credential's name and the file it's made from.
+    if disks.ssh.is_some() {
+        actions.push(text(
+            "base.storage",
+            "initrd-credentials",
+            0o644,
+            format!("{INITRD_SSH_CREDENTIAL} {INITRD_SSH_KEY}\n"),
+            &[],
+            packages,
+        )?);
+    }
     let mut outside = String::new();
     for (path, file) in model["files"].as_object().ok_or("the model has no files")? {
         let at = installed_at(path);
@@ -1559,6 +1571,15 @@ const INITRD_PACKAGES: [&str; 9] = [
     "btrfs-progs",
 ];
 
+/// The packages in the initrd of a system with `disks`: openssh too, for unlocking over SSH.
+fn initrd_packages(disks: &early::Disks) -> Vec<&'static str> {
+    let mut ids = INITRD_PACKAGES.to_vec();
+    if disks.ssh.is_some() {
+        ids.push("openssh");
+    }
+    ids
+}
+
 /// device-mapper's udev rules, which name unlocked containers so they can be mounted.
 const DM_RULES: [&str; 3] = ["10-dm.rules", "13-dm-disk.rules", "95-dm-notify.rules"];
 
@@ -1594,6 +1615,16 @@ fn initrd_files(
         .map(|module| format!("{module}\n"))
         .collect();
     let system_conf = "[Manager]\nDefaultEnvironment=PATH=/bin\nManagerEnvironment=PATH=/bin\n";
+    // sshd separates privileges as its own user, and networkd runs as one.
+    let (users, user_groups) = if disks.ssh.is_some() {
+        (
+            "sshd:x:74:74::/var/empty:/bin/nologin\n\
+             systemd-network:x:152:152::/:/bin/nologin\n",
+            "sshd:x:74:\nsystemd-network:x:152:\n",
+        )
+    } else {
+        ("", "")
+    };
     let mut files = vec![
         file("etc/initrd-release", 0o644, INITRD_RELEASE.to_owned()),
         file("etc/os-release", 0o644, INITRD_RELEASE.to_owned()),
@@ -1619,14 +1650,21 @@ fn initrd_files(
         file(
             "etc/passwd",
             0o644,
-            "root:x:0:0:root:/root:/bin/sh\n".to_owned(),
+            format!("root:x:0:0:root:/root:/bin/sh\n{users}"),
         ),
-        file("etc/group", 0o644, format!("root:x:0:\n{groups}")),
+        file(
+            "etc/group",
+            0o644,
+            format!("root:x:0:\n{groups}{user_groups}"),
+        ),
         file("etc/shadow", 0o600, "root:*:::::::\n".to_owned()),
         file("etc/modules-load.d/wrath.conf", 0o644, modules),
     ];
     if !hostname.is_empty() {
         files.push(file("etc/hostname", 0o644, format!("{hostname}\n")));
+    }
+    if let Some(ssh) = &disks.ssh {
+        files.extend(initrd_ssh_files(ssh));
     }
     // Options for modules, which those loaded in the initrd need too.
     if !modprobe.is_empty() {
@@ -1637,6 +1675,47 @@ fn initrd_files(
         ));
     }
     files
+}
+
+/// The credential the initrd's SSH server takes its host key from: the machine's initrd key,
+/// sealed to its TPM where it has one, next to the boot loader.
+pub const INITRD_SSH_CREDENTIAL: &str = "wrath.initrd-ssh-key";
+
+/// Where a machine keeps the key the initrd's SSH server presents.
+pub const INITRD_SSH_KEY: &str = "/etc/ssh/initrd_ed25519_key";
+
+/// The initrd's files for SSH: a server on `ssh`'s port that lets its keys in as root to type the
+/// disks' passphrase, with its host key from a credential, and DHCP on every wired network.
+fn initrd_ssh_files(ssh: &early::Ssh) -> Vec<(String, u32, String)> {
+    // Every file in the initrd is wrath's, and its root is writable by more than root, which
+    // sshd's checks of the authorized keys' directories would refuse.
+    let config = format!(
+        "Port {}\nPermitRootLogin prohibit-password\nPasswordAuthentication no\n\
+         KbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\n\
+         AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u\n",
+        ssh.port
+    );
+    let keys: String = ssh
+        .authorized_keys
+        .iter()
+        .map(|key| format!("{key}\n"))
+        .collect();
+    let unit = format!(
+        "[Unit]\nDescription=SSH to unlock the disks\nDefaultDependencies=no\n\
+         Wants=systemd-networkd.service\nAfter=systemd-networkd.service\n\n\
+         [Service]\nLoadCredentialEncrypted={INITRD_SSH_CREDENTIAL}\n\
+         ExecStart=/bin/sshd -D -e -f /etc/ssh/sshd_config -h %d/{INITRD_SSH_CREDENTIAL}\n"
+    );
+    let network = "[Match]\nType=ether\n\n[Network]\nDHCP=yes\n";
+    [
+        ("etc/ssh/sshd_config", config),
+        ("etc/ssh/authorized_keys.d/root", keys),
+        ("etc/systemd/system/wrath-initrd-ssh.service", unit),
+        ("etc/systemd/network/10-wired.network", network.to_owned()),
+    ]
+    .into_iter()
+    .map(|(path, text)| (path.to_owned(), 0o644, text))
+    .collect()
 }
 
 /// A modprobe deny-list for the initrd: the modules in `tree` that read firmware, themselves or
@@ -1854,7 +1933,8 @@ fn boot_files<'a>(
     let microcode = kernel["microcode"]["package"]
         .as_str()
         .filter(|id| packages.contains_key(*id));
-    let mut ids = [INITRD_PACKAGES.as_slice(), &["linux"]].concat();
+    let initrd_packages = initrd_packages(&disks);
+    let mut ids = [initrd_packages.as_slice(), &["linux"]].concat();
     ids.extend(microcode);
     let (unresolved, resolved) = action_records(&ids, packages, |deps| {
         json!({"kind": "boot", "files": files, "rules": DM_RULES,
@@ -1890,6 +1970,22 @@ fn boot_files<'a>(
                 "etc/systemd/system/initrd.target.requires/wrath-root.service",
                 link("../wrath-root.service".to_owned()),
             );
+            if disks.ssh.is_some() {
+                initrd::insert(&mut nodes, "var/empty", initrd::Node::Dir);
+                let wants = "etc/systemd/system/initrd.target.wants";
+                initrd::insert(
+                    &mut nodes,
+                    &format!("{wants}/systemd-networkd.service"),
+                    link(format!(
+                        "{systemd}/lib/systemd/system/systemd-networkd.service"
+                    )),
+                );
+                initrd::insert(
+                    &mut nodes,
+                    &format!("{wants}/wrath-initrd-ssh.service"),
+                    link("../wrath-initrd-ssh.service".to_owned()),
+                );
+            }
             for (path, mode, template) in &files {
                 let bytes = fill(template, &ids, packages)?.into_bytes();
                 initrd::insert(&mut nodes, path, initrd::Node::File { mode: *mode, bytes });
@@ -1918,7 +2014,7 @@ fn boot_files<'a>(
             }
             // Every program of the packages on the path, the way a system's `bin` has them.
             let mut roots = Vec::new();
-            for id in INITRD_PACKAGES {
+            for id in &initrd_packages {
                 let path = &package(packages, id)?.path;
                 roots.push(path.hash());
                 let bin = lab.on_host(path).join("bin");
@@ -2631,9 +2727,10 @@ fn system_packages(model: &Value) -> Vec<String> {
         let items = value.as_array().into_iter().flatten();
         items.filter_map(Value::as_str).map(str::to_owned).collect()
     };
+    let initrd = initrd_packages(&early::disks(&model["base"]["storage"]));
     let mut ids: BTreeSet<String> = MECHANISM_PACKAGES
         .iter()
-        .chain(&INITRD_PACKAGES)
+        .chain(&initrd)
         .chain(&LINKED)
         .chain(&["dbus"])
         .map(|id| (*id).to_owned())
@@ -3313,6 +3410,41 @@ mod tests {
         let root = &files["etc/systemd/system/wrath-root.service"];
         assert!(root.contains("ExecStart=/etc/wrath-root\n"), "{root}");
         assert!(files["etc/wrath-root"].contains("os-release"));
+        assert!(!files.contains_key("etc/ssh/sshd_config"));
+    }
+
+    #[test]
+    fn an_initrd_with_ssh_lets_its_keys_in_with_a_host_key_from_a_credential() {
+        let disks = early::Disks {
+            ssh: Some(early::Ssh {
+                port: 2022,
+                authorized_keys: vec!["ssh-ed25519 AAAA me".into()],
+            }),
+            ..early::Disks::default()
+        };
+        let files: BTreeMap<String, String> = initrd_files(&disks, "", "")
+            .into_iter()
+            .map(|(path, _, text)| (path, text))
+            .collect();
+        let config = &files["etc/ssh/sshd_config"];
+        assert!(
+            config.contains("Port 2022\n") && config.contains("UsePAM no\n"),
+            "{config}"
+        );
+        assert_eq!(
+            files["etc/ssh/authorized_keys.d/root"],
+            "ssh-ed25519 AAAA me\n"
+        );
+        let unit = &files["etc/systemd/system/wrath-initrd-ssh.service"];
+        assert!(
+            unit.contains("LoadCredentialEncrypted=wrath.initrd-ssh-key\n")
+                && unit.contains("-h %d/wrath.initrd-ssh-key\n"),
+            "{unit}"
+        );
+        assert!(files["etc/systemd/network/10-wired.network"].contains("DHCP=yes"));
+        assert!(files["etc/passwd"].contains("\nsshd:x:74:74:"));
+        assert!(files["etc/group"].contains("\nsystemd-network:x:152:\n"));
+        assert_eq!(initrd_packages(&disks).last(), Some(&"openssh"));
     }
 
     #[test]

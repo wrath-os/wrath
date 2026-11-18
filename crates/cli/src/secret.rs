@@ -139,9 +139,10 @@ impl Secrets {
         Ok(ExitCode::SUCCESS)
     }
 
-    /// Makes machine `name`'s SSH host key and keeps it under `secrets/machines/NAME` in the
-    /// configuration at `config`, encrypted to the recipients and to a passphrase, with its
-    /// public half beside it. A key it has already is never replaced.
+    /// Makes machine `name`'s keys, its SSH host key and the key its initrd's SSH server
+    /// presents, and keeps them under `secrets/machines/NAME` in the configuration at `config`,
+    /// encrypted to the recipients and to a passphrase, with their public halves beside them. A
+    /// machine with a host key already gets nothing new.
     fn make_host_key(
         &self,
         config: &Path,
@@ -152,10 +153,10 @@ impl Secrets {
             return Err(format!("`{name}` isn't a machine's name"));
         }
         let dir = crate::machine_keys::dir(config, name);
-        let key = crate::machine_keys::HOST_KEY;
-        let encrypted = crate::machine_keys::to_recipients(&dir, key);
-        let locked = crate::machine_keys::to_passphrase(&dir, key);
-        if encrypted.exists() || locked.exists() {
+        let host = crate::machine_keys::HOST_KEY;
+        if crate::machine_keys::to_recipients(&dir, host).exists()
+            || crate::machine_keys::to_passphrase(&dir, host).exists()
+        {
             return Err(format!(
                 "{name} has a host key already, in {}; remove it first to make a new one",
                 dir.display()
@@ -167,41 +168,59 @@ impl Secrets {
             None => crate::machine_keys::new_passphrase(&format!("{name}'s keys at install"))?,
         };
         let made = private_dir()?;
-        let private = made.path().join(key);
-        let generated = Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-C"])
-            .arg(format!("root@{name}"))
-            .arg("-f")
-            .arg(&private)
-            .output()
-            .map_err(|e| format!("cannot run ssh-keygen: {e}"))?;
-        if !generated.status.success() {
-            return Err(format!(
-                "ssh-keygen: {}",
-                String::from_utf8_lossy(&generated.stderr).trim()
-            ));
+        let mut publics = Vec::new();
+        for (key, _) in crate::machine_keys::KEYS {
+            let private = made.path().join(key);
+            let comment = if key == host {
+                format!("root@{name}")
+            } else {
+                format!("initrd@{name}")
+            };
+            let generated = Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-C", &comment, "-f"])
+                .arg(&private)
+                .output()
+                .map_err(|e| format!("cannot run ssh-keygen: {e}"))?;
+            if !generated.status.success() {
+                return Err(format!(
+                    "ssh-keygen: {}",
+                    String::from_utf8_lossy(&generated.stderr).trim()
+                ));
+            }
+            let secret =
+                std::fs::read(&private).map_err(|e| format!("{}: {e}", private.display()))?;
+            let public = std::fs::read_to_string(private.with_extension("pub"))
+                .map_err(|e| format!("{key}.pub: {e}"))?;
+            let encrypted = crate::machine_keys::to_recipients(&dir, key);
+            self.encrypt(&format!("{name}'s {key}"), &secret, &encrypted)?;
+            let locked = crate::machine_keys::to_passphrase(&dir, key);
+            let partial = locked.with_extension("partial");
+            std::fs::write(&partial, crate::machine_keys::lock(&secret, &passphrase)?)
+                .and_then(|()| std::fs::rename(&partial, &locked))
+                .map_err(|e| format!("{}: {e}", locked.display()))?;
+            let pub_file = dir.join(format!("{key}.pub"));
+            std::fs::write(&pub_file, &public)
+                .map_err(|e| format!("{}: {e}", pub_file.display()))?;
+            // The public key without its comment, as recipients are written.
+            publics.push(
+                public
+                    .split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
         }
-        let secret = std::fs::read(&private).map_err(|e| format!("{}: {e}", private.display()))?;
-        let public = std::fs::read_to_string(private.with_extension("pub"))
-            .map_err(|e| format!("{key}.pub: {e}"))?;
-        self.encrypt(&format!("{name}'s host key"), &secret, &encrypted)?;
-        let partial = locked.with_extension("partial");
-        std::fs::write(&partial, crate::machine_keys::lock(&secret, &passphrase)?)
-            .and_then(|()| std::fs::rename(&partial, &locked))
-            .map_err(|e| format!("{}: {e}", locked.display()))?;
-        let pub_file = dir.join(format!("{key}.pub"));
-        std::fs::write(&pub_file, &public).map_err(|e| format!("{}: {e}", pub_file.display()))?;
-        // The public key without its comment, as recipients are written.
-        let recipient = public
-            .split_whitespace()
-            .take(2)
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!("encrypted it to the passphrase too, for installing where none of their keys is");
-        println!("{name}'s host key is {recipient}");
         println!(
-            "add it to `system.secret_recipients`, in place of any key {name} had before, and \
-             `wrath secret rekey` encrypts its secrets to it"
+            "encrypted them to the passphrase too, for installing where none of their keys is"
+        );
+        println!("{name}'s host key is {}", publics[0]);
+        println!(
+            "its initrd presents {}, when its disks unlock over SSH",
+            publics[1]
+        );
+        println!(
+            "add the host key to `system.secret_recipients`, in place of any key {name} had \
+             before, and `wrath secret rekey` encrypts its secrets to it"
         );
         Ok(ExitCode::SUCCESS)
     }

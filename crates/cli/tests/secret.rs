@@ -193,6 +193,15 @@ fn a_machines_host_key_is_made_once_encrypted_to_the_recipients_and_its_passphra
         "{out}"
     );
     assert!(dir.join("ssh_host_ed25519_key.passphrase.age").is_file());
+    // The initrd's key, for unlocking over SSH, is made with it.
+    let initrd = fs::read_to_string(dir.join("initrd_ed25519_key.pub")).unwrap();
+    let presented: Vec<&str> = initrd.split_whitespace().take(2).collect();
+    assert!(
+        out.contains(&format!("its initrd presents {},", presented.join(" "))),
+        "{out}"
+    );
+    assert!(dir.join("initrd_ed25519_key.age").is_file());
+    assert!(dir.join("initrd_ed25519_key.passphrase.age").is_file());
     let decrypted = Command::new("age")
         .args(["-d", "-i"])
         .arg(fixture("test-identity.txt"))

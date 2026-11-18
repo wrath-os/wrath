@@ -89,9 +89,10 @@ own builds (0040, 0041). Whatever signs them has to be there.
 
 ## Order
 
-1. systemd 262, with the world rebuilt.
+1. systemd 262, with the world rebuilt. Done.
 2. UKIs per generation, unsigned, booted through systemd-boot without Secure Boot; the initrd's
-   secrets as TPM-sealed credentials.
+   secrets as TPM-sealed credentials. Done: the first is the initrd's SSH host key, for unlocking
+   over SSH.
 3. Keys made with `wrath secret machine`, signing at switch, enrollment from `/loader/keys/`:
    scenarios in a VM (OVMF in setup mode, swtpm) where an unsigned UKI doesn't boot, a signed one
    unlocks, a changed PCR 7 asks, and a swapped LUKS volume is refused.

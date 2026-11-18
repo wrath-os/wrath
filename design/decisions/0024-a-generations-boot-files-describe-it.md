@@ -16,9 +16,9 @@ kernel, initrd and command line together. The image is its own description.
 ## Decision
 
 `boot.json` goes. A generation's `kernel` and `initrd` links and its `kernel-params` are what
-boots it, one file per line of a boot entry, with `initrd-secrets` naming files on the machine
-that go in an initrd of its own. The activator reads these and adds `init=` from the
-generation's path.
+boots it, one file per line of a boot entry, with `initrd-credentials` naming files on the
+machine the initrd takes as credentials (0042; `initrd-secrets` before). The activator reads
+these and adds `init=` from the generation's path.
 
 When Secure Boot comes, the generation gains a unified kernel image, and that image is what
 boots it.

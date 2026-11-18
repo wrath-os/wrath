@@ -48,6 +48,28 @@ do Secure Boot yet. So anyone with the machine in their hands can boot something
 key. Fine for a desktop at home, not fine for a laptop you travel with. A passphrase doesn't have
 that problem.
 
+### Unlocking over SSH
+
+A server in a rack, or any machine you're not sitting at, can ask for its passphrase over SSH
+instead. List the keys that may log in:
+
+```toml
+[unlock.ssh]
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHVXpgKZYrIfk13p8f+bhA/aS4Nmuwmf3RaZssxOmr/3 me"]
+```
+
+At boot the initrd brings up the wired network with DHCP and listens on port 2222
+(`unlock.ssh.port`). Log in as root and answer the prompt:
+
+```sh
+ssh -p 2222 root@server systemd-tty-ask-password-agent --query
+```
+
+The initrd presents a key of its own, the machine's initrd key, so you can tell it's really your
+machine before you type anything. `wrath secret machine` makes it ahead along with the host key
+and prints it, or install makes one and prints it. It's kept sealed to the machine's TPM next to
+the boot loader, so a copy of the ESP doesn't give it away.
+
 ## From a configuration repository
 
 The simplest way: one installer stick for every machine, with each machine's configuration in a
@@ -123,11 +145,11 @@ Make the host key before you build the image instead, and every install uses tha
 wrath secret machine framework -C ~/machines/framework
 ```
 
-That keeps the key in `secrets/machines/framework/`, encrypted to `system.secret_recipients` and
-to a passphrase it asks for, and prints its public half to add to `secret_recipients`. Install
-finds the key by `--name` or the hostname, asks for the passphrase, and puts the key in the new
-system, so its secrets decrypt at the first boot and SSH doesn't warn about a changed host key
-after a reinstall. `--identity FILE`, with a key it's encrypted to, works instead of the
+That keeps the key in `secrets/machines/framework/`, with the initrd's key for unlocking over
+SSH, encrypted to `system.secret_recipients` and to a passphrase it asks for, and prints their
+public halves: add the host key to `secret_recipients`. Install finds the keys by `--name` or the
+hostname, asks for the passphrase, and puts them in the new system, so its secrets decrypt at the
+first boot and SSH doesn't warn about a changed host key after a reinstall. `--identity FILE`, with a key it's encrypted to, works instead of the
 passphrase, and `--key-passphrase-file FILE` gives the passphrase without asking.
 
 ## Getting online

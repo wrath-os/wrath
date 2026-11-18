@@ -16,6 +16,15 @@ pub struct Disks {
     pub initrd_fstab: String,
     /// Kernel modules the initrd loads.
     pub modules: Vec<String>,
+    /// SSH in the initrd, to unlock the disks from elsewhere.
+    pub ssh: Option<Ssh>,
+}
+
+/// SSH in the initrd: the port it listens on and the keys that may log in.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Ssh {
+    pub port: u16,
+    pub authorized_keys: Vec<String>,
 }
 
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -35,7 +44,12 @@ pub fn disks(storage: &Value) -> Disks {
     }
     let unlock = &storage["unlock"];
     let tpm = unlock["tpm2"].as_bool().unwrap_or(false);
-    let ssh = !items(&unlock["ssh"], "authorized_keys").is_empty();
+    let keys: Vec<String> = items(&unlock["ssh"], "authorized_keys")
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let ssh = !keys.is_empty();
     // Members of a filesystem that boots with one missing, past the first, may be absent.
     let optional: Vec<&str> = items(storage, "spanning")
         .iter()
@@ -133,7 +147,8 @@ pub fn disks(storage: &Value) -> Disks {
             "algif_skcipher",
         ]);
     }
-    if tpm {
+    // The TPM unlocks the disks, or the credentials SSH in the initrd starts with.
+    if tpm || ssh {
         modules.extend(["tpm_crb", "tpm_tis"]);
     }
     // Drivers for the disks themselves, on real machines and virtual ones.
@@ -182,6 +197,13 @@ pub fn disks(storage: &Value) -> Disks {
         crypttab,
         initrd_fstab: early.iter().map(|mount| line(mount, "/sysroot")).collect(),
         modules: modules.into_iter().map(str::to_owned).collect(),
+        ssh: ssh.then(|| Ssh {
+            port: unlock["ssh"]["port"]
+                .as_u64()
+                .and_then(|port| u16::try_from(port).ok())
+                .unwrap_or(2222),
+            authorized_keys: keys,
+        }),
     }
 }
 
@@ -308,5 +330,23 @@ mod tests {
             crypttab.contains("main1-system none luks,discard,nofail\n"),
             "{crypttab}"
         );
+    }
+
+    #[test]
+    fn keys_that_may_log_in_bring_ssh_to_the_initrd_with_the_network_and_the_tpm() {
+        assert_eq!(disks(&storage()).ssh, None);
+        let mut ssh = storage();
+        ssh["unlock"]["ssh"] = json!({"port": 2022, "authorized_keys": ["ssh-ed25519 AAAA me"]});
+        let found = disks(&ssh);
+        assert_eq!(
+            found.ssh,
+            Some(Ssh {
+                port: 2022,
+                authorized_keys: vec!["ssh-ed25519 AAAA me".to_owned()],
+            })
+        );
+        for module in ["af_packet", "virtio_net", "tpm_crb"] {
+            assert!(found.modules.iter().any(|m| m == module), "{module}");
+        }
     }
 }
