@@ -1112,14 +1112,15 @@ pub fn lock(
         update.is_some_and(|names| names.is_empty() || names.iter().any(|n| n == WRATH_SOURCE)),
         |url| crate::trees::follow(url).map(|(pin, _)| pin),
     )?;
-    // What the lock pins is worked out from these; what changed is said against `models`, as
-    // pinned.
+    // What the lock pins is worked out from these; what changed is said against `models` as the
+    // lock pinned them before, since what this command fetched, such as a newer grapes, is in them.
     let followed = match update {
         Some(names) => follow_newest(models, names)?,
         None => models.to_vec(),
     };
+    let previous = crate::read_lock(config)?.unwrap_or_default();
     let mut lock = Lock {
-        ids: crate::read_lock(config)?.unwrap_or_default().ids,
+        ids: previous.ids.clone(),
         ..Lock::default()
     };
     for (_, model) in &followed {
@@ -1146,7 +1147,8 @@ pub fn lock(
         _ => println!("pinned {}", sources.join(", ")),
     }
     for (role, model) in models {
-        let plan = wrath_model::plan(model, &model.clone().with_lock(&lock));
+        let before = model.clone().with_lock(&previous);
+        let plan = wrath_model::plan(&before, &model.clone().with_lock(&lock));
         if plan.is_empty() {
             continue;
         }
