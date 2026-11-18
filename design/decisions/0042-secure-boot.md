@@ -18,13 +18,12 @@ How others do it:
   unlock with PCR 7 plus a signed PCR 11 policy, so kernel updates don't re-enroll. It works
   because every machine boots the same image.
   https://docs.siderolabs.com/talos/v1.13/platform-specific-installations/bare-metal-platforms/secureboot
-- NixOS's lanzaboote and Arch's sbctl sign on the machine, since generations are built there.
-  lanzaboote's own stub keeps kernels and initrds shared on the ESP; its history has the lesson:
-  a separately signed kernel could boot with an unprotected initrd (lanzaboote #65), fixed by
-  signing nothing but the one stub. Trust has to come from exactly one signed object.
-  https://github.com/nix-community/lanzaboote
-- Fedora and Ubuntu boot through shim, signed by Microsoft's third-party CA, which also trusts
-  every other distribution's signed boot loaders: targets for downgrades (BitPixie, 38C3).
+- lanzaboote and sbctl sign on the machine, since generations are built there. A stub that
+  keeps kernels and initrds shared on the ESP has to make sure a separately signed kernel can't
+  boot with an unprotected initrd, which signing nothing but the one stub does. Trust has to come
+  from exactly one signed object. https://github.com/nix-community/lanzaboote
+- Booting through shim, signed by Microsoft's third-party CA, trusts every boot loader signed
+  under that CA, older ones included, which downgrade attacks use (BitPixie, 38C3).
 - Published since 2025: swapping in a LUKS volume with the same UUIDs gets a PCR 7 binding to
   hand over the real key (oddlama, 2025; IncusOS CVE-2026-32606), fixed by releasing the key only
   in the initrd and checking PCR 15. https://oddlama.org/blog/bypassing-disk-encryption-with-tpm2-unlock/
@@ -47,8 +46,8 @@ own builds (0040, 0041). Whatever signs them has to be there.
     secrets, into `/run/wrath/secrets`, never into the store.
 - **Signed on the machine.** Switching to a generation signs its UKI and the boot loader with the
   machine's db key, and the UKI carries a PCR 11 policy signed with its PCR key. root on a running
-  machine can therefore sign something that unlocks its disks: the tradeoff Arch and NixOS accept
-  for desktops, which the PIN closes where it matters.
+  machine can therefore sign something that unlocks its disks: the tradeoff of signing on the
+  machine, which the PIN closes where it matters.
 - **Enrollment through systemd-boot**: install puts the machine's certificates in
   `/loader/keys/`, and systemd-boot enrolls them when the firmware is in setup mode, which is the
   one manual step per machine, spelled out by the plan. The firmware trusts our certificate only:

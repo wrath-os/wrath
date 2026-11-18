@@ -92,8 +92,7 @@ files = ["share/aclocal"]
   for `GI_TYPELIB_PATH` and the like.
 - Generations can use the same declarations at run time (0020's indexes), later.
 
-This is Guix's search paths. Nix's setup hooks, shell code a dependency runs in its dependents'
-builds, are what this replaces without copying.
+This is Guix's search paths, as data on the recipe that reads the variable.
 
 ### What the builder does after a build is a step of its own
 
@@ -147,8 +146,8 @@ another question than what it builds with.
 - Keep `BUILD_RULES` and only add the golden test (0036's batch). Safe against missed bumps,
   but every bump still rebuilds everything.
 - Hash the whole builder into every key. No bumps, but every commit to wrath rebuilds the world.
-- Search paths as code (Spack, Nix setup hooks). More power, and the opacity that made setup
-  hooks the thing to avoid.
+- Search paths as code, a dependency's shell running in its dependents' builds. More power, but
+  what a build takes in gets hard to see.
 
 ## As built
 

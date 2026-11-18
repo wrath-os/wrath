@@ -9,10 +9,9 @@ service runs, its port, its user, the paths it writes. It doesn't scale to every
 program. Programs add and rename settings with each release, a typed copy of them is always
 behind, and every module needs an escape hatch for what it doesn't cover anyway.
 
-NixOS reached the same point and adopted RFC 42: a module takes `settings`, an untyped structure,
-and renders it with `formats.toml`, `formats.yaml` and the like into the program's own file.
-That works, but each program still needs a module written for it before it can be configured,
-and nothing checks the settings until the program reads them.
+A common answer is a module that takes `settings`, an untyped structure, and renders it into the
+program's own format. Each program then still needs a module written for it before it can be
+configured, and nothing checks the settings until the program reads them.
 
 We already have the parts: `types.freeform`, and `formats.toml`, `formats.json` and
 `formats.systemd` for modules. git's module takes `settings` and renders them.
@@ -93,5 +92,5 @@ The formats are written in Rust, as `formats.*` are: TOML and JSON now, and YAML
 - `programs.<id>` is shared by the table and modules. Both declaring the same program is an
   error when the modules load, so a program moving to a module leaves the table.
 - Replacing a built-in module with one of the configuration's own, which 0026 left open, is the
-  next question: it is what makes NixOS modules attractive, and it fits here as a configuration's
+  next question: it makes modules much more useful, and it fits here as a configuration's
   module declaring the same options, with plan naming what it replaced.

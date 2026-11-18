@@ -11,8 +11,8 @@ There are 370 recipes in 34 files under `build/recipes`, grouped by theme: `desk
 The aim is nixpkgs' range, tens of thousands of packages. At that size:
 
 - Reading isn't the cost. 30,000 recipes are about 15 MB of TOML, parsed in well under a second.
-  Evaluating every recipe's style in Starlark to build one package would be: nixpkgs evaluates
-  lazily and still takes minutes and gigabytes to go through all of it.
+  Evaluating every recipe's style in Starlark to build one package would be: even a lazy
+  evaluation of a set that size takes minutes and gigabytes.
 - Changes are. nixpkgs moved packages from `all-packages.nix` to
   `pkgs/by-name/<xx>/<name>/package.nix` (RFC 140) because that file conflicted on nearly every
   change, and an update bot's work merges best as one small diff per package. Our theme files

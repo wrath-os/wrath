@@ -14,8 +14,8 @@ called `wrath`, which means "the modules and recipes next to this binary". That 
   a configuration can't pin one without the other.
 
 NixOS splits these: Nix is the tool, nixpkgs holds the packages and the operating system's
-modules, and each user's configuration pins a nixpkgs. Flakes made that pin a lock, after years
-of channels and `NIX_PATH`. The aim here is the same split, with the lock from the start.
+modules, and each user's configuration pins a nixpkgs in a lock. The aim here is the same split,
+with the lock from the start.
 
 ## Decision
 
@@ -125,31 +125,26 @@ It replaces `--modules` and `--root`, which do a narrower version of the same to
   the rest of the generation.
 - A downstream distribution (0030) is a platform built on grapes' modules, as before.
 
-## What others got wrong, and what this does instead
+## What this keeps simple
 
-- Nix: one giant file of every package that conflicts on every change, and channels that move
-  under you. grapes has a file per package (0034) and is reached only through a lock; the host
-  API's version turns "this nixpkgs needs a newer Nix" into an error up front.
-- Bazel and Buck2: rule sets in repositories of their own with their own releases, so rules and
-  what they build drift apart, and two dependency systems (WORKSPACE, then modules). Recipes and
-  modules live together in grapes, and there's one kind of dependency: a source pinned in a lock.
-  Toolchains are recipes like any other.
-- Kubernetes: many kinds of objects and versioned API groups to say one thing. One model, few
-  concepts, the same verbs for a system, a home and a project.
-- Talos: an immutable core, but only reachable through its own API. Plain files, `why` and
-  `plan` before `apply`.
-- Container images: layers without provenance, and tags that move. Content addresses, and every
-  version in a lock.
-- Most package managers: one mutable global state, shaped by the order things were installed.
-  Generations, rollback, and nothing installed outside the model.
+- grapes has a file per package (0034) and is reached only through a lock, so changes don't
+  conflict and nothing moves under you. The host API's version turns "this set needs a newer
+  wrath" into an error up front.
+- Recipes and modules live together in grapes, so rules and what they build stay in step, and
+  there's one kind of dependency: a source pinned in a lock. Toolchains are recipes like any
+  other.
+- One model, few concepts, the same verbs for a system, a home and a project.
+- Plain files, `why` and `plan` before `apply`.
+- Content addresses, and every version in a lock.
+- Generations, rollback, and nothing installed outside the model.
 
 ## Alternatives
 
 - Modules in a repository of their own, apart from the recipes. Rules and what they build would
-  drift, as Bazel's do; a module names packages, units and files that change with the recipes.
+  drift; a module names packages, units and files that change with the recipes.
 - Keep one repository and one version. Simplest, but only a checkout builds, and the packages
   can't be pinned apart from the tool.
-- Channels, a set named by a moving branch. Nix's history says the lock is worth having first.
+- Channels, a set named by a moving branch. A lock is worth having first.
 - Modules with the tool and recipes in the set. The modules are what a system is, and they change
   with the recipes, not with the evaluator.
 

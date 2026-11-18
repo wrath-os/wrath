@@ -4,9 +4,9 @@ There are two ways onto a machine right now: boot a USB stick with wrath on it a
 the machine's disks, or run it in a VM. Both start the same way, with a configuration describing
 the machine, its disks included.
 
-Fair warning: installing onto disks is tested in VMs, encrypted disks, TPM unlock and all, but I
-haven't done it on real hardware yet. My desktop runs wrath from a USB stick for now. Expect
-rough edges, and don't point it at a disk with anything on it you care about.
+Fair warning: installing onto disks is tested in VMs, encrypted disks, TPM unlock and all, and
+on one real machine so far, my Framework desktop. Expect rough edges, and don't point it at a
+disk with anything on it you care about.
 
 ## Describe the disks
 

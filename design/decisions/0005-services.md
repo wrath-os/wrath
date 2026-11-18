@@ -16,10 +16,10 @@ Services show up in three places, which want different things:
 - A project's services, such as a database and a dev server. The same `distro.toml` has to work for
   everyone on the project, on any platform, and its services start and stop with the work.
 
-nix-darwin exposes launchd the way NixOS exposes systemd. Most NixOS service modules were never
-ported to it, and those that were got rewritten for launchd. A common layer over both would hide
-what makes each worth using, or keep growing escape hatches. devenv ran project processes with
-process-compose, and later replaced it with a manager of its own.
+macOS has launchd where Linux has systemd, and service modules written for one have to be
+written again for the other. A common layer over both would hide what makes each worth using, or
+keep growing escape hatches. process-compose already runs a project's processes the same way on
+both.
 
 ## Decision
 
@@ -72,7 +72,7 @@ behind the same services if it gets in the way. Services stop when `distro up` e
 - One portable service for every platform, including system services (the earlier proposal).
   One way to write services, but it hides systemd's features or keeps growing escape hatches, and
   system services are the place where those features matter.
-- Per-platform services everywhere, as NixOS and nix-darwin do. A project would need its services
+- Per-platform services everywhere. A project would need its services
   written once per platform, which doesn't work for a team on mixed machines.
 - distro's own supervisor for projects from the start. Not a second format either, but weeks of
   work that process-compose already does.

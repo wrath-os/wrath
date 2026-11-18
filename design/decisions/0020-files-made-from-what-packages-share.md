@@ -10,10 +10,10 @@ every package's schemas, and a GTK program aborts without it. The MIME database,
 GIO's module cache, gdk-pixbuf's loader cache and fontconfig's cache are the same kind of file.
 
 Each package can't make it alone, because the file covers all of them, and two packages shipping
-their own collide in the merge. NixOS compiles schemas per package and wraps each program to find
-its package's own; an unwrapped program crashes. It makes the MIME database and icon caches when
-it builds the system profile. Other distributions run the tools from package manager hooks as
-packages come and go, which leaves the result in mutable state.
+their own collide in the merge. One way is to compile schemas per package and wrap each program
+to find its package's own, making the MIME database and icon caches when the system profile is
+built. Another is to run the tools from package manager hooks as packages come and go, which
+leaves the result in mutable state.
 
 ## Decision
 

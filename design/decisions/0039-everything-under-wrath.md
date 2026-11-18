@@ -15,15 +15,13 @@ What others got wrong, or what confuses people about them:
 
 - `/store` is a generic name. NAS setups, container volumes and backup tools make one. On a
   system of our own that's tolerable; once wrath runs on another distribution, it claims a
-  common name on someone else's machine. Nix and Guix namespace theirs (`/nix/store`,
-  `/gnu/store`) for this reason.
-- Guix keeps its state in two roots, `/gnu/store` and `/var/guix`, so persisting or moving it
-  means knowing both.
-- Mutable records inside the store stop it from being mounted read-only. Nix keeps its records
-  in `/nix/var`, beside the store; ours were in `/store/.system`.
-- Nix's profiles are chains of links (`~/.nix-profile`, `per-user/NAME/profile`,
-  `profile-42-link`, then the store) that people find hard to follow.
-- NixOS's `/etc/static` doesn't say whose it is.
+  common name on someone else's machine. A store under the tool's own name avoids that.
+- State kept in two roots means persisting or moving it takes knowing both.
+- Mutable records inside the store stop it from being mounted read-only; ours were in
+  `/store/.system`.
+- Chains of profile links, from a home through several generations of links to the store, are
+  hard to follow.
+- A directory like `/etc/static` doesn't say whose it is.
 
 ## Decision
 
@@ -45,8 +43,8 @@ What others got wrong, or what confuses people about them:
 - `PATH` is `/run/wrath/wrappers/bin:/run/system/bin`.
 - `/run/system` stays short and outside `/run/wrath`: units, scripts and `PATH` name it, and it's
   the one path people type.
-- Store paths keep the hash first. Tab completion in the store lists hashes, which people
-  dislike in Nix, but the fixed-length prefix is what finding references and building at a
+- Store paths keep the hash first. Tab completion in the store lists hashes, which is awkward,
+  but the fixed-length prefix is what finding references and building at a
   path as long as the final one rely on; `wrath why` and `info` are the way to read the store.
 - The seed's path covers how it's prepared and where the store is, so a change to either
   prepares it again; the ready marker is keyed by that path.

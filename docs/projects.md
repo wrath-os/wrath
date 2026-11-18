@@ -2,8 +2,8 @@
 
 A project is a `wrath.toml` in a repository. It says which packages the project needs, which
 environment variables to set and which services to run while you work on it. Same TOML, same
-package names, same lock as a machine's configuration, just smaller. It's sort of what you'd use
-devenv, nix-shell or a `.tool-versions` file for.
+package names, same lock as a machine's configuration, just smaller: everyone who works on the
+project gets the same tools at the same versions.
 
 Something like:
 

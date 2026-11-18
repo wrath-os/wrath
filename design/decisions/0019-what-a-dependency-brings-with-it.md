@@ -10,10 +10,9 @@ A build sees only what its recipe lists (0014). That keeps builds honest, but a 
 a dozen packages it never asked for by name, and forgets one now and then. The desktop recipes
 show it: most of their failures were a missing transitive requirement.
 
-Nix asks packagers to list these by hand as propagated inputs. They get forgotten, which breaks
-builds, and they get overlisted, which spreads to every dependent. Fedora reads the `.pc` files
-and writes the dependencies itself. Distributions with one shared `/usr` mostly don't notice,
-because everything is installed.
+Listed by hand, these get forgotten, which breaks builds, and overlisted, which spreads to every
+dependent. Fedora reads the `.pc` files and writes the dependencies itself. Distributions with
+one shared `/usr` mostly don't notice, because everything is installed.
 
 We want the tool to carry this, without giving up what makes a build correct: the same inputs
 see the same view, and the key says what the view is.

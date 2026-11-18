@@ -22,7 +22,7 @@ that Nix, Bazel and Buck2 each come with more machinery.
 - Buck2 speaks only REAPI, because it was built around remote execution.
 - Nix uses S3 as a cache directly: a `narinfo` per path, signed, next to the archive. Cachix and
   Attic add push tokens for many users, garbage collection, chunks shared across versions of a
-  path, and one query for which of many paths are missing. Nix asks about each path in turn.
+  path, and one query for which of many paths are missing.
 
 So the machinery buys five things: remote execution, batched queries, the server deciding who
 writes, garbage collection, and sharing data across versions. For wrath:
@@ -190,5 +190,5 @@ trust scoped per cache; and normalized archives.
   it's a service to run, secure and keep up, for the one case the set doesn't cover.
 - REAPI, to share Bazel's and Buck2's caches and tools. It's a large protocol meant for remote
   execution, and its entries aren't signed, so the server would have to decide who writes.
-- Nix's layout as is. It verifies a path only by signature, and has no traces, so it couldn't
-  tell why two builders disagree.
+- A signed entry per path as the whole layout. A path would be verified only by signature, and
+  without traces there'd be no telling why two builders disagree.

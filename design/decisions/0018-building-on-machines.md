@@ -42,7 +42,7 @@ which keys a machine trusts, is the cache's own decision, together with the buil
 standalone homes wait on, since both decide who may put what into a store.
 
 **How a cache sends a path** (added 2026-11-13). Addresses stay one flat hash over a path's
-entries. Nix fetches a whole path, so one changed file in LLVM downloads all of LLVM again; Bazel
+entries. Fetching a whole path means one changed file in LLVM downloads all of LLVM again; Bazel
 and Buck2 store single files by digest and fetch only the ones missing. We get the second without
 changing addresses, by keeping a list of files next to each path:
 
@@ -53,12 +53,12 @@ changing addresses, by keeping a list of files next to each path:
   its address, which also checks the manifest, so the manifest needs no trust of its own.
 - A file is stored with references to its own path zeroed, as the address already hashes it, and
   the manifest lists the offsets. The same file in two versions of a package is then stored
-  once, and the machine writes the path back in as it assembles. Nix can't do that, because a
-  file that names its own path differs in every version.
+  once, and the machine writes the path back in as it assembles. Without the zeroing, a file
+  that names its own path would differ in every version.
 - The store keeps an index of file digests for this, which also lets identical files share one
   inode.
 - Later, if needed: content-defined chunks for large files that change a little between versions
-  (as Attic does for Nix), zstd, and not fetching what isn't needed: a machine applying wants the
+  (as Attic does), zstd, and not fetching what isn't needed: a machine applying wants the
   runtime closure only, and build-time dependencies of paths the cache has are never fetched.
 
 Merkle addresses, hashing each directory from its children, would add skipping a whole unchanged

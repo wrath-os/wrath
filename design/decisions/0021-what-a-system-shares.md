@@ -11,9 +11,9 @@ Data nothing refers to, such as the desktop schemas the GTK portal reads by name
 the machine unless named, because a package's run-time needs are found by scanning its files for
 store paths (0014). So modules name libraries for their data, which users would have to know.
 
-NixOS merges only the packages a system lists, and wraps each GTK program to name its
-dependencies' data; unwrapped programs fail. A package can ask for others to be installed beside
-it (`propagatedUserEnvPkgs`), and modules add packages for their data. Guix profiles take the
+One way merges only the packages a system lists and wraps each GTK program to name its
+dependencies' data, with packages asking for others to be installed beside them and modules
+adding packages for their data. Guix profiles take the
 listed packages and their propagated inputs, then make caches from them with profile hooks.
 Distributions with one `/usr` get it from installing: a library's data lands in `/usr/share`, and
 `Depends` brings data packages.

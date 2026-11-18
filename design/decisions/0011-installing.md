@@ -130,8 +130,8 @@ for it: a `@persist` subvolume can be there from the start.
 
 ## Rejected
 
-- disko. It covers more layouts today, but it's a NixOS module run through Nix, the layer distro
-  replaces, and it would be replaced later.
+- disko. It covers more layouts today, but it runs through the layer distro replaces, so it
+  would be replaced later.
 - Named layouts as the format (`layout = "btrfs-raid1"`). Short, but what a machine's disks look
   like would be hidden in distro's code. Included files give the same brevity, readable.
 - Device paths in roles. Machines with a role don't share device names.

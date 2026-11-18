@@ -21,9 +21,10 @@ store from scratch, and booted distro configurations with it:
   set.
 
 distro meanwhile carries two systems: its own model and modules, and a Nix flake that turns the
-model into a system. The second is now the part that most limits the measures in 0012: Nix
-evaluation sits in every apply, store paths and closures leak into what `plan` can say, and
-package builds can't be traced back to the configuration the way distro's own files can.
+model into a system. Keeping two systems in step is now the part that most limits the measures
+in 0012: an evaluation of the second sits in every apply, its store paths and closures shape
+what `plan` can say, and package builds can't be traced back to the configuration the way
+distro's own files can.
 
 ## Decision
 

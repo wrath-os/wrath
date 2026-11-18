@@ -5,7 +5,7 @@ Status: accepted, 2026-11-05 (spike S1)
 ## Context
 
 `plan` should feel instant after a one-line change, including on a machine with many modules.
-Nix's evaluation speed is one of the problems this project exists to fix. The plan called for a
+Speed is one of the things this project is measured on. The plan called for a
 salsa-style incremental engine with a persistent memo table, but only if evaluating from scratch
 turns out too slow.
 

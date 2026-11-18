@@ -12,7 +12,7 @@ directions, and the products the core has to allow, are in `vision.md`.
   "the firewall is on", "only these ports" or "nothing in `kernel.sysctl` is forced". The machine
   checks every configuration it's given after merging, so nobody who writes the configuration can
   get around it, and errors point at the TOML line that broke the rule. Policy doesn't change how
-  values merge. For fleets and Talos-like appliances; a single-owner machine doesn't need it.
+  values merge. For fleets and immutable appliances; a single-owner machine doesn't need it.
 - Settings changes under a second: change a theme in the TOML, save, and the editor or niri shows
   it right away. Evaluation already takes about 40 ms on the Framework config; the time goes
   around it. On 2026-11-12 a build of that config spent about 5.5 s before building anything

@@ -13,14 +13,13 @@ project and the packages it names have to work on aarch64 macOS, as nixpkgs does
 aarch64 Linux. Systems stay Linux.
 
 nixpkgs writes each package once and evaluates it once per platform. Most packages say nothing
-about the platform, because stdenv carries the compiler, libc, triple and linker flags. A few use
-`lib.optionals stdenv.isDarwin`. Two things there are hard to work with:
+about the platform, because the standard environment carries the compiler, libc, triple and
+linker flags. Two things wrath wants to keep simple:
 
-- Cross builds. Every dependency has to be sorted into build, host and target platforms
-  (`nativeBuildInputs`, `buildInputs`, `depsBuildBuild`, ...), and getting it wrong shows up as a
-  build that works natively and fails crossed. Few people understand the splicing behind it.
-- What a package does on one platform is only visible by evaluating it there and reading the
-  derivation, so a Linux user can't easily see why the macOS build differs.
+- Cross builds. With them, every dependency has to be sorted into build, host and target
+  platforms, and getting it wrong shows up as a build that works natively and fails crossed.
+- Seeing what a package does on one platform. If that's only visible by evaluating it there, a
+  Linux user can't easily see why the macOS build differs.
 
 "Platform" already names a set of modules (0030), so this uses "target".
 
@@ -112,7 +111,7 @@ needs work of its own, each piece its own decision when it's started:
 - A toolset: clang with Apple's linker or lld, against Apple's SDK and libSystem, which are
   Apple's and can't be built. How the SDK is fetched and pinned, and what its license allows, is
   open.
-- A sandbox. bubblewrap is Linux's; macOS has `sandbox-exec`, deprecated but what Nix uses. The
+- A sandbox. bubblewrap is Linux's; macOS has `sandbox-exec`, deprecated but still used. The
   builder already asks the sandbox for what a build may see (0018).
 - Where the store lives. `/store` at the root needs `synthetic.conf` and an APFS volume, as Nix
   does with `/nix`.
@@ -129,7 +128,7 @@ needs work of its own, each piece its own decision when it's started:
 
 ## Alternatives
 
-- Cross builds, as nixpkgs. They make one fast machine build for every target, but every recipe
+- Cross builds. They make one fast machine build for every target, but every recipe
   then has to sort its dependencies by role, and the failures appear only when crossed. Native
   builds, emulation and a cache cover the same need with nothing for recipe authors to learn.
   Cross building only the first toolset for a new target is still possible if a seed can't be

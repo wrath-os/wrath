@@ -25,8 +25,8 @@ when it's first fetched. That works for niri, but:
 - The recipe has to say where in the repository each crate is, and the `[patch]` that points
   Cargo at them changes the lock, so the build can't be `--locked`.
 
-Nix needed a hash for each git dependency written into the recipe (`outputHashes`), changed by
-hand with every update, or else fetched git while evaluating, which made evaluation impure.
+Pinning git dependencies by hand means a hash for each written into the recipe, changed with every
+update, and fetching git while evaluating makes evaluation impure.
 
 ## Decision
 

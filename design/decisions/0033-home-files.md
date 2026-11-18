@@ -11,17 +11,15 @@ each one from the home through `/run/system`: `~/.config/wezterm/wezterm.lua` po
 added or removed. A file of the user's own where a link would go is left alone, with a note. Only
 `users/<user>/bin` is written down (0016).
 
-home-manager builds a `home-manager-files` collection in the store and links each file in the
-home to it by its store path, so every activation rewrites every link, one at a time. A file in
-the way stops activation ("Existing file ... is in the way"), unless `-b backup` moves it aside or
-the file says `force = true`.
+Linking each file in the home to the store by its own store path means every activation rewrites
+every link, one at a time, and a file in the way has to stop activation, be moved aside, or be
+forced.
 
 Both point into a store that can't be written, which stops a program writing its file in place.
 It doesn't stop a program that saves by writing a new file and renaming it over the old one: the
 rename replaces the link, since the directory is the user's. VS Code's `settings.json`, GTK's
-`settings.ini`, `mimeapps.list` and KDE's files do this. Under home-manager the next activation
-then fails on the collision; here the next switch leaves the program's file and the setting stops
-applying, with only a note in the switch output.
+`settings.ini`, `mimeapps.list` and KDE's files do this. Here the next switch leaves the
+program's file and the setting stops applying, with only a note in the switch output.
 
 macOS needs the same files without a system that manages the home (0032), and standalone homes
 (0006) are to come back.
@@ -71,17 +69,17 @@ So distro chooses where the program's writes go, and says when they went somewhe
 
 ## Alternatives
 
-- Links straight to store paths, as home-manager does. Each switch then rewrites every link, and
-  a switch cut short leaves a home half old and half new.
+- Links straight to store paths. Each switch then rewrites every link, and a switch cut short
+  leaves a home half old and half new.
 - Copies everywhere. Programs could write them, but distro would have to compare every file at
   every switch, and rollback would have to put copies back.
-- Failing the switch on a replaced link, as home-manager does. It stops a whole system switching
-  because of one program's file.
+- Failing the switch on a replaced link. It stops a whole system switching because of one
+  program's file.
 
-- Links to a file in the configuration's checkout instead of the store, as home-manager's
-  `mkOutOfStoreSymlink`, so edits apply at once and a program's saves show in `jj diff`. A
-  rollback wouldn't take the file back, and it works only on the machine with the checkout, never
-  through `apply --host`. `apply --watch` covers editing live.
+- Links to a file in the configuration's checkout instead of the store, so edits apply at once
+  and a program's saves show in `jj diff`. A rollback wouldn't take the file back, and it works
+  only on the machine with the checkout, never through `apply --host`. `apply --watch` covers
+  editing live.
 - A command that puts the system's file back, or a switch that asks for each. The `mv` in the note
   does the same with nothing new to learn; either can come if that gets tedious.
 

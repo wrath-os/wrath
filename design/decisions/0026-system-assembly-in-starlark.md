@@ -61,8 +61,8 @@ Discipline:
 - A piece moves only when a module would own it. Rust that only writes a format, such as the
   cpio writer, stays.
 
-Plan stays fast and says what changes. Nix's import-from-derivation lets evaluation wait on a
-build, so its evaluation gets slow and a plan can't be made without building. Here:
+Plan stays fast and says what changes. If evaluation could wait on a build, it would get slow and
+a plan couldn't be made without building. Here:
 
 - Plan never builds and never runs an action. The graph's shape, meaning which actions exist and
   what each reads, comes from the model and the recipes alone. An action's result can't add

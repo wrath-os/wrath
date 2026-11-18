@@ -19,10 +19,9 @@ whole toolchain. The same goes for a machine installed from that image, one swit
 `apply --host`, and a plan on any machine without a cache: each answers "what do I have" by
 resolving the whole build graph.
 
-Bazel and Nix don't have this. A Bazel action key is a digest of its inputs' digests, and a Nix
-derivation hash is a hash of its inputs, so neither looks inside a dependency to name a build.
-Nix's content-addressed derivations do, and they have the same need: resolving one requires the
-realisations of its inputs.
+A key that is a digest of its inputs' digests doesn't look inside a dependency to name a build.
+Content-addressed builds do, and they all have this need: resolving one requires what its inputs
+resolved to.
 
 ## Decision
 
@@ -102,7 +101,7 @@ The first cut, 2026-11-16, found a whole system or nothing:
 
 - Cache hints. A trace that names the unresolved key it was built for, under its signature, would
   let a machine follow a cache's hint without trusting it about which build that is.
-- Build descriptions, like Nix's derivations: writing down what a key hashes, so keys can be
+- Build descriptions: writing down what a key hashes, so keys can be
   compared between machines, checked, and sent to a builder without the recipes. That's its own
   decision.
 
@@ -112,5 +111,5 @@ The first cut, 2026-11-16, found a whole system or nothing:
   cache's. It fixes images, `install` and `apply --host`, but every plan still resolves the whole
   graph, and a machine without an image's listings, or a cache, is back where it started.
 - Images bring the tools themselves. Rust alone is 389 MB.
-- Naming builds by unresolved key only, as Nix does. A change anywhere below would then rebuild
+- Naming builds by unresolved key only. A change anywhere below would then rebuild
   everything above it, which store.md measured: a zlib comment rebuilt 23 packages instead of 1.

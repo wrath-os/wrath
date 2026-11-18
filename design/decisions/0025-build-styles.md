@@ -11,9 +11,9 @@ whose locks are read in Rust (about 200 lines). The weight is repetition in the 
 - An identical 20-line Cargo vendoring block appears in 7 recipes.
 - The Go proxy setup appears in 3.
 
-Adding a language today means writing Rust. Nix and Bazel show the other extreme: a large shared
-library of build functions, with overrides, overlays and rule sets released apart from the core,
-that every user depends on and nobody can read whole.
+Adding a language today means writing Rust. The other extreme is a large shared library of build
+functions, with overrides, overlays and rule sets released apart from the core, that every user
+depends on and that's too big to read whole.
 
 ## Decision
 

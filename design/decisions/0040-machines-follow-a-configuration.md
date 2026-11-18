@@ -6,26 +6,23 @@ Status: accepted, 2026-11-17.
 
 A machine applies what's in `/etc/wrath`, a copy made at install, or what `-C DIR` names. To
 upgrade, someone has to put a newer configuration on the machine first, or push one with
-`apply --host`. People who run NixOS from a configuration repository usually work like this:
+`apply --host`. People who run machines from a configuration repository usually work like this:
 install from a checkout, then upgrade from the repository's URL with no checkout on the machine,
 and on some machines let a timer do that daily. wrath has no way to say "upgrade from there".
 
-What others got wrong, or what people trip over:
+What an upgrade from a repository has to get right:
 
-- NixOS's `system.autoUpgrade` with a flake usually adds `--update-input nixpkgs`, so machines
-  run a lock nobody committed or reviewed, and two machines on one repository differ. Without it,
-  writing the lock of a remote flake fails, which is why `--no-write-lock-file` exists.
-- It fails quietly: a broken upgrade is a line in the journal, and the machine stays behind for
-  weeks unnoticed.
-- `allowReboot` reboots when the timer fires, whatever the person is doing.
-- Which commit a NixOS machine runs is unknown unless `system.configurationRevision` is set by
-  hand.
-- An upgrade from the repository silently undoes a change applied from a local checkout the
+- Machines run the lock that was committed and reviewed, so two machines on one repository run
+  the same thing, and nothing writes a lock on the machine.
+- A broken upgrade is noticed. A line in the journal leaves the machine behind for weeks.
+- A reboot doesn't happen whenever the timer fires, whatever the person is doing.
+- Which commit a machine runs is known without setting anything by hand.
+- An upgrade from the repository doesn't silently undo a change applied from a local checkout the
   night before.
-- Private repositories need a token in `nix.conf`, separate from the configuration.
-- bootc and rpm-ostree do better: the machine records its origin and `bootc status` shows it,
-  updates are staged for the next boot by default, and `bootc switch` changes the origin.
-  GitOps tools (Flux, Argo) show the last applied revision and its error, and pausing is explicit.
+- A private repository's token is part of the configuration.
+- The machine records its origin and shows it, updates are staged for the next boot by default,
+  and the origin can be changed, as bootc does. The last applied revision and its error are
+  visible, and pausing is explicit, as GitOps tools (Flux, Argo) have it.
 
 ## Decision
 
@@ -68,7 +65,7 @@ What others got wrong, or what people trip over:
   wrath never reboots by itself.
 - Each automatic run's result is kept, and `status` shows the last one. A failure also shows at
   login, so a machine that stopped upgrading doesn't go unnoticed.
-- Automatic upgrades run whatever the running system came from, as NixOS's do. Someone trying a
+- Automatic upgrades run whatever the running system came from. Someone trying a
   checkout by hand stops `wrath-upgrade.timer` meanwhile, which the docs say. (At first they
   paused while the system came from somewhere other than `from`; see Built so far.)
 
@@ -146,7 +143,7 @@ What others got wrong, or what people trip over:
 - Recording `from` on the machine only (bootc's origin). The configuration couldn't say it, so
   a machine installed from a checkout would need a flag, and moving machines to another URL
   would mean visiting each one.
-- Pushing instead of pulling (Talos, `apply --host`). It stays for one-off changes, but a fleet
+- Pushing instead of pulling, as `apply --host` does. It stays for one-off changes, but a fleet
   then needs something that pushes on a schedule and knows every machine.
-- Following the newest grapes on the machine (NixOS's `--update-input`). Machines would run
+- Following the newest grapes on the machine. Machines would run
   locks nobody reviewed.

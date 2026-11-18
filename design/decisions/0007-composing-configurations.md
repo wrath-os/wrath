@@ -21,8 +21,8 @@ project's development environment.
   systemd drop-ins) hide changes: when a base changes a value an overlay also sets, nobody
   notices. Kustomize's patches also depend on merge keys the reader can't see, and a patch that
   matches nothing does nothing.
-- Numeric priorities (NixOS's `mkDefault`, `mkForce`, `mkOverride 60`) work, but people misread
-  them, and nixpkgs keeps adding levels in between.
+- Numeric priorities (a default, a force, and numbered levels between). They work, but they're
+  easy to misread, and the levels tend to multiply.
 - CUE's unification is closest to what we have: concrete values can't be overridden, and there's
   one default level. But two defaults that disagree cancel out, so a base, a host and a user can't
   each provide a default.

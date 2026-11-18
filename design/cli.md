@@ -208,7 +208,7 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
   ```
 
 - Each command is a call on a library, and later on a local daemon. The CLI, a GUI installer,
-  editor plugins and a Talos-style remote API all use the same calls.
+  editor plugins and a remote API all use the same calls.
 
 ## For contributors
 

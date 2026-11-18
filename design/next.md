@@ -1,22 +1,19 @@
 # What next: from the reviews and the research
 
-Four reviews (a NixOS user, a platform engineer, a build-systems engineer, a new user with only
-the docs) and three research passes (the builder, configuration, fleets) fed this. Each section
-says what's wrong, what others do, the options, a recommendation, and what's open. The quick
-fixes are done; this is what needs deciding.
+Four reviews (a user of another declarative system, a platform engineer, a build-systems
+engineer, a new user with only the docs) and three research passes (the builder, configuration,
+fleets) fed this. Each section says what's wrong, what others do, the options, a
+recommendation, and what's open. The quick fixes are done; this is what needs deciding.
 
 ## Short answers first
 
-- **Typo'd groups.** NixOS silently drops a name in `extraGroups` that no `users.groups` entry
-  declares; only a missing primary group is an assertion (users-groups.nix,
-  update-users-groups.pl). grapes is worse today: any name becomes a new group with a gid.
-  Recommendation: a group must be declared, by a module, by systemd's own sysusers files (audio,
-  video, input, kvm, render, tty, disk), or as `groups.NAME = {}` in the configuration; anything
-  else is an error at the user's line with a did-you-mean.
-- **Time zones.** NixOS checks only that there's no space (`addCheck str nospace` in
-  locale.nix) and links blindly. grapes already checks the shape. A real check needs tzdata's list
-  of zones at plan time, which the provides index below gives for free; until then, nothing cheap
-  and correct.
+- **Typo'd groups.** In grapes today any name becomes a new group with a gid, so a typo goes
+  unnoticed. Recommendation: a group must be declared, by a module, by systemd's own sysusers
+  files (audio, video, input, kvm, render, tty, disk), or as `groups.NAME = {}` in the
+  configuration; anything else is an error at the user's line with a did-you-mean.
+- **Time zones.** grapes checks the shape of a zone's name. A real check needs tzdata's list of
+  zones at plan time, which the provides index below gives for free; until then, nothing cheap and
+  correct.
 - **"rendered by modules X and Y".** It's an error, not information: two writers of one file. It
   should point at the user's TOML when one writer is the configuration, and say how to take the
   file over (see Escape hatches).
@@ -31,10 +28,9 @@ Without one, every machine builds the world (about two hours now); three of four
 it the blocker. 0018 designs a per-file manifest cache keyed by the unresolved key; 0038 proposes
 the cache in a bucket, from what follows.
 
-What the research changes: Nix just dropped "deep realisations", the unresolved-key-to-address
-mapping 0018 describes, because an unresolved key hides which dependency outputs went in, so two
-honest builders disagree with no way to tell why (Nix 2.35 "build traces"). Nix now keys traces
-on resolved inputs only.
+What the research changes: an unresolved-key-to-address mapping, as 0018 describes, hides which
+dependency outputs went in, so two honest builders can disagree with no way to tell why. Keying
+traces on resolved inputs only avoids that.
 
 Recommendation:
 
@@ -42,8 +38,8 @@ Recommendation:
   content addresses). A client walks the graph from the seed: compute a build key, look it up,
   take the addresses, go on; one batched lookup per level.
 - The unresolved key -> build key index stays, unsigned, as a hint to skip work.
-- Traces are append-only: several signed traces for one key are kept, never overwritten (Nix's S3
-  bug #13037 is the overwrite). Two traces that disagree are a reproducibility report for free.
+- Traces are append-only: several signed traces for one key are kept, and none is overwritten.
+  Two traces that disagree are a reproducibility report for free.
 - Files go up openly; the manifest and address verify them. Only traces need a signature, from a
   key the machine lists.
 - Keep 0018's per-file manifests with self-references zeroed: that removes the store-path churn
@@ -57,9 +53,9 @@ machines trust one key or K-of-N.
 Builds run one package at a time, and `NPROC` is fixed at 32. A world rebuild that takes two
 hours is mostly waiting.
 
-Others: Nix multiplies `max-jobs` by `cores` (oversubscribes); nixpkgs dropped load averages as
-wrong; Gentoo's `--load-average` lags; Bazel admits actions against declared resources. GNU make
-4.4, Ninja 1.13, cargo and rustc all speak a FIFO jobserver now.
+Others: jobs times cores per job oversubscribes; load averages lag behind what's running; Bazel
+admits actions against declared resources. GNU make 4.4, Ninja 1.13, cargo and rustc all speak a
+FIFO jobserver now.
 
 Recommendation: wrath owns one jobserver FIFO with as many tokens as the machine has cores, and
 mounts it into every build (`MAKEFLAGS=--jobserver-auth=fifo:...`). A package starts when it gets
@@ -74,8 +70,8 @@ Rust code and a world rebuild.
 
 Others: Guix declares `search-paths` on the package that reads the variable (python declares
 `PYTHONPATH` over `lib/python*/site-packages`), expanded over every input that has the
-directories, at build time and in profiles. Nix setup hooks (shell from dependencies) are what not
-to do; even the manual says they obscure inputs. Bazel providers are more than this needs.
+directories, at build time and in profiles. Shell code injected by dependencies hides what a build
+takes in. Bazel providers are more than this needs.
 
 Recommendation: Guix's design, as data on the consuming recipe:
 
@@ -92,8 +88,8 @@ specs at run time (0020's indexes), so `GI_TYPELIB_PATH` and friends work on the
 ## 4. Planning without sources
 
 Styles read a package's source (Cargo.lock, meson.options) to write its script, so computing
-keys needs every source tarball, even for packages a cache would supply. It's Nix's
-import-from-derivation; nixpkgs bans it because evaluation becomes unbounded.
+keys needs every source tarball, even for packages a cache would supply, and planning becomes
+unbounded.
 
 Bazel's answer is closest to ours: module extensions read sources in a fetch phase and record the
 result in `MODULE.bazel.lock`.
@@ -109,8 +105,8 @@ cache as an accelerator.
 the world. Hashing the builder's source into every key (as graph.rs does) would rebuild the world
 on a comment change.
 
-Others: Guix puts its build-side code into each derivation; Nix keeps fixups in stdenv, a hashed
-input; Bazel salts.
+Others: Guix puts its build-side code into each derivation; fix-ups kept in a hashed common input
+are another way; Bazel salts.
 
 Recommendation: post-processing becomes its own step. The build makes a raw output, keyed without
 post-processing; a fix-up step keyed by (raw output address, hash of the fix-up code) makes the
@@ -123,7 +119,7 @@ comment change reruns fix-ups, not compiles. Keep the golden test as a tripwire.
 Today `[builds.NAME]` makes a differently built package under a new name that only that one uses;
 patching openssl for everything means forking grapes. 0025 rules out an override layer.
 
-Others: nixpkgs overlays (fixpoints, infinite recursion, no idea what rebuilds); Guix
+Others: overlays as fixpoints, where what rebuilds is hard to see; Guix
 `package-input-rewriting` and `--with-input` (clean, rebuilds everything); Guix grafts (security
 fixes without rebuilding, by rewriting references, ABI-compatible only); Bazel's
 `single_version_override`, honoured only in the root module.
@@ -143,9 +139,9 @@ in the plan, only as a security stopgap until the rebuild lands.
 
 ## 7. Escape hatches in modules
 
-A module that lacks a knob means writing a platform. NixOS users lean on `lib.mkForce` on a file
-and per-key `serviceConfig` merging; RFC 42's freeform `settings` mostly worked, with the caveat
-that settings aren't checked until the program reads them.
+A module that lacks a knob means writing a platform. Common answers are forcing a file's value,
+merging unit keys one by one, and freeform `settings`, which aren't checked until the program
+reads them.
 
 Recommendation, all with the existing `force` from 0007, no priorities and no disable lists:
 
@@ -159,9 +155,8 @@ Recommendation, all with the existing `force` from 0007, no priorities and no di
 ## 8. Finding packages
 
 No `search`, no "which package has `rg`". Everyone splits this in two: search from metadata, and
-"provides" from file lists of built outputs, shipped as a separate index (apt-file's Contents,
-dnf's filelists, nix-index-database). command-not-found broke for flakes because its index was
-tied to channels.
+"provides" from file lists of built outputs, shipped as a separate index. An index has to match
+the revision a machine pins, or its answers go stale.
 
 Recommendation: `wrath search` reads recipes (0034's index), no evaluation. A provides index is
 built from build outputs' manifests and published with each grapes revision, pinned in the lock
@@ -194,7 +189,7 @@ Recommendation, keeping one model:
   re-hashes store paths and diffs rendered files in `/etc` against the generation, pointing at the
   TOML that owns each.
 - Secrets are encrypted to the roles and machines whose model uses them, which the evaluator
-  already knows (agenix-rekey's idea, done properly); role keys for interchangeable machines.
+  already knows; role keys for interchangeable machines.
 - `install --set k=v` and a run-once first-boot source (Ignition's rules: fail closed, never
   re-read) both write `machine.toml`, checked against the role's `[machine.values]`.
 - A/B images stay a platform for later, where every plan is tier reboot.
@@ -203,12 +198,12 @@ Recommendation, keeping one model:
 
 Two words mislead rather than just being unfamiliar:
 
-- **platform** means CPU and OS to everyone from Nix, Rust and LLVM. The key could say what it
-  is: `modules = { source = "acme" }`.
+- **platform** means CPU and OS to most build tools, Rust and LLVM among them. The key could say
+  what it is: `modules = { source = "acme" }`.
 - **tier** has no common equivalent; tools describe the effect. Plans could say "takes effect:
   now / on restart / after a soft reboot / after a reboot", with the noun only in reference docs.
 
-Keep **generation** (Nix, Guix and home-manager users know it) and **home**. Say "base system",
+Keep **generation** (users of other declarative systems know it) and **home**. Say "base system",
 never "base" alone. Keep **grapes** as the repository's name, and say "package set" in output.
 
 ## 11. The recipe format, before it grows
@@ -248,11 +243,11 @@ refuses any write to the configuration's lock or a recipe's; a package's search 
 declarations are in its own unresolved key, so dependents see them however the dependency got
 into their view; syncthing has a recipe; four recipes propagate what their headers include.
 
-A third, short round on those: all four happier. The NixOS user calls strip fixed properly but
-won't move without a cache and overlays; the fleet engineer finds `--locked` sound; the Bazel
-engineer finds the search path keying sound and now wants scheduling most; the newcomer likes
-one `--locked` and `clean` reclaiming images. What they found, fixed the same night: with locks
-only read, a pin in another recipe's lock was accepted for this one, so `dev lint --locked`
+A third, short round on those: all four happier. The declarative-systems user calls strip fixed
+properly but won't move without a cache and overlays; the fleet engineer finds `--locked` sound;
+the Bazel engineer finds the search path keying sound and now wants scheduling most; the newcomer
+likes one `--locked` and `clean` reclaiming images. What they found, fixed the same night: with
+locks only read, a pin in another recipe's lock was accepted for this one, so `dev lint --locked`
 missed a lock lacking it; the error blamed a pinned grapes even in a checkout; `-o` linked an
 image that `clean` could then remove, so it copies an image now. Since: `STRIP` resets what it
 read between files, which changes every key, and a plan only reads locks, fetching nothing,

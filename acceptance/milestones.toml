@@ -8,7 +8,7 @@ title = "Compiler core and language choice"
 
 [[milestone]]
 id = "m3"
-title = "NixOS backend in a VM"
+title = "Systems in a VM"
 
 [[milestone]]
 id = "m4"

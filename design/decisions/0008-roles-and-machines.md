@@ -5,8 +5,8 @@ Status: accepted, 2026-11-07.
 ## Context
 
 People with more than one machine keep them in one repo, so shared settings are written once.
-NixOS needs an output per machine (`nixosConfigurations.<host>`), even when machines differ only
-in their hostname. With tens or hundreds of machines that are interchangeable, a file per machine
+An output per machine works for a few, even when machines differ only in their hostname. With
+tens or hundreds of machines that are interchangeable, a file per machine
 breaks down, and every machine gets its own build even when the systems are the same.
 
 A configuration today describes one machine, starting from `system.toml`, and facts such as the
@@ -132,7 +132,7 @@ reach other machines.
 
 ## Rejected
 
-- A file per machine, as NixOS does. It doesn't scale to interchangeable machines, and gives each
+- A file per machine. It doesn't scale to interchangeable machines, and gives each
   machine its own build.
 - A directory per machine (`hosts/neptune/system.toml`). Shared users and services would need an
   include in every machine.

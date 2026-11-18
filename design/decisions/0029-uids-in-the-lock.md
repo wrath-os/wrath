@@ -8,8 +8,8 @@ Users got uids from 1000 in the order of their names, and extra groups gids from
 way. Adding `aaron` gave everyone after him a new uid, so their homes and files belonged to
 someone else. The `uid`, `group` and `system` options weren't read.
 
-NixOS gives a user without a `uid` the next free one and records it in `/var/lib/nixos/uid-map`,
-keeping a removed user's uid so it isn't handed to someone new. That map is state on the
+Giving a user without a `uid` the next free one, and recording it in a map on the machine that
+keeps a removed user's uid so it isn't handed to someone new, makes that map state on the
 machine: wipe it, or forget to keep it on an erased root, and uids can come out differently.
 Userborn and the systemd-sysusers mode read the machine's own `/etc/passwd` instead, which is
 still state on the machine.

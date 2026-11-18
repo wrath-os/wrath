@@ -69,9 +69,8 @@ isn't told.
 - configure looks for `x86_64-pc-linux-gnu-gcc` and finds a compiler that isn't the wrapper
   (libqalculate). The wrapper answers to the target-named compilers too.
 
-nixpkgs does the first two with setup hooks, code each package injects into its dependents'
-builds. That's flexible and hard to follow. Here the builder does it, in one place, for every
-build.
+Here the builder does it, in one place, for every build, rather than each package injecting code
+into its dependents' builds.
 
 Then the recipes' own `ACLOCAL_OPTS`, `PYTHONPATH` and `CC_FOR_BUILD` go.
 
@@ -86,8 +85,8 @@ Then stb's `whole = true` goes.
 ### 7. Checks that fail at build time, not on the machine (no rebuild)
 
 - A prebuilt package: every library it needs resolves, and every undefined function is defined by
-  one (`ldd -r` in the sandbox, now that ldd works). nixpkgs' autoPatchelfHook checks libraries;
-  this also checks functions, which is what bit Zen.
+  one (`ldd -r` in the sandbox, now that ldd works). Checking functions as well as libraries
+  catches what bit Zen.
 - Headers a package installs that include a dependency's header its `.pc` doesn't name
   (libqalculate's `gmp.h`): a warning naming the dependency to propagate, logged, for this rebuild;
   an error once the log shows it's right. Explicit, rather than the builder propagating on its
@@ -127,8 +126,7 @@ A configuration that names no grapes builds on `wrath-os/grapes`, as it builds o
 without naming them. The first command that needs it pins it in the lock like any source, so
 `wrath update grapes` and rollback work, and the TOML stays clean.
 
-Flake registries let `nixpkgs` mean something unpinned and global; here the pin is written the
-moment it's used, and nothing global decides it.
+The pin is written the moment it's used, and nothing global decides it.
 
 When `--source` or `WRATH_GRAPES` replaces the pin, plan and build say so: "grapes from ../grapes,
 not the pinned version". The `share/wrath/modules` fallback goes, leaving one way to find modules.

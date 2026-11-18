@@ -52,14 +52,13 @@ until then.
 
 - Modules change their paths once: `PATH` in the environment and PAM modules, `ExecStart` lines
   that name programs, polkit, fonts and graphics. Tests that check paths change with them.
-- Software that guesses NixOS paths, such as `/run/current-system/sw/share`, won't find them.
-  That's the same as on any non-NixOS system.
+- Software that guesses the old paths, such as `/run/current-system/sw/share`, won't find them.
 - Documentation, the handbook and error messages name the new paths.
 
 ## Alternatives
 
-- Keep NixOS's names. Familiar to NixOS users and no work now, but distro is a different system,
-  and every name it inherits is one more thing to explain as "it's like NixOS".
+- Keep the inherited names. Familiar to some and no work now, but distro is its own system, and
+  every inherited name is one more thing to explain.
 - A merged view at `/usr` for compatibility, as a conventional distribution has. Programs would
   find each other without paths, but `/usr` would become a second way of naming what's in the
   store, and builds could start depending on it again, which the store was built to prevent.

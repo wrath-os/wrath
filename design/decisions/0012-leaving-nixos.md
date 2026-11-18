@@ -15,16 +15,14 @@ time. Today most of a machine still comes from NixOS modules:
   `switch-to-configuration`, the initrd, boot entries, the PAM, dbus, getty and nscd baseline,
   and `nixos-install`.
 
-The common complaints about NixOS come from this layer:
+What distro wants from this layer, and already has for what it renders itself:
 
-- Evaluating the module system takes seconds.
-- Nobody can say ahead of time what a switch restarts.
-- Option priorities and merging are hard to follow.
-- An error points into nixpkgs instead of at the user's configuration.
+- Evaluation that takes milliseconds.
+- Saying ahead of time what a switch restarts.
+- Values that merge in a way anyone can follow.
+- Errors that point at the user's configuration.
 
-distro already does these better for what it renders itself, and the rest should follow.
-
-distro has to be much better than NixOS, or there is little point to it. What it is measured on:
+What distro is measured on:
 
 1. A familiar, simpler language: TOML for configuration, Starlark for modules.
 2. Speed: evaluating a configuration and updating a system.
@@ -37,7 +35,7 @@ distro has to be much better than NixOS, or there is little point to it. What it
 There are two targets:
 
 - Desktops and laptops, changed in place and often.
-- Servers run like cattle, in the way Talos runs them: one image per role, identical machines, and
+- Servers run like cattle: one image per role, identical machines, and
   updates rolled out instead of edited in place.
 
 Both have to stay declarative and traceable. Every package and every file on a machine comes from
@@ -193,14 +191,12 @@ The steps:
 ## Rejected
 
 - Keeping NixOS modules and generating them faster. Evaluation would get faster, but activation
-  would stay opaque and errors would still point into nixpkgs.
+  and errors would stay outside what distro's model can explain.
 - dracut or mkosi for the initrd. dracut is shell scripts with their own conventions, and mkosi
   builds from another distribution's packages. A systemd initrd described by the model is smaller
   and fits the rest.
-- An API daemon on servers instead of SSH, as Talos has. It may come later, with the server
-  decision.
-- Replacing the Nix store now. The store works. What makes NixOS slow and hard to follow is the
-  layer above it.
+- An API daemon on servers in place of SSH. It may come later, with the server decision.
+- Replacing the Nix store now. The store works; what distro needs to own is the layer above it.
 
 ## Consequences
 
@@ -211,4 +207,4 @@ The steps:
   their remaining Nix into TOML and modules before step 7.
 - Running the locked distro means a checkout of any age keeps building, as long as a cache or its
   sources still have the pieces.
-- `plan` becomes the full account of a switch, which NixOS can't give.
+- `plan` becomes the full account of a switch.

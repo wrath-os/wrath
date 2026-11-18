@@ -8,9 +8,9 @@ last section.
 ## What wrath is
 
 A toolkit for building operating systems that are declared, locked, built from source and
-traceable to their configuration. NixOS is one thing you could build with it. The aim is that
-you can build more: a finished desktop, a Talos-like appliance, a fleet of identical servers, or
-a downstream distribution with its own base, all on one core, one model and one set of verbs.
+traceable to their configuration. The aim is that you can build many kinds of system with it: a
+finished desktop, an immutable appliance, a fleet of identical servers, or a downstream
+distribution with its own base, all on one core, one model and one set of verbs.
 
 The core is small and stays in Rust: the store, the builder and sandbox, keys and the cache,
 evaluation and the lock, generations, activation and boot entries. Everything a person might
@@ -40,11 +40,10 @@ system should never mean forking the core.
 
 ### A finished desktop
 
-Omarchy shows that taste and a finished first hour can win with no new technology underneath:
-a keyboard-first tiling desktop that works on day one, one launcher for apps and system actions,
-themes done for you, approachable docs, a bare mode, and a full reset. Its weak spots are what
-wrath is built for: Arch's rolling breakage, dotfiles you can't diff, and plugins nobody
-reviews.
+Taste and a finished first hour matter as much as technology: a keyboard-first tiling desktop
+that works on day one, one launcher for apps and system actions, themes done for you,
+approachable docs, a bare mode, and a full reset. wrath adds what a description brings: updates
+that roll back, settings you can diff, and every piece reviewed in a plan.
 
 On wrath that's a product: one line (`[desktop] session = "niri"` or a named desktop) brings a
 curated whole, and every piece of it can be overridden in TOML, diffed in a plan and rolled
@@ -53,14 +52,13 @@ at every boot. What it needs from the core: fast files-only switches (`ideas.md`
 say how a program picks up a change, homes of their own for per-user settings, and an install
 flow a person can follow.
 
-### Appliances, as Talos does them
+### Appliances
 
 One signed immutable image per role, managed through an API with no shell, A/B updates that roll
-back on a failed boot, and a machine config applied with modes (live, next boot, try). What wrath
-takes from Talos: one declared state, apply modes, a content hash naming a system definition
-(Talos's schematic), and images as an output. What it avoids: extensions locked to an exact
-release and rebuilt by hand (ours rebuild with the system), and no way to debug (a supported
-debug container, chosen by the platform).
+back on a failed boot, and a machine config applied with modes (live, next boot, try). One
+declared state, a content hash naming a system definition, and images as an output. Extensions
+rebuild with the system, and a supported debug container, chosen by the platform, is how a
+machine with no shell gets looked into.
 
 What it needs from the core:
 
@@ -117,8 +115,8 @@ built yet.
 ## Where wrath stands against the hard questions
 
 - **Is it architecturally different?** Yes: its own store, builder, keys, traces and model.
-- **Who is it for?** Developers who want NixOS's guarantees without Nix, and people building
-  systems of their own. The first is a crowded, demanding audience; the second is where the
+- **Who is it for?** Developers who want a declared, locked system they can roll back, and people
+  building systems of their own. The first is a demanding audience; the second is where the
   toolkit wins.
 - **How do people move to it?** The weakest point today. It needs desktop apps from Flatpak while
   recipes catch up, homes and project shells that run on other distributions, and an install that

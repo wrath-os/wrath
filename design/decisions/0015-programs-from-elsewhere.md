@@ -15,9 +15,9 @@ or directory" for a file that is plainly there. Statically linked programs, such
 and some from Rust, already work.
 
 People will want to run such programs: a vendor's CLI, a language toolchain's prebuilt
-compiler, a game. NixOS answers with nix-ld, a loader at `/lib64` that reads a library path from
-an environment variable the system sets, and with steam-run and buildFHSEnv, which run a
-program in a namespace that looks like a conventional distribution.
+compiler, a game. Two known answers: a loader at `/lib64` that reads a library path from an
+environment variable the system sets, and running the program in a namespace that looks like a
+conventional distribution.
 
 ## Decision
 
@@ -69,9 +69,9 @@ like any other, on the `live` tier.
   start themselves again by that path break.
 - glibc's loader at `/lib64` unchanged, with `/etc/ld.so.cache`. Every program on the machine,
   including ours, would then consult a cache.
-- An environment variable for the library path, as nix-ld does. It leaks into children, which
+- An environment variable for the library path. It leaks into children, which
   then load the wrong libraries when they're our own programs.
-- Only a namespace that looks like a conventional distribution, as buildFHSEnv does. That covers
+- Only a namespace that looks like a conventional distribution. That covers
   more programs, but needs a wrapper command for each, and nothing runs when started directly.
   It fits as a second step for the programs the loader doesn't cover.
 - Patching each program's interpreter and run path on download, as patchelf does. Works for one

@@ -6,12 +6,12 @@ Status: accepted, 2026-11-07. Homes of their own, `home.toml`, are dropped for n
 
 A system configuration describes users' homes today: `users/john.toml` holds john's packages,
 files, git settings, services and session variables, and `distro apply` as root puts them in
-place. That's what NixOS with home-manager as a module does, and it suits a machine you own.
+place. That suits a machine you own.
 
 It doesn't cover a machine you don't administer, or macOS where there may be no system
-configuration at all. home-manager answers that with a standalone mode, and the two modes
-differ in small ways that confuse people: different commands, different generations, options
-that only work in one of them. We want to avoid that.
+configuration at all. A second, standalone mode for homes would answer that, but two modes tend
+to differ in small ways that confuse people: different commands, different generations, options
+that only work in one of them. We want one way.
 
 `distro add --home john jq` (added with `add`) edits john's packages in the system
 configuration. Once standalone user configurations exist, there would be a second way to give
