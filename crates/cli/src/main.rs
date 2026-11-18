@@ -162,11 +162,14 @@ enum Command {
     Build {
         /// Packages to build instead of the system, such as `jq`
         packages: Vec<String>,
+        /// Every package grapes has a recipe for, instead of the system, as a cache's builder does
+        #[arg(long, conflicts_with_all = ["packages", "image"])]
+        all: bool,
         /// A disk image of the system, to write to a USB stick or boot in a VM
         #[arg(long, conflicts_with = "packages")]
         image: bool,
         /// Link what was built at this path, or in this directory under its own name; an image is
-        /// copied there instead
+        /// moved there instead
         #[arg(short = 'o', long = "link", value_name = "PATH")]
         link: Option<PathBuf>,
         /// Then run each package's smoke commands, and its own tests in a build of it thrown away
@@ -684,11 +687,21 @@ fn run() -> ExitCode {
         Command::Keep => generations::keep(),
         Command::Build {
             packages,
+            all,
             link,
             check,
             ..
-        } if !packages.is_empty() => package_context(cli.config.as_deref(), &modules)
-            .and_then(|(model, _)| run::built(&model, &packages))
+        } if all || !packages.is_empty() => package_context(cli.config.as_deref(), &modules)
+            .and_then(|(model, _)| {
+                let packages = if all {
+                    wrath_build::graph::recipe_ids(&places::grapes()?)?
+                        .into_iter()
+                        .collect()
+                } else {
+                    packages
+                };
+                run::built(&model, &packages)
+            })
             .and_then(|built| {
                 let paths = built.paths.iter().map(|path| built.store.join(path.hash()));
                 let named: Vec<_> = built.packages.iter().cloned().zip(paths).collect();

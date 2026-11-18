@@ -1,0 +1,49 @@
+# Builds wrath, the package, at the pushed commit, and publishes it to the public cache, so
+# machines whose lock pins this commit (`wrath update wrath`) fetch it instead of building it.
+#
+# It runs where grapes' `.spool/cache.yaml` does, on an agent that advertises `wrath-builder`,
+# with the same settings and secrets: WRATH_ROOT and WRATH_CI_DIR on the agent, and
+# WRATH_CACHE_KEY, R2_ACCOUNT_ID, R2_BUCKET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as
+# project secrets. wrath is built with the newest grapes.
+name: wrath-cache
+tags: [wrath]
+concurrency:
+  group: wrath-cache
+  policy: cancel-running
+env:
+  SHA: "${{ input == null ? '' : (has(input.sha) ? input.sha : '') }}"
+jobs:
+  publish:
+    requires: [wrath-builder]
+    timeout: 3h
+    steps:
+      - name: checkout
+        run: |
+          set -euo pipefail
+          : "${WRATH_CI_DIR:?}"
+          rm -rf "$WRATH_CI_DIR/wrath" "$WRATH_CI_DIR/grapes-main"
+          git clone --quiet https://github.com/wrath-os/wrath.git "$WRATH_CI_DIR/wrath"
+          if [ -n "${SHA:-}" ]; then
+            git -C "$WRATH_CI_DIR/wrath" checkout --quiet "$SHA"
+          fi
+          git clone --quiet --depth 1 https://github.com/wrath-os/grapes.git \
+            "$WRATH_CI_DIR/grapes-main"
+          echo "building wrath at $(git -C "$WRATH_CI_DIR/wrath" rev-parse --short HEAD)"
+      - name: build and publish
+        run: |
+          set -euo pipefail
+          : "${WRATH_ROOT:?}" "${WRATH_CI_DIR:?}" "${WRATH_CACHE_KEY:?}"
+          cache="$WRATH_CI_DIR/cache"
+          wrath --source "grapes=$WRATH_CI_DIR/grapes-main" --source "wrath=$WRATH_CI_DIR/wrath" \
+            build wrath
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$WRATH_CACHE_KEY" > "$key"
+          wrath cache push "$cache" --key "$key"
+          r2="https://${R2_ACCOUNT_ID:?}.r2.cloudflarestorage.com"
+          for part in paths seed traces; do
+            if [ -d "$cache/$part" ]; then
+              aws s3 sync --only-show-errors --endpoint-url "$r2" \
+                "$cache/$part" "s3://${R2_BUCKET:?}/$part"
+            fi
+          done
