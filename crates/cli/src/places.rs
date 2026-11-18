@@ -158,6 +158,13 @@ pub fn wrath_tree(
         .and_then(|lock| lock.sources.get(wrath_model::WRATH_SOURCE).cloned())
         .filter(|pin| pin.is_locked() && !pin.url.is_empty());
     match pinned {
+        // The running wrath, from the running system, was built from the pinned version.
+        Some(pin)
+            if running.starts_with(wrath_build::store::STORE_DIR)
+                && built_with(Path::new(RUNNING_SYSTEM), &pin) =>
+        {
+            Ok(running.to_path_buf())
+        }
         Some(pin) => crate::trees::fetch(&pin).map_err(|e| {
             format!(
                 "cannot fetch the wrath the lock pins from {}: {e}; to build wrath from a \
@@ -167,6 +174,16 @@ pub fn wrath_tree(
         }),
         None => Ok(running.to_path_buf()),
     }
+}
+
+/// Whether the system at `system` was built with wrath at `pin`, as its model records.
+fn built_with(system: &Path, pin: &Source) -> bool {
+    crate::read_model(&system.join(RUNNING_MODEL)).is_ok_and(|model| {
+        model
+            .sources
+            .get(wrath_model::WRATH_SOURCE)
+            .is_some_and(|built| built.url == pin.url && built.hash == pin.hash)
+    })
 }
 
 /// The URL the configuration at `config` follows grapes at: the one it declares, or grapes' own.
@@ -525,6 +542,28 @@ mod tests {
         lock.sources.insert(GRAPES_SOURCE.into(), pinned);
         std::fs::write(config.path().join("wrath.lock"), lock.to_toml()).unwrap();
         (running, config)
+    }
+
+    #[test]
+    fn a_system_built_with_the_pinned_wrath_says_so_and_no_other_does() {
+        let pin = pin(WRATH_URL, "aaaaaaa");
+        let system = tempfile::tempdir().unwrap();
+        let file = system.path().join(RUNNING_MODEL);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        assert!(!built_with(system.path(), &pin));
+        let built = |source: Source| {
+            let mut model = wrath_model::Model::default();
+            model
+                .sources
+                .insert(wrath_model::WRATH_SOURCE.to_owned(), source);
+            std::fs::write(&file, model.canonical()).unwrap();
+        };
+        built(pin.clone());
+        assert!(built_with(system.path(), &pin));
+        built(self::pin(WRATH_URL, "bbbbbbb"));
+        assert!(!built_with(system.path(), &pin));
+        built(self::pin("github:acme/wrath", "aaaaaaa"));
+        assert!(!built_with(system.path(), &pin));
     }
 
     #[test]

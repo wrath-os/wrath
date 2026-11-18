@@ -160,11 +160,17 @@ fn github_token() -> Option<&'static str> {
 
 fn download(url: &str, output: &Path) -> Result<(), String> {
     let token = url.starts_with(GITHUB_API).then(github_token).flatten();
-    match wrath_build::http::download_with(url, token, output) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(nothing_at(url, token.is_some())),
-        Err(e) => Err(format!("couldn't download {e}")),
+    let tried = match wrath_build::http::download_with(url, token, output) {
+        Ok(true) => return Ok(()),
+        Ok(false) => nothing_at(url, token.is_some()),
+        Err(e) => format!("couldn't download {e}"),
+    };
+    // GitHub refuses a token that may only read other repositories even where none is needed,
+    // as for a public one, so it's tried once without; what that says is only kept when it works.
+    if token.is_some() && wrath_build::http::download_with(url, None, output) == Ok(true) {
+        return Ok(());
     }
+    Err(tried)
 }
 
 /// What to say when `url` has nothing there, which on GitHub is also how a private repository
