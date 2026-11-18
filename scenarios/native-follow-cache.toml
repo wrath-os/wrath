@@ -7,9 +7,9 @@ store = "wrath"
 cache = true
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
-  { run = "mkdir -p /srv/m && cp -r /run/wrath-share/configs/native-follow-cache /srv/m/box && sed -i '1i packages = [\"jq\"]' /srv/m/box/system.toml && cat /run/wrath-share/cache.toml >> /srv/m/box/system.toml && echo ready", stdout_contains = "ready" },
+  { run = "mkdir -p /srv/m && cp -r /run/wrath-share/configs/native-follow-cache /srv/m/box && sed -i '1i packages = [\"jq\", \"libX11\"]' /srv/m/box/system.toml && cat /run/wrath-share/cache.toml >> /srv/m/box/system.toml && echo ready", stdout_contains = "ready" },
   { run = "command -v jq || echo no jq", stdout_contains = "no jq" },
-  # The plan fetches jq and builds nothing.
+  # The plan fetches jq, and libX11, whose main output a split leaves empty, and builds nothing.
   { run = "wrath --source grapes=/run/system/grapes plan 2>&1 | grep -o 'to get there: .*'", stdout_contains = "to get there: fetch" },
   { run = "wrath --source grapes=/run/system/grapes plan 2>&1 | grep -c 'build [0-9]' || true", stdout_contains = "0" },
   { run = "wrath --source grapes=/run/system/grapes apply --automatic 2>&1 | tail -3; jq --version", stdout_contains = "jq-" },

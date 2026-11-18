@@ -354,7 +354,10 @@ fn sharing<'a>(
     let mut reached = BTreeSet::new();
     for id in named {
         for output in &package(packages, id)?.outputs {
-            if !reached.contains(output) {
+            // An output neither here nor in a cache, such as a main output a split left empty,
+            // which nothing refers to and so nothing pushes, is nothing the system runs. One a
+            // cache has is fetched by finding its closure.
+            if !reached.contains(output) && there(lab, output) {
                 reached.extend(chain::runtime_closure(lab, output)?);
             }
         }
@@ -3777,6 +3780,18 @@ mod tests {
             link,
             Path::new(&format!("{}/share/web/presets/hinting.conf", lib.inside()))
         );
+    }
+
+    #[test]
+    fn an_output_a_machine_never_got_takes_no_part_in_what_it_shares() {
+        let (_dir, lab, mut packages) = setup();
+        // A main output a split left empty, which a cache never sends, beside the library one.
+        let gone = StorePath::derive("test", &[b"web-out-gone"]);
+        packages.get_mut("web").unwrap().outputs.insert(0, gone);
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realised(&lab, &mut db, &packages, &model(80, false));
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        assert!(fs::symlink_metadata(root.join("bin/web")).is_ok());
     }
 
     #[test]
