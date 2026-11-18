@@ -2759,6 +2759,7 @@ fn by_cache<'a>(
     let mut fetch: BTreeMap<String, (usize, u64)> = BTreeMap::new();
     for (cache, size) in paths
         .into_iter()
+        .filter(|path| !crate::cache::holds_nothing(lab, path))
         .filter_map(|path| crate::cache::traced(lab, path))
     {
         let (count, bytes) = fetch.entry(cache).or_default();

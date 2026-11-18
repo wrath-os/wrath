@@ -547,6 +547,13 @@ fn listing(lab: &Lab, path: &StorePath) -> Option<Listing> {
     fetchable(lab, path).and_then(|(_, _, archived)| archived.listing)
 }
 
+/// Whether a cache traced `path`, not in the store, as holding nothing, as a main output a split
+/// emptied does: nothing refers to it or needs it, so nothing fetches it. Its listing has no
+/// directories; a store path keeps what it holds in directories.
+pub(crate) fn holds_nothing(lab: &Lab, path: &StorePath) -> bool {
+    listing(lab, path).is_some_and(|listing| listing.dirs.is_empty())
+}
+
 /// Whether `path` has a directory at `relative`, from the store or a cache's listing of it. One
 /// under a linked directory, which a listing doesn't follow, brings the path into the store.
 pub(crate) fn has_dir(lab: &Lab, path: &StorePath, relative: &str) -> Result<bool, String> {
@@ -1039,6 +1046,7 @@ mod tests {
         let archive = dir.path().join("cache").join(archive_name(PATH));
         let size = fs::metadata(archive).unwrap().len();
         assert_eq!(traced(&fresh, &path), Some((cache.shown(), size)));
+        assert!(!holds_nothing(&fresh, &path));
         materialize_from(&fresh, &path, std::slice::from_ref(&cache), &trusted).unwrap();
         let file = fresh.work.join("store").join(PATH).join("bin/hello");
         assert_eq!(fs::read_to_string(file).unwrap(), "#!/bin/sh\necho hello\n");
@@ -1082,6 +1090,10 @@ mod tests {
             let found = store.join(dir).is_dir();
             assert_eq!(listing.dirs.contains(dir), found, "{dir}");
         }
+        // What a split emptied lists no directories, which is how a cache says it holds nothing.
+        let emptied = dir.path().join("emptied");
+        fs::create_dir(&emptied).unwrap();
+        assert!(Listing::of(&emptied).unwrap().dirs.is_empty());
     }
 
     #[test]
