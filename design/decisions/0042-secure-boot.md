@@ -124,8 +124,8 @@ own builds (0040, 0041). Whatever signs them has to be there.
      images aren't pinned: anything on the ESP could be replaced anyway.
    - An image changed after it was signed is refused, and the boot loader falls back to an entry
      the machine signed (`native-secure-boot`).
-   Left: a scenario that PCR 11 past the initrd doesn't satisfy the policy even with its signature
-   at hand.
+   - Past the initrd, the policy's signature taken out of the image doesn't fit PCR 11 as it is
+     then (`native-secure-boot-tpm`). Done, 2026-11-20.
 4. The PIN and the recovery key.
 5. The Framework: firmware updated, its event log checked for option ROMs, setup mode by hand.
 

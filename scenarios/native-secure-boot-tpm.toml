@@ -24,6 +24,9 @@ steps = [
   # Past the initrd, the TPM key is no use: the policy's signature is in the image, which the stub
   # hands to the initrd only.
   { run = "systemd-cryptsetup attach probe /dev/disk/by-partlabel/main0-system - tpm2-device=auto,headless=true 2>&1; echo exit=$?", stdout_contains = "Failed to load pcr signature" },
+  # Even with the signature taken out of the image, the policy is signed for PCR 11 as it is in
+  # the initrd, which leaving it changed.
+  { run = '''tr -c '[:print:]' '\n' < "$(ls /boot/EFI/wrath/*-system-*.efi | head -1)" | grep -m1 '^{"sha256":' | sed 's/}]}.*/}]}/' > /tmp/sig.json && SYSTEMD_LOG_LEVEL=debug systemd-cryptsetup attach probe /dev/disk/by-partlabel/main0-system - tpm2-device=auto,tpm2-signature=/tmp/sig.json,headless=true 2>&1; echo exit=$?''', stdout_contains = "Couldn't find signature for this PCR bank, PCR index and public key" },
   # Install recorded the volume's key, and every image pins the volume to it, which the boots
   # above passed.
   { run = "grep -c '^main0-system [0-9a-f]\\{64\\}$' /var/lib/wrath/volume-keys", stdout_contains = "1" },
