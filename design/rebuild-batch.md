@@ -92,6 +92,12 @@ Then stb's `whole = true` goes.
   an error once the log shows it's right. Explicit, rather than the builder propagating on its
   own guess.
 - `wrath build no-such-package` says so before building anything.
+- No temporary path survives placing. After the rewrite, the package's temporary hash is looked
+  for everywhere, inside gzip, xz and zstd files too, where the rewrite can't reach and the path
+  is left naming nothing (Nix's content-addressed builds hit this with compressed man pages). A
+  hit is a warning naming the file, logged with the split pieces; the recipe or style then stops
+  compressing it, or says why it's harmless. Man pages are already plain in 1241 of the 1243
+  packages that have them, so few should show up.
 
 ## Recipes and styles
 
