@@ -85,6 +85,9 @@ pub enum Step {
         ssh_key: Option<String>,
         /// The public key the initrd must present, relative to the repository.
         ssh_host_key: Option<String>,
+        /// Text the console shows when the boot is refused, as it's expected to be. The system
+        /// never comes up, so nothing can follow.
+        refused: Option<String>,
     },
     /// Reboots the VM from inside, as someone would, and waits for it to come back.
     Reboot,
@@ -147,7 +150,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 21] = [
+pub const STEP_FIELDS: [&str; 22] = [
     "run_as",
     "apply_config",
     "apply_host",
@@ -158,6 +161,7 @@ pub const STEP_FIELDS: [&str; 21] = [
     "missing",
     "ssh_key",
     "ssh_host_key",
+    "refused",
     "apply_home",
     "as_user",
     "expect_plan",
@@ -184,6 +188,7 @@ struct RawStep {
     missing: Vec<usize>,
     ssh_key: Option<String>,
     ssh_host_key: Option<String>,
+    refused: Option<String>,
     apply_home: Option<String>,
     as_user: Option<String>,
     #[serde(default)]
@@ -216,6 +221,7 @@ impl TryFrom<RawStep> for Step {
                 missing: raw.missing,
                 ssh_key: raw.ssh_key,
                 ssh_host_key: raw.ssh_host_key,
+                refused: raw.refused,
             });
         }
         if raw.reboot == Some(true) {
@@ -822,12 +828,16 @@ impl VmRun<'_> {
                     missing,
                     ssh_key,
                     ssh_host_key,
+                    refused,
                 } => {
                     let unlock = Unlock {
                         passphrase: passphrase.as_deref(),
                         ssh_key: ssh_key.as_deref(),
                         ssh_host_key: ssh_host_key.as_deref(),
                     };
+                    if let Some(refused) = refused {
+                        return self.boot_refused(qemu, firmware, &unlock, refused, deadline);
+                    }
                     self.boot_installed(qemu, agent, firmware, &unlock, missing, deadline)?;
                     booted = boot_id(agent, deadline)?;
                 }
@@ -951,6 +961,36 @@ impl VmRun<'_> {
         missing: &[usize],
         deadline: Instant,
     ) -> Result<(), String> {
+        let cid = self.start_installed(qemu, firmware, unlock, missing, deadline)?;
+        *agent = self.connect(cid, &mut qemu.0, deadline)?;
+        Ok(())
+    }
+
+    /// Starts the installed system and unlocks its disks as `unlock` says, expecting the boot to
+    /// stop there with `refused` on the console.
+    fn boot_refused(
+        &self,
+        qemu: &mut KillOnDrop,
+        firmware: &FirmwarePaths,
+        unlock: &Unlock,
+        refused: &str,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        self.start_installed(qemu, firmware, unlock, &[], deadline)?;
+        self.wait_for_console(refused, deadline)
+            .map_err(|()| format!("the installed system's console never said `{refused}`"))
+    }
+
+    /// Starts the installed system from the start, with the devices `missing` gone, and unlocks
+    /// its disks as `unlock` says. Gives the CID the guest's agent answers on.
+    fn start_installed(
+        &self,
+        qemu: &mut KillOnDrop,
+        firmware: &FirmwarePaths,
+        unlock: &Unlock,
+        missing: &[usize],
+        deadline: Instant,
+    ) -> Result<u32, String> {
         let _ = qemu.0.kill();
         let _ = qemu.0.wait();
         // The live system's console stays, beside the installed one's.
@@ -974,8 +1014,7 @@ impl VmRun<'_> {
             (Some(passphrase), None) => self.type_at_prompt(passphrase, deadline)?,
             (None, _) => {}
         }
-        *agent = self.connect(args.cid, &mut qemu.0, deadline)?;
-        Ok(())
+        Ok(args.cid)
     }
 
     /// Logs in to the initrd over SSH on `port` with `key` until it answers, and types
@@ -1035,19 +1074,26 @@ impl VmRun<'_> {
         }
     }
 
-    /// Waits for the console to ask for a passphrase, then types `passphrase` at it.
-    fn type_at_prompt(&self, passphrase: &str, deadline: Instant) -> Result<(), String> {
+    /// Waits until the console has shown `text`, or the deadline passes.
+    fn wait_for_console(&self, text: &str, deadline: Instant) -> Result<(), ()> {
         let console = self.dir.join("console.log");
         loop {
-            let text = fs::read_to_string(&console).unwrap_or_default();
-            if text.contains("passphrase") {
-                break;
+            // The console has bytes that aren't UTF-8, such as the firmware's escapes.
+            let shown = fs::read(&console).unwrap_or_default();
+            if String::from_utf8_lossy(&shown).contains(text) {
+                return Ok(());
             }
             if Instant::now() >= deadline {
-                return Err("the installed system never asked for its passphrase".into());
+                return Err(());
             }
             thread::sleep(Duration::from_millis(500));
         }
+    }
+
+    /// Waits for the console to ask for a passphrase, then types `passphrase` at it.
+    fn type_at_prompt(&self, passphrase: &str, deadline: Instant) -> Result<(), String> {
+        self.wait_for_console("passphrase", deadline)
+            .map_err(|()| "the installed system never asked for its passphrase".to_owned())?;
         let mut serial =
             UnixStream::connect(self.dir.join("serial.sock")).map_err(io_err("the console"))?;
         // A key at a time, as someone types, then Enter, which a serial console sends as `\r`.

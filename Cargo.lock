@@ -3274,6 +3274,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "flate2",
+ "hmac",
  "insta",
  "rustix",
  "serde_json",

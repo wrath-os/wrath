@@ -114,13 +114,18 @@ own builds (0040, 0041). Whatever signs them has to be there.
    - PCR 15 is changed for `fixate-volume-key=`: measuring every volume's key into PCR 15 would
      keep a second TPM-unlocked disk from unsealing, and PCR 15 alone doesn't stop a swapped
      volume from being handed the key. `fixate-volume-key=` pins the real volume's key hash in
-     crypttab, which systemd-repart can work out at install. The hash is the machine's own, while
-     the initrd's crypttab is the system's, shared by a role, so it has to reach the boot another
-     way, such as the command line the switch puts in each image.
+     crypttab. The hash is the machine's own, while the initrd's crypttab is the system's, shared
+     by a role. Install works it out for each volume it opens (HMAC-SHA256 with the volume key
+     over `cryptsetup:NAME:UUID`, as systemd does) and keeps it in `/var/lib/wrath/volume-keys`;
+     `wrath unlock enroll` does too, for machines installed before. Each image the switch signs
+     gets the machine's crypttab with the hashes as a small archive after its initrd, which the
+     kernel unpacks over the one in the initrd. A volume with the same label and UUID and another
+     key is refused, given the passphrase too (`native-secure-boot-tpm`). Without Secure Boot,
+     images aren't pinned: anything on the ESP could be replaced anyway.
    - An image changed after it was signed is refused, and the boot loader falls back to an entry
      the machine signed (`native-secure-boot`).
-   Left: the volume key hash and the scenario that a swapped volume doesn't unlock, and one that
-   PCR 11 past the initrd doesn't satisfy the policy even with its signature at hand.
+   Left: a scenario that PCR 11 past the initrd doesn't satisfy the policy even with its signature
+   at hand.
 4. The PIN and the recovery key.
 5. The Framework: firmware updated, its event log checked for option ROMs, setup mode by hand.
 

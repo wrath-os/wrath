@@ -410,7 +410,8 @@ fn check_disks(storage: &Value, given: &BTreeMap<String, Vec<PathBuf>>) -> Resul
 }
 
 /// Partitions each device with systemd-repart, opens what's encrypted, creates the filesystems
-/// that span partitions, and mounts everything under the target.
+/// that span partitions, and mounts everything under the target, recording there the id of each
+/// encrypted volume's key.
 fn lay_out(
     partitions: &[Partition],
     storage: &Value,
@@ -449,12 +450,16 @@ fn lay_out(
             .arg(key)
             .arg(format!("/dev/disk/by-partlabel/{}", partition.label)))?;
     }
+    let mut volume_keys = BTreeMap::new();
     for partition in partitions.iter().filter(|p| p.encrypt) {
+        let device = format!("/dev/disk/by-partlabel/{}", partition.label);
         run(Command::new("cryptsetup")
             .args(["open", "--key-file"])
             .arg(key)
-            .arg(format!("/dev/disk/by-partlabel/{}", partition.label))
+            .arg(&device)
             .arg(&partition.label))?;
+        let id = crate::volume_keys::id_of(&device, &partition.label, key, work)?;
+        volume_keys.insert(partition.label.clone(), id);
     }
     let unlock = field(storage, "unlock");
     if matches!(field(unlock, "tpm2"), Value::Bool(true)) {
@@ -521,7 +526,11 @@ fn lay_out(
         }
         run(command.arg(text(mount, "device")).arg(&at))?;
     }
-    Ok(())
+    // Before switching, which pins each volume to its key in the images it signs.
+    if volume_keys.is_empty() {
+        return Ok(());
+    }
+    crate::volume_keys::record(how.target, &volume_keys)
 }
 
 /// The machine's keys, made before install and kept encrypted in `secrets/machines/<name>/`,

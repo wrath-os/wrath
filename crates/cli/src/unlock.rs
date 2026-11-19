@@ -1,6 +1,7 @@
 //! How a machine's encrypted disks unlock: enrolling its TPM again, for when what the TPM checks
 //! changed, such as the first boot of a unified kernel image or a firmware update.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -10,7 +11,9 @@ use serde_json::Value;
 #[derive(clap::Subcommand)]
 pub enum UnlockCommand {
     /// Let the TPM unlock the disks again, as the machine boots now: it asks for the disks'
-    /// passphrase and replaces their TPM key, after the boot measured differently and asked
+    /// passphrase once, replaces their TPM key and records their volume keys, which the images a
+    /// machine with Secure Boot signs pin them to. For when a boot measured differently and
+    /// asked for the passphrase
     Enroll,
 }
 
@@ -24,11 +27,13 @@ pub fn run(command: UnlockCommand) -> Result<ExitCode, String> {
 }
 
 /// Replaces the TPM key of every disk the machine at `root` unlocks with its TPM by one sealed to
-/// the PCRs as they are now, the passphrase unlocking it for that.
+/// the PCRs as they are now, the passphrase, from `$PASSWORD` or asked for once, unlocking it for
+/// that. Each disk's volume key id is recorded too, which pins the disk in the images the machine
+/// signs.
 fn enroll(root: &Path) -> Result<ExitCode, String> {
     let crypttab = fs::read_to_string(root.join("etc/crypttab")).unwrap_or_default();
-    let devices = tpm_devices(&crypttab);
-    if devices.is_empty() {
+    let volumes = tpm_volumes(&crypttab);
+    if volumes.is_empty() {
         return Err("no disk here unlocks with the TPM; set `unlock.tpm2 = true` first".to_owned());
     }
     let model = fs::read_to_string(root.join(MODEL.trim_start_matches('/')))
@@ -41,13 +46,36 @@ fn enroll(root: &Path) -> Result<ExitCode, String> {
     if model["base"]["boot"]["secure_boot"] == Value::Bool(true) {
         policy.extend(signed_policy(root)?);
     }
+    let passphrase = match std::env::var("PASSWORD") {
+        Ok(passphrase) => passphrase,
+        Err(_) => crate::host::read_password("Passphrase for the disks: ")?,
+    };
+    // Only root reads it, in memory, for as long as enrolling takes.
+    let run = root.join("run");
+    let work = tempfile::Builder::new()
+        .prefix("wrath-unlock")
+        .tempdir_in(&run)
+        .map_err(|e| format!("cannot make a directory under {}: {e}", run.display()))?;
+    let key = work.path().join("passphrase");
+    fs::write(&key, passphrase).map_err(|e| format!("{}: {e}", key.display()))?;
+    policy.push(format!("--unlock-key-file={}", key.display()));
     let policy: Vec<&str> = policy.iter().map(String::as_str).collect();
-    for device in devices {
+    let mut ids = BTreeMap::new();
+    for (name, device) in volumes {
+        // Read first, so a wrong passphrase stops before any key is wiped.
+        let id = crate::volume_keys::id_of(&device, &name, &key, work.path())?;
+        ids.insert(name, id);
         println!("letting the TPM unlock {device} again, as it boots now");
         // The old key goes first: systemd-cryptenroll leaves a key for the same PCRs alone, even
         // when it's sealed to values they no longer have. The passphrase stays.
         cryptenroll(&device, &["--wipe-slot=tpm2"])?;
         cryptenroll(&device, &policy)?;
+    }
+    let before = crate::volume_keys::recorded(root);
+    crate::volume_keys::record(root, &ids)?;
+    // Images signed before pin no volume, or other keys.
+    if crate::volume_keys::recorded(root) != before {
+        crate::activate::boot_entries(root, false)?;
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -98,8 +126,8 @@ fn cryptenroll(device: &str, args: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// The devices in `crypttab` that unlock with the TPM.
-fn tpm_devices(crypttab: &str) -> Vec<String> {
+/// The volumes in `crypttab` that unlock with the TPM, each as its name and device.
+pub(crate) fn tpm_volumes(crypttab: &str) -> Vec<(String, String)> {
     crypttab
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
@@ -109,7 +137,7 @@ fn tpm_devices(crypttab: &str) -> Vec<String> {
             options
                 .split(',')
                 .any(|option| option.starts_with("tpm2-device="))
-                .then(|| fields[1].to_owned())
+                .then(|| (fields[0].to_owned(), fields[1].to_owned()))
         })
         .collect()
 }
@@ -142,8 +170,11 @@ mod tests {
              main0-system /dev/disk/by-partlabel/main0-system none luks,discard,tpm2-device=auto\n\
              data /dev/disk/by-partlabel/data none luks,discard\n";
         assert_eq!(
-            tpm_devices(crypttab),
-            ["/dev/disk/by-partlabel/main0-system"]
+            tpm_volumes(crypttab),
+            [(
+                "main0-system".to_owned(),
+                "/dev/disk/by-partlabel/main0-system".to_owned()
+            )]
         );
     }
 

@@ -24,5 +24,13 @@ steps = [
   # Past the initrd, the TPM key is no use: the policy's signature is in the image, which the stub
   # hands to the initrd only.
   { run = "systemd-cryptsetup attach probe /dev/disk/by-partlabel/main0-system - tpm2-device=auto,headless=true 2>&1; echo exit=$?", stdout_contains = "Failed to load pcr signature" },
+  # Install recorded the volume's key, and every image pins the volume to it, which the boots
+  # above passed.
+  { run = "grep -c '^main0-system [0-9a-f]\\{64\\}$' /var/lib/wrath/volume-keys", stdout_contains = "1" },
+  { run = "grep -la 'fixate-volume-key=' /boot/EFI/wrath/*-system-*.efi | wc -l", stdout_contains = "1" },
+  # A volume with the same label and UUID and another key, as one swapped in has, is refused, even
+  # given the passphrase.
+  { run = "systemd-cryptenroll --wipe-slot=tpm2 /dev/disk/by-partlabel/main0-system 2>&1 && printf 'correct horse' > /tmp/p && cryptsetup reencrypt --batch-mode --key-file /tmp/p /dev/disk/by-partlabel/main0-system 2>&1 && sync; echo exit=$?", stdout_contains = "exit=0" },
+  { boot_installed = true, passphrase = "correct horse", refused = "does not match the expectation" },
 ]
 timeout_secs = 1800

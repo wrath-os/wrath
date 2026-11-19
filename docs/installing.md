@@ -74,6 +74,11 @@ that. From then on the TPM also checks that it's the initrd of an image the mach
 each image carries a policy signed with the machine's own key, so a new generation needs no new
 enrollment, and nothing booted any other way gets the disks' key.
 
+Install also records an id of each disk's volume key, and every image the machine signs attaches
+only the volumes with those keys. A disk swapped in with the same labels and UUIDs, which the TPM
+would hand the key to all the same, is refused, even given the passphrase. A machine installed
+before records them with `sudo wrath unlock enroll`; a switch says when they're missing.
+
 A machine whose firmware needs Microsoft's keys too, such as for a graphics card's own firmware,
 won't show anything on that card after enrolling only its own. Desktops with a separate graphics
 card need care here; laptops and machines with integrated graphics are fine.
@@ -243,5 +248,3 @@ switches it with the new system's own wrath. `NAME` is whatever `ssh NAME` reach
 - An installer image you can download. Today you build it, once.
 - Installing onto the disks directly: what install fetches goes into the stick's store first and
   is copied from there, so the stick needs room for the whole system.
-- Protection against a disk swapped for one an attacker made, which the TPM unlock would still
-  hand its key to in the initrd. Until then, a PIN-less TPM unlock is for machines that stay put.

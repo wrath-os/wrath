@@ -48,6 +48,7 @@ mod timing;
 mod trees;
 mod unlock;
 mod upgrade;
+mod volume_keys;
 mod watch;
 
 /// How many times `dev test --determinism` evaluates each configuration.

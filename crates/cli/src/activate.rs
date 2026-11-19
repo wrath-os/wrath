@@ -80,7 +80,7 @@ const WRAPPERS: &str = "run/wrath/wrappers";
 /// as a test VM booted directly, has nothing to write. An older generation that can't boot, such as
 /// one whose kernel is gone, loses its entry with a warning. With `renew`, the current generation
 /// gets fresh tries if it had run out: switching to it says to try it again.
-fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
+pub(crate) fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     let esp = root.join("boot");
     if !esp.join("loader").is_dir() {
         return Ok(());
@@ -105,6 +105,20 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         match &signer {
             Some(signer) => sign_loader(&esp, system, signer)?,
             None => update_loader(&esp, system),
+        }
+    }
+    // The images it signs attach only the volumes the machine made, by their keys' ids.
+    let volume_keys = match &signer {
+        Some(_) => crate::volume_keys::recorded(root),
+        None => BTreeMap::new(),
+    };
+    if signer.is_some() && volume_keys.is_empty() {
+        let crypttab = fs::read_to_string(root.join("etc/crypttab")).unwrap_or_default();
+        if !crate::unlock::tpm_volumes(&crypttab).is_empty() {
+            crate::style::note(
+                "the TPM would unlock a disk swapped in for this machine's own, since no volume \
+                 key is recorded here; `sudo wrath unlock enroll` records them",
+            );
         }
     }
     let loader = [LOADER, FALLBACK_LOADER]
@@ -145,16 +159,23 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
             Vec::new()
         };
         let files = if images {
-            // Named after the system, which decides everything in it, and the key that signed it.
-            let name = match &signer {
-                Some(signer) => format!("{}-{}.efi", named(&target), signer.fingerprint),
-                None => format!("{}.efi", named(&target)),
-            };
+            let crypttab = crate::volume_keys::initrd_crypttab(&system, &volume_keys);
+            // Named after the system, which decides everything in it, the key that signed it and
+            // the volume keys it pins.
+            let mut name = named(&target);
+            if let Some(signer) = &signer {
+                name.push_str(&format!("-{}", signer.fingerprint));
+            }
+            if let Some(crypttab) = &crypttab {
+                name.push_str(&format!("-{}", &blake3::hash(crypttab).to_hex()[..8]));
+            }
+            name.push_str(".efi");
             vec![OnEsp::Image {
                 name,
                 stub,
                 kernel,
                 initrd,
+                crypttab,
                 system,
             }]
         } else {
@@ -423,12 +444,14 @@ const STUB: &str = "systemd/lib/systemd/boot/efi/linuxx64.efi.stub";
 
 /// A file a generation boots from on the ESP.
 enum OnEsp {
-    /// A unified kernel image, made from the system's stub, kernel and initrd.
+    /// A unified kernel image, made from the system's stub, kernel and initrd, and an archive with
+    /// the machine's own crypttab when it pins volumes to their keys.
     Image {
         name: String,
         stub: PathBuf,
         kernel: PathBuf,
         initrd: PathBuf,
+        crypttab: Option<Vec<u8>>,
         system: PathBuf,
     },
     /// A kernel or an initrd, copied from the store.
@@ -455,8 +478,15 @@ impl OnEsp {
                 stub,
                 kernel,
                 initrd,
+                crypttab,
                 ..
-            } => Ok(size(stub)? + size(kernel)? + size(initrd)? + (5 << 12)),
+            } => Ok(size(stub)?
+                + size(kernel)?
+                + size(initrd)?
+                + crypttab
+                    .as_ref()
+                    .map_or(0, |archive| archive.len() as u64 + 4)
+                + (5 << 12)),
             Self::Copy { from, .. } => size(from),
         }
     }
@@ -477,6 +507,7 @@ impl OnEsp {
                 stub,
                 kernel,
                 initrd,
+                crypttab,
                 system,
                 ..
             } => {
@@ -486,7 +517,13 @@ impl OnEsp {
                 let read =
                     |path: &Path| fs::read(path).map_err(|e| format!("{}: {e}", path.display()));
                 let os_release = fs::read(system.join("etc/os-release")).unwrap_or_default();
-                let initrd = read(initrd)?;
+                let mut initrd = read(initrd)?;
+                // The kernel unpacks archives one after another, each on a 4-byte boundary, and
+                // a later file replaces an earlier one.
+                if let Some(crypttab) = crypttab {
+                    initrd.resize(initrd.len().next_multiple_of(4), 0);
+                    initrd.extend_from_slice(crypttab);
+                }
                 let linux = read(kernel)?;
                 let mut parts = wrath_build::uki::Parts {
                     os_release: &os_release,
@@ -1888,6 +1925,7 @@ mod tests {
             stub: work.path().join("stub"),
             kernel: work.path().join("kernel"),
             initrd: work.path().join("initrd"),
+            crypttab: None,
             system: system.clone(),
         };
         fs::write(work.path().join("stub"), tiny_stub()).unwrap();
@@ -1902,6 +1940,23 @@ mod tests {
         assert!(has(b".pcrsig\0") && has(b"policy"));
         let left: Vec<_> = fs::read_dir(&kernels).unwrap().collect();
         assert_eq!(left.len(), 1, "nothing but the signed image is left");
+
+        // The machine's crypttab follows the initrd, on the boundary the kernel unpacks it from.
+        let pinned = OnEsp::Image {
+            name: "bbb-0123abcd-pinned.efi".into(),
+            stub: work.path().join("stub"),
+            kernel: work.path().join("kernel"),
+            initrd: work.path().join("initrd"),
+            crypttab: Some(b"070701crypttab".to_vec()),
+            system,
+        };
+        pinned.write(&kernels, "init=/x", Some(&signer)).unwrap();
+        let written = fs::read(kernels.join("bbb-0123abcd-pinned.efi")).unwrap();
+        assert!(
+            written
+                .windows(18)
+                .any(|w| w == b"i\x00\x00\x00070701crypttab")
+        );
     }
 
     fn entry_names(root: &Path) -> Vec<String> {

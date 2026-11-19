@@ -279,7 +279,7 @@ wrath unlock <COMMAND>
 
 ## `wrath unlock enroll`
 
-Let the TPM unlock the disks again, as the machine boots now: it asks for the disks' passphrase and replaces their TPM key, after the boot measured differently and asked
+Let the TPM unlock the disks again, as the machine boots now: it asks for the disks' passphrase once, replaces their TPM key and records their volume keys, which the images a machine with Secure Boot signs pin them to. For when a boot measured differently and asked for the passphrase
 
 ```text
 wrath unlock enroll [OPTIONS]
