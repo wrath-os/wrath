@@ -1,6 +1,6 @@
 # 0035: The name is wrath
 
-Status: proposed, 2026-11-13.
+Status: accepted, 2026-11-13; the project was renamed the same day.
 
 ## Context
 

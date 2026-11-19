@@ -1,6 +1,6 @@
 # 0036: wrath, grapes, and your own repository
 
-Status: proposed, 2026-11-13.
+Status: accepted, 2026-11-13; grapes moved to its own repository on 2026-11-14.
 
 ## Context
 
