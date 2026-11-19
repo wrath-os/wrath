@@ -117,9 +117,10 @@ own builds (0040, 0041). Whatever signs them has to be there.
      crypttab, which systemd-repart can work out at install. The hash is the machine's own, while
      the initrd's crypttab is the system's, shared by a role, so it has to reach the boot another
      way, such as the command line the switch puts in each image.
-   Left: the volume key hash, and the scenarios that an unsigned image is refused and a swapped
-   volume doesn't unlock, and that PCR 11 past the initrd doesn't satisfy the policy even with its
-   signature at hand.
+   - An image changed after it was signed is refused, and the boot loader falls back to an entry
+     the machine signed (`native-secure-boot`).
+   Left: the volume key hash and the scenario that a swapped volume doesn't unlock, and one that
+   PCR 11 past the initrd doesn't satisfy the policy even with its signature at hand.
 4. The PIN and the recovery key.
 5. The Framework: firmware updated, its event log checked for option ROMs, setup mode by hand.
 

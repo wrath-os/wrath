@@ -250,7 +250,7 @@ wrath secret edit [OPTIONS] <NAME>
 
 ## `wrath secret rekey`
 
-Encrypt every secret again to the current recipients, such as after adding a machine
+Encrypt every secret, and every machine's keys, again to the current recipients, such as after adding a machine
 
 ```text
 wrath secret rekey [OPTIONS]

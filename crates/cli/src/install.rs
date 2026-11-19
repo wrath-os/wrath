@@ -170,7 +170,9 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
     }
     let work = tempfile::tempdir().map_err(|e| format!("cannot create a work directory: {e}"))?;
     let key = work.path().join("key");
+    // Disks with nothing encrypted on them need no passphrase, so none is asked for.
     let passphrase = match how.passphrase {
+        _ if !partitions.iter().any(|partition| partition.encrypt) => String::new(),
         Some(file) => crate::machine_keys::read_passphrase(file)?,
         None => crate::machine_keys::new_passphrase("the disks")?,
     };

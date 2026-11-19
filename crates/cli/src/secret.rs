@@ -21,7 +21,8 @@ pub enum SecretCommand {
         #[command(flatten)]
         options: Options,
     },
-    /// Encrypt every secret again to the current recipients, such as after adding a machine
+    /// Encrypt every secret, and every machine's keys, again to the current recipients, such as
+    /// after adding a machine
     Rekey {
         #[command(flatten)]
         options: Options,
@@ -53,7 +54,7 @@ pub fn run(command: SecretCommand, config: &Path, modules: &Path) -> Result<Exit
         }
         SecretCommand::Rekey { options } => {
             let secrets = Secrets::load(config, modules)?;
-            secrets.rekey(&identities(options.identity)?)
+            secrets.rekey(config, &identities(options.identity)?)
         }
         SecretCommand::Machine {
             name,
@@ -128,7 +129,8 @@ impl Secrets {
         Ok(ExitCode::SUCCESS)
     }
 
-    fn rekey(&self, identities: &[PathBuf]) -> Result<ExitCode, String> {
+    /// Encrypts every secret, and every machine's keys, again to the recipients.
+    fn rekey(&self, config: &Path, identities: &[PathBuf]) -> Result<ExitCode, String> {
         self.check_recipients()?;
         for (name, file) in &self.files {
             if !file.exists() {
@@ -137,6 +139,7 @@ impl Secrets {
             }
             self.encrypt(name, &decrypt(file, identities)?, file)?;
         }
+        self.rekey_machines(config, identities)?;
         Ok(ExitCode::SUCCESS)
     }
 
@@ -250,32 +253,10 @@ impl Secrets {
     /// signs with encrypted to the recipients, and the PK and KEK to every recipient but the
     /// machine, so only its admins can change what its firmware trusts.
     fn make_secure_boot_keys(&self, dir: &Path, name: &str, made: &Path) -> Result<(), String> {
-        let host_public = without_comment(
-            &std::fs::read_to_string(dir.join(format!("{}.pub", crate::machine_keys::HOST_KEY)))
-                .unwrap_or_default(),
-        );
-        let admins: Vec<String> = self
-            .recipients
-            .iter()
-            .filter(|recipient| without_comment(recipient) != host_public)
-            .cloned()
-            .collect();
-        if admins.is_empty() {
-            return Err(format!(
-                "only {name} itself is among `system.secret_recipients`, so nobody would keep the \
-                 keys that change what its firmware trusts\nhelp: add your own key to them"
-            ));
-        }
+        let (recipients, admins) = self.secure_boot_recipients(dir, name)?;
         let made = made.join("secure-boot");
         std::fs::create_dir(&made).map_err(|e| format!("{}: {e}", made.display()))?;
         let keys = crate::secure_boot::make(name, &made)?;
-        // The machine decrypts these when it switches, so they're encrypted to its host key even
-        // before it's among the recipients, as a host key made just now isn't.
-        let mut recipients = self.recipients.clone();
-        // Every recipient is an admin when the host key isn't among them.
-        if !host_public.is_empty() && admins.len() == self.recipients.len() {
-            recipients.push(host_public);
-        }
         let machine = dir.join(crate::secure_boot::MACHINE_ARCHIVE);
         encrypt_to(
             &recipients,
@@ -294,6 +275,88 @@ impl Secrets {
             "{name} enrolls its Secure Boot keys when its firmware is in setup mode, once \
              `boot.secure_boot` is on"
         );
+        Ok(())
+    }
+
+    /// Who machine `name`'s Secure Boot archives, in `dir`, are encrypted to: what it signs with,
+    /// to the recipients and its host key, which decrypts it when it switches even before it's
+    /// among the recipients, as a host key made just now isn't; and its PK and KEK to every
+    /// recipient but the machine. An error when the machine is the only recipient, as nobody would
+    /// keep the keys that change what its firmware trusts.
+    fn secure_boot_recipients(
+        &self,
+        dir: &Path,
+        name: &str,
+    ) -> Result<(Vec<String>, Vec<String>), String> {
+        let host_public = without_comment(
+            &std::fs::read_to_string(dir.join(format!("{}.pub", crate::machine_keys::HOST_KEY)))
+                .unwrap_or_default(),
+        );
+        let admins: Vec<String> = self
+            .recipients
+            .iter()
+            .filter(|recipient| without_comment(recipient) != host_public)
+            .cloned()
+            .collect();
+        if admins.is_empty() {
+            return Err(format!(
+                "only {name} itself is among `system.secret_recipients`, so nobody would keep the \
+                 keys that change what its firmware trusts\nhelp: add your own key to them"
+            ));
+        }
+        let mut recipients = self.recipients.clone();
+        // Every recipient is an admin when the host key isn't among them.
+        if !host_public.is_empty() && admins.len() == self.recipients.len() {
+            recipients.push(host_public);
+        }
+        Ok((recipients, admins))
+    }
+
+    /// Encrypts every machine's keys under `config` again: its host keys to the recipients, and its
+    /// Secure Boot archives as [`Self::secure_boot_recipients`] says.
+    fn rekey_machines(&self, config: &Path, identities: &[PathBuf]) -> Result<(), String> {
+        let machines = config.join(wrath_eval::MACHINE_KEYS);
+        let Ok(entries) = std::fs::read_dir(&machines) else {
+            return Ok(());
+        };
+        let mut dirs: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let name = dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            for (key, _) in crate::machine_keys::KEYS {
+                let file = crate::machine_keys::to_recipients(&dir, key);
+                if file.exists() {
+                    self.encrypt(
+                        &format!("{name}'s {key}"),
+                        &decrypt(&file, identities)?,
+                        &file,
+                    )?;
+                }
+            }
+            let machine = dir.join(crate::secure_boot::MACHINE_ARCHIVE);
+            let owner = dir.join(crate::secure_boot::OWNER_ARCHIVE);
+            if !machine.exists() && !owner.exists() {
+                continue;
+            }
+            let (recipients, admins) = self.secure_boot_recipients(&dir, &name)?;
+            for (file, to, what) in [
+                (machine, &recipients, "Secure Boot keys"),
+                (owner, &admins, "firmware owner keys"),
+            ] {
+                if file.exists() {
+                    let plaintext = decrypt(&file, identities)?;
+                    encrypt_to(to, &format!("{name}'s {what}"), &plaintext, &file)?;
+                }
+            }
+        }
         Ok(())
     }
 

@@ -9,10 +9,19 @@ blank_disks = ["8G"]
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { prepare_build = "scenarios/fixtures/native-secure-boot" },
-  { run = "cp -r /run/wrath-share/configs/native-secure-boot /tmp/config && printf 'battery staple' > /tmp/keypass && printf unused > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --key-passphrase-file /tmp/keypass --name t-03 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { run = "cp -r /run/wrath-share/configs/native-secure-boot /tmp/config && printf 'battery staple' > /tmp/keypass && wrath install -C /tmp/config --disk /dev/vdb --key-passphrase-file /tmp/keypass --name t-03 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
   { boot_installed = true },
   { run = "ls /boot/loader/keys/auto | sort", stdout_contains = "KEK.auth\nPK.auth\ndb.auth" },
   { run = "ls /boot/EFI/wrath | grep -c -- '-system-[0-9a-f]\\{8\\}\\.efi$'", stdout_contains = "1" },
   { run = "bootctl status 2>&1 | grep 'Secure Boot:'", stdout_contains = "enabled (user)" },
+  # A signed copy as the next boot's entry boots, so the boot loader does take the entry asked for.
+  { run = "cp /boot/EFI/wrath/*-system-*.efi /boot/EFI/wrath/copy.efi && printf 'title copy\\nuki /EFI/wrath/copy.efi\\n' > /boot/loader/entries/copy.conf && bootctl set-oneshot copy.conf && sync && echo set", stdout_contains = "set" },
+  { boot_installed = true },
+  { run = "bootctl status 2>&1 | grep -i 'current entry'", stdout_contains = "copy.conf" },
+  # An image changed after it was signed is refused: the boot loader falls back to the entry it
+  # signed instead of the one asked for.
+  { run = "cp /boot/EFI/wrath/copy.efi /boot/EFI/wrath/tampered.efi && printf X | dd of=/boot/EFI/wrath/tampered.efi bs=1 seek=8192 conv=notrunc status=none && printf 'title tampered\\nuki /EFI/wrath/tampered.efi\\n' > /boot/loader/entries/tampered.conf && bootctl set-oneshot tampered.conf && sync && echo set", stdout_contains = "set" },
+  { boot_installed = true },
+  { run = "bootctl status 2>&1 | grep -i 'current entry'", stdout_contains = "wrath-" },
 ]
 timeout_secs = 1500

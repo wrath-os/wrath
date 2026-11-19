@@ -283,3 +283,53 @@ fn a_machine_whose_only_recipient_is_itself_gets_no_owner_keys() {
     assert!(out.contains("only box itself is among"), "{out}");
     assert!(!dir.join("secure-boot.age").exists());
 }
+
+#[test]
+fn rekeying_encrypts_every_machines_keys_to_the_current_recipients() {
+    let setup = Setup::new(&[FIRST]);
+    let passphrase = setup.config().join("passphrase");
+    fs::write(&passphrase, "horse battery\n").unwrap();
+    ok(&make_machine_keys(&setup, &passphrase));
+    let dir = setup.config().join("secrets/machines/box");
+    let owner = dir.join("secure-boot-owner.age");
+    assert!(!decrypts("second-identity.txt", &owner));
+
+    // A second admin joins.
+    let system = setup.config().join("system.toml");
+    let text = fs::read_to_string(&system).unwrap();
+    fs::write(
+        &system,
+        text.replace(&format!("{FIRST:?}"), &format!("{FIRST:?}, {SECOND:?}")),
+    )
+    .unwrap();
+    ok(&setup.run(&["rekey"], "true"));
+
+    for file in [
+        "secure-boot-owner.age",
+        "secure-boot.age",
+        "ssh_host_ed25519_key.age",
+    ] {
+        assert!(decrypts("second-identity.txt", &dir.join(file)), "{file}");
+    }
+    // The machine still decrypts what it signs with, and only that.
+    let host = Command::new("age")
+        .args(["-d", "-i"])
+        .arg(fixture("test-identity.txt"))
+        .arg(dir.join("ssh_host_ed25519_key.age"))
+        .output()
+        .unwrap();
+    let identity = setup.config().join("host-key");
+    fs::write(&identity, host.stdout).unwrap();
+    let as_machine = |file: &str| {
+        Command::new("age")
+            .args(["-d", "-i"])
+            .arg(&identity)
+            .arg(dir.join(file))
+            .output()
+            .unwrap()
+            .status
+            .success()
+    };
+    assert!(as_machine("secure-boot.age"));
+    assert!(!as_machine("secure-boot-owner.age"));
+}
