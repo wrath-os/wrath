@@ -757,3 +757,34 @@ fn a_default_in_a_file_beats_a_module_default() {
       overrides "UTC", default
     "#);
 }
+
+/// A module that says the system boots with Secure Boot, or not.
+fn secure_boot(on: bool) -> Box<dyn Module> {
+    module("base", vec![], &[], move |_| {
+        let mut output = Output::default();
+        let boot = [("secure_boot".to_owned(), Value::Bool(on))].into();
+        output.base.insert("boot".into(), Value::Table(boot));
+        Ok(output)
+    })
+}
+
+#[test]
+fn a_system_with_secure_boot_carries_each_machines_keys_for_that_machine_only() {
+    let files = [
+        SYSTEM,
+        ("secrets/machines/w-01/secure-boot.age", "one"),
+        ("secrets/machines/w-01/ssh_host_ed25519_key.age", "host"),
+        ("secrets/machines/w-02/ssh_host_ed25519_key.age", "host"),
+    ];
+
+    let evaluation = eval_with(&files, &[secure_boot(true)]).unwrap();
+    let keys = evaluation.machine_secrets();
+    assert_eq!(keys.keys().collect::<Vec<_>>(), ["secure-boot.w-01"]);
+    let keys = &keys["secure-boot.w-01"];
+    assert_eq!(keys.machine, "w-01");
+    assert_eq!(keys.file.source, "secrets/machines/w-01/secure-boot.age");
+    assert_eq!(keys.file.hash, blake3::hash(b"one").to_hex().to_string());
+
+    let evaluation = eval_with(&files, &[secure_boot(false)]).unwrap();
+    assert!(evaluation.machine_secrets().is_empty());
+}

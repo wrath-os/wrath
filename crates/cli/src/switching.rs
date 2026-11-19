@@ -476,10 +476,18 @@ pub fn install(system: &Path, target: &Path) -> Result<(), String> {
     copy_onto(Path::new(ROOT), system, target)?;
     crate::config_from::keep(target, 1)?;
     println!("installing the boot loader");
-    run(Command::new(system.join("bin/wrath"))
+    // What it says, such as a note on Secure Boot, goes straight to stderr.
+    let status = Command::new(system.join("bin/wrath"))
         .args(["activate", "--mode", "install", "--root"])
         .arg(target)
-        .arg(system))
+        .arg(system)
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|e| format!("could not install the boot loader: {e}"))?;
+    if !status.success() {
+        return Err(format!("installing the boot loader failed ({status})"));
+    }
+    Ok(())
 }
 
 /// Copies `system` and every store path it refers to from the store under `from` into the one

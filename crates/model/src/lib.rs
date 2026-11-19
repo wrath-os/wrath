@@ -123,21 +123,20 @@ pub struct Secret {
     pub mode: u32,
     /// Another path linked to the decrypted file.
     pub link: Option<String>,
+    /// The one machine that decrypts it, when only one does, such as its Secure Boot keys. The
+    /// switch decrypts it itself, when it needs it.
+    pub machine: Option<String>,
 }
 
 /// Secrets are the same when everything but where the encrypted file is matches.
 impl PartialEq for Secret {
     fn eq(&self, other: &Self) -> bool {
-        fn key(secret: &Secret) -> (&str, &str, &Option<String>, u32, &Option<String>) {
-            (
-                &secret.hash,
-                &secret.owner,
-                &secret.group,
-                secret.mode,
-                &secret.link,
-            )
-        }
-        key(self) == key(other)
+        self.hash == other.hash
+            && self.owner == other.owner
+            && self.group == other.group
+            && self.mode == other.mode
+            && self.link == other.link
+            && self.machine == other.machine
     }
 }
 
@@ -218,6 +217,7 @@ impl Model {
                         group: declared.group.clone(),
                         mode: declared.mode,
                         link: declared.link.clone(),
+                        machine: None,
                     };
                     (name.clone(), secret)
                 }));
@@ -229,6 +229,20 @@ impl Model {
                     .extend(paths.iter().cloned());
             }
         }
+        model
+            .secrets
+            .extend(evaluation.machine_secrets().iter().map(|(name, secret)| {
+                let secret = Secret {
+                    source: secret.file.source.clone(),
+                    hash: secret.file.hash.clone(),
+                    owner: "root".to_owned(),
+                    group: None,
+                    mode: 0o400,
+                    link: None,
+                    machine: Some(secret.machine.clone()),
+                };
+                (name.clone(), secret)
+            }));
         // A file that restarts a unit the configuration renders is one more file the unit reads.
         model.triggers.retain(|(unit, action), paths| {
             let restarted = model
@@ -341,6 +355,9 @@ impl Model {
                 }
                 if let Some(link) = &secret.link {
                     entries.insert("link".to_owned(), Value::Str(link.clone()));
+                }
+                if let Some(machine) = &secret.machine {
+                    entries.insert("machine".to_owned(), Value::Str(machine.clone()));
                 }
                 (name.clone(), Value::Table(entries))
             })

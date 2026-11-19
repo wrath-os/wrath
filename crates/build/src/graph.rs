@@ -988,6 +988,7 @@ fn activation(model: &Value) -> String {
                 "owner": owner,
                 "mode": mode,
                 "link": secret["link"].as_str().unwrap_or(""),
+                "machine": secret["machine"].as_str().unwrap_or(""),
             }),
         );
     }
@@ -1009,6 +1010,7 @@ fn activation(model: &Value) -> String {
         "templates": templates,
         "templates_spec": TEMPLATES_SPEC,
         "hostname_filled": model["templates"].get("/etc/hostname").is_some(),
+        "secure_boot": model["base"]["boot"]["secure_boot"].as_bool().unwrap_or(false),
         "homes": homes,
     })
     .to_string()
@@ -3512,8 +3514,10 @@ mod tests {
         let activation: Value = serde_json::from_str(&read("activation.json")).unwrap();
         assert_eq!(
             activation["secrets"]["token"],
-            json!({"source": "secrets/token.age", "owner": "web", "mode": "0440", "link": ""})
+            json!({"source": "secrets/token.age", "owner": "web", "mode": "0440", "link": "",
+                   "machine": ""})
         );
+        assert_eq!(activation["secure_boot"], json!(false));
         let age = packages["age"].path.inside();
         assert_eq!(activation["age"], json!(format!("{age}/bin/age")));
         assert_eq!(

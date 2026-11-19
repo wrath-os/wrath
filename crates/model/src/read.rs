@@ -285,6 +285,7 @@ fn read_secrets(value: &Value) -> Result<BTreeMap<String, Secret>, String> {
             group: optional_string(fields, "group", name)?,
             mode: mode(get(fields, "mode", name)?, name)?,
             link: optional_string(fields, "link", name)?,
+            machine: optional_string(fields, "machine", name)?,
         })
     })
 }

@@ -1,0 +1,17 @@
+# One disk, booted with Secure Boot: its keys were made ahead with `wrath secret machine t-03`,
+# encrypted to the test admin key below and to the machine's host key. Test keys only.
+[system]
+hostname = "t-03"
+secret_recipients = ["age1752tz55mdpnqrasdfja6pzw76jhqf532f2dhr5jpkngrfhz5ec0sax8ykl"]
+
+[boot]
+secure_boot = true
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest" }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+subvolumes."@wrath" = { mount = "/wrath" }

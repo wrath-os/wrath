@@ -161,6 +161,7 @@ fn own(sw: &Path, path: &Path, owner: &str, mode: &str) {
 }
 
 /// Decrypts each secret `system` has into `dir`. Its encrypted file is named relative to the system.
+/// A secret for one machine is left to the switch, which decrypts it when it needs it.
 fn decrypt(system: &Path, activation: &Value, dir: &Path) {
     let sw = &system.join("bin");
     let identities: Vec<&str> = items(&activation["identities"])
@@ -168,7 +169,12 @@ fn decrypt(system: &Path, activation: &Value, dir: &Path) {
         .filter(|identity| Path::new(identity).exists())
         .collect();
     let age = activation["age"].as_str().unwrap_or("age");
-    for (name, secret) in activation["secrets"].as_object().into_iter().flatten() {
+    let for_any_machine = activation["secrets"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, secret)| text(secret, "machine").is_empty());
+    for (name, secret) in for_any_machine {
         let file = dir.join(name);
         // Readable only by root from the start, before it has anything in it.
         let output = OpenOptions::new()

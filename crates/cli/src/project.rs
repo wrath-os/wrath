@@ -167,6 +167,10 @@ impl ConfigFs for Shared {
         self.0.toml_files(dir)
     }
 
+    fn subdirs(&self, dir: &str) -> io::Result<Vec<String>> {
+        self.0.subdirs(dir)
+    }
+
     fn display(&self, path: &str) -> String {
         self.0.display(path)
     }

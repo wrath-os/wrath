@@ -1,0 +1,18 @@
+title = "a machine with Secure Boot signs what it boots with its own keys, and its firmware enrolls them from setup mode"
+notes = "The keys were made ahead with `wrath secret machine`. The firmware starts in setup mode, systemd-boot enrolls the machine's keys from the ESP, which a VM does by itself, and from then on it starts only what the machine signed."
+
+[vm]
+config = "scenarios/fixtures/native-state-installer"
+store = "wrath"
+firmware = "secure-boot"
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { prepare_build = "scenarios/fixtures/native-secure-boot" },
+  { run = "cp -r /run/wrath-share/configs/native-secure-boot /tmp/config && printf 'battery staple' > /tmp/keypass && printf unused > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --key-passphrase-file /tmp/keypass --name t-03 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { boot_installed = true },
+  { run = "ls /boot/loader/keys/auto | sort", stdout_contains = "KEK.auth\nPK.auth\ndb.auth" },
+  { run = "ls /boot/EFI/wrath | grep -c -- '-system-[0-9a-f]\\{8\\}\\.efi$'", stdout_contains = "1" },
+  { run = "bootctl status 2>&1 | grep 'Secure Boot:'", stdout_contains = "enabled (user)" },
+]
+timeout_secs = 1500

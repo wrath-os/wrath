@@ -235,6 +235,7 @@ fn units_that_mention_a_secret_restart_when_it_changes() {
                 group: None,
                 mode: 0o400,
                 link: None,
+                machine: None,
             };
             model.secrets.insert(name.into(), secret);
         }
@@ -441,6 +442,19 @@ fn full_model() -> Model {
             group: Some("wheel".into()),
             mode: 0o440,
             link: Some("/home/app/token".into()),
+            machine: None,
+        },
+    );
+    model.secrets.insert(
+        "secure-boot.w-01".into(),
+        Secret {
+            source: String::new(),
+            hash: "k".into(),
+            owner: "root".into(),
+            group: None,
+            mode: 0o400,
+            link: None,
+            machine: Some("w-01".into()),
         },
     );
     model.templates.insert(
@@ -505,6 +519,7 @@ fn with_template(owner: &str, text: &str, secret_hash: &str) -> Model {
             group: None,
             mode: 0o400,
             link: None,
+            machine: None,
         },
     );
     model.templates.insert(

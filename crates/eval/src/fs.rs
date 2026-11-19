@@ -1,6 +1,6 @@
 //! Where configuration files come from: a directory, or memory in tests.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +13,9 @@ pub trait ConfigFs {
 
     /// TOML files under `dir`, recursively, as sorted relative paths. A missing directory has none.
     fn toml_files(&self, dir: &str) -> io::Result<Vec<String>>;
+
+    /// The names of the directories directly in `dir`, sorted. A missing directory has none.
+    fn subdirs(&self, dir: &str) -> io::Result<Vec<String>>;
 
     /// How locations refer to a file.
     fn display(&self, path: &str) -> String;
@@ -56,6 +59,25 @@ impl ConfigFs for DirFs {
         collect_toml(&self.root, Path::new(dir), &mut files)?;
         files.sort();
         Ok(files)
+    }
+
+    fn subdirs(&self, dir: &str) -> io::Result<Vec<String>> {
+        let entries = match std::fs::read_dir(self.root.join(dir)) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let mut dirs = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_type()?.is_dir()
+                && let Some(name) = entry.file_name().to_str()
+            {
+                dirs.push(name.to_owned());
+            }
+        }
+        dirs.sort();
+        Ok(dirs)
     }
 
     fn display(&self, path: &str) -> String {
@@ -139,6 +161,17 @@ impl ConfigFs for MemFs {
             .collect())
     }
 
+    fn subdirs(&self, dir: &str) -> io::Result<Vec<String>> {
+        let prefix = format!("{dir}/");
+        let dirs: BTreeSet<String> = self
+            .files
+            .keys()
+            .filter_map(|path| path.strip_prefix(&prefix)?.split_once('/'))
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        Ok(dirs.into_iter().collect())
+    }
+
     fn display(&self, path: &str) -> String {
         path.to_owned()
     }
@@ -188,5 +221,24 @@ mod tests {
             fs.toml_files("services").unwrap(),
             ["services/a.toml", "services/b/c.toml"]
         );
+    }
+
+    #[test]
+    fn the_directories_directly_in_one_are_listed_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        for machine in ["w-02", "w-01"] {
+            std::fs::create_dir_all(dir.path().join("secrets/machines").join(machine)).unwrap();
+        }
+        std::fs::write(dir.path().join("secrets/machines/notes.txt"), "").unwrap();
+        let fs = DirFs::new(dir.path());
+        assert_eq!(fs.subdirs("secrets/machines").unwrap(), ["w-01", "w-02"]);
+        assert!(fs.subdirs("missing").unwrap().is_empty());
+
+        let fs = MemFs::new([
+            ("secrets/machines/w-02/secure-boot.age", ""),
+            ("secrets/machines/w-01/secure-boot.age", ""),
+            ("secrets/machines/notes.txt", ""),
+        ]);
+        assert_eq!(fs.subdirs("secrets/machines").unwrap(), ["w-01", "w-02"]);
     }
 }

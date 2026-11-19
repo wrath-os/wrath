@@ -72,8 +72,23 @@ pub struct Evaluation {
     declared_caches: BTreeMap<String, DeclaredCache>,
     modules: Vec<Rendered>,
     secret_files: BTreeMap<String, SecretFile>,
+    machine_secrets: BTreeMap<String, MachineSecret>,
     patches: BTreeMap<String, String>,
     platform: Platform,
+}
+
+/// Where a configuration keeps each machine's keys, under the machine's name.
+pub const MACHINE_KEYS: &str = "secrets/machines";
+
+/// A machine's Secure Boot keys, in its directory under [`MACHINE_KEYS`].
+pub const SECURE_BOOT_KEYS: &str = "secure-boot.age";
+
+/// A secret only one machine decrypts, such as its Secure Boot keys, which a system booting with
+/// Secure Boot carries for each machine that has them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineSecret {
+    pub machine: String,
+    pub file: SecretFile,
 }
 
 /// The encrypted file of a secret as read when evaluating.
@@ -184,6 +199,11 @@ impl Evaluation {
     /// The encrypted file of each secret, by name.
     pub fn secret_files(&self) -> &BTreeMap<String, SecretFile> {
         &self.secret_files
+    }
+
+    /// The secrets only one machine decrypts, by name.
+    pub fn machine_secrets(&self) -> &BTreeMap<String, MachineSecret> {
+        &self.machine_secrets
     }
 
     /// The text of each patch builds use, by its path in the configuration.
@@ -343,6 +363,11 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
     } else {
         BTreeMap::new()
     };
+    let machine_secrets = if diagnostics.is_empty() && secure_boot(&resolver.rendered) {
+        read_secure_boot_keys(config, &mut diagnostics)
+    } else {
+        BTreeMap::new()
+    };
 
     if !diagnostics.is_empty() {
         return Err(EvalError {
@@ -366,9 +391,60 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
             .map(|rendered| rendered.expect("every module rendered without errors"))
             .collect(),
         secret_files,
+        machine_secrets,
         patches,
         platform,
     })
+}
+
+/// Whether the system boots with Secure Boot, as the base system's `boot` says.
+fn secure_boot(rendered: &[Option<Rendered>]) -> bool {
+    rendered.iter().flatten().any(|rendered| {
+        matches!(
+            rendered.output.base.get("boot"),
+            Some(Value::Table(boot)) if boot.get("secure_boot") == Some(&Value::Bool(true))
+        )
+    })
+}
+
+/// Reads and hashes the Secure Boot keys of each machine that has them, as secrets named
+/// `secure-boot.<machine>`. A machine without them boots unsigned, which its switch says.
+fn read_secure_boot_keys(
+    config: &dyn ConfigFs,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> BTreeMap<String, MachineSecret> {
+    let mut secrets = BTreeMap::new();
+    let machines = match config.subdirs(MACHINE_KEYS) {
+        Ok(machines) => machines,
+        Err(e) => {
+            diagnostics.push(Diagnostic::error(format!(
+                "cannot list {}: {e}",
+                config.display(MACHINE_KEYS)
+            )));
+            return secrets;
+        }
+    };
+    for machine in machines {
+        let path = format!("{MACHINE_KEYS}/{machine}/{SECURE_BOOT_KEYS}");
+        match config.read_bytes(&path) {
+            Ok(bytes) => {
+                let file = SecretFile {
+                    source: config.display(&path),
+                    hash: blake3::hash(&bytes).to_hex().to_string(),
+                };
+                secrets.insert(
+                    format!("secure-boot.{machine}"),
+                    MachineSecret { machine, file },
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => diagnostics.push(Diagnostic::error(format!(
+                "cannot read {}: {e}",
+                config.display(&path)
+            ))),
+        }
+    }
+    secrets
 }
 
 /// Options modules say they write that no module declares, such as a firewall port when the

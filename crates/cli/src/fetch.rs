@@ -130,6 +130,10 @@ impl<F: ConfigFs> ConfigFs for Sourced<F> {
         self.inner.toml_files(dir)
     }
 
+    fn subdirs(&self, dir: &str) -> io::Result<Vec<String>> {
+        self.inner.subdirs(dir)
+    }
+
     fn display(&self, path: &str) -> String {
         self.inner.display(path)
     }

@@ -26,8 +26,9 @@ pub enum SecretCommand {
         #[command(flatten)]
         options: Options,
     },
-    /// Make a machine's SSH host key before installing it, kept encrypted in
-    /// `secrets/machines/NAME`, so its secrets decrypt from its first boot
+    /// Make the keys a machine doesn't have yet, kept encrypted in `secrets/machines/NAME`: its SSH
+    /// host key, made before installing it so its secrets decrypt from its first boot, and its
+    /// Secure Boot keys
     Machine {
         /// The machine, as `wrath install --name` or its hostname calls it
         name: String,
@@ -59,7 +60,7 @@ pub fn run(command: SecretCommand, config: &Path, modules: &Path) -> Result<Exit
             passphrase_file,
         } => {
             let secrets = Secrets::load(config, modules)?;
-            secrets.make_host_key(config, &name, passphrase_file.as_deref())
+            secrets.make_machine_keys(config, &name, passphrase_file.as_deref())
         }
     }
 }
@@ -139,11 +140,10 @@ impl Secrets {
         Ok(ExitCode::SUCCESS)
     }
 
-    /// Makes machine `name`'s keys, its SSH host key and the key its initrd's SSH server
-    /// presents, and keeps them under `secrets/machines/NAME` in the configuration at `config`,
-    /// encrypted to the recipients and to a passphrase, with their public halves beside them. A
-    /// machine with a host key already gets nothing new.
-    fn make_host_key(
+    /// Makes the keys machine `name` doesn't have yet under `secrets/machines/NAME` in the
+    /// configuration at `config`: its SSH host key and the key its initrd's SSH server presents,
+    /// and its Secure Boot keys. A machine with every key already gets nothing new.
+    fn make_machine_keys(
         &self,
         config: &Path,
         name: &str,
@@ -154,23 +154,44 @@ impl Secrets {
         }
         let dir = crate::machine_keys::dir(config, name);
         let host = crate::machine_keys::HOST_KEY;
-        if crate::machine_keys::to_recipients(&dir, host).exists()
-            || crate::machine_keys::to_passphrase(&dir, host).exists()
-        {
+        let has_host_key = crate::machine_keys::to_recipients(&dir, host).exists()
+            || crate::machine_keys::to_passphrase(&dir, host).exists();
+        let has_secure_boot = dir.join(crate::secure_boot::MACHINE_ARCHIVE).exists();
+        if has_host_key && has_secure_boot {
             return Err(format!(
-                "{name} has a host key already, in {}; remove it first to make a new one",
+                "{name} has its keys already, in {}; remove them first to make new ones",
                 dir.display()
             ));
         }
         self.check_recipients()?;
+        let made = private_dir()?;
+        if !has_host_key {
+            self.make_host_keys(&dir, name, passphrase_file, made.path())?;
+        }
+        if !has_secure_boot {
+            self.make_secure_boot_keys(&dir, name, made.path())?;
+        }
+        Ok(ExitCode::SUCCESS)
+    }
+
+    /// Makes machine `name`'s SSH host key and the key its initrd's SSH server presents, in
+    /// `made`, and keeps them in `dir`, encrypted to the recipients and to a passphrase, with their
+    /// public halves beside them.
+    fn make_host_keys(
+        &self,
+        dir: &Path,
+        name: &str,
+        passphrase_file: Option<&Path>,
+        made: &Path,
+    ) -> Result<(), String> {
+        let host = crate::machine_keys::HOST_KEY;
         let passphrase = match passphrase_file {
             Some(file) => crate::machine_keys::read_passphrase(file)?,
             None => crate::machine_keys::new_passphrase(&format!("{name}'s keys at install"))?,
         };
-        let made = private_dir()?;
         let mut publics = Vec::new();
         for (key, _) in crate::machine_keys::KEYS {
-            let private = made.path().join(key);
+            let private = made.join(key);
             let comment = if key == host {
                 format!("root@{name}")
             } else {
@@ -191,9 +212,9 @@ impl Secrets {
                 std::fs::read(&private).map_err(|e| format!("{}: {e}", private.display()))?;
             let public = std::fs::read_to_string(private.with_extension("pub"))
                 .map_err(|e| format!("{key}.pub: {e}"))?;
-            let encrypted = crate::machine_keys::to_recipients(&dir, key);
+            let encrypted = crate::machine_keys::to_recipients(dir, key);
             self.encrypt(&format!("{name}'s {key}"), &secret, &encrypted)?;
-            let locked = crate::machine_keys::to_passphrase(&dir, key);
+            let locked = crate::machine_keys::to_passphrase(dir, key);
             let partial = locked.with_extension("partial");
             std::fs::write(&partial, crate::machine_keys::lock(&secret, &passphrase)?)
                 .and_then(|()| std::fs::rename(&partial, &locked))
@@ -222,7 +243,58 @@ impl Secrets {
             "add the host key to `system.secret_recipients`, in place of any key {name} had \
              before, and `wrath secret rekey` encrypts its secrets to it"
         );
-        Ok(ExitCode::SUCCESS)
+        Ok(())
+    }
+
+    /// Makes machine `name`'s Secure Boot keys in `made` and keeps them in `dir`: what the machine
+    /// signs with encrypted to the recipients, and the PK and KEK to every recipient but the
+    /// machine, so only its admins can change what its firmware trusts.
+    fn make_secure_boot_keys(&self, dir: &Path, name: &str, made: &Path) -> Result<(), String> {
+        let host_public = without_comment(
+            &std::fs::read_to_string(dir.join(format!("{}.pub", crate::machine_keys::HOST_KEY)))
+                .unwrap_or_default(),
+        );
+        let admins: Vec<String> = self
+            .recipients
+            .iter()
+            .filter(|recipient| without_comment(recipient) != host_public)
+            .cloned()
+            .collect();
+        if admins.is_empty() {
+            return Err(format!(
+                "only {name} itself is among `system.secret_recipients`, so nobody would keep the \
+                 keys that change what its firmware trusts\nhelp: add your own key to them"
+            ));
+        }
+        let made = made.join("secure-boot");
+        std::fs::create_dir(&made).map_err(|e| format!("{}: {e}", made.display()))?;
+        let keys = crate::secure_boot::make(name, &made)?;
+        // The machine decrypts these when it switches, so they're encrypted to its host key even
+        // before it's among the recipients, as a host key made just now isn't.
+        let mut recipients = self.recipients.clone();
+        // Every recipient is an admin when the host key isn't among them.
+        if !host_public.is_empty() && admins.len() == self.recipients.len() {
+            recipients.push(host_public);
+        }
+        let machine = dir.join(crate::secure_boot::MACHINE_ARCHIVE);
+        encrypt_to(
+            &recipients,
+            &format!("{name}'s Secure Boot keys"),
+            &keys.machine,
+            &machine,
+        )?;
+        let owner = dir.join(crate::secure_boot::OWNER_ARCHIVE);
+        encrypt_to(
+            &admins,
+            &format!("{name}'s firmware owner keys"),
+            &keys.owner,
+            &owner,
+        )?;
+        println!(
+            "{name} enrolls its Secure Boot keys when its firmware is in setup mode, once \
+             `boot.secure_boot` is on"
+        );
+        Ok(())
     }
 
     fn check_recipients(&self) -> Result<(), String> {
@@ -238,26 +310,41 @@ impl Secrets {
 
     /// Encrypts `plaintext` to the recipients and replaces `file` with the result in one step.
     fn encrypt(&self, name: &str, plaintext: &[u8], file: &Path) -> Result<(), String> {
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
-        let partial = file.with_extension("age.partial");
-        let mut command = Command::new("age");
-        command.arg("--encrypt").arg("--output").arg(&partial);
-        for recipient in &self.recipients {
-            command.arg("--recipient").arg(recipient);
-        }
-        age(&mut command, plaintext)?;
-        std::fs::rename(&partial, file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let count = self.recipients.len();
-        let noun = if count == 1 {
-            "recipient"
-        } else {
-            "recipients"
-        };
-        println!("encrypted {name} to {count} {noun}");
-        Ok(())
+        encrypt_to(&self.recipients, name, plaintext, file)
     }
+}
+
+/// Encrypts `plaintext` to `recipients` and replaces `file` with the result in one step.
+fn encrypt_to(
+    recipients: &[String],
+    name: &str,
+    plaintext: &[u8],
+    file: &Path,
+) -> Result<(), String> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let partial = file.with_extension("age.partial");
+    let mut command = Command::new("age");
+    command.arg("--encrypt").arg("--output").arg(&partial);
+    for recipient in recipients {
+        command.arg("--recipient").arg(recipient);
+    }
+    age(&mut command, plaintext)?;
+    std::fs::rename(&partial, file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let count = recipients.len();
+    let noun = if count == 1 {
+        "recipient"
+    } else {
+        "recipients"
+    };
+    println!("encrypted {name} to {count} {noun}");
+    Ok(())
+}
+
+/// A public key as recipients are compared: its type and key, without the comment.
+fn without_comment(key: &str) -> String {
+    key.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
 }
 
 fn decrypt(file: &Path, identities: &[PathBuf]) -> Result<Vec<u8>, String> {
@@ -343,6 +430,10 @@ impl ConfigFs for Editing {
 
     fn toml_files(&self, dir: &str) -> io::Result<Vec<String>> {
         self.0.toml_files(dir)
+    }
+
+    fn subdirs(&self, dir: &str) -> io::Result<Vec<String>> {
+        self.0.subdirs(dir)
     }
 
     fn display(&self, path: &str) -> String {

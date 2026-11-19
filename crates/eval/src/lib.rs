@@ -29,7 +29,8 @@ mod writers;
 pub use caches::DeclaredCache;
 pub use diag::{Diagnostic, Label, render};
 pub use eval::{
-    Contribution, EvalError, Evaluation, Input, MACHINE_VALUES, Rendered, Resolved, Use, evaluate,
+    Contribution, EvalError, Evaluation, Input, MACHINE_KEYS, MACHINE_VALUES, MachineSecret,
+    Rendered, Resolved, SECURE_BOOT_KEYS, Use, evaluate,
 };
 pub use fs::{ConfigFs, DirFs, MemFs};
 pub use ids::{Ids, LOCK_FILE};

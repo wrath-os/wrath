@@ -91,8 +91,21 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     for dir in [&kernels, &entries] {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    if let Some((_, link)) = generations.iter().find(|(number, _)| *number == current) {
-        update_loader(&esp, &inside(root, link));
+    let current_system = generations
+        .iter()
+        .find(|(number, _)| *number == current)
+        .map(|(_, link)| inside(root, link));
+    // Secure Boot is decided by the current generation, and its keys sign every generation's
+    // image, so each still boots.
+    let signer = match &current_system {
+        Some(system) => crate::secure_boot::Signer::of(root, system)?,
+        None => None,
+    };
+    if let Some(system) = &current_system {
+        match &signer {
+            Some(signer) => sign_loader(&esp, system, signer)?,
+            None => update_loader(&esp, system),
+        }
     }
     let loader = [LOADER, FALLBACK_LOADER]
         .iter()
@@ -132,8 +145,11 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
             Vec::new()
         };
         let files = if images {
-            // Named after the system, which decides everything in it.
-            let name = format!("{}.efi", named(&target));
+            // Named after the system, which decides everything in it, and the key that signed it.
+            let name = match &signer {
+                Some(signer) => format!("{}-{}.efi", named(&target), signer.fingerprint),
+                None => format!("{}.efi", named(&target)),
+            };
             vec![OnEsp::Image {
                 name,
                 stub,
@@ -200,7 +216,7 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     let mut written = BTreeSet::new();
     for (number, link, params, files, _) in &booting {
         for file in files {
-            file.write(&kernels, params)?;
+            file.write(&kernels, params, signer.as_ref())?;
         }
         // An entry the boot loader is counting tries for keeps its name, which holds the count.
         // A new one gets its tries; a boot that comes up marks it good, and one that runs out of
@@ -242,11 +258,14 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         .flat_map(|(.., credentials)| credentials)
         .collect();
     seal_credentials(root, &esp.join("loader/credentials"), &credentials)?;
-    write_replacing(
-        &esp.join("loader/loader.conf"),
-        "default wrath-*\ntimeout 3\neditor no\n",
-        0o644,
-    )?;
+    let mut loader_conf = String::from("default wrath-*\ntimeout 3\neditor no\n");
+    if let Some(signer) = &signer {
+        place_enrollment(&esp, signer)?;
+        // In setup mode, a VM enrolls the keys by itself; other machines get a menu entry for it,
+        // so firmware that needs other keys too, such as for a graphics card, isn't locked out.
+        loader_conf.push_str("secure-boot-enroll if-safe\n");
+    }
+    write_replacing(&esp.join("loader/loader.conf"), &loader_conf, 0o644)?;
     remove_others(&entries, |name| {
         name.starts_with("wrath-") && !written.contains(name)
     })?;
@@ -339,6 +358,61 @@ fn update_loader(esp: &Path, system: &Path) {
     }
 }
 
+/// systemd-boot in a system, unsigned.
+const SYSTEMD_BOOT: &str = "systemd/lib/systemd/boot/efi/systemd-bootx64.efi";
+
+/// What the ESP's systemd-boot was signed from, and with which key, so it's signed again only when
+/// either changes.
+const SIGNED_LOADER: &str = "loader/wrath-signed-loader";
+
+/// Puts `system`'s systemd-boot on the ESP at `esp`, signed by `signer`, wherever the ESP has one:
+/// with Secure Boot, the firmware starts nothing unsigned. The current generation's loader goes
+/// there, as `bootctl update` would put it.
+fn sign_loader(
+    esp: &Path,
+    system: &Path,
+    signer: &crate::secure_boot::Signer,
+) -> Result<(), String> {
+    let source = system.join(SYSTEMD_BOOT);
+    let bytes = fs::read(&source).map_err(|e| format!("{}: {e}", source.display()))?;
+    let signed = format!("{} {}\n", blake3::hash(&bytes).to_hex(), signer.fingerprint);
+    let marker = esp.join(SIGNED_LOADER);
+    if fs::read_to_string(&marker).ok().as_deref() == Some(signed.as_str()) {
+        return Ok(());
+    }
+    let targets = [LOADER, FALLBACK_LOADER]
+        .iter()
+        .map(|path| esp.join(path))
+        .filter(|path| path.is_file());
+    for target in targets {
+        let temporary = target.with_extension("wrath-new");
+        signer.sign(&source, &temporary)?;
+        fs::File::open(&temporary)
+            .and_then(|file| file.sync_all())
+            .and_then(|()| fs::rename(&temporary, &target))
+            .map_err(|e| format!("{}: {e}", target.display()))?;
+    }
+    fs::create_dir_all(esp.join("loader")).map_err(|e| format!("{}: {e}", esp.display()))?;
+    write_replacing(&marker, signed, 0o644)
+}
+
+/// Where systemd-boot finds keys to enroll when the firmware is in setup mode: `auto` is the one
+/// it enrolls by itself, where `secure-boot-enroll` allows, and offers in its menu elsewhere.
+const ENROLLMENT: &str = "loader/keys/auto";
+
+/// Puts the `.auth` files that enroll `signer`'s keys where systemd-boot looks for them.
+fn place_enrollment(esp: &Path, signer: &crate::secure_boot::Signer) -> Result<(), String> {
+    let dir = esp.join(ENROLLMENT);
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for (name, bytes) in &signer.enrollment {
+        let path = dir.join(name);
+        if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+            write_replacing(&path, bytes, 0o644)?;
+        }
+    }
+    Ok(())
+}
+
 /// systemd's EFI stub, in a system, which unified kernel images start from.
 const STUB: &str = "systemd/lib/systemd/boot/efi/linuxx64.efi.stub";
 
@@ -382,8 +456,14 @@ impl OnEsp {
         }
     }
 
-    /// Puts it in `dir`, unless it's there. An image starts the system with `params`.
-    fn write(&self, dir: &Path, params: &str) -> Result<(), String> {
+    /// Puts it in `dir`, unless it's there. An image starts the system with `params`, and is signed
+    /// by `signer` when there is one.
+    fn write(
+        &self,
+        dir: &Path,
+        params: &str,
+        signer: Option<&crate::secure_boot::Signer>,
+    ) -> Result<(), String> {
         let at = dir.join(self.name());
         match self {
             // Named after the system, and written whole before it takes the name, so one that's
@@ -410,12 +490,24 @@ impl OnEsp {
                     },
                 )
                 .map_err(|e| format!("{}: {e}", stub.display()))?;
+                let unsigned = at.with_extension("wrath-unsigned");
                 let temporary = at.with_extension("wrath-new");
-                let written = fs::write(&temporary, image)
-                    .and_then(|()| fs::File::open(&temporary)?.sync_all());
+                let written = match signer {
+                    Some(signer) => fs::write(&unsigned, image)
+                        .map_err(|e| format!("{}: {e}", unsigned.display()))
+                        .and_then(|()| signer.sign(&unsigned, &temporary)),
+                    None => fs::write(&temporary, image)
+                        .map_err(|e| format!("{}: {e}", temporary.display())),
+                }
+                .and_then(|()| {
+                    fs::File::open(&temporary)
+                        .and_then(|file| file.sync_all())
+                        .map_err(|e| format!("{}: {e}", at.display()))
+                });
+                let _ = fs::remove_file(&unsigned);
                 if let Err(e) = written {
                     let _ = fs::remove_file(&temporary);
-                    return Err(format!("{}: {e}", at.display()));
+                    return Err(e);
                 }
                 fs::rename(&temporary, &at).map_err(|e| format!("{}: {e}", at.display()))
             }
@@ -1740,6 +1832,57 @@ mod tests {
         boot_entries(root, false).unwrap();
         let entry = fs::read_to_string(entries.join("wrath-2+3.conf")).unwrap();
         assert!(entry.ends_with("efi /EFI/wrath/bbb.efi\n"), "{entry}");
+    }
+
+    #[test]
+    fn with_secure_boot_the_loader_and_images_are_signed_and_its_keys_wait_on_the_esp() {
+        let work = tempfile::tempdir().unwrap();
+        let (esp, system) = (work.path().join("boot"), work.path().join("system"));
+        let efi = system.join("systemd/lib/systemd/boot/efi");
+        fs::create_dir_all(&efi).unwrap();
+        fs::write(efi.join("systemd-bootx64.efi"), "loader").unwrap();
+        for path in [LOADER, FALLBACK_LOADER] {
+            fs::create_dir_all(esp.join(path).parent().unwrap()).unwrap();
+            fs::write(esp.join(path), "old loader").unwrap();
+        }
+        let signer = crate::secure_boot::Signer::fake(vec![("db.auth".into(), b"db".to_vec())]);
+
+        sign_loader(&esp, &system, &signer).unwrap();
+        for path in [LOADER, FALLBACK_LOADER] {
+            assert_eq!(fs::read_to_string(esp.join(path)).unwrap(), "loadersigned");
+        }
+        // Signed from the same loader with the same key, it's left alone.
+        fs::write(esp.join(LOADER), "as signed").unwrap();
+        sign_loader(&esp, &system, &signer).unwrap();
+        assert_eq!(fs::read_to_string(esp.join(LOADER)).unwrap(), "as signed");
+        // A new loader is signed again.
+        fs::write(efi.join("systemd-bootx64.efi"), "newer").unwrap();
+        sign_loader(&esp, &system, &signer).unwrap();
+        assert_eq!(fs::read_to_string(esp.join(LOADER)).unwrap(), "newersigned");
+
+        place_enrollment(&esp, &signer).unwrap();
+        assert_eq!(
+            fs::read(esp.join("loader/keys/auto/db.auth")).unwrap(),
+            b"db"
+        );
+
+        let kernels = esp.join("EFI/wrath");
+        fs::create_dir_all(&kernels).unwrap();
+        let image = OnEsp::Image {
+            name: "bbb-0123abcd.efi".into(),
+            stub: work.path().join("stub"),
+            kernel: work.path().join("kernel"),
+            initrd: work.path().join("initrd"),
+            system: system.clone(),
+        };
+        fs::write(work.path().join("stub"), tiny_stub()).unwrap();
+        fs::write(work.path().join("kernel"), "k").unwrap();
+        fs::write(work.path().join("initrd"), "i").unwrap();
+        image.write(&kernels, "init=/x", Some(&signer)).unwrap();
+        let written = fs::read(kernels.join("bbb-0123abcd.efi")).unwrap();
+        assert!(written.starts_with(b"MZ") && written.ends_with(b"signed"));
+        let left: Vec<_> = fs::read_dir(&kernels).unwrap().collect();
+        assert_eq!(left.len(), 1, "nothing but the signed image is left");
     }
 
     fn entry_names(root: &Path) -> Vec<String> {

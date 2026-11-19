@@ -69,6 +69,10 @@ impl ConfigFs for LiveImage<'_> {
         self.inner.toml_files(dir)
     }
 
+    fn subdirs(&self, dir: &str) -> std::io::Result<Vec<String>> {
+        self.inner.subdirs(dir)
+    }
+
     fn display(&self, path: &str) -> String {
         self.inner.display(path)
     }

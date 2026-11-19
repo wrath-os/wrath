@@ -28,6 +28,9 @@
   env.OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
   env.OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
   env.OVMF = "${pkgs.OVMF.fd}/FV/OVMF.fd";
+  # The same with Secure Boot, its variables empty: setup mode.
+  env.OVMF_SECURE_CODE = "${pkgs.OVMFFull.fd}/FV/OVMF_CODE.fd";
+  env.OVMF_SECURE_VARS = "${pkgs.OVMFFull.fd}/FV/OVMF_VARS.fd";
 
   # A checkout of grapes beside this one, for the tests and building while working on both.
   env.WRATH_GRAPES = "${config.devenv.root}/../grapes";

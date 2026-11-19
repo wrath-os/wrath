@@ -168,22 +168,12 @@ fn a_failed_edit_keeps_the_secret() {
 }
 
 #[test]
-fn a_machines_host_key_is_made_once_encrypted_to_the_recipients_and_its_passphrase() {
+fn a_machines_keys_are_made_once_encrypted_to_the_recipients_and_its_passphrase() {
     let setup = Setup::new(&[FIRST]);
     let passphrase = setup.config().join("passphrase");
     fs::write(&passphrase, "horse battery\n").unwrap();
-    let make = || {
-        Command::new(env!("CARGO_BIN_EXE_wrath"))
-            .args(["secret", "machine", "box", "--passphrase-file"])
-            .arg(&passphrase)
-            .arg("--config")
-            .arg(setup.config())
-            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-            .output()
-            .unwrap()
-    };
 
-    let out = ok(&make());
+    let out = ok(&make_machine_keys(&setup, &passphrase));
 
     let dir = setup.config().join("secrets/machines/box");
     let public = fs::read_to_string(dir.join("ssh_host_ed25519_key.pub")).unwrap();
@@ -214,6 +204,82 @@ fn a_machines_host_key_is_made_once_encrypted_to_the_recipients_and_its_passphra
         "{key}"
     );
 
-    let again = err(&make());
-    assert!(again.contains("box has a host key already"), "{again}");
+    // Its Secure Boot keys are made with it: a new machine's host key isn't a recipient yet, so
+    // every recipient keeps the owner keys.
+    assert!(decrypts(
+        "test-identity.txt",
+        &dir.join("secure-boot-owner.age")
+    ));
+    assert!(decrypts("test-identity.txt", &dir.join("secure-boot.age")));
+
+    let again = err(&make_machine_keys(&setup, &passphrase));
+    assert!(again.contains("box has its keys already"), "{again}");
+}
+
+/// Runs `wrath secret machine box` in `setup`'s configuration.
+fn make_machine_keys(setup: &Setup, passphrase: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_wrath"))
+        .args(["secret", "machine", "box", "--passphrase-file"])
+        .arg(passphrase)
+        .arg("--config")
+        .arg(setup.config())
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .output()
+        .unwrap()
+}
+
+/// Whether the age identity in fixture `identity` decrypts `file`.
+fn decrypts(identity: &str, file: &Path) -> bool {
+    Command::new("age")
+        .args(["-d", "-i"])
+        .arg(fixture(identity))
+        .arg(file)
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+#[test]
+fn a_machine_with_a_host_key_gets_only_its_secure_boot_keys_and_not_its_owner_keys() {
+    let setup = Setup::new(&[FIRST, SECOND]);
+    let dir = setup.config().join("secrets/machines/box");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("ssh_host_ed25519_key.age"), "made at install").unwrap();
+    // The machine is the second recipient.
+    fs::write(dir.join("ssh_host_ed25519_key.pub"), format!("{SECOND}\n")).unwrap();
+    let passphrase = setup.config().join("passphrase");
+    fs::write(&passphrase, "horse battery\n").unwrap();
+
+    ok(&make_machine_keys(&setup, &passphrase));
+
+    assert_eq!(
+        fs::read_to_string(dir.join("ssh_host_ed25519_key.age")).unwrap(),
+        "made at install"
+    );
+    assert!(!dir.join("initrd_ed25519_key.age").exists());
+    let machine = dir.join("secure-boot.age");
+    assert!(decrypts("second-identity.txt", &machine));
+    let owner = dir.join("secure-boot-owner.age");
+    assert!(decrypts("test-identity.txt", &owner));
+    assert!(!decrypts("second-identity.txt", &owner));
+
+    let again = err(&make_machine_keys(&setup, &passphrase));
+    assert!(again.contains("box has its keys already"), "{again}");
+}
+
+#[test]
+fn a_machine_whose_only_recipient_is_itself_gets_no_owner_keys() {
+    let setup = Setup::new(&[SECOND]);
+    let dir = setup.config().join("secrets/machines/box");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("ssh_host_ed25519_key.age"), "made at install").unwrap();
+    fs::write(dir.join("ssh_host_ed25519_key.pub"), format!("{SECOND}\n")).unwrap();
+    let passphrase = setup.config().join("passphrase");
+    fs::write(&passphrase, "horse battery\n").unwrap();
+
+    let out = err(&make_machine_keys(&setup, &passphrase));
+
+    assert!(out.contains("only box itself is among"), "{out}");
+    assert!(!dir.join("secure-boot.age").exists());
 }

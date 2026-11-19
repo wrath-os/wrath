@@ -95,7 +95,19 @@ own builds (0040, 0041). Whatever signs them has to be there.
    over SSH.
 3. Keys made with `wrath secret machine`, signing at switch, enrollment from `/loader/keys/`:
    scenarios in a VM (OVMF in setup mode, swtpm) where an unsigned UKI doesn't boot, a signed one
-   unlocks, a changed PCR 7 asks, and a swapped LUKS volume is refused.
+   unlocks, a changed PCR 7 asks, and a swapped LUKS volume is refused. Keys, signing and
+   enrollment done, 2026-11-19 (`native-secure-boot`):
+   - `wrath secret machine` makes whichever keys a machine lacks, so a machine installed before
+     gets its Secure Boot keys alone. They're kept as two archives: `secure-boot.age`, the db and
+     PCR keys and the `.auth` files, encrypted to the recipients and the machine's host key, and
+     `secure-boot-owner.age`, the PK and KEK, encrypted to every recipient but the machine.
+   - A system with `boot.secure_boot` carries each machine's `secure-boot.age` as a secret for
+     that machine only, found by its name. Its switch decrypts it into a directory only root
+     reads, under `/run`, for as long as it signs, rather than into `/run/wrath/secrets`.
+   - The keys go in `/loader/keys/auto`, which systemd-boot enrolls by itself in a VM with
+     `secure-boot-enroll if-safe`, and offers in its menu on other machines.
+   Left: the PCR 11 policy and the PCR 15 check, and the scenarios that an unsigned image is
+   refused and a swapped volume doesn't unlock.
 4. The PIN and the recovery key.
 5. The Framework: firmware updated, its event log checked for option ROMs, setup mode by hand.
 

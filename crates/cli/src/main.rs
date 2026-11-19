@@ -38,6 +38,7 @@ mod reference;
 mod run;
 mod schema;
 mod secret;
+mod secure_boot;
 mod state;
 mod style;
 mod switching;

@@ -43,10 +43,38 @@ it instead:
 tpm2 = true
 ```
 
-Of note: the TPM unlock only checks the Secure Boot state right now (PCR 7), and wrath doesn't
-do Secure Boot yet. So anyone with the machine in their hands can boot something else and get the
-key. Fine for a desktop at home, not fine for a laptop you travel with. A passphrase doesn't have
-that problem.
+Of note: the TPM unlock only checks the Secure Boot state right now (PCR 7). Without Secure Boot,
+anyone with the machine in their hands can boot something else and get the key. Fine for a
+desktop at home, not fine for a laptop you travel with. A passphrase doesn't have that problem.
+
+### Secure Boot
+
+A machine can boot only what it signed itself, with keys of its own. Make them, along with its
+host key if it doesn't have one yet:
+
+```sh
+wrath secret machine framework
+```
+
+That keeps them encrypted in `secrets/machines/framework/`: what the machine signs with, for the
+machine and `system.secret_recipients`, and the keys that change what its firmware trusts, for
+every recipient but the machine. Then turn it on:
+
+```toml
+[boot]
+secure_boot = true
+```
+
+From then on every switch signs the boot loader and each generation's image, and leaves the
+machine's keys where the boot loader finds them. Put the firmware in setup mode once, which
+clears its keys (the firmware's own setup screen has it, usually under Secure Boot), and pick
+"Enroll Secure Boot keys" in the boot menu. The machine restarts with Secure Boot on. That changes
+what the TPM sees, so a TPM unlock asks for the passphrase once; `sudo wrath unlock enroll` after
+that.
+
+A machine whose firmware needs Microsoft's keys too, such as for a graphics card's own firmware,
+won't show anything on that card after enrolling only its own. Desktops with a separate graphics
+card need care here; laptops and machines with integrated graphics are fine.
 
 The TPM only unlocks the disks while the boot looks the same to it. A firmware update, or a
 machine's first boot from a unified kernel image (wrath says so when it switches), changes that,
@@ -213,4 +241,5 @@ switches it with the new system's own wrath. `NAME` is whatever `ssh NAME` reach
 - An installer image you can download. Today you build it, once.
 - Installing onto the disks directly: what install fetches goes into the stick's store first and
   is copied from there, so the stick needs room for the whole system.
-- Secure Boot, and with it a TPM unlock that's actually hard to get around.
+- A TPM unlock that's hard to get around: it checks the Secure Boot state, and nothing yet about
+  what was booted.

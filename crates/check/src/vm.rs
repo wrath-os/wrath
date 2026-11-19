@@ -282,10 +282,13 @@ struct Switching<'a> {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Firmware {
     #[default]
     Uefi,
+    /// UEFI that can do Secure Boot, starting in setup mode: no keys enrolled, so it boots
+    /// anything until a boot loader enrolls some.
+    SecureBoot,
 }
 
 /// The only store a scenario may name: wrath's own. The guest boots a disk image from it and
@@ -419,7 +422,7 @@ impl VmRun<'_> {
     /// the run directory keeps the console log, the guest journal when the agent answered, and a
     /// screenshot.
     pub fn execute(&self) -> Result<(), String> {
-        let firmware = FirmwarePaths::from_env()?;
+        let firmware = FirmwarePaths::from_env(self.spec.firmware)?;
         check_kvm()?;
         check_image(self.image)?;
         self.prepare_dir(&firmware)?;
@@ -557,6 +560,14 @@ impl VmRun<'_> {
         ]
         .map(str::to_owned)
         .into();
+        if firmware.secure_boot {
+            // Secure Boot firmware keeps its variables in flash only code in SMM may write.
+            argv[1].push_str(",smm=on");
+            argv.extend([
+                "-global".into(),
+                "driver=cfi.pflash01,property=secure,value=on".into(),
+            ]);
+        }
         match boot {
             Boot::Image => {
                 argv.extend([
@@ -1333,18 +1344,24 @@ struct QemuArgs {
 struct FirmwarePaths {
     code: PathBuf,
     vars: PathBuf,
+    secure_boot: bool,
 }
 
 impl FirmwarePaths {
-    fn from_env() -> Result<Self, String> {
+    fn from_env(firmware: Firmware) -> Result<Self, String> {
         let var = |name: &str| {
             std::env::var_os(name)
                 .map(PathBuf::from)
                 .ok_or_else(|| format!("{name} is not set; run inside the devenv shell"))
         };
+        let (code, vars) = match firmware {
+            Firmware::Uefi => ("OVMF_CODE", "OVMF_VARS"),
+            Firmware::SecureBoot => ("OVMF_SECURE_CODE", "OVMF_SECURE_VARS"),
+        };
         Ok(Self {
-            code: var("OVMF_CODE")?,
-            vars: var("OVMF_VARS")?,
+            code: var(code)?,
+            vars: var(vars)?,
+            secure_boot: firmware == Firmware::SecureBoot,
         })
     }
 }
@@ -1571,6 +1588,12 @@ mod tests {
         assert!(spec.wait_for.is_empty());
         assert!(spec.expect.is_empty());
         assert_eq!(spec.timeout_secs, 300);
+    }
+
+    #[test]
+    fn a_scenario_can_start_in_secure_boot_setup_mode() {
+        let spec = spec("config = \"x\"\nfirmware = \"secure-boot\"\n").unwrap();
+        assert_eq!(spec.firmware, Firmware::SecureBoot);
     }
 
     #[test]

@@ -260,7 +260,7 @@ wrath secret rekey [OPTIONS]
 
 ## `wrath secret machine`
 
-Make a machine's SSH host key before installing it, kept encrypted in `secrets/machines/NAME`, so its secrets decrypt from its first boot
+Make the keys a machine doesn't have yet, kept encrypted in `secrets/machines/NAME`: its SSH host key, made before installing it so its secrets decrypt from its first boot, and its Secure Boot keys
 
 ```text
 wrath secret machine [OPTIONS] <NAME>

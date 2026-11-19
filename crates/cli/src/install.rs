@@ -196,8 +196,10 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
         // Before switching, which decrypts the secrets with them and seals the initrd's key.
         .and_then(|()| place_keys(how.target, &keys))
         .and_then(|()| initrd_ssh_key(how.target, &system))
+        // Before switching too, which finds the machine's Secure Boot keys by its name.
+        .and_then(|()| record_machine(how))
         .and_then(|()| crate::switching::install(&system, how.target))
-        .and_then(|()| record(how))
+        .and_then(|()| copy_configuration(how))
         .and_then(|()| match crate::state::State::of(&model) {
             Some(state) => state.move_into_keep(how.target),
             None => Ok(()),
@@ -648,9 +650,8 @@ fn initrd_ssh_key(target: &Path, system: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Records the machine's role and name on it, and copies the configuration to where it's
-/// applied from.
-fn record(how: &Install) -> Result<(), String> {
+/// Records the machine's role, name and disks on it.
+fn record_machine(how: &Install) -> Result<(), String> {
     let given = machine::Given {
         role: how.role.map(str::to_owned),
         name: how.name.map(str::to_owned),
@@ -664,7 +665,11 @@ fn record(how: &Install) -> Result<(), String> {
     let file = how
         .target
         .join(machine::MACHINE_FILE.trim_start_matches('/'));
-    machine::record(&file, &given)?;
+    machine::record(&file, &given)
+}
+
+/// Copies the configuration to where the machine applies it from.
+fn copy_configuration(how: &Install) -> Result<(), String> {
     let etc = how.target.join("etc");
     std::fs::create_dir_all(&etc).map_err(|e| format!("{}: {e}", etc.display()))?;
     run(Command::new("cp")
