@@ -70,7 +70,9 @@ machine's keys where the boot loader finds them. Put the firmware in setup mode 
 clears its keys (the firmware's own setup screen has it, usually under Secure Boot), and pick
 "Enroll Secure Boot keys" in the boot menu. The machine restarts with Secure Boot on. That changes
 what the TPM sees, so a TPM unlock asks for the passphrase once; `sudo wrath unlock enroll` after
-that.
+that. From then on the TPM also checks that it's the initrd of an image the machine signed asking:
+each image carries a policy signed with the machine's own key, so a new generation needs no new
+enrollment, and nothing booted any other way gets the disks' key.
 
 A machine whose firmware needs Microsoft's keys too, such as for a graphics card's own firmware,
 won't show anything on that card after enrolling only its own. Desktops with a separate graphics
@@ -241,5 +243,5 @@ switches it with the new system's own wrath. `NAME` is whatever `ssh NAME` reach
 - An installer image you can download. Today you build it, once.
 - Installing onto the disks directly: what install fetches goes into the stick's store first and
   is copied from there, so the stick needs room for the whole system.
-- A TPM unlock that's hard to get around: it checks the Secure Boot state, and nothing yet about
-  what was booted.
+- Protection against a disk swapped for one an attacker made, which the TPM unlock would still
+  hand its key to in the initrd. Until then, a PIN-less TPM unlock is for machines that stay put.

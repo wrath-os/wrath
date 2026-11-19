@@ -208,6 +208,8 @@ pub fn esp_tree(
                 cmdline: params.as_bytes(),
                 initrd: &read(&initrd)?,
                 linux: &read(&kernel)?,
+                pcr_public_key: None,
+                pcr_signature: None,
             },
         )
         .map_err(|e| format!("{}: {e}", stub.display()))?;

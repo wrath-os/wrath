@@ -1,0 +1,21 @@
+# One encrypted disk the TPM unlocks, booted with Secure Boot: its keys were made ahead with
+# `wrath secret machine t-04`, encrypted to the test admin key below and to the machine's host
+# key. Test keys only.
+[system]
+hostname = "t-04"
+secret_recipients = ["age1752tz55mdpnqrasdfja6pzw76jhqf532f2dhr5jpkngrfhz5ec0sax8ykl"]
+
+[boot]
+secure_boot = true
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest", encrypt = true }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+subvolumes."@wrath" = { mount = "/wrath" }
+
+[unlock]
+tpm2 = true

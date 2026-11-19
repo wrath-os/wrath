@@ -261,6 +261,11 @@ fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
     let mut loader_conf = String::from("default wrath-*\ntimeout 3\neditor no\n");
     if let Some(signer) = &signer {
         place_enrollment(&esp, signer)?;
+        let key = root.join(crate::secure_boot::PCR_PUBLIC_KEY);
+        if let Some(dir) = key.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        write_replacing(&key, signer.pcr_public_key()?, 0o644)?;
         // In setup mode, a VM enrolls the keys by itself; other machines get a menu entry for it,
         // so firmware that needs other keys too, such as for a graphics card, isn't locked out.
         loader_conf.push_str("secure-boot-enroll if-safe\n");
@@ -480,16 +485,26 @@ impl OnEsp {
                 }
                 let read =
                     |path: &Path| fs::read(path).map_err(|e| format!("{}: {e}", path.display()));
-                let image = wrath_build::uki::assemble(
-                    &read(stub)?,
-                    &wrath_build::uki::Parts {
-                        os_release: &fs::read(system.join("etc/os-release")).unwrap_or_default(),
-                        cmdline: params.as_bytes(),
-                        initrd: &read(initrd)?,
-                        linux: &read(kernel)?,
-                    },
-                )
-                .map_err(|e| format!("{}: {e}", stub.display()))?;
+                let os_release = fs::read(system.join("etc/os-release")).unwrap_or_default();
+                let initrd = read(initrd)?;
+                let linux = read(kernel)?;
+                let mut parts = wrath_build::uki::Parts {
+                    os_release: &os_release,
+                    cmdline: params.as_bytes(),
+                    initrd: &initrd,
+                    linux: &linux,
+                    pcr_public_key: None,
+                    pcr_signature: None,
+                };
+                // With Secure Boot, the image carries a TPM policy signed for the PCR 11 values
+                // booting it gives, so the disks unlock in its initrd, and in no other.
+                let policy = signer.map(|signer| signer.pcr_policy(&parts)).transpose()?;
+                if let Some((key, signature)) = &policy {
+                    parts.pcr_public_key = Some(key);
+                    parts.pcr_signature = Some(signature);
+                }
+                let image = wrath_build::uki::assemble(&read(stub)?, &parts)
+                    .map_err(|e| format!("{}: {e}", stub.display()))?;
                 let unsigned = at.with_extension("wrath-unsigned");
                 let temporary = at.with_extension("wrath-new");
                 let written = match signer {
@@ -1881,6 +1896,10 @@ mod tests {
         image.write(&kernels, "init=/x", Some(&signer)).unwrap();
         let written = fs::read(kernels.join("bbb-0123abcd.efi")).unwrap();
         assert!(written.starts_with(b"MZ") && written.ends_with(b"signed"));
+        // It carries the PCR key and the policy signed for it.
+        let has = |part: &[u8]| written.windows(part.len()).any(|w| w == part);
+        assert!(has(b".pcrpkey") && has(b"public key"));
+        assert!(has(b".pcrsig\0") && has(b"policy"));
         let left: Vec<_> = fs::read_dir(&kernels).unwrap().collect();
         assert_eq!(left.len(), 1, "nothing but the signed image is left");
     }

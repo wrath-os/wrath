@@ -136,11 +136,20 @@ pub fn make(name: &str, dir: &Path) -> Result<Keys, String> {
 /// systemd's signer, in a system.
 const SBSIGN: &str = "systemd/lib/systemd/systemd-sbsign";
 
-/// Signs what a machine boots with its db key, decrypted from the system it switches to into a
-/// directory only root reads, which goes when the signer does.
+/// systemd's tool for the PCR values an image gives, and signing a TPM policy for them.
+const MEASURE: &str = "systemd/lib/systemd/systemd-measure";
+
+/// Where the switch keeps the public half of the machine's PCR key, under its root, for enrolling
+/// the disks to the policies it signs. The stub hands it only to the initrd.
+pub const PCR_PUBLIC_KEY: &str = "var/lib/wrath/tpm2-pcr-public-key.pem";
+
+/// Signs what a machine boots with its db key, and its images' TPM policies with its PCR key,
+/// both decrypted from the system it switches to into a directory only root reads, which goes when
+/// the signer does.
 pub struct Signer {
     dir: tempfile::TempDir,
     sbsign: PathBuf,
+    measure: PathBuf,
     /// The start of the db certificate's SHA-256, which names what it signed, so a new key signs
     /// everything again.
     pub fingerprint: String,
@@ -207,7 +216,7 @@ impl Signer {
         let mut fingerprint = String::new();
         for (name, bytes) in unpack(&output.stdout)? {
             match name.as_str() {
-                "db.key" | "db.crt" => {
+                "db.key" | "db.crt" | "pcr.key" | "pcr.pem" => {
                     let path = dir.path().join(&name);
                     fs::OpenOptions::new()
                         .write(true)
@@ -228,9 +237,56 @@ impl Signer {
         Ok(Some(Self {
             dir,
             sbsign: system.join(SBSIGN),
+            measure: system.join(MEASURE),
             fingerprint,
             enrollment,
         }))
+    }
+
+    /// The PCR key's public half, in PEM.
+    pub fn pcr_public_key(&self) -> Result<Vec<u8>, String> {
+        read(self.dir.path(), "pcr.pem")
+    }
+
+    /// The PCR key's public half and a policy signed with it for the PCR 11 values an image of
+    /// `parts` gives in its initrd only, `enter-initrd`: once the initrd hands over, PCR 11 moves
+    /// on and the disks' TPM key no longer unseals.
+    pub fn pcr_policy(
+        &self,
+        parts: &wrath_build::uki::Parts,
+    ) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let dir = self.dir.path();
+        let public = self.pcr_public_key()?;
+        let measured = [
+            ("linux", parts.linux),
+            ("osrel", parts.os_release),
+            ("cmdline", parts.cmdline),
+            ("initrd", parts.initrd),
+            ("pcrpkey", public.as_slice()),
+        ];
+        let mut command = Command::new(&self.measure);
+        command.arg("sign");
+        for (section, bytes) in measured {
+            let path = dir.join(format!("section.{section}"));
+            fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            command.arg(format!("--{section}={}", path.display()));
+        }
+        let output = command
+            .arg(format!("--private-key={}", dir.join("pcr.key").display()))
+            .arg(format!("--public-key={}", dir.join("pcr.pem").display()))
+            .args(["--phase=enter-initrd", "--bank=sha256", "--json=short"])
+            .output()
+            .map_err(|e| format!("cannot run {}: {e}", self.measure.display()))?;
+        for (section, _) in measured {
+            let _ = fs::remove_file(dir.join(format!("section.{section}")));
+        }
+        if !output.status.success() {
+            return Err(format!(
+                "cannot sign the TPM policy: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok((public, output.stdout))
     }
 
     /// Writes `from`, signed, to `to`.
@@ -258,20 +314,28 @@ impl Signer {
 
 #[cfg(test)]
 impl Signer {
-    /// A signer that appends `signed` to what it signs, for tests: no keys, no systemd.
+    /// A signer that appends `signed` to what it signs and signs every TPM policy as `policy`,
+    /// for tests: no keys, no systemd.
     pub(crate) fn fake(enrollment: Vec<(String, Vec<u8>)>) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let sbsign = dir.path().join("sbsign");
-        fs::write(
-            &sbsign,
+        let script = |name: &str, text: &str| {
+            let path = dir.path().join(name);
+            fs::write(&path, text).unwrap();
+            fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .unwrap();
+            path
+        };
+        let sbsign = script(
+            "sbsign",
             "#!/bin/sh\nfor arg; do case $arg in --output=*) out=${arg#--output=};; esac; done\n\
              eval \"in=\\${$#}\"\ncat \"$in\" > \"$out\" && printf signed >> \"$out\"\n",
-        )
-        .unwrap();
-        fs::set_permissions(&sbsign, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        );
+        let measure = script("measure", "#!/bin/sh\nprintf policy\n");
+        fs::write(dir.path().join("pcr.pem"), "public key").unwrap();
         Self {
             dir,
             sbsign,
+            measure,
             fingerprint: "0123abcd".to_owned(),
             enrollment,
         }

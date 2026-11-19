@@ -1,0 +1,28 @@
+title = "with Secure Boot, the TPM unlocks the disks only in the initrd of an image the machine signed"
+notes = "Enrolling the machine's keys changes PCR 7, so the first boot with Secure Boot asks for the passphrase. `wrath unlock enroll` then binds the disk's TPM key to PCR 7 and to the policy signed with the machine's PCR key that every image it signs carries, which holds only while its initrd runs."
+
+[vm]
+config = "scenarios/fixtures/native-state-installer"
+store = "wrath"
+firmware = "secure-boot"
+tpm = true
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { prepare_build = "scenarios/fixtures/native-secure-boot-tpm" },
+  { run = "cp -r /run/wrath-share/configs/native-secure-boot-tpm /tmp/config && printf 'battery staple' > /tmp/keypass && printf 'correct horse' > /tmp/passphrase && wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --key-passphrase-file /tmp/keypass --name t-04 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  # The firmware enrolls the keys and starts again with Secure Boot, which the TPM key made at
+  # install doesn't know.
+  { boot_installed = true, passphrase = "correct horse" },
+  { run = "bootctl status 2>&1 | grep 'Secure Boot:'", stdout_contains = "enabled (user)" },
+  { run = "test -s /var/lib/wrath/tpm2-pcr-public-key.pem && echo kept", stdout_contains = "kept" },
+  { run = "PASSWORD='correct horse' wrath unlock enroll 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pcrs":\[[0-9,]*\]\|"tpm2_pubkey_pcrs":\[[0-9,]*\]' | sort | tr '\n' ' ' ''', stdout_contains = '"tpm2-pcrs":[7] "tpm2_pubkey_pcrs":[11]' },
+  # Booted from the initrd it signed, the TPM unlocks the disk.
+  { boot_installed = true },
+  { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+  # Past the initrd, the TPM key is no use: the policy's signature is in the image, which the stub
+  # hands to the initrd only.
+  { run = "systemd-cryptsetup attach probe /dev/disk/by-partlabel/main0-system - tpm2-device=auto,headless=true 2>&1; echo exit=$?", stdout_contains = "Failed to load pcr signature" },
+]
+timeout_secs = 1800

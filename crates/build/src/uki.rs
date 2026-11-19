@@ -8,6 +8,11 @@ pub struct Parts<'a> {
     pub cmdline: &'a [u8],
     pub initrd: &'a [u8],
     pub linux: &'a [u8],
+    /// The public key the TPM policy is signed with, in PEM, which the stub measures too.
+    pub pcr_public_key: Option<&'a [u8]>,
+    /// The signed TPM policy for the PCR 11 values the image gives, as `systemd-measure sign`
+    /// writes it, which the stub doesn't measure.
+    pub pcr_signature: Option<&'a [u8]>,
 }
 
 /// The first systemd-boot that reads an entry's `uki` line, and counts tries for it.
@@ -106,12 +111,18 @@ pub fn assemble(stub: &[u8], parts: &Parts) -> Result<Vec<u8>, String> {
             first_data = first_data.min(raw_at as usize);
         }
     }
-    let sections: [(&[u8; 8], &[u8]); 4] = [
+    let mut sections: Vec<(&[u8; 8], &[u8])> = vec![
         (b".osrel\0\0", parts.os_release),
         (b".cmdline", parts.cmdline),
         (b".initrd\0", parts.initrd),
-        (b".linux\0\0", parts.linux),
     ];
+    if let Some(key) = parts.pcr_public_key {
+        sections.push((b".pcrpkey", key));
+    }
+    if let Some(signature) = parts.pcr_signature {
+        sections.push((b".pcrsig\0", signature));
+    }
+    sections.push((b".linux\0\0", parts.linux));
     let new_table = table + count * SECTION_HEADER;
     if new_table + sections.len() * SECTION_HEADER > headers_size.min(first_data) {
         return Err("the stub has no room for more sections".to_owned());
@@ -182,6 +193,8 @@ pub(crate) mod tests {
             cmdline: b"init=/wrath/store/abc-system/init",
             initrd: &[7; 0x300],
             linux: &[9; 0x1234],
+            pcr_public_key: None,
+            pcr_signature: None,
         }
     }
 
@@ -213,6 +226,25 @@ pub(crate) mod tests {
         assert_eq!(found[0].2, [0xcc; 0x10]);
         assert_eq!(found[2].2, b"init=/wrath/store/abc-system/init");
         assert_eq!(found[4].2, [9; 0x1234]);
+    }
+
+    #[test]
+    fn a_signed_policy_and_its_key_go_ahead_of_the_kernel() {
+        let parts = Parts {
+            pcr_public_key: Some(b"key"),
+            pcr_signature: Some(b"{}"),
+            ..parts()
+        };
+        let image = assemble(&stub(), &parts).unwrap();
+        let found = sections(&image);
+        let names: Vec<&str> = found.iter().map(|(name, ..)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                ".text", ".osrel", ".cmdline", ".initrd", ".pcrpkey", ".pcrsig", ".linux"
+            ]
+        );
+        assert_eq!(found[4].2, b"key");
     }
 
     #[test]

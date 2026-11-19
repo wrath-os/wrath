@@ -106,8 +106,20 @@ own builds (0040, 0041). Whatever signs them has to be there.
      reads, under `/run`, for as long as it signs, rather than into `/run/wrath/secrets`.
    - The keys go in `/loader/keys/auto`, which systemd-boot enrolls by itself in a VM with
      `secure-boot-enroll if-safe`, and offers in its menu on other machines.
-   Left: the PCR 11 policy and the PCR 15 check, and the scenarios that an unsigned image is
-   refused and a swapped volume doesn't unlock.
+   - Each image carries `.pcrpkey`, the PCR key's public half, and `.pcrsig`, a policy signed
+     for the PCR 11 values of its `enter-initrd` phase only (`native-secure-boot-tpm`). The
+     switch keeps the public half in `/var/lib/wrath`, since the stub hands it to the initrd
+     only, and `wrath unlock enroll` binds the disks to PCR 7 and to that key's PCR 11 policy,
+     once the firmware has Secure Boot on.
+   - PCR 15 is changed for `fixate-volume-key=`: measuring every volume's key into PCR 15 would
+     keep a second TPM-unlocked disk from unsealing, and PCR 15 alone doesn't stop a swapped
+     volume from being handed the key. `fixate-volume-key=` pins the real volume's key hash in
+     crypttab, which systemd-repart can work out at install. The hash is the machine's own, while
+     the initrd's crypttab is the system's, shared by a role, so it has to reach the boot another
+     way, such as the command line the switch puts in each image.
+   Left: the volume key hash, and the scenarios that an unsigned image is refused and a swapped
+   volume doesn't unlock, and that PCR 11 past the initrd doesn't satisfy the policy even with its
+   signature at hand.
 4. The PIN and the recovery key.
 5. The Framework: firmware updated, its event log checked for option ROMs, setup mode by hand.
 

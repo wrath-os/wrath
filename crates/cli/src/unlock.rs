@@ -34,18 +34,53 @@ fn enroll(root: &Path) -> Result<ExitCode, String> {
     let model = fs::read_to_string(root.join(MODEL.trim_start_matches('/')))
         .map_err(|e| format!("{MODEL}: {e}"))?;
     let model: Value = serde_json::from_str(&model).map_err(|e| format!("{MODEL}: {e}"))?;
-    let pcrs = pcrs(&model["base"]["storage"]["unlock"]);
+    let mut policy = vec![
+        "--tpm2-device=auto".to_owned(),
+        format!("--tpm2-pcrs={}", pcrs(&model["base"]["storage"]["unlock"])),
+    ];
+    if model["base"]["boot"]["secure_boot"] == Value::Bool(true) {
+        policy.extend(signed_policy(root)?);
+    }
+    let policy: Vec<&str> = policy.iter().map(String::as_str).collect();
     for device in devices {
         println!("letting the TPM unlock {device} again, as it boots now");
         // The old key goes first: systemd-cryptenroll leaves a key for the same PCRs alone, even
         // when it's sealed to values they no longer have. The passphrase stays.
         cryptenroll(&device, &["--wipe-slot=tpm2"])?;
-        cryptenroll(
-            &device,
-            &["--tpm2-device=auto", &format!("--tpm2-pcrs={pcrs}")],
-        )?;
+        cryptenroll(&device, &policy)?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The firmware's Secure Boot state: its last byte is 1 when it's on.
+const SECURE_BOOT_STATE: &str =
+    "sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+
+/// With Secure Boot, the TPM also checks PCR 11 against a policy signed with the machine's PCR
+/// key, which every image it signs carries: the disks then unlock only in the initrd of an image
+/// the machine signed. PCR 7 changes when the firmware turns Secure Boot on, so enrolling before
+/// then would only ask again.
+fn signed_policy(root: &Path) -> Result<Vec<String>, String> {
+    let key = root.join(crate::secure_boot::PCR_PUBLIC_KEY);
+    if !key.is_file() {
+        return Err(
+            "this machine boots with Secure Boot, but no switch has signed what it boots yet; \
+             `wrath apply` first"
+                .to_owned(),
+        );
+    }
+    let on = fs::read(root.join(SECURE_BOOT_STATE)).is_ok_and(|state| state.last() == Some(&1));
+    if !on {
+        return Err(
+            "Secure Boot isn't on in the firmware yet: put it in setup mode, enroll the keys from \
+             the boot menu, and enroll the disks once it's back up"
+                .to_owned(),
+        );
+    }
+    Ok(vec![
+        format!("--tpm2-public-key={}", key.display()),
+        "--tpm2-public-key-pcrs=11".to_owned(),
+    ])
 }
 
 fn cryptenroll(device: &str, args: &[&str]) -> Result<(), String> {
@@ -116,5 +151,33 @@ mod tests {
     fn the_pcrs_come_from_the_model_or_are_the_secure_boot_state() {
         assert_eq!(pcrs(&json!({"pcrs": [7, 15]})), "7+15");
         assert_eq!(pcrs(&json!({})), "7");
+    }
+
+    #[test]
+    fn with_secure_boot_the_disks_enroll_to_the_signed_policy_once_the_firmware_has_it_on() {
+        let root = tempfile::tempdir().unwrap();
+        let refused = signed_policy(root.path()).unwrap_err();
+        assert!(refused.contains("no switch has signed"), "{refused}");
+
+        let key = root.path().join(crate::secure_boot::PCR_PUBLIC_KEY);
+        fs::create_dir_all(key.parent().unwrap()).unwrap();
+        fs::write(&key, "key").unwrap();
+        let state = root.path().join(SECURE_BOOT_STATE);
+        fs::create_dir_all(state.parent().unwrap()).unwrap();
+        fs::write(&state, [6, 0, 0, 0, 0]).unwrap();
+        let refused = signed_policy(root.path()).unwrap_err();
+        assert!(
+            refused.contains("isn't on in the firmware yet"),
+            "{refused}"
+        );
+
+        fs::write(&state, [6, 0, 0, 0, 1]).unwrap();
+        assert_eq!(
+            signed_policy(root.path()).unwrap(),
+            [
+                format!("--tpm2-public-key={}", key.display()),
+                "--tpm2-public-key-pcrs=11".to_owned()
+            ]
+        );
     }
 }
