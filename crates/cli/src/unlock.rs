@@ -97,6 +97,18 @@ fn signed_policy(root: &Path) -> Result<Vec<String>, String> {
                 .to_owned(),
         );
     }
+    // Empty when the kernel can't show them: efivarfs isn't there.
+    let variables = Path::new(SECURE_BOOT_STATE)
+        .parent()
+        .expect("in a directory");
+    let shown =
+        fs::read_dir(root.join(variables)).is_ok_and(|mut entries| entries.next().is_some());
+    if !shown {
+        return Err(format!(
+            "cannot tell whether Secure Boot is on: the firmware's variables aren't in /{}",
+            variables.display()
+        ));
+    }
     let on = fs::read(root.join(SECURE_BOOT_STATE)).is_ok_and(|state| state.last() == Some(&1));
     if !on {
         return Err(
@@ -195,6 +207,12 @@ mod tests {
         fs::write(&key, "key").unwrap();
         let state = root.path().join(SECURE_BOOT_STATE);
         fs::create_dir_all(state.parent().unwrap()).unwrap();
+        let refused = signed_policy(root.path()).unwrap_err();
+        assert!(
+            refused.contains("cannot tell whether Secure Boot is on"),
+            "{refused}"
+        );
+
         fs::write(&state, [6, 0, 0, 0, 0]).unwrap();
         let refused = signed_policy(root.path()).unwrap_err();
         assert!(
