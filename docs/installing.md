@@ -49,39 +49,73 @@ desktop at home, not fine for a laptop you travel with. A passphrase doesn't hav
 
 ### Secure Boot
 
-A machine can boot only what it signed itself, with keys of its own. Make them, along with its
-host key if it doesn't have one yet:
+A machine can boot only what it signed itself, with keys of its own. Every switch signs the boot
+loader and each generation's image, and the TPM hands over the disks' key only to the initrd of an
+image the machine signed. Each image carries a policy signed with the machine's key, so a new
+generation needs no new enrollment, and nothing booted any other way gets the key.
+
+Before turning it on, check that nothing in the machine needs Microsoft's keys. A graphics or
+network card with firmware of its own needs them, and shows nothing once the firmware trusts only
+the machine's keys. On the machine:
 
 ```sh
-wrath secret machine framework
+sudo /run/system/systemd/lib/systemd/systemd-pcrlock log | grep -i driver
 ```
 
-That keeps them encrypted in `secrets/machines/framework/`: what the machine signs with, for the
-machine and `system.secret_recipients`, and the keys that change what its firmware trusts, for
-every recipient but the machine. Then turn it on:
+Lines naming `efi-variable-driver-config` are the Secure Boot settings themselves and are fine.
+Anything else, such as a driver loaded from a card, means that card needs Microsoft's keys; leave
+Secure Boot off on that machine for now. Laptops and machines with integrated graphics usually
+show nothing more.
 
-```toml
-[boot]
-secure_boot = true
-```
+Then, for a machine called `framework`:
 
-From then on every switch signs the boot loader and each generation's image, and leaves the
-machine's keys where the boot loader finds them. Put the firmware in setup mode once, which
-clears its keys (the firmware's own setup screen has it, usually under Secure Boot), and pick
-"Enroll Secure Boot keys" in the boot menu. The machine restarts with Secure Boot on. That changes
-what the TPM sees, so a TPM unlock asks for the passphrase once; `sudo wrath unlock enroll` after
-that. From then on the TPM also checks that it's the initrd of an image the machine signed asking:
-each image carries a policy signed with the machine's own key, so a new generation needs no new
-enrollment, and nothing booted any other way gets the disks' key.
+1. Make its keys, along with its host key if it doesn't have one yet:
 
-Install also records an id of each disk's volume key, and every image the machine signs attaches
-only the volumes with those keys. A disk swapped in with the same labels and UUIDs, which the TPM
-would hand the key to all the same, is refused, even given the passphrase. A machine installed
-before records them with `sudo wrath unlock enroll`; a switch says when they're missing.
+   ```sh
+   wrath secret machine framework
+   ```
 
-A machine whose firmware needs Microsoft's keys too, such as for a graphics card's own firmware,
-won't show anything on that card after enrolling only its own. Desktops with a separate graphics
-card need care here; laptops and machines with integrated graphics are fine.
+   They're kept encrypted in `secrets/machines/framework/`: what the machine signs with, for the
+   machine and `system.secret_recipients`, and the keys that change what its firmware trusts, for
+   every recipient but the machine.
+
+2. Turn it on in the machine's configuration:
+
+   ```toml
+   [boot]
+   secure_boot = true
+   ```
+
+3. On the machine, switch to it:
+
+   ```sh
+   sudo wrath apply
+   ```
+
+4. Restart into the firmware's setup screen and put Secure Boot in setup mode, which clears its
+   keys. It's usually under Security or Secure Boot, called something like "Reset to setup mode"
+   or "Erase all Secure Boot settings". Save and restart.
+
+5. Pick "Enroll Secure Boot keys" in the boot menu. The machine restarts with Secure Boot on and
+   asks for the disks' passphrase once, since the TPM sees a different boot.
+
+6. Once it's up, have the TPM unlock the disks again, now only for images the machine signed, and
+   check that Secure Boot is on:
+
+   ```sh
+   sudo wrath unlock enroll
+   bootctl status | grep 'Secure Boot'
+   ```
+
+   It says `enabled (user)`.
+
+If the machine won't boot, turn Secure Boot off in the firmware's setup screen. It boots the same
+images unsigned, and the passphrase still unlocks the disks.
+
+The images also attach only the disks whose volume keys the machine recorded. A disk swapped in
+with the same labels and UUIDs, which the TPM would hand the key to all the same, is refused, even
+given the passphrase. Install records the keys; for a machine installed before, the
+`wrath unlock enroll` in step 6 does.
 
 The TPM only unlocks the disks while the boot looks the same to it. A firmware update, or a
 machine's first boot from a unified kernel image (wrath says so when it switches), changes that,
