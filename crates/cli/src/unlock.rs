@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
@@ -57,7 +59,13 @@ fn enroll(root: &Path) -> Result<ExitCode, String> {
         .tempdir_in(&run)
         .map_err(|e| format!("cannot make a directory under {}: {e}", run.display()))?;
     let key = work.path().join("passphrase");
-    fs::write(&key, passphrase).map_err(|e| format!("{}: {e}", key.display()))?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&key)
+        .and_then(|mut file| file.write_all(passphrase.as_bytes()))
+        .map_err(|e| format!("{}: {e}", key.display()))?;
     policy.push(format!("--unlock-key-file={}", key.display()));
     let policy: Vec<&str> = policy.iter().map(String::as_str).collect();
     let mut ids = BTreeMap::new();
