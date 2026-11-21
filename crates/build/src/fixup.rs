@@ -296,44 +296,26 @@ pub(crate) fn finish(
         .map(|(class, path)| format!("{}={}", class.name(), path.hash()))
         .collect::<Vec<_>>()
         .join(" ");
-    fs::write(&fixed, &record).map_err(with_path(&fixed))?;
     remember_outputs(built, package, &record);
-    // Only advice for now: nothing here fails a build that worked.
-    let noted = crate::requires::unbrought_headers(lab, built, &package.id).and_then(|lines| {
-        if lines.is_empty() {
-            Ok(())
-        } else {
-            note_unbrought(lab, package, &lines)
-        }
-    });
-    if let Err(why) = noted {
-        eprintln!(
+    // Checked before the record is written, so a package that fails it is built again.
+    match crate::requires::unbrought_headers(lab, built, &package.id) {
+        Ok(lines) if !lines.is_empty() => return Err(unbrought(&package.id, &lines)),
+        Ok(_) => {}
+        Err(why) => eprintln!(
             "warning: couldn't check what `{}`'s headers include: {why}",
             package.id
-        );
+        ),
     }
-    Ok(())
+    fs::write(&fixed, &record).map_err(with_path(&fixed))
 }
 
-/// Says which of a package's headers include ones from a dependency it doesn't bring along, and
-/// records them, so whether this can be an error is decided from what it finds.
-fn note_unbrought(lab: &Lab, package: &Package, lines: &[String]) -> Result<(), String> {
-    eprintln!(
-        "warning: `{}` doesn't bring along what its headers include, so builds using them may \
-         fail; `propagates` in its recipe brings it:\n  {}",
-        package.id,
+/// The error for a package whose headers include ones from dependencies it doesn't bring along.
+fn unbrought(id: &str, lines: &[String]) -> String {
+    format!(
+        "`{id}`'s headers include ones from dependencies it doesn't bring along, so builds using \
+         them would fail; add those to `propagates` in its recipe:\n  {}",
         lines.join("\n  ")
-    );
-    let path = logs_dir(lab).join("unbrought-headers.txt");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(with_path(&path))?;
-    for line in lines {
-        writeln!(file, "{} {line}", package.id).map_err(with_path(&path))?;
-    }
-    Ok(())
+    )
 }
 
 /// Moves a finished package to its content addresses, and says why if it stayed whole.
@@ -346,7 +328,14 @@ pub(crate) fn place_outputs(
     let root = lab.on_host(out);
     let pieces = crate::content::split_pieces(&root, seen_as.hash())?;
     if !pieces.is_empty() {
-        note_pieces(lab, package, out, &pieces)?;
+        let says = "keeps pieces of its build's path, which can't be rewritten, in";
+        note_files(lab, package, out, &pieces, says, "split-pieces.txt")?;
+    }
+    let packed = crate::content::packed_mentions(&root, seen_as.hash())?;
+    if !packed.is_empty() {
+        let says = "keeps its build's path, which names nothing once it moves, inside compressed \
+                    files the rewrite can't reach; its recipe should leave them uncompressed:";
+        note_files(lab, package, out, &packed, says, "packed-paths.txt")?;
     }
     let cut = crate::content::cut_names(&root, seen_as.hash())?;
     if package.whole {
@@ -374,13 +363,15 @@ fn note_whole(lab: &Lab, package: &Package, reason: &str) -> Result<(), String> 
     writeln!(file, "{} {reason}", package.id).map_err(with_path(&path))
 }
 
-/// Says which of a package's files hold pieces of the path its build saw, which keep naming that
-/// path once it's moved, and records them for the packaging findings.
-fn note_pieces(
+/// Warns that a package's `files` keep naming the path its build saw once it's moved, as `says`
+/// puts it, and records them in the log `name` for the packaging findings.
+fn note_files(
     lab: &Lab,
     package: &Package,
     out: &StorePath,
     files: &[PathBuf],
+    says: &str,
+    name: &str,
 ) -> Result<(), String> {
     let root = lab.on_host(out);
     let names: Vec<String> = files
@@ -392,12 +383,8 @@ fn note_pieces(
                 .to_string()
         })
         .collect();
-    eprintln!(
-        "warning: `{}` keeps pieces of its build's path in {}, which can't be rewritten",
-        package.id,
-        names.join(", ")
-    );
-    let path = logs_dir(lab).join("split-pieces.txt");
+    eprintln!("warning: `{}` {says} {}", package.id, names.join(", "));
+    let path = logs_dir(lab).join(name);
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)

@@ -1644,6 +1644,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "297e814c836ae64db86b36cf2a557ba54368d03f6afcd7d947c266692f71115e"
+dependencies = [
+ "byteorder",
+ "crc",
+]
+
+[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3237,6 +3247,8 @@ name = "wrath-build"
 version = "0.0.0"
 dependencies = [
  "ed25519-dalek",
+ "flate2",
+ "lzma-rs",
  "memchr",
  "rusqlite",
  "rustix",

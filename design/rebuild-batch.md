@@ -4,6 +4,10 @@ Everything below changes package keys or what builds see, so it lands together a
 rebuilds once. Each item says what's wrong, what others do, the fix, and how it's checked. Items
 marked "no rebuild" can land any time.
 
+Status: landed with the rebuild of 2026-11-14, and the rest on 2026-11-21: the systemd fix, the
+check for paths inside compressed files, and the unbrought-headers warning made an error. Still
+open, since each rebuilds only its own package: cargo's `crates_io` and helix's grammars.
+
 ## Builder
 
 ### 1. Keys cover the whole recipe

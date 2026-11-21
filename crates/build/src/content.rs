@@ -8,6 +8,7 @@
 //! has the same length.
 
 use std::fs;
+use std::io::{self, Read};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
@@ -174,6 +175,76 @@ pub fn split_pieces(root: &Path, own: &str) -> Result<Vec<PathBuf>, String> {
     Ok(found)
 }
 
+/// The files under `root` compressed with gzip, xz or zstd that hold `own`'s hash once unpacked.
+/// Rewriting can't reach inside them, so the path they hold names nothing once the package moves.
+pub fn packed_mentions(root: &Path, own: &str) -> Result<Vec<PathBuf>, String> {
+    let digest = own.get(..HASH_LENGTH).unwrap_or(own).as_bytes();
+    let mut found = Vec::new();
+    for file in regular_files(root)? {
+        let mut magic = [0; 6];
+        let mut opened = fs::File::open(&file).map_err(with_path(&file))?;
+        let read = opened.read(&mut magic).map_err(with_path(&file))?;
+        if Packing::of(&magic[..read]).is_none() {
+            continue;
+        }
+        let bytes = fs::read(&file).map_err(with_path(&file))?;
+        if unpacked(&bytes).is_some_and(|text| memmem::find(&text, digest).is_some()) {
+            found.push(file);
+        }
+    }
+    Ok(found)
+}
+
+enum Packing {
+    Gzip,
+    Xz,
+    Zstd,
+}
+
+impl Packing {
+    fn of(start: &[u8]) -> Option<Self> {
+        match start {
+            [0x1f, 0x8b, ..] => Some(Self::Gzip),
+            [0xfd, b'7', b'z', b'X', b'Z', 0, ..] => Some(Self::Xz),
+            [0x28, 0xb5, 0x2f, 0xfd, ..] => Some(Self::Zstd),
+            _ => None,
+        }
+    }
+}
+
+/// What a gzip, xz or zstd file unpacks to, up to 256 MiB, as far as it unpacks; `None` for
+/// anything else.
+fn unpacked(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Capped(Vec::new());
+    // A file that stops unpacking partway, or past the cap, is searched as far as it got.
+    let _ = match Packing::of(bytes)? {
+        Packing::Gzip => io::copy(&mut flate2::read::MultiGzDecoder::new(bytes), &mut out),
+        Packing::Zstd => zstd::stream::read::Decoder::new(bytes)
+            .and_then(|mut decoder| io::copy(&mut decoder, &mut out)),
+        Packing::Xz => lzma_rs::xz_decompress(&mut io::BufReader::new(bytes), &mut out)
+            .map(|()| 0)
+            .map_err(io::Error::other),
+    };
+    Some(out.0)
+}
+
+/// A buffer that refuses to grow past 256 MiB.
+struct Capped(Vec<u8>);
+
+impl io::Write for Capped {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.0.len() + bytes.len() > 256 << 20 {
+            return Err(io::Error::other("unpacks to more than 256 MiB"));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The regular files under `root`, sorted.
 fn regular_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
@@ -272,6 +343,43 @@ mod tests {
         let found = split_pieces(dir.path(), &own).unwrap();
 
         assert_eq!(found, [dir.path().join("ld.so")]);
+    }
+
+    #[test]
+    fn a_path_inside_gzip_xz_or_zstd_files_is_found() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let own = format!(
+            "{}-man-db-2.13",
+            "0123456789abcdef".repeat(3)[..40].to_owned()
+        );
+        let page = format!(".TH MAN 1\nSee /wrath/store/{own}/share/doc.\n");
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(page.as_bytes()).unwrap();
+        fs::write(dir.path().join("a.1.gz"), gzip.finish().unwrap()).unwrap();
+        let mut xz = Vec::new();
+        lzma_rs::xz_compress(&mut page.as_bytes(), &mut xz).unwrap();
+        fs::write(dir.path().join("b.1.xz"), xz).unwrap();
+        fs::write(
+            dir.path().join("c.1.zst"),
+            zstd::encode_all(page.as_bytes(), 3).unwrap(),
+        )
+        .unwrap();
+        let other = zstd::encode_all(&b"nothing of the package's"[..], 3).unwrap();
+        fs::write(dir.path().join("d.1.zst"), other).unwrap();
+        // Plain files are for the rewrite, which reaches them.
+        fs::write(dir.path().join("e.1"), &page).unwrap();
+        // Cut short: what unpacks is still searched.
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(page.repeat(4096).as_bytes()).unwrap();
+        let mut short = gzip.finish().unwrap();
+        short.truncate(short.len() / 2);
+        fs::write(dir.path().join("f.1.gz"), short).unwrap();
+
+        let found = packed_mentions(dir.path(), &own).unwrap();
+
+        let names = ["a.1.gz", "b.1.xz", "c.1.zst", "f.1.gz"];
+        assert_eq!(found, names.map(|name| dir.path().join(name)));
     }
 
     /// A file naming `out` as glib's charset path did: copied in 16-byte pieces whose last one
