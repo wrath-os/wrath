@@ -123,6 +123,9 @@ Styles translate `WRATH_ARCH` into theirs (the go style sets `GOARCH`), and the 
 - helix's grammars: a style option reads `languages.toml` and adds each grammar's repository and
   commit as a git source, as the cargo style does for git crates. nixpkgs reads the same file.
 - stb: a `smoke` line for the headers its users need.
+- systemd: its SSH generator writes `/usr/lib/systemd/systemd-ssh-issue` into the vsock socket
+  it makes, so a VM's SSH over vsock logs a missing program. A substitution to the package's own
+  path, which fails the build if it changes nothing.
 
 ## Grapes and the tool (no rebuild)
 

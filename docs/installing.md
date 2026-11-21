@@ -92,11 +92,14 @@ Then, for a machine called `framework`:
    sudo wrath apply
    ```
 
-4. Restart into the firmware's setup screen and put Secure Boot in setup mode, which clears its
-   keys. It's usually under Security or Secure Boot, called something like "Reset to setup mode"
-   or "Erase all Secure Boot settings". Save and restart.
+4. Restart into the firmware's setup screen and put Secure Boot in setup mode. It's usually
+   under Security or Secure Boot. Deleting only the platform key (PK) does it and keeps the list
+   of revoked boot loaders; "Erase all Secure Boot settings" works too. Leave "Restore factory
+   keys" alone, which puts Microsoft's back. Some firmware, such as the Framework's, also needs
+   "Enforce Secure Boot" turned on. Save and restart.
 
-5. Pick "Enroll Secure Boot keys" in the boot menu. The machine restarts with Secure Boot on and
+5. Pick "Enroll Secure Boot keys" in the boot menu. It warns that this can leave the machine
+   unable to boot, which the check above rules out. The machine restarts with Secure Boot on and
    asks for the disks' passphrase once, since the TPM sees a different boot.
 
 6. Once it's up, have the TPM unlock the disks again, now only for images the machine signed, and

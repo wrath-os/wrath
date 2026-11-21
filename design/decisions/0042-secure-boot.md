@@ -127,7 +127,36 @@ own builds (0040, 0041). Whatever signs them has to be there.
    - Past the initrd, the policy's signature taken out of the image doesn't fit PCR 11 as it is
      then (`native-secure-boot-tpm`). Done, 2026-11-20.
 4. The PIN and the recovery key.
+   - `unlock.pin = true` seals the TPM key with a PIN too. Install and `wrath unlock enroll` ask
+     for it (or take `$NEWPIN`), and the boot asks for it where it asked for nothing. The
+     passphrase stays, for when the TPM won't.
+   - Install makes a recovery key for every encrypted volume (`systemd-cryptenroll
+     --recovery-key`), and `wrath unlock recovery` makes a new one, replacing the old. Where
+     it's kept is the one part that varies, so it's an option with a default rather than a
+     fixed place:
+
+     ```toml
+     [unlock.recovery]
+     keep = "esp"     # the default; or "print", or "none"
+     command = []     # or a program that takes it instead
+     ```
+
+     `esp` encrypts it to `system.secret_recipients` but the machine, so the machine can't read
+     it back, puts it on the ESP, where it survives the disks being locked, and prints it once.
+     `wrath unlock recovery-key --from DIR` reads it with an admin's key, on any machine. `print`
+     shows it once and keeps nothing. `command` hands it to a program on stdin, with the
+     machine's name as its argument: a password manager's, a vault's, a module's own. A module
+     that ships such a program sets `command`, so a configuration only enables the module.
 5. The Framework: firmware updated, its event log checked for option ROMs, setup mode by hand.
+   Done on firmware 0.770, 2026-11-21. Its event log loads no option ROMs, so the firmware
+   trusts the machine's keys only. What the VM hadn't shown:
+   - The kernel needed securityfs for the event log, and efivarfs built in: as a module nothing
+     loaded it, so the firmware's variables weren't there and Secure Boot read as off. The
+     scenario now checks both.
+   - Insyde's setup mode: deleting the PK alone keeps dbx, and "Enforce Secure Boot" has to be
+     on, or the firmware leaves Secure Boot off once the keys are in.
+   - systemd-boot warns that enrolling can leave a machine unbootable, which the event log
+     check is there to rule out.
 
 ## Rejected
 
