@@ -1,0 +1,16 @@
+# One encrypted disk that the TPM unlocks at boot once it's given the PIN.
+[system]
+hostname = "t-05"
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest", encrypt = true }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+subvolumes."@wrath" = { mount = "/wrath" }
+
+[unlock]
+tpm2 = true
+pin = true

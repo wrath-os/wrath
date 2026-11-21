@@ -79,6 +79,8 @@ pub enum Step {
     /// `missing` leaves out those blank disks, by index, to boot with them gone.
     BootInstalled {
         passphrase: Option<String>,
+        /// The PIN typed on the console when the TPM asks for one.
+        pin: Option<String>,
         missing: Vec<usize>,
         /// A private key, relative to the repository, that logs in to the initrd over SSH, where
         /// the passphrase is typed instead of at the console.
@@ -150,7 +152,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 22] = [
+pub const STEP_FIELDS: [&str; 23] = [
     "run_as",
     "apply_config",
     "apply_host",
@@ -158,6 +160,7 @@ pub const STEP_FIELDS: [&str; 22] = [
     "target",
     "boot_installed",
     "passphrase",
+    "pin",
     "missing",
     "ssh_key",
     "ssh_host_key",
@@ -184,6 +187,7 @@ struct RawStep {
     target: Option<String>,
     boot_installed: Option<bool>,
     passphrase: Option<String>,
+    pin: Option<String>,
     #[serde(default)]
     missing: Vec<usize>,
     ssh_key: Option<String>,
@@ -218,6 +222,7 @@ impl TryFrom<RawStep> for Step {
         if raw.boot_installed == Some(true) {
             return Ok(Self::BootInstalled {
                 passphrase: raw.passphrase,
+                pin: raw.pin,
                 missing: raw.missing,
                 ssh_key: raw.ssh_key,
                 ssh_host_key: raw.ssh_host_key,
@@ -775,6 +780,7 @@ impl VmRun<'_> {
 /// How the installed system's disks are unlocked when it boots.
 struct Unlock<'a> {
     passphrase: Option<&'a str>,
+    pin: Option<&'a str>,
     ssh_key: Option<&'a str>,
     ssh_host_key: Option<&'a str>,
 }
@@ -825,6 +831,7 @@ impl VmRun<'_> {
                 }
                 Step::BootInstalled {
                     passphrase,
+                    pin,
                     missing,
                     ssh_key,
                     ssh_host_key,
@@ -832,6 +839,7 @@ impl VmRun<'_> {
                 } => {
                     let unlock = Unlock {
                         passphrase: passphrase.as_deref(),
+                        pin: pin.as_deref(),
                         ssh_key: ssh_key.as_deref(),
                         ssh_host_key: ssh_host_key.as_deref(),
                     };
@@ -1011,8 +1019,11 @@ impl VmRun<'_> {
             (Some(passphrase), Some(key)) => {
                 self.unlock_over_ssh(port, key, unlock.ssh_host_key, passphrase, deadline)?
             }
-            (Some(passphrase), None) => self.type_at_prompt(passphrase, deadline)?,
+            (Some(passphrase), None) => self.type_at_prompt("passphrase", passphrase, deadline)?,
             (None, _) => {}
+        }
+        if let Some(pin) = unlock.pin {
+            self.type_at_prompt("Please enter TPM2 PIN", pin, deadline)?;
         }
         Ok(args.cid)
     }
@@ -1090,15 +1101,15 @@ impl VmRun<'_> {
         }
     }
 
-    /// Waits for the console to ask for a passphrase, then types `passphrase` at it.
-    fn type_at_prompt(&self, passphrase: &str, deadline: Instant) -> Result<(), String> {
-        self.wait_for_console("passphrase", deadline)
-            .map_err(|()| "the installed system never asked for its passphrase".to_owned())?;
+    /// Waits for the console to show `prompt`, then types `answer` at it.
+    fn type_at_prompt(&self, prompt: &str, answer: &str, deadline: Instant) -> Result<(), String> {
+        self.wait_for_console(prompt, deadline)
+            .map_err(|()| format!("the installed system's console never said `{prompt}`"))?;
         let mut serial =
             UnixStream::connect(self.dir.join("serial.sock")).map_err(io_err("the console"))?;
         // A key at a time, as someone types, then Enter, which a serial console sends as `\r`.
         thread::sleep(Duration::from_secs(1));
-        for key in passphrase.bytes().chain(*b"\r") {
+        for key in answer.bytes().chain(*b"\r") {
             serial.write_all(&[key]).map_err(io_err("the console"))?;
             thread::sleep(Duration::from_millis(50));
         }

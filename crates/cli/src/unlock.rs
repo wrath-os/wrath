@@ -52,6 +52,13 @@ fn enroll(root: &Path) -> Result<ExitCode, String> {
         Ok(passphrase) => passphrase,
         Err(_) => crate::host::read_password("Passphrase for the disks: ")?,
     };
+    let pin = match model["base"]["storage"]["unlock"]["pin"] {
+        Value::Bool(true) => {
+            policy.push("--tpm2-with-pin=yes".to_owned());
+            Some(new_pin()?)
+        }
+        _ => None,
+    };
     // Only root reads it, in memory, for as long as enrolling takes.
     let run = root.join("run");
     let work = tempfile::Builder::new()
@@ -76,8 +83,8 @@ fn enroll(root: &Path) -> Result<ExitCode, String> {
         println!("letting the TPM unlock {device} again, as it boots now");
         // The old key goes first: systemd-cryptenroll leaves a key for the same PCRs alone, even
         // when it's sealed to values they no longer have. The passphrase stays.
-        cryptenroll(&device, &["--wipe-slot=tpm2"])?;
-        cryptenroll(&device, &policy)?;
+        cryptenroll(&device, &["--wipe-slot=tpm2"], None)?;
+        cryptenroll(&device, &policy, pin.as_deref())?;
     }
     let before = crate::volume_keys::recorded(root);
     crate::volume_keys::record(root, &ids)?;
@@ -131,8 +138,27 @@ fn signed_policy(root: &Path) -> Result<Vec<String>, String> {
     ])
 }
 
-fn cryptenroll(device: &str, args: &[&str]) -> Result<(), String> {
-    let status = Command::new("systemd-cryptenroll")
+/// The PIN a TPM key is sealed with too, from `$NEWPIN`, as systemd-cryptenroll takes it, or
+/// asked for twice.
+pub(crate) fn new_pin() -> Result<String, String> {
+    use crate::host::read_password as ask;
+    if let Ok(pin) = std::env::var("NEWPIN") {
+        return Ok(pin);
+    }
+    let pin = ask("PIN to unlock the disks with, along with the TPM: ")?;
+    if pin.is_empty() || pin != ask("The same PIN again: ")? {
+        return Err("the PINs were empty or didn't match".into());
+    }
+    Ok(pin)
+}
+
+/// Runs systemd-cryptenroll on `device`, sealing with `pin` when there is one.
+fn cryptenroll(device: &str, args: &[&str], pin: Option<&str>) -> Result<(), String> {
+    let mut command = Command::new("systemd-cryptenroll");
+    if let Some(pin) = pin {
+        command.env("NEWPIN", pin);
+    }
+    let status = command
         .args(args)
         .arg(device)
         .status()

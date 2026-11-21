@@ -467,9 +467,17 @@ fn lay_out(
             Value::List(items) => items.iter().map(ToString::to_string).collect(),
             _ => Vec::new(),
         };
+        let pin = match field(unlock, "pin") {
+            Value::Bool(true) => Some(crate::unlock::new_pin()?),
+            _ => None,
+        };
         for partition in partitions.iter().filter(|p| p.encrypt) {
             println!("letting the TPM unlock {}", partition.label);
-            run(Command::new("systemd-cryptenroll")
+            let mut enroll = Command::new("systemd-cryptenroll");
+            if let Some(pin) = &pin {
+                enroll.arg("--tpm2-with-pin=yes").env("NEWPIN", pin);
+            }
+            run(enroll
                 .arg(format!("--unlock-key-file={}", key.display()))
                 .arg("--tpm2-device=auto")
                 .arg(format!("--tpm2-pcrs={}", pcrs.join("+")))

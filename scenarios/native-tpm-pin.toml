@@ -1,0 +1,20 @@
+title = "with a PIN, the TPM unlocks the disk only once the PIN is typed, and enrolling again changes it"
+
+[vm]
+config = "scenarios/fixtures/native-state-installer"
+store = "wrath"
+tpm = true
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { prepare_build = "scenarios/fixtures/native-tpm-pin" },
+  { run = "cp -r /run/wrath-share/configs/native-tpm-pin /tmp/config && printf 'correct horse' > /tmp/passphrase && NEWPIN=2468 wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name t-05 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  # The PIN, and no passphrase: the boot gets this far only if the TPM unlocked the disk with it.
+  { boot_installed = true, pin = "2468" },
+  { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+  { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pin":[a-z]*' ''', stdout_contains = '"tpm2-pin":true' },
+  { run = "PASSWORD='correct horse' NEWPIN=1357 wrath unlock enroll 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { boot_installed = true, pin = "1357" },
+  { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
+]
+timeout_secs = 1500
