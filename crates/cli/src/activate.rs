@@ -268,7 +268,8 @@ pub(crate) fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         };
         let release = fs::read_to_string(link.join("etc/os-release")).unwrap_or_default();
         let text = format!(
-            "title {}\nversion generation {number}\nsort-key {sort_key}\n{starts}",
+            // The boot loader shows the version beside the title, and bootctl wants a plain one.
+            "title {}\nversion {number}\nsort-key {sort_key}\n{starts}",
             wrath_build::image::release_name(&release),
         );
         write_replacing(&entries.join(&entry), &text, 0o644)?;

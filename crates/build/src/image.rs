@@ -224,7 +224,7 @@ pub fn esp_tree(
         )
     };
     let text = format!(
-        "title {}\nversion generation 1\nsort-key wrath\n{starts}",
+        "title {}\nversion 1\nsort-key wrath\n{starts}",
         release_name(&release)
     );
     write(&esp.join("loader/entries/wrath-1.conf"), &text)?;
