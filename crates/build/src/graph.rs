@@ -1646,6 +1646,12 @@ fn initrd_files(
             0o644,
             force_shell.to_owned(),
         ),
+        // systemd looks for a unit's program in /usr, which the initrd hasn't.
+        file(
+            "etc/systemd/system/modprobe@.service.d/wrath.conf",
+            0o644,
+            "[Service]\nExecSearchPath=/bin\n".to_owned(),
+        ),
         file("etc/wrath-root", 0o755, INITRD_ROOT.to_owned()),
         file("etc/fstab", 0o644, disks.initrd_fstab.clone()),
         file("etc/crypttab", 0o644, disks.crypttab.clone()),
@@ -3413,6 +3419,10 @@ mod tests {
         assert!(root.contains("ExecStart=/etc/wrath-root\n"), "{root}");
         assert!(files["etc/wrath-root"].contains("os-release"));
         assert!(!files.contains_key("etc/ssh/sshd_config"));
+        assert_eq!(
+            files["etc/systemd/system/modprobe@.service.d/wrath.conf"],
+            "[Service]\nExecSearchPath=/bin\n"
+        );
     }
 
     #[test]
