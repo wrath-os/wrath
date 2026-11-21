@@ -147,6 +147,7 @@ own builds (0040, 0041). Whatever signs them has to be there.
      shows it once and keeps nothing. `command` hands it to a program on stdin, with the
      machine's name as its argument: a password manager's, a vault's, a module's own. A module
      that ships such a program sets `command`, so a configuration only enables the module.
+   - Done, 2026-11-21 (`native-tpm-pin`).
 5. The Framework: firmware updated, its event log checked for option ROMs, setup mode by hand.
    Done on firmware 0.770, 2026-11-21. Its event log loads no option ROMs, so the firmware
    trusts the machine's keys only. What the VM hadn't shown:

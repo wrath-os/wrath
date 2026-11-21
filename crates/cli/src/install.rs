@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use wrath_eval::Value;
 use wrath_model::Model;
 
+use crate::recovery::Keep;
 use crate::{generations, machine};
 
 /// A partition of the layout, as the `disks` module renders it.
@@ -181,7 +182,8 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
         Some(Value::Str(hostname)) => Some(hostname.as_str()),
         _ => None,
     };
-    let keys = machine_keys(how, how.name.or(hostname))?;
+    let name = how.name.or(hostname);
+    let keys = machine_keys(how, name)?;
     // Readable only by root, as systemd-repart and cryptsetup require of a key file.
     std::fs::OpenOptions::new()
         .write(true)
@@ -197,6 +199,8 @@ pub fn install(model: Model, how: &Install) -> Result<ExitCode, String> {
     let result = lay_out(&partitions, storage, how, &key, work.path())
         // Before switching, which decrypts the secrets with them and seals the initrd's key.
         .and_then(|()| place_keys(how.target, &keys))
+        // After the host key, which the admins it's encrypted to are told apart from.
+        .and_then(|()| recover(&model, &partitions, how, &key, name.unwrap_or_default()))
         .and_then(|()| initrd_ssh_key(how.target, &system))
         // Before switching too, which finds the machine's Secure Boot keys by its name.
         .and_then(|()| record_machine(how))
@@ -613,6 +617,49 @@ fn unlock(file: &Path, name: &str, passphrase: &mut Option<String>) -> Result<Ve
         "no passphrase given decrypts {}; `--identity` with a key it's encrypted to does too",
         file.display()
     ))
+}
+
+/// Makes a recovery key for each encrypted partition and keeps them as `unlock.recovery` says.
+fn recover(
+    model: &Model,
+    partitions: &[Partition],
+    how: &Install,
+    key: &Path,
+    name: &str,
+) -> Result<(), String> {
+    let Some(storage) = model.base.get("storage") else {
+        return Ok(());
+    };
+    let recovery = field(field(storage, "unlock"), "recovery");
+    let keep = Keep::of(&text(recovery, "keep"), strings(field(recovery, "command")));
+    let encrypted: Vec<&Partition> = partitions.iter().filter(|p| p.encrypt).collect();
+    if keep == Keep::None || encrypted.is_empty() {
+        return Ok(());
+    }
+    let mut keys = BTreeMap::new();
+    for partition in encrypted {
+        let device = format!("/dev/disk/by-partlabel/{}", partition.label);
+        keys.insert(
+            partition.label.clone(),
+            crate::recovery::enroll(&device, key)?,
+        );
+    }
+    let esp = list(storage, "mounts")
+        .iter()
+        .find(|mount| text(mount, "format") == "vfat")
+        .map(|mount| how.target.join(text(mount, "path").trim_start_matches('/')));
+    let recipients = model
+        .base
+        .get("secrets")
+        .map(|secrets| strings(field(secrets, "recipients")))
+        .unwrap_or_default();
+    let machine = crate::recovery::Machine {
+        name,
+        root: how.target,
+        esp: esp.as_deref(),
+        recipients: &recipients,
+    };
+    crate::recovery::keep(&keys, &keep, &machine)
 }
 
 /// Writes the machine's decrypted `keys` into the new system at `target`, readable only by root,

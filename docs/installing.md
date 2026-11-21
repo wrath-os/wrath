@@ -43,9 +43,44 @@ it instead:
 tpm2 = true
 ```
 
-Of note: the TPM unlock only checks the Secure Boot state right now (PCR 7). Without Secure Boot,
-anyone with the machine in their hands can boot something else and get the key. Fine for a
+Of note: without Secure Boot (below), the TPM unlock only checks the Secure Boot state (PCR 7),
+so anyone with the machine in their hands can boot something else and get the key. Fine for a
 desktop at home, not fine for a laptop you travel with. A passphrase doesn't have that problem.
+
+A laptop can ask for a PIN along with the TPM, so the key can't be had from the TPM alone, even
+from a stolen machine. It's shorter than a passphrase, and the TPM locks out guessing:
+
+```toml
+[unlock]
+tpm2 = true
+pin = true
+```
+
+`wrath install` asks for the PIN, and `sudo wrath unlock enroll` changes it.
+
+### Recovery keys
+
+Install also makes a recovery key for each encrypted disk. It unlocks the disk wherever the
+passphrase is asked for, for when the passphrase is forgotten or the TPM stops unlocking. It's
+shown once, and kept on the boot partition encrypted to `system.secret_recipients`, except the
+machine's own key, so the machine can't read it but you can, from any machine with your key:
+
+```sh
+sudo mount /dev/sdb1 /mnt            # the locked machine's boot partition, or its /boot
+wrath unlock recovery-key --from /mnt
+```
+
+`sudo wrath unlock recovery` makes new ones, replacing the old, and is how a machine installed
+before this gets them. To keep them somewhere else, say so:
+
+```toml
+[unlock.recovery]
+keep = "print"                        # shown once, kept nowhere; or "none" for no recovery key
+command = ["store-recovery-keys"]     # or a program that takes them instead
+```
+
+A program in `command` gets `NAME KEY` lines on its standard input and the machine's name as its
+argument, so a password manager's command line, or a module that brings one, can file them away.
 
 ### Secure Boot
 

@@ -34,6 +34,7 @@ mod pinned;
 mod places;
 mod platforms;
 mod project;
+mod recovery;
 mod reference;
 mod run;
 mod schema;

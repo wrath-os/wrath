@@ -1,6 +1,8 @@
-# One encrypted disk that the TPM unlocks at boot once it's given the PIN.
+# One encrypted disk that the TPM unlocks at boot once it's given the PIN, with its recovery key
+# kept on the ESP for the admin.
 [system]
 hostname = "t-05"
+secret_recipients = ["age1752tz55mdpnqrasdfja6pzw76jhqf532f2dhr5jpkngrfhz5ec0sax8ykl"]
 
 [disks.main]
 partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }

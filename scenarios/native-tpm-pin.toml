@@ -1,4 +1,4 @@
-title = "with a PIN, the TPM unlocks the disk only once the PIN is typed, and enrolling again changes it"
+title = "with a PIN, the TPM unlocks the disk only once the PIN is typed, and a recovery key kept for the admin unlocks it too"
 
 [vm]
 config = "scenarios/fixtures/native-state-installer"
@@ -8,11 +8,17 @@ blank_disks = ["8G"]
 wait_for = ["agent", "unit:multi-user.target"]
 steps = [
   { prepare_build = "scenarios/fixtures/native-tpm-pin" },
-  { run = "cp -r /run/wrath-share/configs/native-tpm-pin /tmp/config && printf 'correct horse' > /tmp/passphrase && NEWPIN=2468 wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name t-05 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { run = "cp -r /run/wrath-share/configs/native-tpm-pin /tmp/config && printf 'correct horse' > /tmp/passphrase && NEWPIN=2468 wrath install -C /tmp/config --disk /dev/vdb --passphrase-file /tmp/passphrase --name t-05 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "kept the recovery keys on the ESP, encrypted to 1 admin key(s)" },
   # The PIN, and no passphrase: the boot gets this far only if the TPM unlocked the disk with it.
   { boot_installed = true, pin = "2468" },
   { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },
   { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pin":[a-z]*' ''', stdout_contains = '"tpm2-pin":true' },
+  # The admin reads the recovery key off the ESP with their own key, and it opens the disk.
+  { run = "printf '%s\\n' 'AGE-SECRET-KEY-1230EQ7RDPZ24LFM247UGU3MZGZF53CX20QMC8VQUEFE0MMGE5HHS0UY6A7' > /tmp/admin && wrath unlock recovery-key --from /boot --identity /tmp/admin | awk '/^main0-system / { printf \"%s\", $2 }' > /tmp/first && cryptsetup open --test-passphrase --key-file /tmp/first /dev/disk/by-partlabel/main0-system && echo opens", stdout_contains = "opens" },
+  # A new one replaces it.
+  { run = "PASSWORD='correct horse' wrath unlock recovery 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { run = "wrath unlock recovery-key --from /boot --identity /tmp/admin | awk '/^main0-system / { printf \"%s\", $2 }' > /tmp/second && ! cmp -s /tmp/first /tmp/second && cryptsetup open --test-passphrase --key-file /tmp/second /dev/disk/by-partlabel/main0-system && ! cryptsetup open --test-passphrase --key-file /tmp/first /dev/disk/by-partlabel/main0-system 2>/dev/null && echo replaced", stdout_contains = "replaced" },
+  # Enrolling again changes the PIN.
   { run = "PASSWORD='correct horse' NEWPIN=1357 wrath unlock enroll 2>&1; echo exit=$?", stdout_contains = "exit=0" },
   { boot_installed = true, pin = "1357" },
   { run = "findmnt -no SOURCE /", stdout_contains = "/dev/mapper/main0-system" },

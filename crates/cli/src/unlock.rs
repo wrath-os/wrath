@@ -5,10 +5,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use serde_json::Value;
+
+use crate::recovery::Keep;
 
 #[derive(clap::Subcommand)]
 pub enum UnlockCommand {
@@ -17,6 +19,19 @@ pub enum UnlockCommand {
     /// machine with Secure Boot signs pin them to. For when a boot measured differently and
     /// asked for the passphrase
     Enroll,
+    /// Make a new recovery key for each encrypted disk, replacing the old, and keep them as
+    /// `unlock.recovery` says. It asks for the disks' passphrase once
+    Recovery,
+    /// Show the recovery keys a machine keeps on its ESP, decrypted with an admin's key, from any
+    /// machine
+    RecoveryKey {
+        /// The ESP, mounted, or the file on it
+        #[arg(long, default_value = "/boot")]
+        from: PathBuf,
+        /// A private key that decrypts them [default: ~/.ssh/id_ed25519]
+        #[arg(long)]
+        identity: Option<PathBuf>,
+    },
 }
 
 /// The running system's model, which says which PCRs unlocking depends on.
@@ -25,41 +40,25 @@ const MODEL: &str = "/run/system/etc/wrath/model.json";
 pub fn run(command: UnlockCommand) -> Result<ExitCode, String> {
     match command {
         UnlockCommand::Enroll => enroll(Path::new("/")),
+        UnlockCommand::Recovery => recovery(Path::new("/")),
+        UnlockCommand::RecoveryKey { from, identity } => recovery_key(&from, identity),
     }
 }
 
-/// Replaces the TPM key of every disk the machine at `root` unlocks with its TPM by one sealed to
-/// the PCRs as they are now, the passphrase, from `$PASSWORD` or asked for once, unlocking it for
-/// that. Each disk's volume key id is recorded too, which pins the disk in the images the machine
-/// signs.
-fn enroll(root: &Path) -> Result<ExitCode, String> {
-    let crypttab = fs::read_to_string(root.join("etc/crypttab")).unwrap_or_default();
-    let volumes = tpm_volumes(&crypttab);
-    if volumes.is_empty() {
-        return Err("no disk here unlocks with the TPM; set `unlock.tpm2 = true` first".to_owned());
-    }
+/// The running system's model, from the machine at `root`.
+fn model(root: &Path) -> Result<Value, String> {
     let model = fs::read_to_string(root.join(MODEL.trim_start_matches('/')))
         .map_err(|e| format!("{MODEL}: {e}"))?;
-    let model: Value = serde_json::from_str(&model).map_err(|e| format!("{MODEL}: {e}"))?;
-    let mut policy = vec![
-        "--tpm2-device=auto".to_owned(),
-        format!("--tpm2-pcrs={}", pcrs(&model["base"]["storage"]["unlock"])),
-    ];
-    if model["base"]["boot"]["secure_boot"] == Value::Bool(true) {
-        policy.extend(signed_policy(root)?);
-    }
+    serde_json::from_str(&model).map_err(|e| format!("{MODEL}: {e}"))
+}
+
+/// The disks' passphrase, from `$PASSWORD` or asked for once, in a file in a directory only root
+/// reads, in memory, gone with the directory.
+fn passphrase_file(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
     let passphrase = match std::env::var("PASSWORD") {
         Ok(passphrase) => passphrase,
         Err(_) => crate::host::read_password("Passphrase for the disks: ")?,
     };
-    let pin = match model["base"]["storage"]["unlock"]["pin"] {
-        Value::Bool(true) => {
-            policy.push("--tpm2-with-pin=yes".to_owned());
-            Some(new_pin()?)
-        }
-        _ => None,
-    };
-    // Only root reads it, in memory, for as long as enrolling takes.
     let run = root.join("run");
     let work = tempfile::Builder::new()
         .prefix("wrath-unlock")
@@ -73,6 +72,109 @@ fn enroll(root: &Path) -> Result<ExitCode, String> {
         .open(&key)
         .and_then(|mut file| file.write_all(passphrase.as_bytes()))
         .map_err(|e| format!("{}: {e}", key.display()))?;
+    Ok((work, key))
+}
+
+/// Makes a new recovery key for every encrypted disk of the machine at `root` and keeps them as
+/// its `unlock.recovery` says.
+fn recovery(root: &Path) -> Result<ExitCode, String> {
+    let crypttab = fs::read_to_string(root.join("etc/crypttab")).unwrap_or_default();
+    let volumes = volumes(&crypttab);
+    if volumes.is_empty() {
+        return Err("no disk here is encrypted".to_owned());
+    }
+    let model = model(root)?;
+    let recovery = &model["base"]["storage"]["unlock"]["recovery"];
+    let command = strings(&recovery["command"]);
+    let keep = Keep::of(recovery["keep"].as_str().unwrap_or_default(), command);
+    if keep == Keep::None {
+        return Err("`unlock.recovery.keep` is \"none\"".to_owned());
+    }
+    let (_work, key) = passphrase_file(root)?;
+    let mut keys = BTreeMap::new();
+    for (name, device) in volumes {
+        println!("making a new recovery key for {device}");
+        keys.insert(name, crate::recovery::enroll(&device, &key)?);
+    }
+    let esp = model["base"]["storage"]["mounts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|mount| mount["format"] == "vfat")
+        .and_then(|mount| mount["path"].as_str())
+        .map(|path| root.join(path.trim_start_matches('/')));
+    let recipients = strings(&model["base"]["secrets"]["recipients"]);
+    let machine = crate::recovery::Machine {
+        name: model["options"]["system.hostname"]
+            .as_str()
+            .unwrap_or_default(),
+        root,
+        esp: esp.as_deref(),
+        recipients: &recipients,
+    };
+    crate::recovery::keep(&keys, &keep, &machine)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Prints the recovery keys kept on the ESP at `from`, or in the file `from`, decrypted with
+/// `identity`.
+fn recovery_key(from: &Path, identity: Option<PathBuf>) -> Result<ExitCode, String> {
+    let file = if from.is_dir() {
+        from.join(crate::recovery::ON_ESP)
+    } else {
+        from.to_path_buf()
+    };
+    let identity = match identity {
+        Some(identity) => identity,
+        None => {
+            Path::new(&std::env::var("HOME").map_err(|_| "HOME isn't set")?).join(".ssh/id_ed25519")
+        }
+    };
+    let output = Command::new("age")
+        .arg("--decrypt")
+        .arg("--identity")
+        .arg(&identity)
+        .arg(&file)
+        .output()
+        .map_err(|e| format!("cannot run age: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cannot decrypt {} with {}: {}",
+            file.display(),
+            identity.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Replaces the TPM key of every disk the machine at `root` unlocks with its TPM by one sealed to
+/// the PCRs as they are now, the passphrase, from `$PASSWORD` or asked for once, unlocking it for
+/// that. Each disk's volume key id is recorded too, which pins the disk in the images the machine
+/// signs.
+fn enroll(root: &Path) -> Result<ExitCode, String> {
+    let crypttab = fs::read_to_string(root.join("etc/crypttab")).unwrap_or_default();
+    let volumes = tpm_volumes(&crypttab);
+    if volumes.is_empty() {
+        return Err("no disk here unlocks with the TPM; set `unlock.tpm2 = true` first".to_owned());
+    }
+    let model = model(root)?;
+    let mut policy = vec![
+        "--tpm2-device=auto".to_owned(),
+        format!("--tpm2-pcrs={}", pcrs(&model["base"]["storage"]["unlock"])),
+    ];
+    if model["base"]["boot"]["secure_boot"] == Value::Bool(true) {
+        policy.extend(signed_policy(root)?);
+    }
+    let (work, key) = passphrase_file(root)?;
+    let pin = match model["base"]["storage"]["unlock"]["pin"] {
+        Value::Bool(true) => {
+            policy.push("--tpm2-with-pin=yes".to_owned());
+            Some(new_pin()?)
+        }
+        _ => None,
+    };
     policy.push(format!("--unlock-key-file={}", key.display()));
     let policy: Vec<&str> = policy.iter().map(String::as_str).collect();
     let mut ids = BTreeMap::new();
@@ -174,17 +276,44 @@ fn cryptenroll(device: &str, args: &[&str], pin: Option<&str>) -> Result<(), Str
 
 /// The volumes in `crypttab` that unlock with the TPM, each as its name and device.
 pub(crate) fn tpm_volumes(crypttab: &str) -> Vec<(String, String)> {
+    entries(crypttab)
+        .filter(|(.., options)| {
+            options
+                .split(',')
+                .any(|option| option.starts_with("tpm2-device="))
+        })
+        .map(|(name, device, _)| (name, device))
+        .collect()
+}
+
+/// Every volume in `crypttab`, as its name and device.
+fn volumes(crypttab: &str) -> Vec<(String, String)> {
+    entries(crypttab)
+        .map(|(name, device, _)| (name, device))
+        .collect()
+}
+
+/// The lines of `crypttab`, each as its name, device and options.
+fn entries(crypttab: &str) -> impl Iterator<Item = (String, String, String)> + '_ {
     crypttab
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            let options = fields.get(3)?;
-            options
-                .split(',')
-                .any(|option| option.starts_with("tpm2-device="))
-                .then(|| (fields[0].to_owned(), fields[1].to_owned()))
+            let (name, device) = (fields.first()?, fields.get(1)?);
+            let options = fields.get(3).copied().unwrap_or_default();
+            Some((name.to_string(), device.to_string(), options.to_owned()))
         })
+}
+
+/// The strings in the array `value`, or none when it isn't one.
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
         .collect()
 }
 

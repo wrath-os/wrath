@@ -285,6 +285,25 @@ Let the TPM unlock the disks again, as the machine boots now: it asks for the di
 wrath unlock enroll [OPTIONS]
 ```
 
+## `wrath unlock recovery`
+
+Make a new recovery key for each encrypted disk, replacing the old, and keep them as `unlock.recovery` says. It asks for the disks' passphrase once
+
+```text
+wrath unlock recovery [OPTIONS]
+```
+
+## `wrath unlock recovery-key`
+
+Show the recovery keys a machine keeps on its ESP, decrypted with an admin's key, from any machine
+
+```text
+wrath unlock recovery-key [OPTIONS]
+```
+
+- `--from <FROM>`: The ESP, mounted, or the file on it
+- `--identity <IDENTITY>`: A private key that decrypts them [default: ~/.ssh/id_ed25519]
+
 ## `wrath cache`
 
 Sign and push builds to a binary cache, which machines then fetch from
