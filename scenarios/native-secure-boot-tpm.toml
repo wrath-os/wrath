@@ -19,8 +19,8 @@ steps = [
   # whether any card's own firmware needs Microsoft's keys.
   # Their files say they're empty, so they're read.
   { run = "for f in /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c /sys/kernel/security/tpm0/binary_bios_measurements; do echo \"$(head -c 4 $f 2>/dev/null | wc -c) $f\"; done", stdout_contains = "4 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c\n4 /sys/kernel/security/tpm0/binary_bios_measurements" },
-  # modprobe@ units find modprobe, in the initrd too.
-  { run = "journalctl -b | grep -q \"Unable to locate executable 'modprobe'\" && echo missing || echo found", stdout_contains = "found" },
+  # Every unit finds the programs it runs, in the initrd too.
+  { run = "journalctl -b | grep -q 'Unable to locate executable' && echo missing || echo found", stdout_contains = "found" },
   { run = "test -s /var/lib/wrath/tpm2-pcr-public-key.pem && echo kept", stdout_contains = "kept" },
   { run = "PASSWORD='correct horse' wrath unlock enroll 2>&1; echo exit=$?", stdout_contains = "exit=0" },
   { run = '''cryptsetup token export --token-id 0 /dev/disk/by-partlabel/main0-system | tr -d ' ' | grep -o '"tpm2-pcrs":\[[0-9,]*\]\|"tpm2_pubkey_pcrs":\[[0-9,]*\]' | sort | tr '\n' ' ' ''', stdout_contains = '"tpm2-pcrs":[7] "tpm2_pubkey_pcrs":[11]' },
@@ -39,7 +39,7 @@ steps = [
   { run = "grep -la 'fixate-volume-key=' /boot/EFI/wrath/*-system-*.efi | wc -l", stdout_contains = "1" },
   # A volume with the same label and UUID and another key, as one swapped in has, is refused, even
   # given the passphrase.
-  { run = "systemd-cryptenroll --wipe-slot=tpm2 /dev/disk/by-partlabel/main0-system 2>&1 && printf 'correct horse' > /tmp/p && cryptsetup reencrypt --batch-mode --key-file /tmp/p /dev/disk/by-partlabel/main0-system 2>&1 && sync; echo exit=$?", stdout_contains = "exit=0" },
+  { run = "systemd-cryptenroll --wipe-slot=tpm2,recovery /dev/disk/by-partlabel/main0-system 2>&1 && printf 'correct horse' > /tmp/p && cryptsetup reencrypt --batch-mode --key-file /tmp/p /dev/disk/by-partlabel/main0-system 2>&1 && sync; echo exit=$?", stdout_contains = "exit=0" },
   { boot_installed = true, passphrase = "correct horse", refused = "does not match the expectation" },
 ]
 timeout_secs = 1800
