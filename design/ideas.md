@@ -32,3 +32,25 @@ directions, and the products the core has to allow, are in `vision.md`.
   - Per-user settings such as an editor theme wait for homes to come back. System-wide files
     (`/etc/xdg`, niri's system config) are enough to prove it.
   Changes to packages or units stay slower; that's fine.
+- `wrath set services.nginx.port 8080`: changes a setting where the configuration lives. The
+  value's origin, as `wrath why` finds it, says which file and line to edit; a value set nowhere
+  goes in the machine's own file. TOML comments and layout are kept, and plan and apply follow as
+  usual. A machine following a URL refuses, as `add` and `update` do, and shows the edit to make
+  in the repository; later it could open a pull request there. No machine-local layer on top of
+  a fetched configuration: the repository would stop describing the machine, two machines on one
+  commit would differ, and every upgrade would have to merge it.
+- `wrath try --set services.nginx.port=8080`: a generation from the configuration plus overrides,
+  rolled back unless kept. The generation records them beside its origin. Keeping one for good
+  means putting it in the configuration.
+- `wrath verify`, in place of general drift detection: commands that change settings write the
+  configuration, and `/etc` and the store are read-only, so what's left to check is small. It
+  rehashes store paths against their names, which works on every platform, and lists files in
+  `/etc` that nothing manages. To find out: what a hand-run `systemctl enable` does against the
+  managed `/etc`. Which machine runs which commit is `status`'s job (0040).
+- fs-verity on store paths for Linux machines, opt-in beside Secure Boot: the kernel checks each
+  page as it's read, carrying the verified chain from the UKI into the store. Needs a filesystem
+  that has it (btrfs, ext4); never something the design depends on, since macOS lacks it.
+- macOS stores: a read-only APFS volume through `synthetic.conf`. arm64 macOS kills unsigned or
+  wrongly signed executables, and rewriting store paths breaks a Mach-O signature, so the
+  builder's fixup has to ad-hoc sign after rewriting before anything it builds runs there. The
+  kernel checking those signatures per page covers executables; `verify` covers the rest.
