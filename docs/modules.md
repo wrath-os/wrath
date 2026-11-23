@@ -38,7 +38,6 @@ module(
             show_hostname = option(types.bool, default = True),
         ),
     },
-    writes = [],
     enable = False,
     render = render,
 )
@@ -99,9 +98,17 @@ values is an error, a `set` gets both files' items, and so on. `doc` shows up in
 `formats.json`, `formats.toml` and `formats.systemd` turn a dict into a file's text, and
 `lines([...])` joins lines with a newline after each.
 
-Every option a module sets with `ctx.set` has to be listed in its `writes`. That's how wrath
-knows to run the ssh module before the firewall module reads `allowed_tcp_ports`, and it means
-there's never a question of which module ran first.
+wrath works out which options a module sets from its `ctx.set`, `ctx.default` and `ctx.remove`
+calls, before anything runs. That's how it knows to run the ssh module before the firewall module
+reads `allowed_tcp_ports`, so there's never a question of which module ran first. For that, the
+context is always written `ctx: Context`, and an option's path is written where it's set, at
+least its start: `"security.pam.services." + name` sets something under
+`security.pam.services`.
+
+Fields taken from what `ctx.read` returns are checked the same way. In the motd module above,
+`cfg["txet"]` is an error when the module loads, even with motd off, because `motd` has no such
+field. That works for a read with a literal path, indexed with literal keys or `.get("key")`,
+directly or through a name assigned once.
 
 Shared code goes in `modules/lib/` and is loaded like so:
 

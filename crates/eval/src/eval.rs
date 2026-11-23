@@ -262,6 +262,8 @@ pub fn evaluate(input: Input<'_>) -> Result<Evaluation, EvalError> {
         }
     }
     diagnostics.extend(undeclared_writes(&schema, modules));
+    diagnostics.extend(unknown_fields(&schema, modules));
+    diagnostics.extend(crate::cycles::cycles(modules));
     let load::Loaded {
         files,
         diagnostics: load_diagnostics,
@@ -480,6 +482,39 @@ fn undeclared_writes(schema: &Schema, modules: &[Box<dyn Module>]) -> Vec<Diagno
                          or leave out the module that writes it",
                     )
                 })
+        })
+        .collect()
+}
+
+/// Fields modules take from records they read that the records don't have, such as
+/// `ctx.read("services.ollama")["acceleraton"]`. A field of something that isn't a declared
+/// record, such as a map entry's name or a path inside a freeform option, isn't checked.
+fn unknown_fields(schema: &Schema, modules: &[Box<dyn Module>]) -> Vec<Diagnostic> {
+    modules
+        .iter()
+        .flat_map(|module| {
+            module.option_uses().fields.into_iter().filter_map(|field| {
+                let (last, parent) = field.path.segments().split_last()?;
+                let parent = parent.iter().fold(OptionPath::root(), |path, segment| {
+                    path.child(segment.as_str())
+                });
+                let spec = spec_at(schema, &parent)?;
+                let Type::Record(record) = &spec.ty else {
+                    return None;
+                };
+                if record.fields.contains_key(last) {
+                    return None;
+                }
+                let diagnostic = Diagnostic::error(format!(
+                    "module `{}` reads `{last}` from `{parent}`, which has no such field",
+                    module.name()
+                ))
+                .label_opt(field.at, "here");
+                Some(match did_you_mean(last, record.fields.keys()) {
+                    Some(help) => diagnostic.note(help),
+                    None => diagnostic,
+                })
+            })
         })
         .collect()
 }

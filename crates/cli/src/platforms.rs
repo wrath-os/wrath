@@ -160,7 +160,7 @@ mod tests {
                     ctx.file(\"/etc/motd\", ctx.read(\"motd\") + \"\\n\")\n\n\
                     module(\n    name = \"motd\",\n    \
                     options = {\"motd\": option(types.str, default = \"acme\")},\n    \
-                    writes = [],\n    render = render,\n)\n";
+                    render = render,\n)\n";
         std::fs::write(acme.path().join("modules/motd.star"), motd).unwrap();
 
         let config = tempfile::tempdir().unwrap();

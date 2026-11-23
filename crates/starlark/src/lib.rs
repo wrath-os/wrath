@@ -8,14 +8,16 @@
 //! module(
 //!     name = "syncthing",
 //!     options = {"services.syncthing": types.map(instance)},
-//!     writes = ["users"],
 //!     render = render,
 //! )
 //! ```
+//!
+//! What a module writes, which orders the modules, comes from its code (see `analysis`).
 
 // starlark-rust's derive macros (`ProvidesStaticType`, `starlark_value`) emit `unsafe impl`s.
 #![allow(unsafe_code)]
 
+mod analysis;
 mod convert;
 mod reference;
 pub mod style;
@@ -47,9 +49,9 @@ use starlark::values::{
 use starlark_derive::starlark_value;
 use wrath_eval::{
     Build, ConfigKind, ConfigReader, Diagnostic, EVERY, File, FileId, Level, ListMerge,
-    MACHINE_VALUES, Module, OptionPath, OptionSpec, Output, ReadError, RenderError, RuntimePart,
-    Secret, Setting, Sources, Span, Template, Type, Unit, UnitAction, Value, Wrapper, formats,
-    home_path,
+    MACHINE_VALUES, Module, OptionPath, OptionSpec, OptionUse, OptionUses, Output, ReadError,
+    RenderError, RuntimePart, Secret, Setting, Sources, Span, Template, Type, Unit, UnitAction,
+    Value, Wrapper, formats, home_path,
 };
 
 /// The module variable that holds the render function after `module(...)` runs.
@@ -74,14 +76,17 @@ pub fn load(
         path: path.to_owned(),
     };
     let ast = parse(path, sources.text(file)).map_err(|e| locate.diagnostic(&e))?;
+    let own = analysis::accesses(&ast).map_err(|refused| locate.refused(&refused))?;
     let globals = globals();
     let mut libraries = Libraries::new();
+    let mut reached = vec![own];
     load_libraries(
         sources,
         root,
         &ast,
         &globals,
         &mut libraries,
+        &mut reached,
         &mut Vec::new(),
     )
     .map_err(|message| Diagnostic::error(format!("{path}: {message}")))?;
@@ -104,6 +109,7 @@ pub fn load(
     })?;
     Ok(Box::new(StarlarkModule {
         declared,
+        reached,
         source: sources.text(file).to_owned(),
         globals,
         libraries,
@@ -127,13 +133,15 @@ fn loader(libraries: &Libraries) -> HashMap<&str, &FrozenModule> {
 
 /// Loads the libraries `ast` loads, and theirs, into `libraries`, and adds each one's text to
 /// `sources` once, so an apply keeps the code its modules ran. `stack` holds the libraries being
-/// loaded, to catch one that ends up loading itself.
+/// loaded, to catch one that ends up loading itself. What each library reads and writes goes in
+/// `reached`.
 fn load_libraries(
     sources: &mut Sources,
     root: &Path,
     ast: &AstModule,
     globals: &Globals,
     libraries: &mut Libraries,
+    reached: &mut Vec<analysis::Accesses>,
     stack: &mut Vec<String>,
 ) -> Result<(), String> {
     for load in ast.loads() {
@@ -157,12 +165,15 @@ fn load_libraries(
         let text =
             std::fs::read_to_string(&file).map_err(|e| format!("cannot load `{path}`: {e}"))?;
         let library = parse(path, &text).map_err(|e| format!("`{path}`: {e}"))?;
+        let accesses = analysis::accesses(&library)
+            .map_err(|refused| format!("{}: {}", refused.at, refused.message))?;
+        reached.push(accesses);
         let name = file.display().to_string();
         if !sources.files().any(|id| sources.name(id) == name) {
             sources.add(name, text);
         }
         stack.push(path.to_owned());
-        load_libraries(sources, root, &library, globals, libraries, stack)?;
+        load_libraries(sources, root, &library, globals, libraries, reached, stack)?;
         stack.pop();
         let frozen = StarModule::with_temp_heap(|module| {
             {
@@ -202,7 +213,6 @@ fn set_time_limit(eval: &mut Evaluator<'_, '_, '_>) {
 struct Declared {
     name: String,
     options: Vec<(OptionPath, OptionSpec)>,
-    writes: Vec<OptionPath>,
     configurations: Vec<ConfigKind>,
     /// The `enable` option that turns the module on, when it has one.
     switch: Option<OptionPath>,
@@ -225,6 +235,10 @@ impl Locate {
             start: span.span.begin().get() as usize,
             end: span.span.end().get() as usize,
         })
+    }
+
+    fn refused(&self, refused: &analysis::Refused) -> Diagnostic {
+        Diagnostic::error(refused.message.clone()).label_opt(self.span(&refused.at), "here")
     }
 
     fn diagnostic(&self, error: &starlark::Error) -> Diagnostic {
@@ -282,7 +296,7 @@ fn spec_of(value: StarValue<'_>) -> anyhow::Result<OptionSpec> {
     }
 }
 
-/// A list of strings, such as `writes`.
+/// A list of strings, such as `configurations`.
 fn strings(value: StarValue<'_>) -> anyhow::Result<Vec<String>> {
     match convert::from_starlark(value) {
         Ok(Value::List(items)) => items
@@ -404,7 +418,6 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] name: &str,
         #[starlark(require = named)] options: SmallMap<String, StarValue<'v>>,
         #[starlark(require = named)] user_options: Option<SmallMap<String, StarValue<'v>>>,
-        #[starlark(require = named)] writes: StarValue<'v>,
         #[starlark(require = named)] render: StarValue<'v>,
         #[starlark(require = named)] configurations: Option<StarValue<'v>>,
         #[starlark(require = named)] enable: Option<bool>,
@@ -431,11 +444,6 @@ fn std_globals(builder: &mut GlobalsBuilder) {
         let switch = enable.map(|on| add_switch(&mut options, on)).transpose()?;
         options.extend(user_options.collect::<anyhow::Result<Vec<_>>>()?);
         options.sort_by(|a, b| a.0.cmp(&b.0));
-        let writes = strings(writes)?
-            .iter()
-            .map(|path| OptionPath::parse(path))
-            .collect::<Result<_, _>>()
-            .map_err(anyhow::Error::msg)?;
         let configurations = match configurations {
             None => vec![ConfigKind::System],
             Some(value) => strings(value)?
@@ -467,7 +475,6 @@ fn std_globals(builder: &mut GlobalsBuilder) {
             *loading.0.borrow_mut() = Some(Declared {
                 name: name.to_owned(),
                 options,
-                writes,
                 configurations,
                 switch,
             });
@@ -599,6 +606,9 @@ fn render<'v>(
 /// function it declares, so no Starlark values outlive a render.
 struct StarlarkModule {
     declared: Declared,
+    /// What the module's code reads and writes, then each library's it loads. A library's calls
+    /// count for every module that loads it, which only ever orders more than needed.
+    reached: Vec<analysis::Accesses>,
     source: String,
     globals: Globals,
     libraries: Libraries,
@@ -1198,7 +1208,31 @@ impl Module for StarlarkModule {
     }
 
     fn writes(&self) -> Vec<OptionPath> {
-        self.declared.writes.clone()
+        let mut writes: Vec<OptionPath> = self
+            .reached
+            .iter()
+            .flat_map(|accesses| accesses.writes.iter().map(|access| access.path.clone()))
+            .collect();
+        writes.sort();
+        writes.dedup();
+        writes
+    }
+
+    fn option_uses(&self) -> OptionUses {
+        let sites = |accesses: &[analysis::Access]| -> Vec<OptionUse> {
+            accesses
+                .iter()
+                .map(|access| OptionUse {
+                    path: access.path.clone(),
+                    at: self.locate.span(&access.at),
+                })
+                .collect()
+        };
+        OptionUses {
+            reads: self.reached.iter().flat_map(|a| sites(&a.reads)).collect(),
+            writes: self.reached.iter().flat_map(|a| sites(&a.writes)).collect(),
+            fields: self.reached.iter().flat_map(|a| sites(&a.fields)).collect(),
+        }
     }
 
     fn configurations(&self) -> &[ConfigKind] {

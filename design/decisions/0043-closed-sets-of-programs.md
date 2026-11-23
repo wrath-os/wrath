@@ -98,7 +98,7 @@ ctx.command(
   recipe, and `run = "@wrath-unlock/bin/wrath-unlock"` names a program in one.
 - `uses` is its closed set. wrath builds the command into its own store object: the file and a
   launcher that sets PATH and runs it.
-- `reads` names options, as `writes` does for setting them. Their values are rendered as JSON
+- `reads` names options. Their values are rendered as JSON
   when the system is built and the command gets the file's path in `WRATH_INPUT`. A command acts
   on the generation that's running, and never parses configuration files or has values pasted
   into its text.

@@ -1,6 +1,6 @@
 # 0044: What a module reads and writes comes from its code
 
-Status: proposed, 2026-11-19.
+Status: accepted, 2026-11-23. Done 2026-11-24.
 
 ## Context
 
@@ -45,9 +45,10 @@ A call in a library is charged to every module that loads it, which only ever or
 needed. `getattr(ctx, "set")` and taking a method as a value, `f = ctx.set`, are errors when the
 module loads, as the analysis couldn't follow them.
 
-`writes` goes away. For one release it's still read, and a list that disagrees with what was
-derived is a warning; then it's an error to give one. The check when a `set` runs stays, as an
-assertion that the analysis is right.
+`writes` goes away. Nothing outside grapes used it, so it went at once: every module in grapes
+was loaded with its list checked against what was derived, they all agreed, and then the lists
+went and `module()` stopped taking one. The check when a `set` runs stays, as an assertion that
+the analysis is right.
 
 ### Cycles are found when modules load
 
@@ -93,3 +94,25 @@ error when the module loads. A path the module doesn't declare, or a computed on
 3. `ctx: Context` required.
 4. Option types for `ctx.read`.
 5. `writes` removed from grapes and the docs, then refused.
+
+## Done
+
+2026-11-23: the analysis, cycles and `ctx: Context` (steps 1 to 3), and `writes` gone from
+grapes, the docs and `module()` (step 5).
+
+- A call's path is cut back to its last whole segment, so `"security.pam.services.%s.auth" %
+  service` writes `security.pam.services`. Derived writes are sometimes more exact than the lists
+  were: syncthing listed `users` and writes `users.syncthing`.
+- A parameter named `ctx` without a type is refused. One under another name without a type
+  isn't seen, so it's left to review.
+- Cycles are reported once per set of modules, with each module's read and the other's write.
+  Grapes has none.
+
+2026-11-24: fields of what `ctx.read` returns (step 4).
+
+- It's part of the same walk over the syntax, rather than types given to the checker: a read with
+  a literal path is followed through literal keys and `.get("key")`, directly or through a name
+  the function binds once. Each field is checked against the whole schema when the configuration
+  is evaluated, so reads of other modules' options are checked too.
+- A map entry's name and anything inside a freeform option aren't checked, nor is anything once a
+  computed key or a loop variable takes over.

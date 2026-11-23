@@ -120,10 +120,10 @@ fn settings_point_at_the_exact_call() {
 #[test]
 fn errors_point_at_the_expression() {
     insta::assert_snapshot!(run(r#"
-def render(ctx):
+def render(ctx: Context):
     ctx.read("system.hostnam")
 
-module(name = "typo", options = {}, writes = [], render = render)
+module(name = "typo", options = {}, render = render)
 "#).unwrap_err(), @r#"
     error: unknown option `system.hostnam`; did you mean `system.hostname`?
      --> test.star:3:5
@@ -136,12 +136,12 @@ module(name = "typo", options = {}, writes = [], render = render)
 #[test]
 fn values_read_are_copies() {
     let evaluation = run(r#"
-def render(ctx):
+def render(ctx: Context):
     system = ctx.read("system")
     system["hostname"] = "other"
     ctx.file("/hostname", ctx.read("system.hostname"))
 
-module(name = "mutate", options = {}, writes = [], render = render)
+module(name = "mutate", options = {}, render = render)
 "#)
     .unwrap();
 
@@ -154,11 +154,11 @@ module(name = "mutate", options = {}, writes = [], render = render)
 #[test]
 fn a_module_that_runs_too_long_is_stopped() {
     let message = run(r#"
-def render(ctx):
+def render(ctx: Context):
     for _ in range(1000000000):
         pass
 
-module(name = "spin", options = {}, writes = [], render = render)
+module(name = "spin", options = {}, render = render)
 "#)
     .unwrap_err();
 
@@ -175,7 +175,7 @@ fn a_module_must_declare_itself() {
 #[test]
 fn types_and_options_are_checked() {
     let message = run(r#"
-module(name = "x", options = {"a": types.list(option(types.str))}, writes = [], render = None)
+module(name = "x", options = {"a": types.list(option(types.str))}, render = None)
 "#)
     .unwrap_err();
 
@@ -432,7 +432,7 @@ fn files_with_secrets_are_filled_in_on_the_machine() {
 #[test]
 fn formats_and_plus_keep_secrets_for_the_machine_to_fill_in() {
     let module = r#"
-def render(ctx):
+def render(ctx: Context):
     token = ctx.read("services.app.token")
     ctx.file("/etc/app.toml", formats.toml({"token": token, "port": 80}), owner = "app")
     ctx.file("/etc/app.env", "TOKEN=" + token + "\n", 0o440, group = "app")
@@ -440,7 +440,6 @@ def render(ctx):
 module(
     name = "app",
     options = {"services.app.token": option(types.str, runtime = True)},
-    writes = [],
     render = render,
 )
 "#;
@@ -524,10 +523,10 @@ module(
 #[test]
 fn only_files_with_secrets_have_an_owner() {
     let error = run(r#"
-def render(ctx):
+def render(ctx: Context):
     ctx.file("/etc/plain", "x\n", owner = "app")
 
-module(name = "plain", options = {}, writes = [], render = render)
+module(name = "plain", options = {}, render = render)
 "#)
     .unwrap_err();
 
@@ -785,10 +784,10 @@ fn load_from(files: &[(&str, &str)], module: &str) -> Result<Evaluation, String>
 const LOADS_MERGE: &str = r#"
 load("lib/merge.star", "merge")
 
-def render(ctx):
+def render(ctx: Context):
     ctx.file("/etc/merged", str(merge({"a": {"b": 1}}, {"a": {"c": 2}})) + "\n")
 
-module(name = "app", options = {}, writes = [], render = render)
+module(name = "app", options = {}, render = render)
 "#;
 
 #[test]
@@ -811,9 +810,158 @@ fn modules_load_helpers_from_libraries() {
     assert_eq!(file.text, "{\"a\": {\"b\": 1, \"c\": 2}}\n");
 }
 
+/// Loads `module` as `app.star` beside `files`, and returns what it writes.
+fn writes_of(files: &[(&str, &str)], module: &str) -> Result<Vec<String>, String> {
+    let dir = tempfile::tempdir().unwrap();
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let mut sources = Sources::default();
+    let module = load(&mut sources, "app.star", module.to_owned(), dir.path())
+        .map_err(|e| wrath_eval::render(&[e], &sources))?;
+    Ok(module.writes().iter().map(ToString::to_string).collect())
+}
+
+#[test]
+fn modules_that_each_need_the_other_first_are_refused_even_when_off() {
+    let module = |name: &str, reads: &str, writes: &str| {
+        format!(
+            "def render(ctx: Context) -> None:\n    \
+             if ctx.read(\"{name}.enable\") and ctx.read(\"{reads}\"):\n        \
+             ctx.set(\"{writes}\", True)\n\n\
+             module(name = \"{name}\", options = {{\"{name}.enable\": types.bool, \
+             \"{name}.flag\": types.bool}}, render = render)\n"
+        )
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut sources = Sources::default();
+    let modules: Vec<_> = [
+        module("a", "b.flag", "a.flag"),
+        module("b", "a.flag", "b.flag"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(n, text)| load(&mut sources, &format!("m{n}.star"), text, dir.path()).unwrap())
+    .collect();
+    let config = "[system]\nhostname = \"box\"\n[a]\nenable = false\n[b]\nenable = false\n";
+
+    let error = evaluate(Input {
+        sources,
+        config: &MemFs::new([("system.toml", config)]),
+        kind: ConfigKind::System,
+        user: None,
+        role: None,
+        schema: base_schema(),
+        modules: &modules,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(
+        error.contains("modules `a`, `b` each need another to have run first"),
+        "{error}"
+    );
+    assert!(
+        error.contains("`a` reads `b.flag`, which `b` writes"),
+        "{error}"
+    );
+    assert!(
+        error.contains("`b` reads `a.flag`, which `a` writes"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_field_a_record_doesnt_have_is_refused_even_when_off() {
+    let module = r#"
+def render(ctx: Context) -> None:
+    app = ctx.read("services.app")
+    if app["enable"]:
+        ctx.set("services.app.port", app["prot"])
+    ctx.read("services.app")["sites"]["any"]["root"]
+    ctx.read("services.app").get("extra", {})["anything"]
+
+module(
+    name = "app",
+    options = {"services.app": types.record(
+        enable = option(types.bool, default = False),
+        port = option(types.port, default = 80),
+        sites = option(types.map(option(types.str))),
+        extra = option(types.freeform, optional = True),
+    )},
+    render = render,
+)
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let mut sources = Sources::default();
+    let modules = vec![load(&mut sources, "app.star", module.to_owned(), dir.path()).unwrap()];
+
+    let error = evaluate(Input {
+        sources,
+        config: &MemFs::new([("system.toml", "[system]\nhostname = \"box\"\n")]),
+        kind: ConfigKind::System,
+        user: None,
+        role: None,
+        schema: base_schema(),
+        modules: &modules,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(
+        error.contains("module `app` reads `prot` from `services.app`, which has no such field"),
+        "{error}"
+    );
+    assert!(error.contains("did you mean `port`?"), "{error}");
+    assert_eq!(error.matches("no such field").count(), 1, "{error}");
+}
+
+#[test]
+fn what_a_module_writes_comes_from_its_code_and_its_libraries() {
+    let open = "def open(ctx: Context, port: int) -> None:\n    \
+                ctx.set(\"networking.firewall.allowed_tcp_ports\", [port])\n";
+    let module = r#"
+load("lib/firewall.star", "open")
+
+def render(ctx: Context) -> None:
+    open(ctx, 22)
+    for service in ["login", "sudo"]:
+        ctx.set("security.pam.services.%s.auth" % service, [])
+
+module(name = "app", options = {}, render = render)
+"#;
+
+    let writes = writes_of(&[("lib/firewall.star", open)], module).unwrap();
+
+    assert_eq!(
+        writes,
+        [
+            "networking.firewall.allowed_tcp_ports",
+            "security.pam.services"
+        ]
+    );
+}
+
+#[test]
+fn a_module_that_writes_somewhere_it_cant_say_is_refused() {
+    let computed = "def render(ctx: Context) -> None:\n    ctx.set(ctx.read(\"x\"), 1)\n\n\
+                    module(name = \"app\", options = {}, render = render)\n";
+    let error = writes_of(&[], computed).unwrap_err();
+    assert!(error.contains("app.star:2"), "{error}");
+    assert!(error.contains("starts computed"), "{error}");
+
+    let library = "def f(ctx: Context) -> None:\n    ctx.set(name(), 1)\n";
+    let module = "load(\"lib/f.star\", \"f\")\n\ndef render(ctx: Context) -> None:\n    f(ctx)\n\n\
+                  module(name = \"app\", options = {}, render = render)\n";
+    let error = writes_of(&[("lib/f.star", library)], module).unwrap_err();
+    assert!(error.contains("lib/f.star:2"), "{error}");
+}
+
 #[test]
 fn libraries_hold_helpers_only_and_stay_in_the_modules_directory() {
-    let calls_module = "module(name = \"lib\", options = {}, writes = [], render = None)\n";
+    let calls_module = "module(name = \"lib\", options = {}, render = None)\n";
     let error = load_from(&[("lib/merge.star", calls_module)], LOADS_MERGE).unwrap_err();
     assert!(
         error.contains("only a module calls `module(...)`"),
@@ -835,10 +983,10 @@ fn libraries_hold_helpers_only_and_stay_in_the_modules_directory() {
 #[test]
 fn an_error_about_an_option_the_configuration_doesnt_set_points_at_the_module() {
     let error = run(r#"
-def render(ctx):
+def render(ctx: Context):
     ctx.error("system.timezone", "pick a timezone")
 
-module(name = "picky", options = {}, writes = [], render = render)
+module(name = "picky", options = {}, render = render)
 "#)
     .unwrap_err();
 
@@ -855,7 +1003,7 @@ module(name = "picky", options = {}, writes = [], render = render)
 fn a_module_says_which_configurations_it_belongs_to() {
     let module = |configurations: &str| {
         format!(
-            "module(name = \"m\", options = {{}}, writes = [], render = lambda ctx: None, \
+            "module(name = \"m\", options = {{}}, render = lambda ctx: None, \
              configurations = {configurations})"
         )
     };
@@ -1039,6 +1187,11 @@ fn disks_are_laid_out_and_mounted_by_name() {
         "pcrs": [
           7
         ],
+        "pin": false,
+        "recovery": {
+          "command": [],
+          "keep": "esp"
+        },
         "ssh": {
           "authorized_keys": [],
           "port": 2222
@@ -1119,6 +1272,11 @@ fn disks_are_laid_out_and_mounted_by_name() {
         "pcrs": [
           7
         ],
+        "pin": false,
+        "recovery": {
+          "command": [],
+          "keep": "esp"
+        },
         "ssh": {
           "authorized_keys": [],
           "port": 2222
@@ -1175,14 +1333,14 @@ fn disks_say_what_doesnt_fit() {
 #[test]
 fn base_modules_add_service_packages_enable_their_units_and_make_wrappers() {
     let evaluation = run(r#"
-def render(ctx):
+def render(ctx: Context):
     ctx.service_package("dbus")
     ctx.enable("systemd-networkd.service")
     ctx.enable("pipewire.service", user = True, wanted_by = "default.target")
     ctx.wrapper("sudo", source = "/run/current-system/sw/bin/sudo")
     ctx.wrapper("ping", source = "/run/current-system/sw/bin/ping", group = "net", mode = 0o755)
 
-module(name = "base-test", options = {}, writes = [], render = render)
+module(name = "base-test", options = {}, render = render)
 "#)
     .unwrap();
     let output = output_of(&evaluation, "base-test");
@@ -1200,10 +1358,10 @@ module(name = "base-test", options = {}, writes = [], render = render)
     assert_eq!(output.wrappers["ping"].mode, 0o755);
 
     let message = run(r#"
-def render(ctx):
+def render(ctx: Context):
     ctx.wrapper("bin/sudo", source = "sudo")
 
-module(name = "bad", options = {}, writes = [], render = render)
+module(name = "bad", options = {}, render = render)
 "#)
     .unwrap_err();
     assert!(message.contains("absolute path"), "{message}");
@@ -1513,7 +1671,7 @@ fn lists_sets_and_tables_are_empty_unless_a_default_says_otherwise() {
            \"a.maybe\": option(types.list(types.str), optional = True),\
            \"a.must\": option(types.list(types.str), required = True),\
            \"a.name\": option(types.str),\
-         }, writes = [], render = lambda ctx: None)",
+         }, render = lambda ctx: None)",
     );
     let default = |path: &str| options[path].default.clone();
     assert_eq!(default("a.ports"), Some(wrath_eval::Value::List(vec![])));
@@ -1541,10 +1699,10 @@ fn lists_sets_and_tables_are_empty_unless_a_default_says_otherwise() {
 fn lines_join_with_a_newline_after_each() {
     let evaluation = load_from(
         &[],
-        "def render(ctx):\n\
+        "def render(ctx: Context):\n\
          \x20   ctx.file(\"/etc/a\", lines([\"one\", \"two\"]))\n\
          \x20   ctx.file(\"/etc/b\", lines([]))\n\
-         module(name = \"m\", options = {}, writes = [], render = render)\n",
+         module(name = \"m\", options = {}, render = render)\n",
     )
     .unwrap();
     let text = |path: &str| output_of(&evaluation, "m").files[path].text.clone();
@@ -1576,13 +1734,12 @@ fn evaluate_module(source: &str, toml: &str) -> Result<Evaluation, String> {
 }
 
 const SWITCHED: &str = "\
-def render(ctx):
+def render(ctx: Context):
     ctx.file(\"/etc/app\", \"port %d\\n\" % ctx.read(\"services.app.port\"))
 module(
     name = \"app\",
     options = {\"services.app\": types.record(port = option(types.port, default = 80))},
     enable = ENABLED,
-    writes = [],
     render = render,
 )
 ";
@@ -1623,7 +1780,7 @@ fn a_module_that_can_be_turned_off_renders_only_when_it_is_on() {
 #[test]
 fn a_switch_needs_one_table_of_options_without_its_own() {
     let two = "module(name = \"m\", options = {\"a\": types.record(), \"b\": types.record()}, \
-               enable = False, writes = [], render = lambda ctx: None)";
+               enable = False, render = lambda ctx: None)";
     let mut sources = Sources::default();
     let error = load(
         &mut sources,
@@ -1652,7 +1809,7 @@ fn a_switch_needs_one_table_of_options_without_its_own() {
 fn never_rendered(call: &str) -> String {
     format!(
         "def render(ctx: Context) -> None:\n    {call}\n\
-         module(name = \"app\", enable = False, writes = [], render = render,\n\
+         module(name = \"app\", enable = False, render = render,\n\
          options = {{\"services.app\": types.record(port = option(types.port, default = 80))}})\n"
     )
 }
@@ -1672,7 +1829,7 @@ fn a_ctx_call_with_the_wrong_type_is_an_error_before_anything_renders() {
 #[test]
 fn an_annotated_render_that_is_called_right_renders() {
     let source = "def render(ctx: Context) -> None:\n    ctx.package(\"jq\")\n\
-                  module(name = \"m\", options = {}, writes = [], render = render)\n";
+                  module(name = \"m\", options = {}, render = render)\n";
     let evaluation = evaluate_module(source, "").unwrap();
     assert!(
         output_of(&evaluation, "m")
@@ -1746,7 +1903,7 @@ fn every_function_in_the_built_in_modules_is_fully_annotated() {
 fn files_are_named_plainly_and_unit_values_stay_on_one_line() {
     let rendering = |call: &str| {
         run(&format!(
-            "def render(ctx):\n    {call}\n\nmodule(name = \"t\", options = {{}}, writes = [], \
+            "def render(ctx: Context):\n    {call}\n\nmodule(name = \"t\", options = {{}}, \
              render = render)\n"
         ))
     };

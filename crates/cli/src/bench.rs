@@ -137,7 +137,7 @@ instance = types.record(
     settings = option(types.freeform, optional = True),
 )
 
-def render(ctx):
+def render(ctx: Context):
     ports = []
     for instance_name, cfg in ctx.read("services.{name}").items():
         if not cfg["enable"]:
@@ -160,7 +160,6 @@ def render(ctx):
 module(
     name = "{name}",
     options = {{"services.{name}": types.map(instance)}},
-    writes = ["users", "networking.firewall.allowed_tcp_ports"],
     render = render,
 )
 "#
@@ -170,12 +169,12 @@ module(
 /// A module that reads every service, as an inventory page would.
 const INVENTORY_MODULE: &str = r#"# Lists every configured service instance.
 
-def render(ctx):
+def render(ctx: Context):
     lines = []
     for service, instances in ctx.read("services").items():
         for instance_name in instances:
             lines.append(service + "." + instance_name)
     ctx.file("/etc/wrath/inventory", "\n".join(lines) + "\n")
 
-module(name = "inventory", options = {}, writes = [], render = render)
+module(name = "inventory", options = {}, render = render)
 "#;

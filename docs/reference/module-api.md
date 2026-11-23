@@ -12,7 +12,7 @@ The lines of `items`, each ending in a newline, as a file holds them.
 
 A machine value, such as `machine_value("machine.name")`, filled in on the machine when it switches. Only options and files filled in there take it, like a secret.
 
-### `module(*, name, options, user_options = ..., writes, render, configurations = ..., enable = ...)`
+### `module(*, name, options, user_options = ..., render, configurations = ..., enable = ...)`
 
 Declares the module. Every module file calls this once. `user_options` are options every user has, under `users.<name>`.
 

@@ -5,6 +5,7 @@
 //! `${path}`. Every value keeps the file and line that set it, for error messages and `why`.
 
 mod caches;
+mod cycles;
 mod diag;
 mod eval;
 pub mod formats;
@@ -37,9 +38,9 @@ pub use ids::{Ids, LOCK_FILE};
 pub use load::{ConfigKind, DeclaredSource, kind_of, roles, starting_file};
 pub use machines::Machine;
 pub use module::{
-    Build, ConfigReader, File, HOME_SECRETS_DIR, Home, Module, ModuleId, Output, ReadError,
-    RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit, UnitAction, WRAPPERS_DIR,
-    WRATH_SOURCE, Wrapper, home_path, package_source,
+    Build, ConfigReader, File, HOME_SECRETS_DIR, Home, Module, ModuleId, OptionUse, OptionUses,
+    Output, ReadError, RenderError, SECRETS_DIR, Secret, Section, Setting, Template, Unit,
+    UnitAction, WRAPPERS_DIR, WRATH_SOURCE, Wrapper, home_path, package_source,
 };
 pub use path::OptionPath;
 pub use platform::{Platform, declared_source, platform};

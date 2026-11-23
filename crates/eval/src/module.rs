@@ -16,6 +16,23 @@ use crate::source::Span;
 use crate::value::{RuntimePart, Value};
 use crate::walk::Level;
 
+/// A call that reads or writes an option, and where it is when that's in the module's own file.
+#[derive(Debug, Clone)]
+pub struct OptionUse {
+    pub path: OptionPath,
+    pub at: Option<Span>,
+}
+
+/// The calls in a module's code that read and write options.
+#[derive(Debug, Clone, Default)]
+pub struct OptionUses {
+    pub reads: Vec<OptionUse>,
+    pub writes: Vec<OptionUse>,
+    /// Fields taken from values read, as `ctx.read("services.ssh")["port"]` is
+    /// `services.ssh.port`.
+    pub fields: Vec<OptionUse>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleId(pub(crate) u32);
 
@@ -37,6 +54,12 @@ pub trait Module {
 
     /// Option prefixes the module may set.
     fn writes(&self) -> Vec<OptionPath>;
+
+    /// Where the module's code reads and writes options, as far as it can be told before it
+    /// runs, so a cycle between modules is found when they load.
+    fn option_uses(&self) -> OptionUses {
+        OptionUses::default()
+    }
 
     /// The kinds of configuration the module belongs to.
     fn configurations(&self) -> &[ConfigKind] {
