@@ -19,7 +19,7 @@ wrath-eval.workspace = true
 wrath-model.workspace = true
 wrath-starlark.workspace = true
 serde_json.workspace = true
-rustix = { version = "1.1", features = ["fs", "system", "termios"] }
+rustix = { version = "1.1", features = ["fs", "process", "system", "termios"] }
 sha2 = "0.10"
 hmac = "0.12"
 tempfile.workspace = true

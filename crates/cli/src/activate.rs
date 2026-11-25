@@ -803,6 +803,8 @@ fn remove_others(dir: &Path, unwanted: impl Fn(&str) -> bool) -> Result<(), Stri
 /// Runs as the booted system's init: puts `system` in place and hands over to systemd, which
 /// starts even when part of that failed, so the machine still comes up to be fixed.
 fn init(system: &Path) -> Result<(), String> {
+    // The first program starts with no umask, and everything made here would be writable by all.
+    rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o022));
     if let Err(message) = put_in_place(Path::new("/"), system) {
         eprintln!("wrath: {message}; starting systemd anyway");
     }
@@ -1350,12 +1352,21 @@ fn switch_etc(root: &Path, old: Option<&Path>, system: &Path) -> Result<(), Stri
 
 /// Makes the directories above `path` under `etc`. A link of wrath's where a directory now goes,
 /// such as one to a file the old system had there, is removed first, so nothing is made through
-/// it; one someone else made is an error.
+/// it; one someone else made is an error. A directory others may write to, as one made at boot
+/// before there was a umask, is made root's alone to change.
 fn make_dirs(etc: &Path, path: &Path) -> Result<(), String> {
     let mut dir = etc.to_path_buf();
     for part in path.parent().into_iter().flat_map(Path::components) {
         dir.push(part);
         let Ok(target) = fs::read_link(&dir) else {
+            if let Ok(meta) = fs::metadata(&dir)
+                && meta.is_dir()
+                && meta.permissions().mode() & 0o022 != 0
+            {
+                let mode = meta.permissions().mode() & 0o7755;
+                fs::set_permissions(&dir, fs::Permissions::from_mode(mode))
+                    .map_err(|e| format!("{}: {e}", dir.display()))?;
+            }
             continue;
         };
         let ours =
@@ -2609,5 +2620,22 @@ mod tests {
             fs::read_to_string(passwd).unwrap(),
             "root:x:0:0::/root:/bin/sh\n"
         );
+    }
+
+    #[test]
+    fn a_directory_in_etc_others_could_write_to_is_made_roots_alone() {
+        let work = tempfile::tempdir().unwrap();
+        let etc = work.path().join("etc");
+        let mode = |dir: &Path| fs::metadata(dir).unwrap().permissions().mode() & 0o7777;
+        fs::create_dir_all(etc.join("pam.d")).unwrap();
+        fs::create_dir_all(etc.join("tidy")).unwrap();
+        fs::set_permissions(etc.join("pam.d"), fs::Permissions::from_mode(0o777)).unwrap();
+        fs::set_permissions(etc.join("tidy"), fs::Permissions::from_mode(0o700)).unwrap();
+
+        make_dirs(&etc, Path::new("pam.d/login")).unwrap();
+        make_dirs(&etc, Path::new("tidy/app.conf")).unwrap();
+
+        assert_eq!(mode(&etc.join("pam.d")), 0o755);
+        assert_eq!(mode(&etc.join("tidy")), 0o700);
     }
 }
