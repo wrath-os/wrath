@@ -289,6 +289,11 @@ impl Signer {
         Ok((public, output.stdout))
     }
 
+    /// A path in the signer's private directory, off the ESP, for an image while it's signed.
+    pub fn scratch(&self, name: &str) -> PathBuf {
+        self.dir.path().join(name)
+    }
+
     /// Writes `from`, signed, to `to`.
     pub fn sign(&self, from: &Path, to: &Path) -> Result<(), String> {
         let key = self.dir.path().join("db.key");

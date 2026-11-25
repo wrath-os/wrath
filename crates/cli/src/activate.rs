@@ -543,26 +543,28 @@ impl OnEsp {
                 }
                 let image = wrath_build::uki::assemble(&read(stub)?, &parts)
                     .map_err(|e| format!("{}: {e}", stub.display()))?;
-                let unsigned = at.with_extension("wrath-unsigned");
-                let temporary = at.with_extension("wrath-new");
-                let written = match signer {
-                    Some(signer) => fs::write(&unsigned, image)
-                        .map_err(|e| format!("{}: {e}", unsigned.display()))
-                        .and_then(|()| signer.sign(&unsigned, &temporary)),
-                    None => fs::write(&temporary, image)
-                        .map_err(|e| format!("{}: {e}", temporary.display())),
-                }
-                .and_then(|()| {
-                    fs::File::open(&temporary)
-                        .and_then(|file| file.sync_all())
-                        .map_err(|e| format!("{}: {e}", at.display()))
-                });
+                let Some(signer) = signer else {
+                    let temporary = at.with_extension("wrath-new");
+                    let written = fs::write(&temporary, image)
+                        .and_then(|()| fs::File::open(&temporary)?.sync_all());
+                    if let Err(e) = written {
+                        let _ = fs::remove_file(&temporary);
+                        return Err(format!("{}: {e}", at.display()));
+                    }
+                    return fs::rename(&temporary, &at)
+                        .map_err(|e| format!("{}: {e}", at.display()));
+                };
+                // Signed off the ESP, so only the signed image takes room there, as `fitting`
+                // counts it.
+                let (unsigned, signed) =
+                    (signer.scratch("unsigned.efi"), signer.scratch("signed.efi"));
+                let written = fs::write(&unsigned, image)
+                    .map_err(|e| format!("{}: {e}", unsigned.display()))
+                    .and_then(|()| signer.sign(&unsigned, &signed))
+                    .and_then(|()| copy_replacing(&signed, &at));
                 let _ = fs::remove_file(&unsigned);
-                if let Err(e) = written {
-                    let _ = fs::remove_file(&temporary);
-                    return Err(e);
-                }
-                fs::rename(&temporary, &at).map_err(|e| format!("{}: {e}", at.display()))
+                let _ = fs::remove_file(&signed);
+                written
             }
             // Named by the store path, so one of the right size is the same file. One cut short,
             // such as by a power cut, is copied again.
@@ -783,7 +785,11 @@ fn copy_replacing(from: &Path, to: &Path) -> Result<(), String> {
     let copied = fs::copy(from, &temporary).and_then(|_| fs::File::open(&temporary)?.sync_all());
     if let Err(e) = copied {
         let _ = fs::remove_file(&temporary);
-        return Err(format!("{}: {e}", from.display()));
+        return Err(format!(
+            "copying {} to {}: {e}",
+            from.display(),
+            to.display()
+        ));
     }
     fs::rename(&temporary, to).map_err(|e| format!("{}: {e}", to.display()))
 }
