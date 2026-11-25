@@ -692,6 +692,11 @@ fn system_layout() -> Vec<(&'static str, &'static str)> {
             "etc/systemd/system-generators",
         ),
         ("share/dbus-1/system.d", "etc/dbus-1/system.d"),
+        // What services such as rtkit let polkit decide, and rules they come with.
+        ("share/polkit-1/actions", "etc/polkit-1/actions"),
+        ("share/polkit-1/rules.d", "etc/polkit-1/rules.d"),
+        // The TPM's NV indexes that systemd measures the machine and logins into.
+        ("lib/nvpcr", "etc/nvpcr"),
         // PKCS#11 modules, such as GNOME Keyring's, which p11-kit loads.
         ("share/p11-kit/modules", "etc/pkcs11/modules"),
     ]
@@ -1603,8 +1608,22 @@ fn initrd_files(
     // initrd's root has no password, and only the console reaches it.
     let force_shell = "[Service]\nExecStart=\nExecStart=-/bin/sh\n";
     let groups: String = [
-        "tty", "disk", "kmem", "input", "video", "audio", "lp", "dialout", "cdrom", "tape",
-        "floppy", "render", "sgx", "clock", "kvm",
+        "tty",
+        "disk",
+        "kmem",
+        "input",
+        "video",
+        "audio",
+        "lp",
+        "dialout",
+        "cdrom",
+        "tape",
+        "floppy",
+        "render",
+        "sgx",
+        "clock",
+        "kvm",
+        "systemd-journal",
     ]
     .iter()
     .enumerate()
