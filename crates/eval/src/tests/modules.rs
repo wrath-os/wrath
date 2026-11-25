@@ -681,7 +681,7 @@ fn a_secret_belongs_to_one_module_and_its_file_must_be_readable() {
         eval_with(&[SYSTEM], &[secrets("a", "key", "secrets/key.age")]).unwrap_err(),
         @"
     error: cannot read secret `key` from secrets/key.age: entity not found
-     = help: encrypt it with age to the machine's key, or set its `file`
+     = help: create it with `wrath secret edit key`, or set its `file`
     "
     );
 }

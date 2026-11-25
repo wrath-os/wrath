@@ -556,7 +556,7 @@ fn a_secret_must_be_declared_and_its_file_readable() {
     "#);
     insta::assert_snapshot!(evaluate_with(&config("api-token"), &SECRET_MODULES).unwrap_err(), @"
     error: cannot read secret `api-token` from secrets/api-token.age: entity not found
-     = help: encrypt it with age to the machine's key, or set its `file`
+     = help: create it with `wrath secret edit api-token`, or set its `file`
     ");
 }
 

@@ -647,8 +647,9 @@ fn read_secrets(
                 files.insert(name.clone(), SecretFile { source, hash });
             }
             Err(e) => diagnostics.push(
-                Diagnostic::error(format!("cannot read secret `{name}` from {source}: {e}"))
-                    .note("help: encrypt it with age to the machine's key, or set its `file`"),
+                Diagnostic::error(format!("cannot read secret `{name}` from {source}: {e}")).note(
+                    format!("help: create it with `wrath secret edit {name}`, or set its `file`"),
+                ),
             ),
         }
     }
