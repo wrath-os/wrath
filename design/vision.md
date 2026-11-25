@@ -150,6 +150,14 @@ starmole.
   serve both is to find out.
 - The agent and starmole are packages built from grapes, not part of the core.
 
+### Admitting machines
+
+A new machine joins starmole as pending: it can report its hardware facts and nothing else. A
+policy service decides what happens next: it accepts the machine, rejects it, or asks a person.
+Where the machine sits (datacenter, region, zone, rack, the router it hangs off) comes from match
+rules in the repository applied to its facts, so placement is reviewed like any other change.
+Accepting it commits its machine file and gives it its role's tag.
+
 ### What a coordinator can't do
 
 It says "go to commit X", nothing more. The machine checks that X is on the repository it
@@ -164,8 +172,12 @@ service's outage into the fleet's.
 
 Changes that take effect live or on a restart roll as fast as health checks pass; only reboot
 changes take a slot. Roles declare health checks that gate `boot-complete.target`, so a node
-that boots but is broken rolls itself back with boot counting. A plan's destructive changes,
-such as to disks, wait for approval.
+that boots but is broken rolls itself back with boot counting.
+
+What needs approval is set per channel and per kind of change: a test channel applies
+everything on its own, while production applies live changes on its own and waits for a person
+before a reboot or any change to disks. The person approves from a UI that shows the plan's diff
+and tiers for the machines it covers.
 
 Modules declare guards around disruptive changes, and the core knows nothing of what they
 guard: before a reboot, drain the node; before going on, wait for etcd to have quorum. A Ceph or

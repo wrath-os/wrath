@@ -68,15 +68,24 @@ directions, and the products the core has to allow, are in `vision.md`.
     (rescue-and-dd) or in cloud metadata. The machine makes its key at first
     boot, sealed by the TPM when there is one, and the control plane binds that key on first
     contact.
-  - The same API stays once installed, so a node with no shell is a platform of wrath's (no
-    shell, the agent over starmole), not a different design: the API makes the calls the CLI
-    does.
+  - The same API stays once installed, so a node with no shell is a platform of wrath's with an
+    agent, not a different design: the API makes the calls the CLI does. No A/B partitions
+    either: the store and boot counting already give atomic updates and rollback.
+  - A small declared identity state: the starmole key, the machine's identity and its enrolment
+    record. Install carries it from the blank-slate system onto the disk, and rollback never
+    touches it, so going back a generation never makes a machine a stranger to its fleet.
+  - The agent's services are iroh ALPNs on its starmole node: the API, logs, maybe metrics. The
+    journal stays on the machine; the log ALPN streams copies to a collector, so losing the
+    collector loses no logs.
   - Not soft-bricking it when starmole or the agent changes: a change that touches starmole,
     the agent or networking is applied as a `try`, kept only once the agent has reconnected
     and the control plane confirms; the agent reaching the control plane is a health check
     gating `boot-complete.target`, so a generation that loses it rolls back by boot counting;
     starmole upgrades reach canaries first; and a second way in (a management network, the
     console, the BMC) stays possible.
+  - Open: does starmole already have a pending state for nodes that may report but do nothing
+    else; where the approval UI lives (the coordinator, a separate service, or a page over the
+    API); and how a new machine's key joins its secrets' recipients (also open in `vision.md`).
 - Servers and Kubernetes nodes, beyond what the fleet design in `vision.md` covers. systemd
   already does most of what the machine needs; the store does what A/B slots, sysext and confext
   would, with more than one release of rollback.
