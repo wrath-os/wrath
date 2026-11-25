@@ -185,9 +185,9 @@ no cache has, and has no seed, fetches the seed from a cache it uses and checks 
 hash grapes pins, so any machine with a cache can build.
 
 Something built that you expected fetched says why: `build 3 (wrath; 2 built with it)` names what
-no cache has and counts what's only built because it builds with that. `wrath cache check PKG`
-goes through one package: its key, whether it's here, what it would fetch from where, or what it
-builds with that no cache has, and which caches were asked.
+no cache has and counts what's only built because it builds with that. `wrath why PKG`
+goes through one package: why it's installed, its key, whether it's here, and what it would
+fetch from where or what it builds with that no cache has, and which caches were asked.
 
 On a machine wrath installed, fetched paths go straight into `/wrath/store`, beside the system
 that runs them, and the builder keeps its records in `/wrath/work`.

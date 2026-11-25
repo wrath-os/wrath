@@ -324,16 +324,6 @@ wrath cache key [OPTIONS] <NAME> <FILE>
 - `<FILE>`: Where to keep the key, which only whoever pushes should be able to read
 - `--url <URL>`: Where machines will fetch from, for the configuration this prints
 
-## `wrath cache check`
-
-Say where a package would come from: the store, a cache, or a build, and why
-
-```text
-wrath cache check [OPTIONS] <PACKAGE>
-```
-
-- `<PACKAGE>`: The package, as `wrath build` names it
-
 ## `wrath cache push`
 
 Push everything built here to a cache, signed, that it doesn't have yet
@@ -366,28 +356,18 @@ wrath dev <COMMAND>
 
 ## `wrath dev test`
 
-Run scenario files, or compare bad configs with their golden errors
+Run scenario files, compare bad configs with their golden errors, check module renders, or show which acceptance scenarios pass
 
 ```text
 wrath dev test [OPTIONS] [FILES]...
 ```
 
-- `[FILES]...`: Scenario files to run, or directories of bad configs to compare with their golden errors
+- `[FILES]...`: Scenario files to run; directories of bad configs or module cases to compare with what they expect; or `acceptance`, or one milestone in it such as `acceptance/m2`
 - `--determinism [<DIR>]`: Check that the modules in this directory [default: the set in use's] render the fixture configs byte for byte the same across fresh interpreters and module orders
 - `--configs <CONFIGS>`: Configurations for --determinism
 - `--bless`: Write the actual errors of bad configs as their expected errors
 - `--image <IMAGE>`: Run VM scenarios against this built image instead of building one
 - `--run-reproduction`: After a failure, run the printed reproduction and report whether it fails the same way
-
-## `wrath dev acceptance`
-
-Run the acceptance scenarios and show which pass
-
-```text
-wrath dev acceptance [OPTIONS]
-```
-
-- `--milestone <MILESTONE>`: Only run the scenarios of this milestone, for example `m2`
 
 ## `wrath dev docs`
 
@@ -477,15 +457,3 @@ Print the configuration's model as JSON
 ```text
 wrath dev model [OPTIONS]
 ```
-
-## `wrath dev bench`
-
-Measure how long `plan` takes with many synthetic modules
-
-```text
-wrath dev bench [OPTIONS]
-```
-
-- `--synthetic <SYNTHETIC>`: How many synthetic service modules to add
-- `--runs <RUNS>`: How many times to measure
-- `--budget-ms <BUDGET_MS>`: The most the median plan may take, in milliseconds

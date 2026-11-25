@@ -2916,7 +2916,7 @@ fn by_cache<'a>(
     fetch
 }
 
-/// Where one package would come from, as `wrath cache check` says it.
+/// Where one package would come from, as `wrath why` says it.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Found {
     /// In the store already.

@@ -180,26 +180,6 @@ fn a_file_a_case_expects_fails_until_blessed_and_missing_ones_always_fail() {
     assert!(stdout.contains("doesn't write etc/nothing"), "{stdout}");
 }
 
-#[test]
-fn bench_measures_plan_time() {
-    let output = stdout(&wrath(&[
-        "dev",
-        "bench",
-        "--synthetic",
-        "4",
-        "--runs",
-        "1",
-        "--budget-ms",
-        "60000",
-    ]));
-
-    assert!(output.starts_with("PASS "), "{output}");
-    assert!(
-        output.contains(" modules: plan after a one-line change takes"),
-        "{output}"
-    );
-}
-
 /// `fixtures/configs/NAME` copied to a temporary directory, for commands that write its lock.
 fn copied(name: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();

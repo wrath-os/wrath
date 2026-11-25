@@ -22,11 +22,6 @@ pub enum CacheCommand {
         #[arg(long)]
         url: Option<String>,
     },
-    /// Say where a package would come from: the store, a cache, or a build, and why
-    Check {
-        /// The package, as `wrath build` names it
-        package: String,
-    },
     /// Push everything built here to a cache, signed, that it doesn't have yet
     Push {
         /// The cache: a directory
@@ -47,7 +42,6 @@ pub enum CacheCommand {
 
 pub fn run(command: CacheCommand, work: &Path) -> Result<ExitCode, String> {
     match command {
-        CacheCommand::Check { package } => check(&package, work),
         CacheCommand::Key { name, file, url } => {
             if file.exists() {
                 return Err(format!("{} is there already", file.display()));
@@ -179,14 +173,15 @@ pub fn use_configured(evaluation: &wrath_eval::Evaluation, config: Option<&Path>
     wrath_build::cache::use_caches(locations, trusted);
 }
 
-/// Says where `package` would come from, and when it would be built, why.
-fn check(package: &str, work: &Path) -> Result<ExitCode, String> {
+/// Says where `package` would come from: the store, a cache, or a build, and when it would be
+/// built, why. Nothing is fetched or built.
+pub(crate) fn where_from(package: &str, work: &Path) -> Result<(), String> {
     use wrath_build::graph::Found;
     let grapes = crate::places::grapes()?;
     let (key, found) = wrath_build::graph::package_check(&grapes, work, package)?;
     match key {
-        Some(key) => println!("{package}, key {}", &key[..12.min(key.len())]),
-        None => println!("{package}"),
+        Some(key) => println!("where it comes from, key {}:", &key[..12.min(key.len())]),
+        None => println!("where it comes from:"),
     }
     let asked = wrath_build::cache::asked();
     // A cache that couldn't be reached may have it all the same.
@@ -220,7 +215,7 @@ fn check(package: &str, work: &Path) -> Result<ExitCode, String> {
             name => println!("  {reached}: {name} ({cache})"),
         }
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }
 
 /// Says how much the command fetched from caches since this was last called, if anything.

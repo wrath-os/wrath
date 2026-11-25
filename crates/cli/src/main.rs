@@ -14,7 +14,6 @@ use wrath_model::{LOCK_FILE, Lock, Model, Source, WRATH_SOURCE};
 
 mod activate;
 mod apply_record;
-mod bench;
 mod cache;
 mod checks;
 mod config_from;
@@ -361,19 +360,15 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DevCommand {
-    /// Run scenario files, or compare bad configs with their golden errors
+    /// Run scenario files, compare bad configs with their golden errors, check module renders, or
+    /// show which acceptance scenarios pass
     Test {
-        /// Scenario files to run, or directories of bad configs to compare with their golden errors
+        /// Scenario files to run; directories of bad configs or module cases to compare with what
+        /// they expect; or `acceptance`, or one milestone in it such as `acceptance/m2`
         #[arg(required_unless_present = "determinism")]
         files: Vec<PathBuf>,
         #[command(flatten)]
         test: TestOptions,
-    },
-    /// Run the acceptance scenarios and show which pass
-    Acceptance {
-        /// Only run the scenarios of this milestone, for example `m2`
-        #[arg(long)]
-        milestone: Option<String>,
     },
     /// Write the reference pages in docs/reference from the code: commands, options, module API
     Docs {
@@ -417,18 +412,6 @@ enum DevCommand {
     /// Print what an apply keeps of the configuration, as JSON
     #[command(hide = true)]
     ApplyRecord,
-    /// Measure how long `plan` takes with many synthetic modules
-    Bench {
-        /// How many synthetic service modules to add
-        #[arg(long, default_value_t = 150)]
-        synthetic: usize,
-        /// How many times to measure
-        #[arg(long, default_value_t = 5)]
-        runs: usize,
-        /// The most the median plan may take, in milliseconds
-        #[arg(long, default_value_t = 500)]
-        budget_ms: u64,
-    },
 }
 
 #[derive(Subcommand)]
@@ -882,28 +865,17 @@ fn run() -> ExitCode {
             }
         }
         Command::Why { all: _, option } => {
+            // Where a package would come from reads locks as a plan does.
+            wrath_build::chain::planned_locks();
             config().and_then(|config| why(&config, &modules, option.as_deref()))
         }
         Command::Secret { command } => {
             config().and_then(|config| secret::run(command, &config, &modules))
         }
         Command::Unlock { command } => unlock::run(command),
-        Command::Cache {
-            command: command @ cache::CacheCommand::Check { .. },
-        } => {
-            // A check reads locks as a plan does, and asks the configuration's caches and keys.
-            wrath_build::chain::planned_locks();
-            if let Ok(config) = config()
-                && evaluate(&config, &modules).is_none()
-            {
-                return ExitCode::FAILURE;
-            }
-            cache::run(command, &places::work())
-        }
         Command::Cache { command } => cache::run(command, &places::work()),
         Command::Dev { command } => match command {
             DevCommand::Test { files, test } => dev_test(root, &files, test, &modules),
-            DevCommand::Acceptance { milestone } => status(root, milestone.as_deref()),
             DevCommand::Lint {
                 redundant,
                 packages,
@@ -942,17 +914,6 @@ fn run() -> ExitCode {
             DevCommand::ApplyRecord => {
                 config().and_then(|config| print_apply_record(&config, &modules))
             }
-            DevCommand::Bench {
-                synthetic,
-                runs,
-                budget_ms,
-            } => bench::plan_time(&bench::Options {
-                modules: &modules,
-                synthetic,
-                runs: runs.max(1),
-                budget: std::time::Duration::from_millis(budget_ms),
-            })
-            .map(exit_code),
         },
         Command::Activate { system, mode, root } => {
             activate::activate(&system, mode, &root).map(|()| ExitCode::SUCCESS)
@@ -1313,29 +1274,41 @@ fn outdated(all: bool) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn status(root: &Path, milestone: Option<&str>) -> Result<ExitCode, String> {
-    let suite = Suite::load(&root.join("acceptance")).map_err(|e| e.to_string())?;
+/// The file that makes a directory a suite of acceptance scenarios, grouped by milestone.
+const MILESTONES: &str = "milestones.toml";
 
-    if let Some(id) = milestone
-        && !suite.milestones.iter().any(|m| m.id == id)
-    {
-        let known: Vec<_> = suite.milestones.iter().map(|m| m.id.as_str()).collect();
-        return Err(format!(
-            "unknown milestone `{id}`; known milestones: {}",
-            known.join(", ")
-        ));
+/// The suite `dir` is, or the suite and milestone when it's one milestone's directory in one.
+fn acceptance_suite(dir: &Path) -> Option<(&Path, Option<&str>)> {
+    if dir.join(MILESTONES).is_file() {
+        return Some((dir, None));
     }
+    let suite = dir.parent()?;
+    let milestone = dir.file_name()?.to_str()?;
+    suite
+        .join(MILESTONES)
+        .is_file()
+        .then_some((suite, Some(milestone)))
+}
 
-    let ctx = context(root, None)?;
+/// Runs the acceptance scenarios in `suite_dir`, or of one milestone there, and shows which pass.
+/// Scenarios start out failing until their milestone is done, so failures don't fail the run.
+fn acceptance(
+    root: &Path,
+    suite_dir: &Path,
+    milestone: Option<&str>,
+    image: Option<PathBuf>,
+) -> Result<(), String> {
+    // Loading refuses a directory that isn't a milestone the suite lists.
+    let suite = Suite::load(suite_dir).map_err(|e| e.to_string())?;
+    let ctx = context(root, image)?;
     let results: Vec<_> = suite
         .scenarios
         .iter()
         .filter(|s| milestone.is_none_or(|id| s.milestone == id))
         .map(|s| (s, wrath_check::run(s, &ctx)))
         .collect();
-
     print!("{}", wrath_check::render(&suite.milestones, &results));
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }
 
 fn check(
@@ -1356,7 +1329,11 @@ fn check(
 
     let mut all_passed = true;
     for dir in dirs {
-        all_passed &= checks::cases(&under_root(root, dir), modules, bless)?;
+        let dir = under_root(root, dir);
+        match acceptance_suite(&dir) {
+            Some((suite, milestone)) => acceptance(root, suite, milestone, image.clone())?,
+            None => all_passed &= checks::cases(&dir, modules, bless)?,
+        }
     }
     let ctx = context(root, image)?;
     for scenario in &scenarios {
@@ -1700,16 +1677,33 @@ fn why(config: &Path, modules: &Path, thing: Option<&str>) -> Result<ExitCode, S
     };
     let as_option =
         OptionPath::parse(thing).and_then(|option| wrath_eval::explain(&evaluation, Some(&option)));
-    match (as_option, wrath_eval::explain_output(&evaluation, thing)) {
-        (Ok(explained), _) | (Err(_), Some(explained)) => print!("{explained}"),
-        (Err(_), None) if thing.starts_with(['/', '~']) => {
-            return Err(format!("no module writes `{thing}`"));
+    let message = match as_option {
+        Ok(explained) => {
+            print!("{explained}");
+            return Ok(ExitCode::SUCCESS);
         }
-        (Err(message), None) => {
+        Err(message) => message,
+    };
+    if thing.starts_with(['/', '~']) {
+        let explained = wrath_eval::explain_output(&evaluation, thing)
+            .ok_or_else(|| format!("no module writes `{thing}`"))?;
+        print!("{explained}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    // A package: why it's installed, if it is, and where it would come from.
+    let installed = wrath_eval::explain_output(&evaluation, thing);
+    let recipe = wrath_build::graph::recipe_ids(&places::grapes()?)?.contains(thing);
+    match (&installed, recipe) {
+        (None, false) => {
             return Err(format!(
-                "`{thing}` isn't a package any module installs, and {message}"
+                "`{thing}` isn't a package there's a recipe for, and {message}"
             ));
         }
+        (Some(explained), _) => print!("{explained}"),
+        (None, true) => println!("{thing}: no module installs it"),
+    }
+    if recipe {
+        cache::where_from(thing, &places::work())?;
     }
     Ok(ExitCode::SUCCESS)
 }

@@ -1,8 +1,8 @@
 //! Acceptance scenarios and the progress scoreboard.
 //!
-//! Milestones are defined by executable scenarios that start out failing. `wrath dev acceptance` loads
-//! them, runs what can be run and prints how many pass. `wrath dev test` runs individual scenario
-//! files.
+//! Milestones are defined by executable scenarios that start out failing. `wrath dev test
+//! acceptance` loads them, runs what can be run and prints how many pass; `wrath dev test` on
+//! one file runs that scenario.
 
 mod runner;
 mod scenario;

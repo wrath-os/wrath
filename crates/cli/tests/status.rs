@@ -32,12 +32,19 @@ fn fixture() -> tempfile::TempDir {
     dir
 }
 
+/// `wrath dev test` on `dir` under the fixture, such as `acceptance` or `acceptance/m2`.
+fn test(fixture: &Path, dir: &str) -> Output {
+    let root = fixture.to_str().unwrap();
+    wrath(&["dev", "test", &format!("{root}/{dir}"), "--root", root])
+}
+
 #[test]
-fn status_runs_scenarios_and_prints_scoreboard() {
+fn acceptance_runs_scenarios_and_prints_scoreboard() {
     let dir = fixture();
 
-    let out = wrath(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
+    let out = test(dir.path(), "acceptance");
 
+    // Scenarios of milestones not done yet fail without failing the run.
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("M1  First  1/1"), "{stdout}");
@@ -51,17 +58,10 @@ fn status_runs_scenarios_and_prints_scoreboard() {
 }
 
 #[test]
-fn status_filters_by_milestone() {
+fn acceptance_runs_one_milestone_by_its_directory() {
     let dir = fixture();
 
-    let out = wrath(&[
-        "dev",
-        "acceptance",
-        "--root",
-        dir.path().to_str().unwrap(),
-        "--milestone",
-        "m2",
-    ]);
+    let out = test(dir.path(), "acceptance/m2");
 
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -70,34 +70,29 @@ fn status_filters_by_milestone() {
 }
 
 #[test]
-fn status_rejects_unknown_milestone() {
+fn acceptance_refuses_a_directory_that_is_no_milestone() {
     let dir = fixture();
+    fs::create_dir(dir.path().join("acceptance/m9")).unwrap();
 
-    let out = wrath(&[
-        "dev",
-        "acceptance",
-        "--root",
-        dir.path().to_str().unwrap(),
-        "--milestone",
-        "m9",
-    ]);
+    let out = test(dir.path(), "acceptance/m9");
 
     assert!(!out.status.success());
-    assert_eq!(
-        String::from_utf8(out.stderr).unwrap(),
-        "error: unknown milestone `m9`; known milestones: m1, m2\n"
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.ends_with("acceptance/m9: directory is not a milestone listed in milestones.toml\n"),
+        "{stderr}"
     );
 }
 
 #[test]
-fn status_reports_invalid_scenarios() {
+fn acceptance_reports_invalid_scenarios() {
     let dir = fixture();
     write(
         &dir.path().join("acceptance/m1/broken.toml"),
         "title = \"no runner\"\n",
     );
 
-    let out = wrath(&["dev", "acceptance", "--root", dir.path().to_str().unwrap()]);
+    let out = test(dir.path(), "acceptance");
 
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();

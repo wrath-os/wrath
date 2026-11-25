@@ -213,7 +213,7 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 ## For contributors
 
 The commands that only make sense in this repository move under `wrath dev`: `dev test`
-(running scenarios), `dev acceptance`, `dev bench`. `fill-templates` stays hidden;
+(running scenarios, module cases and the acceptance suite). `fill-templates` stays hidden;
 activation runs it, and people don't.
 
 `dev docs` writes the reference pages in `docs/reference` from the code, and `--check` fails
