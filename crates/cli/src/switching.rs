@@ -251,17 +251,37 @@ fn rollback_target(root: &Path, to: Option<u32>) -> Result<u32, String> {
     }
 }
 
-/// What to say when switching to generation `number` failed after it became current and the
-/// boot default. `previous` is where a plain rollback goes, when it's worth saying.
-fn switch_failed(number: u32, previous: Option<u32>, error: String) -> String {
+/// What to say when switching to generation `number` failed after it became current. `boots`
+/// says whether its boot entry was written, so it's the boot default. `previous` is where a plain
+/// rollback goes, when it's worth saying.
+fn switch_failed(number: u32, boots: bool, previous: Option<u32>, error: String) -> String {
     let next = match previous {
         Some(previous) => format!("`wrath rollback` goes back to {previous}"),
         None => format!("`wrath rollback {number}` tries it again"),
     };
+    let boots = if boots {
+        "and boots next"
+    } else {
+        "but its boot entry wasn't written, so it doesn't boot next"
+    };
     format!(
-        "{error}\ngeneration {number} is current and boots next, but switching to it failed \
-         partway; {next}"
+        "{error}\ngeneration {number} is current {boots}; switching to it failed partway; \
+         {next}"
     )
+}
+
+/// Whether generation `number` has a boot entry at `root`. A machine without one, such as a VM
+/// booted directly, boots the current generation.
+fn has_boot_entry(root: &Path, number: u32) -> bool {
+    let Ok(entries) = fs::read_dir(root.join("boot/loader/entries")) else {
+        return true;
+    };
+    let (plain, counted) = (format!("wrath-{number}."), format!("wrath-{number}+"));
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        name.starts_with(&plain) || name.starts_with(&counted)
+    })
 }
 
 /// Makes `system` the current generation and switches to it. Needs root.
@@ -270,7 +290,8 @@ pub fn activate(system: &Path) -> Result<(), String> {
     let _held = lock(root)?;
     let number = add(root, system)?;
     crate::config_from::keep(root, number)?;
-    switch(system, "switch").map_err(|e| switch_failed(number, previous(root).ok(), e))
+    switch(system, "switch")
+        .map_err(|e| switch_failed(number, has_boot_entry(root, number), previous(root).ok(), e))
 }
 
 /// Makes `system` the current generation, the one booted next, without switching to it now.
@@ -292,7 +313,8 @@ pub fn rollback(to: Option<u32>) -> Result<u32, String> {
     let _held = lock(root)?;
     let number = rollback_target(root, to)?;
     make_current(root, number)?;
-    switch(&root.join(CURRENT), "switch").map_err(|e| switch_failed(number, None, e))?;
+    switch(&root.join(CURRENT), "switch")
+        .map_err(|e| switch_failed(number, has_boot_entry(root, number), None, e))?;
     Ok(number)
 }
 
@@ -681,7 +703,7 @@ mod tests {
 
     #[test]
     fn a_failed_switch_says_what_is_current_and_how_to_go_on() {
-        let after_apply = switch_failed(4, Some(3), "nginx.service failed".into());
+        let after_apply = switch_failed(4, true, Some(3), "nginx.service failed".into());
         assert!(
             after_apply.contains("generation 4 is current"),
             "{after_apply}"
@@ -690,11 +712,30 @@ mod tests {
             after_apply.contains("`wrath rollback` goes back to 3"),
             "{after_apply}"
         );
-        let after_rollback = switch_failed(2, None, "nginx.service failed".into());
+        let after_rollback = switch_failed(2, true, None, "nginx.service failed".into());
         assert!(
             after_rollback.contains("`wrath rollback 2`"),
             "{after_rollback}"
         );
+        let unbootable = switch_failed(5, false, Some(4), "no space left on device".into());
+        assert!(unbootable.contains("doesn't boot next"), "{unbootable}");
+    }
+
+    #[test]
+    fn a_generation_boots_next_only_with_its_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            has_boot_entry(dir.path(), 3),
+            "no ESP, so the current one boots"
+        );
+        let entries = dir.path().join("boot/loader/entries");
+        fs::create_dir_all(&entries).unwrap();
+        fs::write(entries.join("wrath-3+3.conf"), "").unwrap();
+        fs::write(entries.join("wrath-12.conf"), "").unwrap();
+        assert!(has_boot_entry(dir.path(), 3));
+        assert!(has_boot_entry(dir.path(), 12));
+        assert!(!has_boot_entry(dir.path(), 1));
+        assert!(!has_boot_entry(dir.path(), 4));
     }
 
     #[test]
