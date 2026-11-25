@@ -47,6 +47,12 @@ session required pam_env.so conffile=/etc/pam/environment readenv=0
 session required pam_unix.so
 session optional /run/system/lib/security/pam_systemd.so
 
+file /etc/pam.d/other (mode 644, from pam)
+account required pam_deny.so
+auth required pam_deny.so
+password required pam_deny.so
+session required pam_deny.so
+
 file /etc/pam.d/sudo (mode 644, from pam)
 account required pam_unix.so
 auth required pam_env.so conffile=/etc/pam/environment readenv=0

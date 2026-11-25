@@ -96,7 +96,7 @@ fn the_built_in_modules_render_the_fixture() {
     insta::assert_snapshot!(why("security.pam.services.sudo.auth"), @r#"
     security.pam.services.sudo.auth = [{ args = ["conffile=/etc/pam/environment", "readenv=0"], control = "required", module = "pam_env.so", name = "env" }, { control = "sufficient", module = "pam_fprintd.so", name = "fprintd" }, { args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }]
       set by module `fprintd` at modules/fprintd.star:14:9: [{ after = "env", before = "unix", control = "sufficient", module = "pam_fprintd.so", name = "fprintd" }]
-      set by module `pam-base` at modules/pam-base.star:7:9: [{ args = ["conffile=/etc/pam/environment", "readenv=0"], control = "required", module = "pam_env.so", name = "env" }, { after = "env", args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }, { after = "unix", control = "required", module = "pam_deny.so", name = "deny" }]
+      set by module `pam-base` at modules/pam-base.star:10:9: [{ args = ["conffile=/etc/pam/environment", "readenv=0"], control = "required", module = "pam_env.so", name = "env" }, { after = "env", args = ["likeauth", "try_first_pass"], control = "sufficient", module = "pam_unix.so", name = "unix" }, { after = "unix", control = "required", module = "pam_deny.so", name = "deny" }]
       overrides [], default
       removes ["deny"], set at ../../fixtures/configs/s4/system.toml:9:8
     "#);
@@ -1125,7 +1125,9 @@ fn disks_are_laid_out_and_mounted_by_name() {
         {
           "device": "/dev/disk/by-partlabel/nvme0-esp",
           "format": "vfat",
-          "options": [],
+          "options": [
+            "umask=0077"
+          ],
           "path": "/boot"
         },
         {
@@ -1236,7 +1238,9 @@ fn disks_are_laid_out_and_mounted_by_name() {
         {
           "device": "/dev/disk/by-partlabel/main0-esp",
           "format": "vfat",
-          "options": [],
+          "options": [
+            "umask=0077"
+          ],
           "path": "/boot"
         }
       ],
