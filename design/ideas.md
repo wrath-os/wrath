@@ -54,3 +54,26 @@ directions, and the products the core has to allow, are in `vision.md`.
   wrongly signed executables, and rewriting store paths breaks a Mach-O signature, so the
   builder's fixup has to ad-hoc sign after rewriting before anything it builds runs there. The
   kernel checking those signatures per page covers executables; `verify` covers the rest.
+- Servers that boot as a blank slate and wait for a control plane (Kubernetes nodes and other
+  fleets; `vision.md` has the fleet design). One generic image, a UKI usable from a USB stick,
+  PXE (iPXE over HTTP), a cloud snapshot or rescue-and-dd, boots a minimal system whose only
+  job is to join starmole and serve the machine's API: facts (SMBIOS UUID, CPU, memory, disks by
+  path, NICs, PCI devices, whether there's a TPM), then install and apply. The control plane
+  sends a commit, the machine runs `wrath install` with it and reboots into the result.
+  - Needs networking and userspace, so it's a booted system, not firmware; an initrd with
+    networking might be enough, a small full system is simpler. In a datacenter, PXE.
+  - Enrolling securely: the image holds no secret, only the network's id. What lets it join is a
+    single-use, short-lived starmole invite, minted per machine or per boot by whatever
+    provisions it, delivered on the kernel command line (PXE), in a small config partition
+    (rescue-and-dd, as Talos's META) or in cloud metadata. The machine makes its key at first
+    boot, sealed by the TPM when there is one, and the control plane binds that key on first
+    contact.
+  - The same API stays once installed, so the Talos-shaped system is a platform of wrath's (no
+    shell, the agent over starmole), not a different design: the API makes the calls the CLI
+    does.
+  - Not soft-bricking it when starmole or the agent changes: a change that touches starmole,
+    the agent or networking is applied as a `try`, kept only once the agent has reconnected
+    and the control plane confirms; the agent reaching the control plane is a health check
+    gating `boot-complete.target`, so a generation that loses it rolls back by boot counting;
+    starmole upgrades reach canaries first; and a second way in (a management network, the
+    console, the BMC) stays possible.
