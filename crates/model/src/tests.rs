@@ -161,6 +161,52 @@ fn base_changes_show_their_tier_and_boot_needs_a_reboot() {
 }
 
 #[test]
+fn a_long_value_shows_only_what_changed_in_it() {
+    let mount = |path: &str, options: Vec<Value>| {
+        Value::Table(
+            [
+                (
+                    "device".to_owned(),
+                    Value::Str(format!("/dev/disk/by-partlabel{path}")),
+                ),
+                ("options".to_owned(), Value::List(options)),
+                ("path".to_owned(), Value::Str(path.to_owned())),
+            ]
+            .into(),
+        )
+    };
+    let storage = |boot_options: Vec<Value>, state: &str| {
+        Value::Table(
+            [
+                (
+                    "mounts".to_owned(),
+                    Value::List(vec![mount("/", Vec::new()), mount("/boot", boot_options)]),
+                ),
+                ("state".to_owned(), Value::Str(state.to_owned())),
+            ]
+            .into(),
+        )
+    };
+    let mut before = model(80);
+    before
+        .base
+        .insert("storage".into(), storage(Vec::new(), ""));
+    let mut after = before.clone();
+    after.base.insert(
+        "storage".into(),
+        storage(vec![Value::Str("umask=0077".into())], "/keep"),
+    );
+
+    insta::assert_snapshot!(plan(&before, &after).to_string(), @r#"
+    base
+      ~ storage (tier: live)
+          mounts[1].options: [] -> ["umask=0077"]
+          state: "" -> "/keep"
+    1 change, tier: live
+    "#);
+}
+
+#[test]
 fn a_unit_restarts_when_a_file_it_reads_changes() {
     let before = model(80);
     let mut after = before.clone();

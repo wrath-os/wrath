@@ -450,12 +450,12 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
         fresh,
         options: diff_with_names(&before.options, &after.options, |name, before, after| {
             // A password hash is as good as the password to anyone with time; plans don't show it.
-            let detail = if name.ends_with("hashed_password") {
-                "a password hash".to_owned()
+            let details = if name.ends_with("hashed_password") {
+                vec!["a password hash".to_owned()]
             } else {
                 value_change(before, after)
             };
-            (vec![detail], None)
+            (details, None)
         }),
         packages: diff(&before.sources, &after.sources, source_change)
             .into_iter()
@@ -479,7 +479,7 @@ pub fn plan(before: &Model, after: &Model) -> Plan {
             } else {
                 Tier::Live
             };
-            (vec![value_change(before, after)], Some(tier))
+            (value_change(before, after), Some(tier))
         })
         .into_iter()
         .chain(platform(before, after))
@@ -584,12 +584,53 @@ fn triggered(after: &Model, files: &[Change]) -> Vec<Change> {
         .collect()
 }
 
-/// `old -> new`, or the one value when the other side has none.
-fn value_change(before: Option<&Value>, after: Option<&Value>) -> String {
+/// The longest `old -> new` a plan shows whole; a longer one shows only what changed in it.
+const WHOLE: usize = 100;
+
+/// `old -> new`, or the one value when the other side has none. Tables and lists too long for one
+/// line show a line for each part that changed, by where it is in them.
+fn value_change(before: Option<&Value>, after: Option<&Value>) -> Vec<String> {
     match (before, after) {
-        (Some(before), Some(after)) => format!("{before} -> {after}"),
-        (None, Some(value)) | (Some(value), None) => value.to_string(),
+        (Some(before), Some(after)) => {
+            let whole = format!("{before} -> {after}");
+            let mut parts = Vec::new();
+            if whole.len() > WHOLE {
+                changed_parts("", before, after, &mut parts);
+            }
+            if parts.is_empty() { vec![whole] } else { parts }
+        }
+        (None, Some(value)) | (Some(value), None) => vec![value.to_string()],
         (None, None) => unreachable!("one side has a value"),
+    }
+}
+
+/// A line `at: old -> new` for each part of `before` and `after` that differs, going into tables,
+/// and into lists that kept their length.
+fn changed_parts(at: &str, before: &Value, after: &Value, parts: &mut Vec<String>) {
+    let within = |key: &str| match at {
+        "" => key.to_owned(),
+        _ => format!("{at}.{key}"),
+    };
+    match (before, after) {
+        _ if before == after => {}
+        (Value::Table(old), Value::Table(new)) => {
+            for key in old.keys().chain(new.keys()).collect::<BTreeSet<_>>() {
+                let at = within(key);
+                match (old.get(key), new.get(key)) {
+                    (Some(old), Some(new)) => changed_parts(&at, old, new, parts),
+                    (None, Some(new)) => parts.push(format!("{at}: (none) -> {new}")),
+                    (Some(old), None) => parts.push(format!("{at}: {old} -> (none)")),
+                    (None, None) => unreachable!("the key is on one side"),
+                }
+            }
+        }
+        (Value::List(old), Value::List(new)) if old.len() == new.len() => {
+            for (n, (old, new)) in old.iter().zip(new).enumerate() {
+                changed_parts(&format!("{at}[{n}]"), old, new, parts);
+            }
+        }
+        _ if at.is_empty() => parts.push(format!("{before} -> {after}")),
+        _ => parts.push(format!("{at}: {before} -> {after}")),
     }
 }
 
