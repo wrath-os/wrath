@@ -19,9 +19,10 @@ use crate::split;
 use crate::store::{self, Lab, StorePath, with_path};
 use crate::view;
 
-/// A part of every non-boot package's key, left from when packages were built several ways side
-/// by side. It says nothing the scope doesn't, but taking it out changes every key and so
-/// rebuilds everything: it goes with the next rebuild of everything.
+/// A part of every non-boot package's key, and its build's environment as `WRATH_ARM`, left from
+/// when packages were built several ways side by side. It says nothing the scope doesn't, but
+/// taking it out of either changes every key and so rebuilds everything: it goes with the next
+/// rebuild of everything.
 const ARM: &str = "f";
 
 /// What boot packages have in their keys in its place, kept for the same reason.
@@ -2992,6 +2993,7 @@ fn build_env(
         ("PREFIX".to_owned(), prefix),
         ("DEST".to_owned(), dest),
         ("NPROC".to_owned(), Identity::current().jobs.to_string()),
+        ("WRATH_ARM".to_owned(), ARM.to_owned()),
         ("WRATH_SEED".to_owned(), seed.inside()),
         ("WRATH_REAL_BIN".to_owned(), real_bin.to_owned()),
         ("WRATH_ARCH".to_owned(), ARCH.to_owned()),
