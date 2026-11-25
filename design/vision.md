@@ -86,6 +86,97 @@ Someone else's base, recipes and modules, using wrath's core and keeping its gua
 with a platform and recipes, pinned in their users' locks (0030). What it needs: recipe ids
 namespaced by source, and their own cache and keys, trusted per cache.
 
+## Fleets
+
+How servers as cattle, appliances and Kubernetes nodes get managed together. It draws on
+experience running Talos clusters with a fleet manager, without following how either works.
+
+### Desired state stays in git
+
+The configuration repository says what every machine should run: roles, machines, the lock and
+secrets encrypted to recipients. A fleet service holds only what git can't: what machines run,
+their facts, leases and how far a rollout got. Onboarding a machine is a commit,
+`machines/<id>.toml` with the values its facts gave, by CI or as a pull request. Addresses
+allocated to machines are pinned in the lock, as uids are (0029). Every change to the fleet is
+reviewed and rolled back like a change to one machine, and losing the service loses history,
+nothing else. A machine that follows a repository on its own (0040) keeps working without it.
+
+### Pieces
+
+- **The agent**, a service on each machine. It dials out, so it works behind NAT with no ports
+  open. It reports the running generation, its commit, health and facts, and takes the calls the
+  CLI makes: plan, apply, try, `--boot`, status, logs, reboot, reset. `--host` goes through it.
+- **The coordinator**, a small service with SQLite: machines and their keys, channels mapping to
+  commits, rollouts in waves with canaries that halt on failure, reboot slots, provider jobs.
+- **Providers** for Hetzner Robot, Hetzner Cloud, PXE and qemu, each a separate process holding
+  its own credentials. Facts have a common shape plus what each provider adds.
+- **Discovery**: a live image boots and its agent reports facts; match rules in the repository
+  pick a role (`role = "storage"` when there are two NVMe disks); the machine's file is committed
+  and `wrath install` runs from the live image.
+
+### starmole as the transport
+
+starmole connects machines by public key over QUIC (iroh): through a relay first, directly once
+hole punching works, with relays and address lookup that can be self-hosted. It's a Rust
+library, and a program can be a node serving its own protocol, so the agent and the coordinator
+are both nodes speaking `wrath/agent/1`, with certificates, renewal and membership from
+starmole.
+
+- A starmole invite is the join token: the discovery image or first-boot source carries one,
+  and `revoke` cuts a machine off everywhere within seconds.
+- Access rules by tag: only the coordinator's tag may use the agent, admins may open a shell or
+  run commands, with starmole's log as the audit trail. An issuer certificate bounds which tags
+  the coordinator hands out, so it gives a new machine its role's tag and no more.
+- starmole keys are Ed25519 like the SSH host key secrets are encrypted to; whether one key can
+  serve both is to find out.
+- The agent and starmole are packages built from grapes, not part of the core.
+
+### What a coordinator can't do
+
+It says "go to commit X", nothing more. The machine checks that X is on the repository it
+follows and fetches the build from caches it trusts, with its own keys. A compromised
+coordinator or mesh can move machines between reviewed, signed states and nothing else.
+
+Nothing at boot waits on the mesh or the coordinator: unlocking disks, booting and running the
+system stay local. A network service that a node needs before it can mount its state turns that
+service's outage into the fleet's.
+
+### Rollouts follow the plan's tiers
+
+Changes that take effect live or on a restart roll as fast as health checks pass; only reboot
+changes take a slot. Roles declare health checks that gate `boot-complete.target`, so a node
+that boots but is broken rolls itself back with boot counting. A plan's destructive changes,
+such as to disks, wait for approval.
+
+Modules declare guards around disruptive changes, and the core knows nothing of what they
+guard: before a reboot, drain the node; before going on, wait for etcd to have quorum. A Ceph or
+Postgres role brings guards of its own the same way.
+
+Drift is a generation's hash against the one wanted, and `verify` for the rest.
+
+### Kubernetes nodes
+
+A product on top: recipes for containerd, runc or crun, CNI plugins, etcd and Kubernetes from
+source, a kernel with what Cilium needs, drbd and zfs as ordinary packages, and a `kube`
+platform with no shell, PAM, getty or sudo (0030). The cluster's PKI is role secrets. Operations
+such as bootstrapping etcd, taking a snapshot or fetching a kubeconfig are module commands
+(0043), run on a node through the agent: `wrath --host cp1 kube bootstrap`. Against Talos it
+changes nodes without rebooting when the plan allows, takes kernel modules on its own schedule,
+and boots only what its own keys signed.
+
+### Order
+
+1. On the machine: `plan --json` and `status --json`, health checks gating boot-complete, a
+   first-boot config source, module commands (0043).
+2. The agent over starmole, with the machine's identity; `--host` through it.
+3. The coordinator: channels, waves, slots, guards.
+4. Provisioning: the discovery image, the Hetzner Robot provider, match rules making commits.
+5. Kubernetes nodes.
+
+Open: a new machine's key has to join its secrets' recipients, which means re-encrypting with a
+key that can decrypt, so either CI holds a role or admin key or a person approves and
+re-encrypts.
+
 ## Larger directions
 
 These come from looking at what a new operating system in 2026 would have to offer beyond
