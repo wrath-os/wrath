@@ -77,3 +77,30 @@ directions, and the products the core has to allow, are in `vision.md`.
     gating `boot-complete.target`, so a generation that loses it rolls back by boot counting;
     starmole upgrades reach canaries first; and a second way in (a management network, the
     console, the BMC) stays possible.
+- Servers and Kubernetes nodes, beyond what the fleet design in `vision.md` covers. systemd
+  already does most of what the machine needs; the store does what A/B slots, sysext and confext
+  would, with more than one release of rollback.
+  - Rollback floors. A module declares state that only moves forward: etcd after a control-plane
+    upgrade, a Postgres major version, a Ceph release. Once a generation has crossed one,
+    `rollback`, `try` and the boot menu refuse generations below it, and the plan says so.
+  - The new generation prepares its own boot. The running wrath writes boot entries for every
+    generation, so an old agent has to understand a new system. Instead the new system ships a
+    small program, run sandboxed (no network, no devices, the ESP hidden), that makes its image
+    and entry; the running side checks a small stable contract and moves the default. Matters
+    once fleets upgrade agents and systems separately.
+  - Two more plan outcomes beside the tiers: needs an operation (bootstrap, a Kubernetes upgrade:
+    a module command, 0043) and refused. The plan says which, and apply does nothing for those.
+  - Operations as records apart from generations: one at a time under a lock, resumed by running
+    the same command again, kept as plain JSON in `/wrath` so rescue media can read them with
+    `jq`. Generations say what runs; operations say how the machine got there.
+  - Recovery that stops: a failed trial boot falls back once and the fallback doesn't re-arm, so
+    a bad fallback waits for a person instead of looping. Check boot counting gives this.
+  - Say what persists in user docs: `/var` and declared state never roll back, so rollback isn't
+    a backup.
+  - On the `kube` platform, `systemd-oomd` stays off with a check that fails the build if a
+    module enables it: killing on memory pressure rather than free memory can take down an API
+    server with plenty of memory left.
+  - The VM harness reaches a machine over vsock when its network is down, beside the serial
+    console.
+  - Never a management API or installer unauthenticated by default, nor security that can only
+    be chosen before install.
