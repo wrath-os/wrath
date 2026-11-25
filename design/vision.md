@@ -36,6 +36,25 @@ core          store, builder, cache, model, lock, generations, activation, boot
 A product is a configuration plus a platform, published as a source. Building a new kind of
 system should never mean forking the core.
 
+## Staying small
+
+One person has to be able to hold the core in their head and still change it in years. It was
+about 44,000 lines of Rust, tests aside, in November 2026; it should stay under 50,000 while it
+grows into everything above, which means features mostly land elsewhere or replace code.
+
+- Above the core first. A service, a program or a platform is a module or a recipe. The core
+  grows only for what every configuration needs, and the agent and coordinator are packages.
+- What the machine already has, it uses: systemd's timers, boot counting, credentials,
+  cryptenroll, repart and networkd. wrath writes their files and leaves the running to them.
+- A change that adds more than a few hundred lines of core says why it can't be a module and
+  what it lets go of. Code no command needs any more, such as what an experiment left behind,
+  is deleted rather than kept working.
+- Commands are few and each earns its place: a new one is weighed against folding it into an
+  existing verb or a flag, and developer tools that aren't for users stay under `dev` or become
+  scripts.
+- Tests check what a user sees (module renders, golden errors, VM scenarios) more than how the
+  code gets there, so code can shrink without rewriting tests.
+
 ## Products the core has to allow
 
 ### A finished desktop
@@ -89,7 +108,7 @@ namespaced by source, and their own cache and keys, trusted per cache.
 ## Fleets
 
 How servers as cattle, appliances and Kubernetes nodes get managed together. It draws on
-experience running Talos clusters with a fleet manager, without following how either works.
+experience running Kubernetes clusters on rented servers with a fleet manager.
 
 ### Desired state stays in git
 
@@ -160,7 +179,7 @@ A product on top: recipes for containerd, runc or crun, CNI plugins, etcd and Ku
 source, a kernel with what Cilium needs, drbd and zfs as ordinary packages, and a `kube`
 platform with no shell, PAM, getty or sudo (0030). The cluster's PKI is role secrets. Operations
 such as bootstrapping etcd, taking a snapshot or fetching a kubeconfig are module commands
-(0043), run on a node through the agent: `wrath --host cp1 kube bootstrap`. Against Talos it
+(0043), run on a node through the agent: `wrath --host cp1 kube bootstrap`. It
 changes nodes without rebooting when the plan allows, takes kernel modules on its own schedule,
 and boots only what its own keys signed.
 

@@ -65,10 +65,10 @@ directions, and the products the core has to allow, are in `vision.md`.
   - Enrolling securely: the image holds no secret, only the network's id. What lets it join is a
     single-use, short-lived starmole invite, minted per machine or per boot by whatever
     provisions it, delivered on the kernel command line (PXE), in a small config partition
-    (rescue-and-dd, as Talos's META) or in cloud metadata. The machine makes its key at first
+    (rescue-and-dd) or in cloud metadata. The machine makes its key at first
     boot, sealed by the TPM when there is one, and the control plane binds that key on first
     contact.
-  - The same API stays once installed, so the Talos-shaped system is a platform of wrath's (no
+  - The same API stays once installed, so a node with no shell is a platform of wrath's (no
     shell, the agent over starmole), not a different design: the API makes the calls the CLI
     does.
   - Not soft-bricking it when starmole or the agent changes: a change that touches starmole,
