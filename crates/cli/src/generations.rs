@@ -180,7 +180,7 @@ fn builds(takes: &wrath_build::graph::Takes) -> Option<String> {
     let nowhere: Vec<&str> = takes
         .build
         .iter()
-        .filter(|(_, why)| **why == wrath_build::pilot::Why::Nowhere)
+        .filter(|(_, why)| **why == wrath_build::building::Why::Nowhere)
         .map(|(id, _)| id.as_str())
         .collect();
     let mut named = nowhere[..nowhere.len().min(5)].join(", ");
@@ -1329,7 +1329,7 @@ mod tests {
             line(&takes).unwrap(),
             "to get there: fetch 1 path from /srv/c and 12 from home (40 MB)"
         );
-        use wrath_build::pilot::Why;
+        use wrath_build::building::Why;
         takes.build = (1..=7).map(|n| (format!("p{n}"), Why::Nowhere)).collect();
         takes
             .build

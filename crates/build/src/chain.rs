@@ -19,17 +19,17 @@ use crate::split;
 use crate::store::{self, Lab, StorePath, with_path};
 use crate::view;
 
-/// The name of the experiment arm every package used to be built under. It's in non-boot
-/// packages' keys and records, the sandbox's `WRATH_ARM` and the logs' directory, and is kept
-/// so existing builds stay valid and their logs stay where they are.
-pub(crate) const ARM: &str = "f";
+/// A part of every non-boot package's key, left from when packages were built several ways side
+/// by side. It says nothing the scope doesn't, but taking it out changes every key and so
+/// rebuilds everything: it goes with the next rebuild of everything.
+const ARM: &str = "f";
 
-/// What boot packages have in their keys in place of an arm, kept for the same reason.
+/// What boot packages have in their keys in its place, kept for the same reason.
 const BOOT_ARM: &str = "boot";
 
 /// Where build logs go.
 pub(crate) fn logs_dir(lab: &Lab) -> PathBuf {
-    lab.work.join("logs").join(ARM)
+    lab.work.join("logs")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -2292,7 +2292,7 @@ fn unpack_one(archive: &Path, relative: &str) -> Result<Option<String>, String> 
         .map_err(|_| format!("`{relative}` isn't text"))
 }
 
-/// What stands for the arm in a package's key and record: boot packages had one of their own.
+/// What stands for the arm in a package's key: boot packages had one of their own.
 fn arm_key(package: &Package) -> &'static str {
     if package.is_boot() { BOOT_ARM } else { ARM }
 }
@@ -2749,7 +2749,6 @@ pub(crate) fn begin(
         text: serde_json::json!({
             "kind": "package",
             "id": package.id,
-            "arm": arm_key(package),
             // A styled package as its recipe was written and what its style made, as in its key.
             "script": package.unstyled.as_ref().map_or(&package.script, |recipe| &recipe.script),
             "made": package.record,
@@ -2993,7 +2992,6 @@ fn build_env(
         ("PREFIX".to_owned(), prefix),
         ("DEST".to_owned(), dest),
         ("NPROC".to_owned(), Identity::current().jobs.to_string()),
-        ("WRATH_ARM".to_owned(), ARM.to_owned()),
         ("WRATH_SEED".to_owned(), seed.inside()),
         ("WRATH_REAL_BIN".to_owned(), real_bin.to_owned()),
         ("WRATH_ARCH".to_owned(), ARCH.to_owned()),

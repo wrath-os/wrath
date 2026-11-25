@@ -1,4 +1,4 @@
-//! Step 5: how many packages reproduce when built again, and when built somewhere else.
+//! How many packages reproduce when built again, and when built somewhere else.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -217,8 +217,8 @@ fn keep_difference(lab: &Lab, id: &str, name: &str, first: &Path, second: &Path)
     }
 }
 
-/// Step 5: rebuilds every package and writes what differs to `results/reproduce-f.md`, named
-/// after the experiment arm it was first run under.
+/// Rebuilds every package, or those in `only`, and writes what differs to
+/// `results/reproduce.md`.
 pub fn reproduce(lab: &Lab, repository: &Path, only: &[&str]) -> Result<(), String> {
     let seed = seed::prepare(lab)?;
     let mut sources = Sources::load(repository)?;
@@ -227,7 +227,7 @@ pub fn reproduce(lab: &Lab, repository: &Path, only: &[&str]) -> Result<(), Stri
     for package in all_packages(lab, repository)? {
         if package.is_boot() || !(only.is_empty() || only.contains(&package.id.as_str())) {
             // As a build would, so what it depends on is where and how a build leaves it.
-            crate::pilot::build_and_finish(
+            crate::building::build_and_finish(
                 lab,
                 repository,
                 &package,
@@ -268,7 +268,7 @@ pub fn reproduce(lab: &Lab, repository: &Path, only: &[&str]) -> Result<(), Stri
             result.samples.join(" ")
         ));
     }
-    let path = repository.join(format!("results/reproduce-{}.md", chain::ARM));
+    let path = repository.join("results/reproduce.md");
     fs::write(&path, text).map_err(with_path(&path))
 }
 

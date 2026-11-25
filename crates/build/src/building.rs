@@ -1,5 +1,5 @@
-//! Step 3: building packages on the final toolchain, fixing up what they say about `/usr`, and
-//! checking them with their smoke commands and tests.
+//! Building chosen packages: what it would take, building them on the final toolchain, fixing up
+//! what they say about `/usr`, and checking them with their smoke commands and tests.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

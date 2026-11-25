@@ -171,7 +171,7 @@ wrath build grim
 ```
 
 On a terminal you get a line per package that keeps updating with its time and latest output.
-`-v` shows everything instead. The full log is always in `build/work/logs/f/<id>.log` in the
+`-v` shows everything instead. The full log is always in `build/work/logs/<id>.log` in the
 wrath checkout building it.
 
 When a build fails, the error usually comes with a hint. A missing pkg-config module, header or
@@ -179,7 +179,7 @@ program gets matched to the recipe that has it, and so does a fallback subprojec
 fetch or an install that wrote outside the prefix:
 
 ```text
-error: `grim` Failed after 4 s, see build/work/logs/f/grim.log
+error: `grim` Failed after 4 s, see build/work/logs/grim.log
   hint: `wayland` has the program `wayland-scanner`: add it to `deps`
 ```
 

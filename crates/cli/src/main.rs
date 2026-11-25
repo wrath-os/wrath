@@ -702,7 +702,7 @@ fn run() -> ExitCode {
                     return Ok(code);
                 }
                 let ids: Vec<&str> = built.packages.iter().map(String::as_str).collect();
-                show_checked(&wrath_build::pilot::check_packages(
+                show_checked(&wrath_build::building::check_packages(
                     &places::grapes()?,
                     &places::work(),
                     &ids,
@@ -890,7 +890,7 @@ fn run() -> ExitCode {
                 let only: Vec<&str> = packages.iter().map(String::as_str).collect();
                 builder()
                     .and_then(|(lab, repository)| {
-                        wrath_build::experiments::reproduce(&lab, &repository, &only)
+                        wrath_build::repro::reproduce(&lab, &repository, &only)
                     })
                     .map(|()| ExitCode::SUCCESS)
             }
@@ -1173,7 +1173,7 @@ fn context(root: &Path, image_override: Option<PathBuf>) -> Result<RunContext, S
 }
 
 /// Prints each check `build --check` ran, and fails when any did.
-fn show_checked(checked: &[wrath_build::pilot::Checked]) -> Result<ExitCode, String> {
+fn show_checked(checked: &[wrath_build::building::Checked]) -> Result<ExitCode, String> {
     if checked.is_empty() {
         println!("nothing to check: these recipes have no smoke commands or tests");
     }

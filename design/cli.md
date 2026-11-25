@@ -188,7 +188,7 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 - Human output by default. `--json` gives the same thing as data, with a schema per command.
 - Builds show a line each as they start. On a terminal that line stays up to date with the
   build's time and latest output, and ends as `built NAME 42s`. `-v` shows everything each build
-  prints. Each build's full output is kept in `build/work/logs/f/NAME.log` either way.
+  prints. Each build's full output is kept in `build/work/logs/NAME.log` either way.
 - Exit codes: 0 for success, 1 for errors. `plan --exit-code`, returning 2 when there are
   changes, is planned but not built.
 - `apply` asks before switching unless `-y`. Without a terminal, it refuses rather than

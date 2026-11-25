@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::chain::{self, Built, Sources};
-use crate::experiments::all_packages;
+use crate::repro::all_packages;
 use crate::runpath;
 use crate::sandbox::Status;
 use crate::seed::{self, run, sha256_of};

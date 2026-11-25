@@ -1,4 +1,4 @@
-//! Step 15: a wrath model lowered into actions, each with two keys. An unresolved key names what
+//! A wrath model lowered into actions, each with two keys. An unresolved key names what
 //! an action depends on by those actions' keys, and is known before anything runs. A resolved key
 //! names what they really produced. Where an action came from is kept beside it, unhashed.
 
@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::building;
 use crate::chain::{self, Built, names_of, recipe_files};
 use crate::early;
 use crate::initrd;
-use crate::pilot;
 use crate::sandbox;
 use crate::split;
 use crate::store::{Lab, StorePath, hex, with_path};
@@ -2508,7 +2508,7 @@ fn names_word(code: &str, name: &str) -> bool {
 pub fn redundant(repository: &Path, work: &Path, only: &[&str]) -> Result<String, String> {
     let lab = Lab::new(work);
     let wanted = (!only.is_empty()).then_some(only);
-    let (mut built, _, mut packages) = pilot::build_some(&lab, repository, wanted)?;
+    let (mut built, _, mut packages) = building::build_some(&lab, repository, wanted)?;
     if let Some(wanted) = wanted {
         packages.retain(|package| wanted.contains(&package.id.as_str()));
     }
@@ -2721,7 +2721,7 @@ fn build_variants(
     let mut sources = chain::Sources::load(repository)?;
     for variant in variants(lab, repository, recipes, model)? {
         if !built.paths.contains_key(&variant.id) {
-            pilot::build_and_finish(lab, repository, &variant, seed, &mut sources, built)?;
+            building::build_and_finish(lab, repository, &variant, seed, &mut sources, built)?;
         }
     }
     Ok(())
@@ -2785,7 +2785,7 @@ pub fn system(
         (found, false) => {
             let wanted = system_packages(model);
             let (mut built, seed, mut recipes) =
-                pilot::build_onto(&lab, repository, Some(&names_of(&wanted)), found)?;
+                building::build_onto(&lab, repository, Some(&names_of(&wanted)), found)?;
             recipes.extend(build_base_recipes(&lab, repository, model)?);
             build_variants(&lab, repository, &recipes, &seed, &mut built, model)?;
             built
@@ -2812,7 +2812,7 @@ pub fn system(
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Takes {
     /// What would be built, and why.
-    pub build: BTreeMap<String, pilot::Why>,
+    pub build: BTreeMap<String, building::Why>,
     /// Whether those builds need the seed prepared first, or can't have it here.
     pub seed: Seed,
     /// How many store paths, and how many bytes, by the cache they come from.
@@ -2853,7 +2853,7 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
         });
     }
     let wanted = system_packages(model);
-    let mut dry = pilot::Dry::onto(&lab, repository, &names_of(&wanted), found)?;
+    let mut dry = building::Dry::onto(&lab, repository, &names_of(&wanted), found)?;
     let mut ids: BTreeSet<String> = wanted.iter().cloned().collect();
     let mut loaded = dry.loaded.clone();
     loaded.extend(build_base_recipes(&lab, repository, model)?);
@@ -2936,11 +2936,11 @@ pub fn package_check(
     id: &str,
 ) -> Result<(Option<String>, Found), String> {
     let lab = Lab::new(work);
-    let dry = pilot::Dry::of(&lab, repository, &[id])?;
+    let dry = building::Dry::of(&lab, repository, &[id])?;
     let key = dry.built.temporary.get(id).map(|key| key.hash().to_owned());
     let mut chain = Vec::new();
     let mut at = id;
-    while let Some(pilot::Why::BuiltWith(dep)) = dry.missing.get(at) {
+    while let Some(building::Why::BuiltWith(dep)) = dry.missing.get(at) {
         chain.push(dep.clone());
         at = dep;
     }
@@ -3006,8 +3006,8 @@ pub fn recipe_ids(repository: &Path) -> Result<BTreeSet<String>, String> {
 /// where each one is in the store.
 pub fn packages(repository: &Path, work: &Path, names: &[&str]) -> Result<Vec<StorePath>, String> {
     let lab = Lab::new(work);
-    pilot::unknown(names, &recipe_ids(repository)?)?;
-    let (built, ..) = pilot::build_some(&lab, repository, Some(names))?;
+    building::unknown(names, &recipe_ids(repository)?)?;
+    let (built, ..) = building::build_some(&lab, repository, Some(names))?;
     names
         .iter()
         .map(|name| {
