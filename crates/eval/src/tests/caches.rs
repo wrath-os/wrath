@@ -96,3 +96,20 @@ fn error_bad_caches() {
         ),
     ]));
 }
+
+#[test]
+fn caches_are_read_before_anything_is_evaluated() {
+    let fs = MemFs::new([
+        (
+            "system.toml",
+            "[system]\nhostname = \"box\"\n\n[caches.home]\nurl = \"https://cache.lan\"\n",
+        ),
+        ("services/ci.toml", "[caches.ci]\nurl = \"/srv/cache\"\n"),
+    ]);
+    let declared = crate::declared_caches(&fs, None);
+    let urls: Vec<(&str, &str)> = declared
+        .iter()
+        .map(|(name, cache)| (name.as_str(), cache.url.as_str()))
+        .collect();
+    assert_eq!(urls, [("ci", "/srv/cache"), ("home", "https://cache.lan")]);
+}

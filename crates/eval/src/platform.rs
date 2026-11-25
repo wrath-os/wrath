@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
+use crate::caches::DeclaredCache;
 use crate::diag::{Diagnostic, render};
 use crate::fs::ConfigFs;
 use crate::load::{self, ConfigKind, DeclaredSource, SOURCES};
@@ -86,6 +87,13 @@ pub fn declared_source(fs: &dyn ConfigFs, role: Option<&str>, name: &str) -> Opt
     load::source_url(name, source, file)
         .ok()
         .map(|(url, _)| url)
+}
+
+/// The caches the configuration in `fs` for `role` declares, read before anything is evaluated,
+/// so what evaluates it can come from them.
+pub fn declared_caches(fs: &dyn ConfigFs, role: Option<&str>) -> BTreeMap<String, DeclaredCache> {
+    let mut sources = Sources::default();
+    load::load(fs, &mut sources, load::kind_of(fs), None, role).caches
 }
 
 /// `platform`'s value in the starting file `file`, whose `[sources]` are `declared`.

@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use wrath_build::cache::{Location, SigningKeyFile, TrustedKey};
 use wrath_build::store::Lab;
+use wrath_eval::DeclaredCache;
 
 #[derive(Debug, clap::Subcommand)]
 pub enum CacheCommand {
@@ -138,16 +139,16 @@ pub fn name_of(shown: &str) -> String {
         .unwrap_or_else(|| shown.to_owned())
 }
 
-/// Makes builds fetch from the caches `evaluation` lists, trusting the keys it gives them. A
-/// cache's directory is relative to the configuration at `config`, when it has one.
-pub fn use_configured(evaluation: &wrath_eval::Evaluation, config: Option<&Path>) {
+/// Makes builds fetch from the caches a configuration declares, trusting the keys it gives them.
+/// A cache's directory is relative to the configuration at `config`, when it has one.
+pub fn use_configured(declared: &BTreeMap<String, DeclaredCache>, config: Option<&Path>) {
     if offline() {
         return;
     }
     let mut names = NAMES.lock().expect("the cache names are writable");
     let mut locations = Vec::new();
     let mut trusted = Vec::new();
-    for (name, cache) in evaluation.declared_caches() {
+    for (name, cache) in declared {
         let location = match (Location::parse(&cache.url), config) {
             (Location::Dir(dir), Some(config)) if dir.is_relative() => {
                 Location::Dir(config.join(dir))

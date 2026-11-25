@@ -43,7 +43,7 @@ pub use module::{
     UnitAction, WRAPPERS_DIR, WRATH_SOURCE, Wrapper, home_path, package_source,
 };
 pub use path::OptionPath;
-pub use platform::{Platform, declared_source, platform};
+pub use platform::{Platform, declared_caches, declared_source, platform};
 pub use requires::{Check, FACTS, Kind, Requirement};
 pub use schema::{EVERY, ListMerge, OptionSpec, Record, Schema, Type};
 pub use source::{FileId, Position, Sources, Span};

@@ -123,7 +123,7 @@ fn evaluate_with(
         modules: &modules,
     })
     .map_err(|e| e.to_string())?;
-    crate::cache::use_configured(&evaluation, config.dir());
+    crate::cache::use_configured(evaluation.declared_caches(), config.dir());
     Ok(evaluation)
 }
 

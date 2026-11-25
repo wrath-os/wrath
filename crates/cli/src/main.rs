@@ -595,12 +595,14 @@ fn run() -> ExitCode {
     let pinned_instead = configured
         .as_deref()
         .filter(|_| hands_over)
-        .and_then(|config| places::pinned_instead(config, &running));
+        .and_then(|config| {
+            places::pinned_instead(config, &running).map(|pin| (config.to_path_buf(), pin))
+        });
     wrath_build::chain::set_wrath_tree(move || {
         places::wrath_tree(dirs.wrath.as_deref(), configured.as_deref(), &running)
     });
-    if let Some(pin) = pinned_instead {
-        return hand_over(&pin);
+    if let Some((config, pin)) = pinned_instead {
+        return hand_over(&config, &pin);
     }
     // Only commands that evaluate read the modules, so only they find grapes.
     let given_modules = cli.modules;
@@ -1401,13 +1403,17 @@ fn evaluates_here(command: &Command) -> bool {
 
 /// Runs this command again with the wrath `pin` names, fetched from a cache or built. Returns only
 /// when that can't be done.
-fn hand_over(pin: &Source) -> ExitCode {
+fn hand_over(config: &Path, pin: &Source) -> ExitCode {
     use std::os::unix::process::CommandExt;
     let rev = pin.rev.as_deref().unwrap_or_default();
     eprintln!(
         "the lock pins wrath {}, which this isn't; running that one",
         &rev[..12.min(rev.len())]
     );
+    // Caches are known once the configuration is evaluated, which the lock's wrath does, so the
+    // ones it declares are read first: a machine that can't build gets that wrath from them.
+    let declared = wrath_eval::declared_caches(&wrath_eval::DirFs::new(config), None);
+    cache::use_configured(&declared, Some(config));
     let program = places::grapes()
         .and_then(|grapes| {
             let work = places::work();
