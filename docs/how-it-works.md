@@ -266,10 +266,11 @@ network or SSH settings on a remote machine.
 
 Each generation boots from one file on the ESP, a unified kernel image: systemd's EFI stub with
 the generation's kernel, initrd and kernel command line inside, put together on the machine when
-it switches. Every generation gets a systemd-boot entry, with the current one as the default.
+it switches. The newest eight generations get a systemd-boot entry, with the current one as the
+default; older ones stay in the store, and `wrath rollback` still reaches them.
 New entries count their boot attempts, and a generation that fails to boot three times in a row
-stops being the default, so a broken update falls back to the last one that worked. The ESP fills
-up eventually, so the oldest generations lose their entries first.
+stops being the default, so a broken update falls back to the last one that worked. When the ESP
+is short of room for eight, the oldest lose their entries first.
 
 ## What it doesn't manage
 

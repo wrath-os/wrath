@@ -609,9 +609,13 @@ fn room(kernels: &Path) -> Result<u64, String> {
     Ok(room.saturating_sub(1 << 20))
 }
 
+/// The most generations with boot entries, `wanted` ones aside. Older ones stay in the store, so
+/// `wrath rollback` still reaches them, and the ESP keeps room to spare.
+const MOST_ENTRIES: usize = 8;
+
 /// The generations of `sizes`, each with the files it needs on the ESP and their sizes, that get
-/// entries: those in `wanted`, then the newest others while their files fit in `room`, sharing
-/// files they have in common. An error when `wanted` alone doesn't fit.
+/// entries: those in `wanted`, then the newest others while their files fit in `room`, up to
+/// [`MOST_ENTRIES`], sharing files they have in common. An error when `wanted` alone doesn't fit.
 fn fitting(
     sizes: &[(u32, Vec<(String, u64)>)],
     wanted: &BTreeSet<u32>,
@@ -626,6 +630,9 @@ fn fitting(
     let mut files = BTreeSet::new();
     let mut used = 0;
     for (number, generation) in first.iter().chain(&others) {
+        if chosen.len() >= MOST_ENTRIES && !wanted.contains(number) {
+            break;
+        }
         let more: u64 = generation
             .iter()
             .filter(|(name, _)| !files.contains(name.as_str()))
@@ -1751,6 +1758,21 @@ mod tests {
         let sizes = sized(&[(1, "k1", "i1"), (2, "k2", "i2"), (3, "k3", "i3")]);
         let chosen = fitting(&sizes, &BTreeSet::from([3]), 45).unwrap();
         assert_eq!(chosen, BTreeSet::from([2, 3]));
+    }
+
+    #[test]
+    fn only_the_newest_generations_get_entries_however_much_room() {
+        let numbered: Vec<(u32, String, String)> = (1..=12)
+            .map(|n| (n, format!("k{n}"), format!("i{n}")))
+            .collect();
+        let named: Vec<(u32, &str, &str)> = numbered
+            .iter()
+            .map(|(n, kernel, initrd)| (*n, kernel.as_str(), initrd.as_str()))
+            .collect();
+        let chosen = fitting(&sized(&named), &BTreeSet::from([12, 1]), 10_000).unwrap();
+        assert_eq!(chosen.len(), MOST_ENTRIES);
+        assert!(chosen.contains(&1), "the running one keeps its entry");
+        assert_eq!(chosen.iter().filter(|n| **n > 5).count(), MOST_ENTRIES - 1);
     }
 
     #[test]
