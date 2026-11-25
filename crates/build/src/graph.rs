@@ -2109,7 +2109,7 @@ const LINKED: [&str; 2] = ["systemd", "linux"];
 
 /// Links every system has, where `@id@` stands for the path of package `id`, one of [`LINKED`].
 /// They're part of the action's key, so changing one changes the action.
-const FIXED_LINKS: [(&str, &str); 8] = [
+const FIXED_LINKS: [(&str, &str); 9] = [
     // wrath starts systemd from here at boot.
     ("systemd", "@systemd@"),
     // The modules of the kernel, which wrath links at /lib/modules when the system boots.
@@ -2140,6 +2140,11 @@ const FIXED_LINKS: [(&str, &str); 8] = [
     // A login prompt on the screen.
     (
         "etc/systemd/system/getty.target.wants/getty@tty1.service",
+        "@systemd@/lib/systemd/system/getty@.service",
+    ),
+    // And on the other consoles, which logind starts by this name when one is switched to.
+    (
+        "etc/systemd/system/autovt@.service",
         "@systemd@/lib/systemd/system/getty@.service",
     ),
 ];
@@ -3317,6 +3322,24 @@ mod tests {
                 .join("etc/systemd/system/nothing.target.wants")
                 .exists()
         );
+    }
+
+    #[test]
+    fn every_console_gets_a_login_prompt() {
+        let (_dir, lab, packages) = setup();
+        let model = model(80, false);
+        let lowered = lower(&lab, &model, &Kept::plain(&model), &packages).unwrap();
+        let mut db = Db::open(&db_path(&lab)).unwrap();
+        let outcome = realise(&lab, &mut db, lowered.actions).unwrap();
+        let root = lab.on_host(&StorePath::from_hash(&outcome.generation));
+        let getty = format!(
+            "{}/lib/systemd/system/getty@.service",
+            packages["systemd"].path.inside()
+        );
+        for link in ["getty.target.wants/getty@tty1.service", "autovt@.service"] {
+            let target = fs::read_link(root.join("etc/systemd/system").join(link)).unwrap();
+            assert_eq!(target, Path::new(&getty), "{link}");
+        }
     }
 
     #[test]
