@@ -113,3 +113,11 @@ directions, and the products the core has to allow, are in `vision.md`.
     console.
   - Never a management API or installer unauthenticated by default, nor security that can only
     be chosen before install.
+- Kernels per platform and per machine. Today there is one kernel recipe, with one set of options
+  for VMs, the Framework Desktop and everything else; a configuration can load, blacklist and set
+  options on modules, but not choose what's built. A platform, or a machine, could add or remove
+  config options and modules as recipe options (`linux` built with `options.config`), each a
+  build of its own kept by the cache: a desktop with every driver a PC might need, a server node
+  with only its hardware's, no sound, Bluetooth or wifi, and lockdown and module signing on, so
+  nothing loads that wasn't built with it. The plan shows a change of options as the kernel
+  rebuilt, at the reboot tier.
