@@ -587,9 +587,21 @@ fn run() -> ExitCode {
         cli.config.is_some(),
     );
     let running = std::path::absolute(&root).unwrap_or_else(|_| root.clone());
+    // A configuration whose lock pins another wrath than this one is evaluated by that wrath,
+    // which its grapes is written for.
+    let hands_over = dirs.wrath.is_none()
+        && evaluates_here(&cli.command)
+        && std::env::var_os(HANDED_OVER).is_none();
+    let pinned_instead = configured
+        .as_deref()
+        .filter(|_| hands_over)
+        .and_then(|config| places::pinned_instead(config, &running));
     wrath_build::chain::set_wrath_tree(move || {
         places::wrath_tree(dirs.wrath.as_deref(), configured.as_deref(), &running)
     });
+    if let Some(pin) = pinned_instead {
+        return hand_over(&pin);
+    }
     // Only commands that evaluate read the modules, so only they find grapes.
     let given_modules = cli.modules;
     let modules = std::cell::LazyCell::new(move || given_modules.unwrap_or_else(places::modules));
@@ -1348,6 +1360,73 @@ fn check(
         }
     }
     Ok(exit_code(all_passed))
+}
+
+/// Set for a wrath another handed its command to, so it doesn't hand it on again.
+const HANDED_OVER: &str = "WRATH_HANDED_OVER";
+
+/// Whether `command` evaluates the configuration's modules on this machine, which a wrath other
+/// than the one the lock pins may not be able to. Commands that only act on what's built, or that
+/// build on another machine, don't.
+fn evaluates_here(command: &Command) -> bool {
+    match command {
+        Command::Plan { host, .. } => host.is_none(),
+        Command::Apply { host, system, .. } | Command::Try { host, system, .. } => {
+            host.is_none() && system.is_none()
+        }
+        Command::Status
+        | Command::Build { .. }
+        | Command::Check
+        | Command::Options { .. }
+        | Command::Why { .. } => true,
+        Command::Keep
+        | Command::History { .. }
+        | Command::Clean { .. }
+        | Command::Rollback { .. }
+        | Command::Run { .. }
+        | Command::Up
+        | Command::Shell { .. }
+        | Command::Add { .. }
+        | Command::Remove { .. }
+        | Command::Install { .. }
+        | Command::Update { .. }
+        | Command::Secret { .. }
+        | Command::Unlock { .. }
+        | Command::Cache { .. }
+        | Command::Dev { .. }
+        | Command::Activate { .. }
+        | Command::FillTemplates { .. } => false,
+    }
+}
+
+/// Runs this command again with the wrath `pin` names, fetched from a cache or built. Returns only
+/// when that can't be done.
+fn hand_over(pin: &Source) -> ExitCode {
+    use std::os::unix::process::CommandExt;
+    let rev = pin.rev.as_deref().unwrap_or_default();
+    eprintln!(
+        "the lock pins wrath {}, which this isn't; running that one",
+        &rev[..12.min(rev.len())]
+    );
+    let program = places::grapes()
+        .and_then(|grapes| {
+            let work = places::work();
+            let built = wrath_build::graph::packages(&grapes, &work, &["wrath"])?;
+            cache::say_fetched();
+            let wrath = built.first().ok_or("building wrath made nothing")?;
+            Ok(work.join("store").join(wrath.hash()).join("bin/wrath"))
+        })
+        .map(|program| {
+            let error = std::process::Command::new(&program)
+                .args(std::env::args_os().skip(1))
+                .env(HANDED_OVER, "1")
+                .exec();
+            format!("cannot run {}: {error}", program.display())
+        });
+    style::error(&match program {
+        Ok(message) | Err(message) => format!("{message}; the lock's wrath couldn't take over"),
+    });
+    ExitCode::FAILURE
 }
 
 fn exit_code(passed: bool) -> ExitCode {

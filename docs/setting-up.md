@@ -354,7 +354,10 @@ and `wrath update` on a machine that follows a repository say so instead of chan
 
 wrath itself moves the same way. `wrath update wrath` pins its newest commit, and machines build
 that version into their next system, or fetch it from a cache, so the wrath on a machine is the
-one its lock says. Until the lock pins wrath, a machine keeps the wrath it runs.
+one its lock says. Until the lock pins wrath, a machine keeps the wrath it runs. When the lock
+pins a different wrath than the one running, `apply`, `plan` and the other commands that read the
+configuration first fetch or build that wrath and run it instead, since the grapes it pins may
+need it.
 
 With `automatic`, `switch` says what an upgrade does: `auto`, the default, switches when every
 change takes effect right away or at the next login, and otherwise makes the new system the one

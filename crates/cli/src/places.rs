@@ -153,11 +153,7 @@ pub fn wrath_tree(
     if let Some(dir) = given {
         return Ok(dir.to_path_buf());
     }
-    let pinned = config
-        .and_then(|config| crate::read_lock(config).ok().flatten())
-        .and_then(|lock| lock.sources.get(wrath_model::WRATH_SOURCE).cloned())
-        .filter(|pin| pin.is_locked() && !pin.url.is_empty());
-    match pinned {
+    match config.and_then(pinned_wrath) {
         // The running wrath, from the running system, was built from the pinned version.
         Some(pin)
             if running.starts_with(wrath_build::store::STORE_DIR)
@@ -174,6 +170,32 @@ pub fn wrath_tree(
         }),
         None => Ok(running.to_path_buf()),
     }
+}
+
+/// The version of wrath the lock of the configuration at `config` pins, once it's locked.
+fn pinned_wrath(config: &Path) -> Option<Source> {
+    crate::read_lock(config)
+        .ok()
+        .flatten()?
+        .sources
+        .get(wrath_model::WRATH_SOURCE)
+        .cloned()
+        .filter(|pin| pin.is_locked() && !pin.url.is_empty())
+}
+
+/// The version of wrath the lock of the configuration at `config` pins, when an installed wrath,
+/// whose own tree `running` is in the store, isn't it: the running system wasn't built with it.
+/// A checkout of wrath is never replaced, since it's what's being worked on.
+pub fn pinned_instead(config: &Path, running: &Path) -> Option<Source> {
+    pinned_instead_on(config, running, Path::new(RUNNING_SYSTEM))
+}
+
+/// [`pinned_instead`] on a machine whose running system is at `system`.
+fn pinned_instead_on(config: &Path, running: &Path, system: &Path) -> Option<Source> {
+    if !running.starts_with(wrath_build::store::STORE_DIR) {
+        return None;
+    }
+    pinned_wrath(config).filter(|pin| !built_with(system, pin))
 }
 
 /// Whether the system at `system` was built with wrath at `pin`, as its model records.
@@ -564,6 +586,34 @@ mod tests {
         assert!(!built_with(system.path(), &pin));
         built(self::pin("github:acme/wrath", "aaaaaaa"));
         assert!(!built_with(system.path(), &pin));
+    }
+
+    #[test]
+    fn an_installed_wrath_hands_over_to_the_pinned_one_unless_the_system_has_it() {
+        let config = config("[system]\nhostname = \"a\"\n");
+        let system = tempfile::tempdir().unwrap();
+        let installed = Path::new("/wrath/store/aaaa-wrath/share/wrath");
+        let checkout = Path::new("/home/someone/wrath");
+        let on = |running| pinned_instead_on(config.path(), running, system.path());
+        // Nothing pinned yet.
+        assert_eq!(on(installed), None);
+
+        let pin = pin(WRATH_URL, "aaaaaaa");
+        let mut lock = Lock::default();
+        lock.sources
+            .insert(wrath_model::WRATH_SOURCE.into(), pin.clone());
+        std::fs::write(config.path().join("wrath.lock"), lock.to_toml()).unwrap();
+        assert_eq!(on(installed), Some(pin.clone()));
+        assert_eq!(on(checkout), None);
+
+        let file = system.path().join(RUNNING_MODEL);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let mut model = wrath_model::Model::default();
+        model
+            .sources
+            .insert(wrath_model::WRATH_SOURCE.to_owned(), pin);
+        std::fs::write(&file, model.canonical()).unwrap();
+        assert_eq!(on(installed), None);
     }
 
     #[test]
