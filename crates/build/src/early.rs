@@ -105,8 +105,11 @@ pub fn disks(storage: &Value) -> Disks {
             ("/", prefix) => prefix.to_owned(),
             (path, prefix) => format!("{prefix}{path}"),
         };
+        // A FAT filesystem, such as the ESP, is checked before it's mounted: the firmware writes to
+        // it at boot and can leave it marked as not cleanly unmounted.
+        let pass = if format == "vfat" { 2 } else { 0 };
         format!(
-            "{} {} {format} {options} 0 0\n",
+            "{} {} {format} {options} 0 {pass}\n",
             field(text(mount, "device")),
             field(&at)
         )
@@ -293,7 +296,7 @@ mod tests {
             fstab.starts_with("none / tmpfs mode=755,size=1G 0 0\n"),
             "{fstab}"
         );
-        assert!(fstab.contains("/dev/disk/by-partlabel/main0-esp /boot vfat defaults 0 0\n"));
+        assert!(fstab.contains("/dev/disk/by-partlabel/main0-esp /boot vfat defaults 0 2\n"));
         assert!(
             fstab.ends_with("/dev/mapper/swap none swap defaults 0 0\n"),
             "{fstab}"
