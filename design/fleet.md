@@ -91,7 +91,7 @@ core:
 
 - `plan --json` and `status --json` as a versioned contract. The agent and coordinator read
   nothing else, so an older agent understands a newer system as long as the contract holds.
-- Health checks: a role lists units that must pass. They gate `boot-complete.target`, so a
+- Health checks (0045): a role lists units that must pass. They gate `boot-complete.target`, so a
   generation that boots but can't serve rolls back by boot counting, and they gate the next wave.
 - Operations as records in `/wrath/operations/`, plain JSON readable with `jq` from rescue media,
   one at a time under a lock, resumed by running the same command again.
