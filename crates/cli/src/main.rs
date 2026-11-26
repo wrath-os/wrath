@@ -1739,7 +1739,9 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
         println!("against {compared} (model {})", &before.hash()[..16]);
     }
     crate::print_plan(&plan);
-    generations::print_takes(&after);
+    if let Err(e) = generations::print_takes(&after) {
+        style::warning(&e);
+    }
     timing::done("working out what it takes");
     Ok(ExitCode::SUCCESS)
 }

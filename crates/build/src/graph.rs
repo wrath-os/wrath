@@ -2837,10 +2837,13 @@ pub fn system(
 pub struct Takes {
     /// What would be built, and why.
     pub build: BTreeMap<String, building::Why>,
-    /// Whether those builds need the seed prepared first, or can't have it here.
+    /// Whether those builds, and those of what unreachable caches have, need the seed prepared
+    /// first, or can't have it here.
     pub seed: Seed,
     /// How many store paths, and how many bytes, by the cache they come from.
     pub fetch: BTreeMap<String, (usize, u64)>,
+    /// The same of caches that can't be reached this command, whose paths are built instead.
+    pub unreachable: BTreeMap<String, (usize, u64)>,
 }
 
 /// The seed, as what would be built needs it.
@@ -2871,10 +2874,7 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
                 paths.extend(chain::traced_closure(&lab, &path)?);
             }
         }
-        return Ok(Takes {
-            fetch: by_cache(&lab, &paths),
-            ..Takes::default()
-        });
+        return takes(&lab, BTreeMap::new(), &paths);
     }
     let wanted = system_packages(model);
     let mut dry = building::Dry::onto(&lab, repository, &names_of(&wanted), found)?;
@@ -2902,17 +2902,31 @@ pub fn system_takes(repository: &Path, work: &Path, model: &Value) -> Result<Tak
             paths.extend(chain::traced_closure(&lab, &path)?);
         }
     }
-    let seed = if dry.missing.is_empty() || crate::seed::ready(&lab)? {
+    takes(&lab, dry.missing, &paths)
+}
+
+/// What building `build` and getting `paths` takes, where caches that can't be reached leave
+/// what they have to be built as well.
+fn takes(
+    lab: &Lab,
+    build: BTreeMap<String, building::Why>,
+    paths: &BTreeSet<StorePath>,
+) -> Result<Takes, String> {
+    let (fetch, unreachable): (BTreeMap<_, _>, BTreeMap<_, _>) = by_cache(lab, paths)
+        .into_iter()
+        .partition(|(cache, _)| crate::cache::reachable(cache));
+    let seed = if (build.is_empty() && unreachable.is_empty()) || crate::seed::ready(lab)? {
         Seed::Ready
-    } else if crate::seed::available(&lab)? {
+    } else if crate::seed::available(lab)? {
         Seed::Prepare
     } else {
         Seed::Missing
     };
     Ok(Takes {
-        fetch: by_cache(&lab, &paths),
-        build: dry.missing,
+        build,
         seed,
+        fetch,
+        unreachable,
     })
 }
 

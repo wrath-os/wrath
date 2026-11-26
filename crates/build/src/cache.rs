@@ -522,9 +522,15 @@ pub fn asked() -> Vec<(String, bool)> {
 static DOWN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 fn is_down(cache: &Location) -> bool {
-    DOWN.lock()
+    !reachable(&cache.shown())
+}
+
+/// Whether the cache shown as `shown` hasn't failed to answer this command.
+pub fn reachable(shown: &str) -> bool {
+    !DOWN
+        .lock()
         .expect("the caches down are readable")
-        .contains(&cache.shown())
+        .contains(shown)
 }
 
 /// Leaves `cache` out for the rest of the command, saying so the first time.

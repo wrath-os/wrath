@@ -102,9 +102,10 @@ fn encrypted_secrets(model: &Model) -> Result<BTreeMap<String, Vec<u8>>, String>
 
 /// Prints what getting to `model` takes: what would be fetched from each cache and what would be
 /// built. Asking the caches, which only traces answer, can't fail the plan; it says why instead.
-pub fn print_takes(model: &Model) {
+/// An error when getting there needs a build this machine has no seed for.
+pub fn print_takes(model: &Model) -> Result<(), String> {
     if crate::cache::offline() || !crate::known::recipes_here() {
-        return;
+        return Ok(());
     }
     // Working it out keeps the traces it asks for, in the work directory; one the user can't write,
     // as a machine's for anyone but root, leaves the line out with a word on why.
@@ -114,7 +115,7 @@ pub fn print_takes(model: &Model) {
             "to get there: only someone who can write {} can say",
             work.display()
         );
-        return;
+        return Ok(());
     }
     match system_takes(model) {
         Ok(takes) => {
@@ -122,11 +123,12 @@ pub fn print_takes(model: &Model) {
                 println!("{line}");
             }
             if takes.seed == Seed::Missing {
-                crate::style::warning(wrath_build::seed::MISSING);
+                return Err(wrath_build::seed::MISSING.to_owned());
             }
         }
         Err(e) => crate::style::warning(&format!("can't tell what it would build: {e}")),
     }
+    Ok(())
 }
 
 /// What getting to `model` takes, asking caches for traces and building nothing.
@@ -145,6 +147,13 @@ fn takes_line(
     takes: &wrath_build::graph::Takes,
     name_of: impl Fn(&str) -> String,
 ) -> Option<String> {
+    let sized = |bytes: u64| {
+        if bytes > 0 {
+            format!(" ({})", size(bytes))
+        } else {
+            String::new()
+        }
+    };
     let fetched: Vec<String> = takes
         .fetch
         .iter()
@@ -155,20 +164,28 @@ fn takes_line(
             } else {
                 count.to_string()
             };
-            let sized = if *bytes > 0 {
-                format!(" ({})", size(*bytes))
-            } else {
-                String::new()
-            };
-            format!("{count} from {}{sized}", name_of(cache))
+            format!("{count} from {}{}", name_of(cache), sized(*bytes))
         })
         .collect();
     let mut parts = Vec::new();
     if !fetched.is_empty() {
         parts.push(format!("fetch {}", fetched.join(" and ")));
     }
+    parts.extend(takes.unreachable.iter().map(|(cache, (count, bytes))| {
+        format!(
+            "build the {} {} has{}, as it can't be reached",
+            crate::counted(*count, "path"),
+            name_of(cache),
+            sized(*bytes)
+        )
+    }));
     parts.extend(builds(takes));
-    (!parts.is_empty()).then(|| format!("to get there: {}", parts.join(", ")))
+    let seed = match takes.seed {
+        Seed::Ready => "",
+        Seed::Prepare => ", preparing the seed first",
+        Seed::Missing => ", which needs a seed this machine doesn't have",
+    };
+    (!parts.is_empty()).then(|| format!("to get there: {}{seed}", parts.join(", ")))
 }
 
 /// What `takes` builds, such as `build 2 (glibc; 1 built with it)`, when it builds anything.
@@ -192,12 +209,7 @@ fn builds(takes: &wrath_build::graph::Takes) -> Option<String> {
         let them = if nowhere.len() == 1 { "it" } else { "them" };
         named.push_str(&format!("; {with} built with {them}"));
     }
-    let seed = match takes.seed {
-        Seed::Ready => "",
-        Seed::Prepare => ", preparing the seed first",
-        Seed::Missing => ", which needs a seed this machine doesn't have",
-    };
-    Some(format!("build {} ({named}){seed}", takes.build.len()))
+    Some(format!("build {} ({named})", takes.build.len()))
 }
 
 /// `bytes` as people read sizes, such as `40 MB` or `1.2 GB`.
@@ -525,7 +537,7 @@ fn planned(
             plan.summary(5)
         ),
     }
-    print_takes(model);
+    print_takes(model)?;
     if !confirmed(yes, "switch to it?")? {
         return Ok(None);
     }
@@ -1359,6 +1371,14 @@ mod tests {
         assert!(
             missing.ends_with("with it), which needs a seed this machine doesn't have"),
             "{missing}"
+        );
+        takes.build.clear();
+        takes.fetch.clear();
+        takes.unreachable = BTreeMap::from([("http://h".to_owned(), (36, 195_000_000))]);
+        assert_eq!(
+            line(&takes).unwrap(),
+            "to get there: build the 36 paths home has (195 MB), as it can't be reached, which \
+             needs a seed this machine doesn't have"
         );
         assert_eq!(size(999), "999 B");
         assert_eq!(size(1_250_000), "1.2 MB");

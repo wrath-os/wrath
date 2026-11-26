@@ -628,7 +628,11 @@ fn carry_on(
             } else {
                 format!(", and {skipped} that need them weren't built")
             };
-            Err(format!("{count} failed{waited}:\n{}", failures.join("\n")))
+            // Packages failing for one reason, such as no seed to build from, say it once.
+            let mut seen = BTreeSet::new();
+            failures.retain(|error| seen.insert(error.clone()));
+            let reasons = failures.join("\n");
+            Err(format!("{count} failed{waited}:\n{reasons}"))
         }
     }
 }
@@ -724,6 +728,22 @@ mod tests {
             let built = carry_on(packages(), slots, failing(&[])).unwrap();
             assert_eq!(built.len(), 4);
         }
+    }
+
+    #[test]
+    fn packages_failing_for_one_reason_say_it_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = carry_on(chain_of_four(dir.path()), 1, |package, _| {
+            match package.id.as_str() {
+                "zlib" | "jq" => Err("no seed".to_owned()),
+                _ => Ok(()),
+            }
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "2 failed, and 2 that need them weren't built:\nno seed"
+        );
     }
 
     /// Packages `zlib`, `curl` (needing zlib), `jq` and `git` (needing curl): jq needs nothing,
