@@ -83,9 +83,36 @@ directions, and the products the core has to allow, are in `vision.md`.
     gating `boot-complete.target`, so a generation that loses it rolls back by boot counting;
     starmole upgrades reach canaries first; and a second way in (a management network, the
     console, the BMC) stays possible.
-  - Open: does starmole already have a pending state for nodes that may report but do nothing
-    else; where the approval UI lives (the coordinator, a separate service, or a page over the
+  - Open: where the approval UI lives (the coordinator, a separate service, or a page over the
     API); and how a new machine's key joins its secrets' recipients (also open in `vision.md`).
+  - What starmole already does for this: the agent and coordinator embed it as a library and
+    serve `wrath/agent/1` with `Builder::serve`, checking the caller's tags through `Peers`.
+    The coordinator holds an issuer certificate and mints per-machine invites limited to the
+    tags it may give; an invite works once and runs out (`--expires 10m`). An agent that only
+    serves ALPNs needs no tun and no capabilities. The machine dials out, the daemon opens
+    the host firewall itself, and a relay covers the rest. `starmole check` can gate
+    `boot-complete.target`, and revoking a certificate cuts a machine off everywhere.
+  - Pending is a `tag:pending` set in the invite: the coordinator takes facts from it, and no
+    rule anywhere matches it. Accepting the machine needs something starmole doesn't have yet:
+    an issuer re-signing a member's certificate with its role's tag. The new certificate
+    already syncs to the node right away.
+  - Still to change in starmole, none of it touching how it works for anyone else:
+    - The clock at boot. Certificates allow five minutes of skew, so join after
+      `time-sync.target`, and `starmole join` should say how far off the clock is when that's
+      why it fails.
+    - An invite on the kernel command line over plain PXE can be read on the wire and redeemed
+      first. It works only once, so the real machine failing shows it, but nothing stops it.
+      iPXE over HTTPS helps; a `starmole-verify-tpm` verifier checking a TPM quote through the
+      exchange stops it, as a separate program like `starmole-oidc`.
+    - Invites live in the issuer's memory, so restarting the coordinator drops outstanding
+      ones. A coordinator minting one per boot wants them kept, optionally.
+    - The key from systemd's credentials directory, so `LoadCredentialEncrypted` seals it
+      with the TPM and starmole doesn't have to.
+    - A live image makes a new key every boot. Short certificates run out and `--replace`
+      handles names, but whether membership ever forgets expired nodes needs checking.
+    - Wire compatibility. A coordinator talks to live images built months earlier, and
+      starmole's policy format has changed in place so far. Version the policy and exchange
+      messages, and write down what may change, before wrath depends on them.
 - Servers and Kubernetes nodes, beyond what the fleet design in `vision.md` covers. systemd
   already does most of what the machine needs; the store does what A/B slots, sysext and confext
   would, with more than one release of rollback.
