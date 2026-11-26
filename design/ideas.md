@@ -138,6 +138,28 @@ directions, and the products the core has to allow, are in `vision.md`.
     console.
   - Never a management API or installer unauthenticated by default, nor security that can only
     be chosen before install.
+- Fleets reboot as little as possible. A reboot drains a node and takes it out for minutes, so
+  as much as possible should apply at the live tier, and the reboot tier is kept for what can't
+  change under a running kernel: a new kernel, the initrd, the bootloader. Today some changes
+  land at soft reboot or reboot only because nobody worked out how to apply them live; each is
+  worth a look.
+  - Adding an extension, a driver, a tool or a service to a running machine is live: new store
+    paths and units started. A kernel module built for the running kernel loads now; only one
+    built for a new kernel waits for the reboot.
+  - Patches to anything in userspace, libc and systemd included, should be live where they
+    can be: restart the units that use what changed (the store says which reference it),
+    `systemctl daemon-reexec` for systemd itself, and soft reboot only when restarting
+    everything is the honest answer.
+  - Lean on systemd for all of it: restarts and reloads, `daemon-reexec`, soft reboot,
+    `systemd-run` for one-offs. wrath works out what changed and its tier, and systemd does
+    the work, so there's no second service manager or extension mechanism to keep.
+  - The plan says per change why it isn't live, so an unexpected reboot has a reason a person
+    can read and a module author can fix.
+  - A fleet applies live changes as they come and holds reboot-tier ones as pending until a
+    maintenance window. The running kernel and the one the machine would boot can differ for a
+    while, and status says so.
+  - Kernel live patches could narrow even the kernel's share later, for security fixes within
+    one kernel version.
 - Kernels per platform and per machine. Today there is one kernel recipe, with one set of options
   for VMs, the Framework Desktop and everything else; a configuration can load, blacklist and set
   options on modules, but not choose what's built. A platform, or a machine, could add or remove
