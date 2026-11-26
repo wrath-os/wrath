@@ -197,10 +197,6 @@ fn enroll(root: &Path) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The firmware's Secure Boot state: its last byte is 1 when it's on.
-const SECURE_BOOT_STATE: &str =
-    "sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
-
 /// With Secure Boot, the TPM also checks PCR 11 against a policy signed with the machine's PCR
 /// key, which every image it signs carries: the disks then unlock only in the initrd of an image
 /// the machine signed. PCR 7 changes when the firmware turns Secure Boot on, so enrolling before
@@ -215,7 +211,7 @@ fn signed_policy(root: &Path) -> Result<Vec<String>, String> {
         );
     }
     // Empty when the kernel can't show them: efivarfs isn't there.
-    let variables = Path::new(SECURE_BOOT_STATE)
+    let variables = Path::new(crate::secure_boot::SECURE_BOOT_STATE)
         .parent()
         .expect("in a directory");
     let shown =
@@ -226,8 +222,7 @@ fn signed_policy(root: &Path) -> Result<Vec<String>, String> {
             variables.display()
         ));
     }
-    let on = fs::read(root.join(SECURE_BOOT_STATE)).is_ok_and(|state| state.last() == Some(&1));
-    if !on {
+    if !crate::secure_boot::firmware_enforces(root) {
         return Err(
             "Secure Boot isn't on in the firmware yet: put it in setup mode, enroll the keys from \
              the boot menu, and enroll the disks once it's back up"
@@ -368,7 +363,7 @@ mod tests {
         let key = root.path().join(crate::secure_boot::PCR_PUBLIC_KEY);
         fs::create_dir_all(key.parent().unwrap()).unwrap();
         fs::write(&key, "key").unwrap();
-        let state = root.path().join(SECURE_BOOT_STATE);
+        let state = root.path().join(crate::secure_boot::SECURE_BOOT_STATE);
         fs::create_dir_all(state.parent().unwrap()).unwrap();
         let refused = signed_policy(root.path()).unwrap_err();
         assert!(

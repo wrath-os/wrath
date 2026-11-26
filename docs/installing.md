@@ -150,6 +150,9 @@ Then, for a machine called `framework`:
 If the machine won't boot, turn Secure Boot off in the firmware's setup screen. It boots the same
 images unsigned, and the passphrase still unlocks the disks.
 
+While the firmware has Secure Boot on, wrath won't switch or roll back to a system without
+`secure_boot = true`, since the firmware would refuse to start it.
+
 The images also attach only the disks whose volume keys the machine recorded. A disk swapped in
 with the same labels and UUIDs, which the TPM would hand the key to all the same, is refused, even
 given the passphrase. Install records the keys; for a machine installed before, the

@@ -19,6 +19,15 @@ pub const MACHINE_ARCHIVE: &str = wrath_eval::SECURE_BOOT_KEYS;
 /// The archive of the PK and KEK, encrypted to every recipient but the machine.
 pub const OWNER_ARCHIVE: &str = "secure-boot-owner.age";
 
+/// The firmware's Secure Boot state: its last byte is 1 when it's on.
+pub const SECURE_BOOT_STATE: &str =
+    "sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+
+/// Whether the firmware of the machine at `root` has Secure Boot on.
+pub fn firmware_enforces(root: &Path) -> bool {
+    fs::read(root.join(SECURE_BOOT_STATE)).is_ok_and(|state| state.last() == Some(&1))
+}
+
 /// The db key and certificate sign what the machine boots; the PCR key signs its TPM policy; the
 /// `.auth` files enroll the certificates.
 pub const MACHINE_FILES: [&str; 7] = [
@@ -143,6 +152,52 @@ const MEASURE: &str = "systemd/lib/systemd/systemd-measure";
 /// the disks to the policies it signs. The stub hands it only to the initrd.
 pub const PCR_PUBLIC_KEY: &str = "var/lib/wrath/tpm2-pcr-public-key.pem";
 
+/// Checks, before anything changes, that what `system` would boot on the machine at `root` gets
+/// signed when it has to be: when `system` boots with Secure Boot it needs keys for the machine,
+/// and when the firmware has Secure Boot on, `system` has to boot with it, since the firmware
+/// would refuse an unsigned boot loader.
+pub fn check(root: &Path, system: &Path) -> Result<(), String> {
+    if keys(root, system)?.is_none() && firmware_enforces(root) {
+        return Err(
+            "Secure Boot is on in the firmware, but this system has `boot.secure_boot` \
+             off, so the firmware would refuse what it boots; turn `boot.secure_boot` on, or \
+             Secure Boot off in the firmware's setup screen"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// `system`'s activation and the keys it carries for the machine at `root`, still encrypted, when
+/// it boots with Secure Boot. An error when it has none for this machine.
+fn keys(root: &Path, system: &Path) -> Result<Option<(Value, Value)>, String> {
+    let spec = system.join("activation.json");
+    let Ok(text) = fs::read_to_string(&spec) else {
+        return Ok(None);
+    };
+    let activation: Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", spec.display()))?;
+    if activation["secure_boot"] != Value::Bool(true) {
+        return Ok(None);
+    }
+    let machine = machine_name(root, system);
+    let keys = activation["secrets"]
+        .as_object()
+        .and_then(|secrets| {
+            secrets
+                .values()
+                .find(|secret| secret["machine"].as_str() == Some(machine.as_str()))
+        })
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "`boot.secure_boot` is on, but there are no Secure Boot keys for {machine}, so \
+                 what it boots couldn't be signed; `wrath secret machine {machine}` makes them"
+            )
+        })?;
+    Ok(Some((activation, keys)))
+}
+
 /// Signs what a machine boots with its db key, and its images' TPM policies with its PCR key,
 /// both decrypted from the system it switches to into a directory only root reads, which goes when
 /// the signer does.
@@ -159,31 +214,12 @@ pub struct Signer {
 
 impl Signer {
     /// The signer for the machine at `root`, from the keys `system` carries for it, when `system`
-    /// boots with Secure Boot. A system that has no keys for this machine boots unsigned, which is
-    /// said.
+    /// boots with Secure Boot. An error when it has none for this machine, as [`check`] says.
     pub fn of(root: &Path, system: &Path) -> Result<Option<Self>, String> {
-        let spec = system.join("activation.json");
-        let Ok(text) = fs::read_to_string(&spec) else {
+        let Some((activation, keys)) = keys(root, system)? else {
             return Ok(None);
         };
-        let activation: Value =
-            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", spec.display()))?;
-        if activation["secure_boot"] != Value::Bool(true) {
-            return Ok(None);
-        }
         let machine = machine_name(root, system);
-        let keys = activation["secrets"].as_object().and_then(|secrets| {
-            secrets
-                .values()
-                .find(|secret| secret["machine"].as_str() == Some(machine.as_str()))
-        });
-        let Some(keys) = keys else {
-            crate::style::note(&format!(
-                "this system boots with Secure Boot, but has no keys for {machine}, so what it \
-                 boots isn't signed; `wrath secret machine {machine}` makes them"
-            ));
-            return Ok(None);
-        };
         let at_root = |path: &str| root.join(path.trim_start_matches('/'));
         let mut age = Command::new(at_root(activation["age"].as_str().unwrap_or_default()));
         age.arg("--decrypt");
@@ -590,5 +626,53 @@ mod tests {
         // The signed list is the db certificate, after the time and the signature.
         let cert = fs::read(dir.path().join("db.der")).unwrap();
         assert!(db.ends_with(&cert));
+    }
+
+    /// A machine named w-01 switching to a system that says `secure_boot`, with keys for the
+    /// machines `keys_for`, and a firmware with Secure Boot `firmware` on.
+    fn switching(secure_boot: bool, keys_for: &[&str], firmware: bool) -> Result<(), String> {
+        let root = tempfile::tempdir().unwrap();
+        let system = root.path().join("system");
+        fs::create_dir_all(system.join("etc")).unwrap();
+        fs::write(system.join("etc/hostname"), "w-01\n").unwrap();
+        let secrets: serde_json::Map<String, Value> = keys_for
+            .iter()
+            .map(|machine| {
+                let secret = serde_json::json!({"machine": machine, "source": "keys.age"});
+                (format!("secure-boot.{machine}"), secret)
+            })
+            .collect();
+        let activation = serde_json::json!({"secure_boot": secure_boot, "secrets": secrets});
+        fs::write(system.join("activation.json"), activation.to_string()).unwrap();
+        let state = root.path().join(SECURE_BOOT_STATE);
+        fs::create_dir_all(state.parent().unwrap()).unwrap();
+        fs::write(&state, [6, 0, 0, 0, u8::from(firmware)]).unwrap();
+        check(root.path(), &system)
+    }
+
+    #[test]
+    fn a_system_with_secure_boot_switches_with_keys_for_this_machine() {
+        assert_eq!(switching(true, &["w-01"], true), Ok(()));
+        assert_eq!(switching(true, &["w-01"], false), Ok(()));
+    }
+
+    #[test]
+    fn a_system_with_secure_boot_and_no_keys_for_this_machine_is_refused() {
+        let error = switching(true, &["w-02"], false).unwrap_err();
+        assert!(
+            error.contains("`wrath secret machine w-01` makes them"),
+            "{error}"
+        );
+        assert!(switching(true, &[], true).is_err());
+    }
+
+    #[test]
+    fn an_unsigned_system_is_refused_when_the_firmware_has_secure_boot_on() {
+        let error = switching(false, &[], true).unwrap_err();
+        assert!(
+            error.contains("Secure Boot is on in the firmware"),
+            "{error}"
+        );
+        assert_eq!(switching(false, &[], false), Ok(()));
     }
 }

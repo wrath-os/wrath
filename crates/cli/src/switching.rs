@@ -288,6 +288,7 @@ fn has_boot_entry(root: &Path, number: u32) -> bool {
 pub fn activate(system: &Path) -> Result<(), String> {
     let root = Path::new(ROOT);
     let _held = lock(root)?;
+    crate::secure_boot::check(root, system)?;
     let number = add(root, system)?;
     crate::config_from::keep(root, number)?;
     switch(system, "switch")
@@ -299,6 +300,7 @@ pub fn activate(system: &Path) -> Result<(), String> {
 pub fn activate_boot(system: &Path) -> Result<u32, String> {
     let root = Path::new(ROOT);
     let _held = lock(root)?;
+    crate::secure_boot::check(root, system)?;
     let number = add(root, system)?;
     crate::config_from::keep(root, number)?;
     switch(system, "boot")?;
@@ -312,6 +314,8 @@ pub fn rollback(to: Option<u32>) -> Result<u32, String> {
     let root = Path::new(ROOT);
     let _held = lock(root)?;
     let number = rollback_target(root, to)?;
+    let system = system_of(root, &root.join(GENERATIONS).join(number.to_string()))?;
+    crate::secure_boot::check(root, &system).map_err(|e| format!("generation {number}: {e}"))?;
     make_current(root, number)?;
     switch(&root.join(CURRENT), "switch")
         .map_err(|e| switch_failed(number, has_boot_entry(root, number), None, e))?;
