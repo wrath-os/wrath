@@ -215,17 +215,13 @@ pub(crate) fn boot_entries(root: &Path, renew: bool) -> Result<(), String> {
         sizes.push((*number, sized));
     }
     let chosen = fitting(&sizes, &wanted, room(&kernels)?)?;
-    let dropped: Vec<String> = booting
+    let dropped: Vec<u32> = booting
         .iter()
-        .filter(|(number, ..)| !chosen.contains(number))
-        .map(|(number, ..)| number.to_string())
+        .map(|(number, ..)| *number)
+        .filter(|number| !chosen.contains(number))
         .collect();
     if !dropped.is_empty() {
-        crate::style::note(&format!(
-            "generations {} have no boot entry, since /boot has no room for them; they stay \
-             in the store",
-            dropped.join(", ")
-        ));
+        crate::style::note(&without_entries(&dropped, chosen.len()));
     }
     booting.retain(|(number, ..)| chosen.contains(number));
     let kept: BTreeSet<&str> = booting
@@ -653,6 +649,37 @@ fn fitting(
         chosen.insert(*number);
     }
     Ok(chosen)
+}
+
+/// Why generations `dropped` got no boot entry, when `kept` others did.
+fn without_entries(dropped: &[u32], kept: usize) -> String {
+    let reason = if kept >= MOST_ENTRIES {
+        format!("only the newest {MOST_ENTRIES} keep theirs")
+    } else {
+        "/boot is out of room".to_owned()
+    };
+    let them = if dropped.len() == 1 { "it" } else { "them" };
+    format!(
+        "{} no boot entry, since {reason}; `wrath rollback` still reaches {them}",
+        runs(dropped)
+    )
+}
+
+/// `numbers`, ascending, with runs written as ranges: "generations 1-4, 7 have" or
+/// "generation 3 has".
+fn runs(numbers: &[u32]) -> String {
+    if let [one] = numbers {
+        return format!("generation {one} has");
+    }
+    let parts: Vec<String> = numbers
+        .chunk_by(|a, b| a + 1 == *b)
+        .map(|run| match run {
+            [first, .., last] => format!("{first}-{last}"),
+            [only] => only.to_string(),
+            [] => unreachable!("chunk_by never yields an empty run"),
+        })
+        .collect();
+    format!("generations {} have", parts.join(", "))
 }
 
 /// How many times the boot loader tries a new generation before it falls back to another.
@@ -1788,6 +1815,20 @@ mod tests {
         let sizes = sized(&[(1, "k1", "i1"), (2, "k2", "i2"), (3, "k3", "i3")]);
         let chosen = fitting(&sizes, &BTreeSet::from([3, 1]), 45).unwrap();
         assert_eq!(chosen, BTreeSet::from([1, 3]));
+    }
+
+    #[test]
+    fn generations_without_entries_are_told_why() {
+        assert_eq!(
+            without_entries(&[1, 2, 3, 4, 7, 9, 10], MOST_ENTRIES),
+            "generations 1-4, 7, 9-10 have no boot entry, since only the newest 8 keep theirs; \
+             `wrath rollback` still reaches them"
+        );
+        assert_eq!(
+            without_entries(&[3], 2),
+            "generation 3 has no boot entry, since /boot is out of room; \
+             `wrath rollback` still reaches it"
+        );
     }
 
     #[test]
