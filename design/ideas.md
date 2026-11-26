@@ -160,6 +160,56 @@ directions, and the products the core has to allow, are in `vision.md`.
     while, and status says so.
   - Kernel live patches could narrow even the kernel's share later, for security fixes within
     one kernel version.
+- Lessons from running a Kubernetes fleet on an immutable, API-only OS. Worth keeping: the whole
+  machine as reviewable documents (disks, modules, seccomp, firewall, kubelet); an authenticated
+  API with the journal, kernel log, services and file reads, which diagnosed a lost cluster with
+  no console; the image's identity content-addressed and readable back from the node; disks
+  sealed through a KMS, harmless while it was down; idempotent bootstrap, a graceful reset that
+  drains and leaves etcd, upgrades that keep state; a host firewall and hardened defaults that
+  passed an outside probe; one generic image for every machine. What hurt, and what wrath does
+  about it:
+  - A field left out was an instruction. A rendered config without disk encryption reformatted
+    the data volume on all three control planes and lost etcd and every replicated volume; one
+    without the install image reinstalled a node without its storage modules; one whose disk
+    pick drifted onto a replicated volume held every other change behind it. A change that
+    formats or retargets a disk is never applied from a diff: the plan refuses it, or it's an
+    operation someone runs. Disks are named by path, never picked by order.
+  - Kernel features came only as extensions baked into an image: storage modules and a VM
+    runtime each needed a new image, a reinstall or upgrade reboot, and the modules listed again
+    by hand because the extension didn't load them. In wrath a kernel module is a package built
+    against the kernel, and a module that declares one has it loaded (see the reboot bullet
+    above for when it can load live).
+  - Extensions sat badly in the lifecycle: new config for one applied only at the next boot,
+    and a storage extension's export at shutdown, blocked by devices still holding its volumes,
+    was killed after 10s and hung the node until a power cycle. Services are systemd units, so
+    a config change restarts them, and shutdown ordering and timeouts are systemd's.
+  - An in-place upgrade unmounted the running system and waited with no timeout; busy volumes
+    hung it. Generations switch by boot entry or soft reboot, with nothing unmounted under a
+    running system.
+  - No shell: a pool-creating DaemonSet that entered the host found no `/bin/sh`, and each new
+    failure needed a new debugging helper. The API stays, and a shell stays possible, off by
+    default on servers if wanted.
+  - A fixed kernel and defaults: nftables only, which moved the network plugin to pure eBPF and
+    broke an add-on that expected kube-proxy's chains; a seccomp default that blocked user
+    namespaces for VMs and sandboxes. Kernel options and hardening defaults are configuration,
+    shown in the plan (see per-platform kernels below).
+  - Patching config by merge appended duplicates to lists (a doubled namespace crashed the API
+    server) and couldn't reach an interface chosen by a selector, so JSON patches crept in.
+    TOML merges say what they do with lists, and modules expose what needs changing as options.
+  - Behaviour learned only from source: join tokens re-redeemed every few seconds, so single-use
+    tokens couldn't work; a per-machine token not persisted across boots; boot metadata
+    surviving a reset; one port serving two TLS identities, self-signed before install and the
+    cluster CA after, with nothing saying which. In wrath the identity is the machine's
+    starmole key, made at first boot and carried by install, so the blank-slate system and the
+    installed one answer as the same node, and the invite is spent once: later connections use
+    the certificate. That lifecycle is written down for users, including what reset and
+    rollback keep.
+  - A hostname change pushed to all control planes at once restarted etcd on all three within
+    30ms. Fleet rollouts know which services hold quorum and restart them one machine at a time.
+  - Kubernetes and add-on upgrades, bootstrap and re-bootstrap were left to tooling outside the
+    OS, about half of it. These are operations (above), with modules owning their steps.
+  - Images built lazily on first request took 60-90s and timed out the first apply. A fleet
+    pulls from a cache CI has already filled.
 - Kernels per platform and per machine. Today there is one kernel recipe, with one set of options
   for VMs, the Framework Desktop and everything else; a configuration can load, blacklist and set
   options on modules, but not choose what's built. A platform, or a machine, could add or remove
