@@ -74,6 +74,16 @@ directions, and the products the core has to allow, are in `vision.md`.
   - A small declared identity state: the starmole key, the machine's identity and its enrolment
     record. Install carries it from the blank-slate system onto the disk, and rollback never
     touches it, so going back a generation never makes a machine a stranger to its fleet.
+  - The machine's identity is its SSH host key, which `wrath secret machine` makes before
+    install and secrets are already encrypted to. A machine that joins starmole later keeps it:
+    a starmole node key is an ed25519 seed, the same kind of key, so the SSH fingerprint and the
+    node id are one public key and nothing is re-keyed. starmole reads its key from the systemd
+    credential `starmole.identity`, but only as a line of hex; it should also take an OpenSSH
+    private key (it already depends on `ssh_key`), so a module passes
+    `/etc/ssh/ssh_host_ed25519_key` as that credential, sealed by the TPM with
+    `LoadCredentialEncrypted` when there is one, with no second copy to keep in step. A separate
+    starmole key cross-signed by the host key is the fallback if the two ever need rotating
+    apart.
   - The agent's services are iroh ALPNs on its starmole node: the API, logs, maybe metrics. The
     journal stays on the machine; the log ALPN streams copies to a collector, so losing the
     collector loses no logs.
