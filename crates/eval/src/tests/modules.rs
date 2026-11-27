@@ -3,7 +3,8 @@
 use super::eval_with;
 use crate::{
     ConfigReader, Diagnostic, File, Level, ListMerge, Module, OptionPath, OptionSpec, Output,
-    ReadError, RenderError, Secret, Section, Setting, Type, Unit, UnitAction, Value, explain,
+    ReadError, RenderError, RuntimePart, Secret, Section, Setting, Template, Type, Unit,
+    UnitAction, Value, explain,
 };
 
 type RenderFn = dyn Fn(&mut dyn ConfigReader) -> Result<Output, RenderError>;
@@ -507,6 +508,28 @@ fn a_unit_restarts_on_files_some_module_renders() {
         eval_with(&[SYSTEM], &[module("app", vec![], &[], render("/etc/ap.conf"))]).unwrap_err(),
         @"error: unit `app.service` from module `app` restarts on `/etc/ap.conf`, which no module renders"
     );
+}
+
+#[test]
+fn a_unit_reloads_on_files_filled_in_on_the_machine() {
+    let app = module("app", vec![], &[], |_: &mut dyn ConfigReader| {
+        let mut output = Output::default();
+        output.templates.insert(
+            "/etc/app.conf".into(),
+            Template {
+                parts: vec![RuntimePart::Machine("machine.name".into())],
+                owner: "root".into(),
+                group: None,
+                mode: 0o644,
+            },
+        );
+        output.triggers.insert(
+            ("systemd-networkd.service".into(), UnitAction::Reload),
+            ["/etc/app.conf".into()].into(),
+        );
+        Ok(output)
+    });
+    eval_with(&[SYSTEM], &[app]).unwrap();
 }
 
 #[test]

@@ -744,7 +744,13 @@ fn bad_triggers(rendered: &[Option<Rendered>]) -> Vec<Diagnostic> {
     let rendered: Vec<&Rendered> = rendered.iter().flatten().collect();
     let files: BTreeSet<&String> = rendered
         .iter()
-        .flat_map(|rendered| rendered.output.files.keys())
+        .flat_map(|rendered| {
+            rendered
+                .output
+                .files
+                .keys()
+                .chain(rendered.output.templates.keys())
+        })
         .collect();
     let units: BTreeSet<&String> = rendered
         .iter()
