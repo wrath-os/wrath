@@ -23,3 +23,4 @@
 
 - [Commands](reference/commands.md)
 - [The module API](reference/module-api.md)
+- [Output as data](reference/json.md)

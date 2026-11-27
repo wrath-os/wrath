@@ -98,8 +98,9 @@ What an upgrade from a repository has to get right:
   switches; a checkout applied by hand pauses the next one, and plain `wrath apply` goes back and
   resumes them; `add` refuses; `--boot` leaves the running system alone, and `status` says which
   generation runs and which boots next; a failed automatic upgrade is kept and shown.
-- A failed automatic upgrade, or a pause while it holds, is written to `/wrath/system/notice`,
-  which PAM shows at console and SSH logins on machines that upgrade on their own. It goes once an
+- A failed automatic upgrade, or a pause while it holds, is written to
+  `/wrath/system/notice.d/upgrade`, which PAM shows at console and SSH logins (on every machine
+  since 0045). It goes once an
   upgrade works, or once the machine is applied by hand from what it follows.
 - `scenarios/native-follow.toml` checks it in a VM with no cache: an automatic upgrade with
   nothing to do, a broken configuration upstream shown at an SSH login, the notice gone after a

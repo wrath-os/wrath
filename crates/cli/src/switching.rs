@@ -212,6 +212,7 @@ pub fn add(root: &Path, system: &Path) -> Result<u32, String> {
     symlink(system, root.join(GENERATIONS).join(number.to_string()))
         .map_err(|e| format!("generation {number}: {e}"))?;
     make_current(root, number)?;
+    crate::boot_failed::forget_for(root, number)?;
     Ok(number)
 }
 
@@ -316,7 +317,13 @@ pub fn rollback(to: Option<u32>) -> Result<u32, String> {
     let number = rollback_target(root, to)?;
     let system = system_of(root, &root.join(GENERATIONS).join(number.to_string()))?;
     crate::secure_boot::check(root, &system).map_err(|e| format!("generation {number}: {e}"))?;
+    let failed = crate::boot_failed::now(root, &history_at(root)?);
     make_current(root, number)?;
+    // Going back from a generation that didn't boot is when it's worth keeping a record of it.
+    match failed.filter(|failed| failed.generation != number) {
+        Some(failed) => crate::boot_failed::record(root, failed, number, now_utc())?,
+        None => crate::boot_failed::forget_for(root, number)?,
+    }
     switch(&root.join(CURRENT), "switch")
         .map_err(|e| switch_failed(number, has_boot_entry(root, number), None, e))?;
     Ok(number)

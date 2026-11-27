@@ -8,16 +8,16 @@ wait_for = ["agent", "unit:multi-user.target", "unit:sshd.service"]
 steps = [
   { run = "systemctl is-active wrath-upgrade.timer", stdout_contains = "active" },
   { run = "mkdir -p /srv/m && cp -r /run/wrath-share/configs/native-follow /srv/m/box && echo copied", stdout_contains = "copied" },
-  { run = "wrath --source grapes=/run/system/grapes apply --automatic 2>&1; test -e /wrath/system/notice || echo nothing to say", stdout_contains = "nothing to say" },
+  { run = "wrath --source grapes=/run/system/grapes apply --automatic 2>&1; test -e /wrath/system/notice.d/upgrade || echo nothing to say", stdout_contains = "nothing to say" },
   # A package no cache has, where it follows, with building left to a cache: it waits.
   { run = "sed -i '1i packages = [\"jq\"]' /srv/m/box/system.toml && sed -i 's/^automatic = .*/&\\nbuild = false/' /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply --automatic 2>&1 | grep -o 'not upgrading yet: it would build'", stdout_contains = "not upgrading yet: it would build" },
-  { run = "wrath status 2>&1 | grep -o 'the last automatic upgrade waited'; command -v jq || echo no jq; test -e /wrath/system/notice || echo nothing to say", stdout_contains = "the last automatic upgrade waited\nno jq\nnothing to say" },
+  { run = "wrath status 2>&1 | grep -o 'the last automatic upgrade waited'; command -v jq || echo no jq; test -e /wrath/system/notice.d/upgrade || echo nothing to say", stdout_contains = "the last automatic upgrade waited\nno jq\nnothing to say" },
   # A broken configuration where it follows: the upgrade fails, and logins say so.
-  { run = "echo 'broken = [' >> /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply --automatic >/dev/null 2>&1; cat /wrath/system/notice", stdout_contains = "wrath: the last automatic upgrade failed" },
+  { run = "echo 'broken = [' >> /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply --automatic >/dev/null 2>&1; cat /wrath/system/notice.d/upgrade", stdout_contains = "wrath: the last automatic upgrade failed" },
   { run = "ssh-keygen -q -t ed25519 -N '' -f /root/key && install -d -m 700 /root/.ssh && cp /root/key.pub /root/.ssh/authorized_keys && echo ok", stdout_contains = "ok" },
   { run = "echo exit | ssh -tt -i /root/key -o StrictHostKeyChecking=accept-new -o BatchMode=yes root@localhost 2>&1", stdout_contains = "wrath: the last automatic upgrade failed" },
   # Fixed where it follows, and a change applied by hand from there: up to date, so nothing to say.
-  { run = "cp /run/wrath-share/configs/native-follow/system.toml /srv/m/box/ && printf '\\n[files.\"/etc/hello\"]\\ntext = \"by hand\\\\n\"\\n' >> /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply -y >/dev/null 2>&1; cat /etc/hello; test -e /wrath/system/notice || echo cleared", stdout_contains = "by hand\ncleared" },
+  { run = "cp /run/wrath-share/configs/native-follow/system.toml /srv/m/box/ && printf '\\n[files.\"/etc/hello\"]\\ntext = \"by hand\\\\n\"\\n' >> /srv/m/box/system.toml && wrath --source grapes=/run/system/grapes apply -y >/dev/null 2>&1; cat /etc/hello; test -e /wrath/system/notice.d/upgrade || echo cleared", stdout_contains = "by hand\ncleared" },
   { run = "echo exit | ssh -tt -i /root/key -o BatchMode=yes root@localhost 2>&1 | grep -q 'wrath: ' && echo shown || echo not shown", stdout_contains = "not shown" },
   # Staged for the next boot. Built on the host, so the harness reaches it once it boots.
   { prepare_build = "scenarios/fixtures/native-follow-booted" },

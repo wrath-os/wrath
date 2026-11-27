@@ -14,6 +14,7 @@ use wrath_model::{LOCK_FILE, Lock, Model, Source, WRATH_SOURCE};
 
 mod activate;
 mod apply_record;
+mod boot_failed;
 mod cache;
 mod checks;
 mod config_from;
@@ -27,6 +28,7 @@ mod install;
 mod known;
 mod machine;
 mod machine_keys;
+mod notice;
 mod on_machine;
 mod options;
 mod pinned;
@@ -627,9 +629,12 @@ fn run() -> ExitCode {
         Command::Status => machine().and_then(|config| {
             generations::warn_degraded();
             match model(&config, &modules) {
-                Some(model) if json => print_serde(&generations::status_json(&model)),
+                Some(model) if json => print_serde(&generations::status_json(Some(&model))),
                 Some(model) => generations::status(&model),
-                None if json => Ok(ExitCode::FAILURE),
+                // What runs, at least, with the error already said on stderr.
+                None if json => {
+                    print_serde(&generations::status_json(None)).map(|_| ExitCode::FAILURE)
+                }
                 None => Ok(generations::status_unread()),
             }
         }),
@@ -1730,6 +1735,7 @@ fn plan(config: &Path, against: Against, modules: &Path, json: bool) -> Result<E
         let Value::Table(mut fields) = plan.to_value() else {
             unreachable!("a plan is a table")
         };
+        fields.insert("format".into(), Value::Int(generations::JSON_FORMAT.into()));
         fields.insert("model".into(), Value::Str(after.hash()));
         fields.insert("against".into(), Value::Str(before.hash()));
         return print_json(&Value::Table(fields));

@@ -671,24 +671,56 @@ pub(crate) fn full_effect(tier: Tier) -> Option<&'static str> {
     }
 }
 
-/// `status` as data: the running generation, whether a system is being tried, the running and
-/// configured models' hashes, and whether the lock pins every source.
-pub fn status_json(model: &Model) -> serde_json::Value {
-    let generations = here::history().unwrap_or_default();
-    let running = here::running_model_hash();
-    let hash = model.hash();
-    serde_json::json!({
-        "generation": running_of(&generations).map(|g| g.number),
-        "boots_next": generations.iter().find(|g| g.current).map(|g| g.number),
-        "from": running_of(&generations).and_then(|g| g.from.as_ref()).map(ConfigFrom::to_json),
+/// The version of what `status --json` and `plan --json` print. Fields may be added within a
+/// version; one that's renamed, removed or changes meaning makes a new version.
+pub const JSON_FORMAT: u32 = 1;
+
+/// What `status --json` says about the machine whatever its configuration: the running
+/// generation, the one that boots next, a boot that failed, a system being tried, the running
+/// model's hash and how the last automatic upgrade went. `from` is where the generation that
+/// `of` picks came from.
+fn machine_json(
+    generations: &[Generation],
+    of: fn(&[Generation]) -> Option<&Generation>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let serde_json::Value::Object(fields) = serde_json::json!({
+        "format": JSON_FORMAT,
+        "generation": running_of(generations).map(|g| g.number),
+        "boots_next": boots_next(generations),
+        "boot_failed": crate::boot_failed::get(Path::new("/"), generations).map(|f| f.to_json()),
+        "from": of(generations).and_then(|g| g.from.as_ref()).map(ConfigFrom::to_json),
         "trying": here::trying(),
-        "matches": running.as_deref() == Some(hash.as_str()),
-        "running": running,
-        "model": hash,
-        "locked": model.is_locked(),
-        "replaced_home_files": crate::homes::replaced_in_homes(Path::new("/")),
+        "running": here::running_model_hash(),
         "upgrade": crate::upgrade::last(Path::new("/")).map(|o| o.to_json()),
-    })
+    }) else {
+        unreachable!("an object")
+    };
+    fields
+}
+
+/// `status` as data: [`machine_json`], and the configured model's hash, whether the running
+/// system is it, and whether the lock pins every source. Without a `model`, as when the
+/// configuration can't be read, those are null.
+pub fn status_json(model: Option<&Model>) -> serde_json::Value {
+    let generations = here::history().unwrap_or_default();
+    let mut fields = machine_json(&generations, running_of);
+    let hash = model.map(Model::hash);
+    let matches = hash
+        .as_deref()
+        .map(|hash| fields["running"].as_str() == Some(hash));
+    fields.extend([
+        ("model".into(), serde_json::json!(hash)),
+        ("matches".into(), serde_json::json!(matches)),
+        (
+            "locked".into(),
+            serde_json::json!(model.map(Model::is_locked)),
+        ),
+        (
+            "replaced_home_files".into(),
+            serde_json::json!(crate::homes::replaced_in_homes(Path::new("/"))),
+        ),
+    ]);
+    serde_json::Value::Object(fields)
 }
 
 /// `history` as data: each generation, with a summary of what changed from the one before.
@@ -760,21 +792,15 @@ pub fn following(follows: &str) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `following` as data.
+/// `following` as data: [`machine_json`], with where the current generation came from and what
+/// the machine follows.
 pub fn following_json(follows: &str) -> serde_json::Value {
     let generations = here::history().unwrap_or_default();
-    let current = generations.iter().find(|g| g.current);
-    let from = current.and_then(|g| g.from.as_ref());
-    serde_json::json!({
-        "generation": running_of(&generations).map(|g| g.number),
-        "boots_next": current.map(|g| g.number),
-        "from": from.map(ConfigFrom::to_json),
-        "follows": follows,
-        "upgrade": crate::upgrade::last(Path::new("/"))
-            .map(|outcome| outcome.to_json()),
-        "trying": here::trying(),
-        "running": here::running_model_hash(),
-    })
+    let mut fields = machine_json(&generations, |generations| {
+        generations.iter().find(|g| g.current)
+    });
+    fields.insert("follows".into(), serde_json::json!(follows));
+    serde_json::Value::Object(fields)
 }
 
 pub(crate) fn current_generation() -> Option<Generation> {
@@ -812,9 +838,23 @@ fn print_running(generations: &[Generation]) {
             println!("its configuration came from {from}");
         }
     }
-    let current = generations.iter().find(|g| g.current);
-    if let Some(current) = current.filter(|c| running.is_none_or(|r| r.number != c.number)) {
-        println!("generation {} boots next", current.number);
+    match crate::boot_failed::get(Path::new("/"), generations) {
+        Some(failed) => println!("{failed}"),
+        None => {
+            let next = boots_next(generations);
+            if let Some(next) = next.filter(|n| running.is_none_or(|r| r.number != *n)) {
+                println!("generation {next} boots next");
+            }
+        }
+    }
+}
+
+/// The generation that boots next: the current one, unless the boot loader gave up on it and
+/// boots the one that runs instead.
+fn boots_next(generations: &[Generation]) -> Option<u32> {
+    match crate::boot_failed::now(Path::new("/"), generations) {
+        Some(failed) => Some(failed.runs),
+        None => generations.iter().find(|g| g.current).map(|g| g.number),
     }
 }
 

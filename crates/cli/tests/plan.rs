@@ -403,12 +403,53 @@ fn json_is_the_plan_as_data_and_refused_where_it_isnt_supported() {
         "fixtures/configs/basic",
     ]));
     let plan: serde_json::Value = serde_json::from_str(&plan).unwrap();
+    assert_eq!(plan["format"], 1);
     assert_eq!(plan["tier"], "live");
     assert_eq!(plan["changes"][0]["name"], "services.nginx.main.port");
     assert_eq!(plan["changes"][0]["details"][0], "8080 -> 8081");
 
     let unsupported = wrath(&["why", "--json", "-C", "fixtures/configs/basic", "--all"]);
     assert!(!unsupported.status.success());
+}
+
+#[test]
+fn status_as_data_has_a_format_and_says_what_runs_even_without_a_configuration() {
+    let fields = [
+        "format",
+        "generation",
+        "boots_next",
+        "boot_failed",
+        "from",
+        "trying",
+        "running",
+        "upgrade",
+        "model",
+        "matches",
+        "locked",
+        "replaced_home_files",
+    ];
+    let read = wrath(&["status", "--json", "-C", "fixtures/configs/basic"]);
+    assert!(read.status.success());
+    let read: serde_json::Value = serde_json::from_str(&stdout(&read)).unwrap();
+    for field in fields {
+        assert!(read.get(field).is_some(), "{field} in {read}");
+    }
+    assert_eq!(read["format"], 1);
+    assert!(read["model"].is_string());
+
+    let unread = wrath(&[
+        "status",
+        "--json",
+        "-C",
+        "fixtures/bad-configs/unknown-option",
+    ]);
+    assert!(!unread.status.success());
+    let unread: serde_json::Value = serde_json::from_slice(&unread.stdout).unwrap();
+    assert_eq!(unread["format"], 1);
+    assert!(
+        unread["model"].is_null() && unread["matches"].is_null(),
+        "{unread}"
+    );
 }
 
 #[test]

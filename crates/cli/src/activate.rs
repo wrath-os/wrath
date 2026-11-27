@@ -691,6 +691,18 @@ fn out_of_tries(name: &str) -> bool {
         .is_some_and(|(_, count)| count.starts_with("0-") || count == "0.conf")
 }
 
+/// How many times the boot loader tried generation `number`'s entry in `entries` before it gave
+/// up on it, when it has: 3 for `wrath-4+0-3.conf`.
+pub(crate) fn gave_up_after(entries: &Path, number: u32) -> Option<u32> {
+    let name = counted_entry(entries, number).ok()??;
+    let count = name.strip_suffix(".conf")?.split_once('+')?.1;
+    match count.split_once('-') {
+        Some(("0", done)) => done.parse().ok(),
+        None if count == "0" => Some(0),
+        _ => None,
+    }
+}
+
 /// The file in `entries` that holds generation `number`'s entry, with or without the boot
 /// loader's count of tries in its name: `wrath-4.conf`, `wrath-4+3.conf`, `wrath-4+1-2.conf`.
 fn counted_entry(entries: &Path, number: u32) -> Result<Option<String>, String> {
@@ -2078,6 +2090,27 @@ mod tests {
         assert_eq!(found(2).as_deref(), Some("wrath-2+0-3.conf"));
         assert_eq!(found(1), None, "wrath-10 isn't generation 1");
         assert_eq!(found(3), None, "a count that isn't numbers isn't one");
+    }
+
+    #[test]
+    fn the_boot_loader_gave_up_on_an_entry_only_with_no_tries_left() {
+        let work = tempfile::tempdir().unwrap();
+        let entries = work.path();
+        for name in [
+            "wrath-1.conf",
+            "wrath-2+0-3.conf",
+            "wrath-3+1-2.conf",
+            "wrath-4+3.conf",
+        ] {
+            fs::write(entries.join(name), "").unwrap();
+        }
+        fs::write(entries.join("wrath-5+0.conf"), "").unwrap();
+        let gave_up = |number| gave_up_after(entries, number);
+        assert_eq!(gave_up(2), Some(3));
+        assert_eq!(gave_up(5), Some(0));
+        for number in [1, 3, 4, 6] {
+            assert_eq!(gave_up(number), None, "generation {number}");
+        }
     }
 
     #[test]

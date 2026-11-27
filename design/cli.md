@@ -186,6 +186,10 @@ With `[unlock]`, install enrolls the TPM, and the initrd can be unlocked over SS
 ## Output and the API
 
 - Human output by default. `--json` gives the same thing as data, with a schema per command.
+  `status --json` and `plan --json` carry a `format` number and are a contract: fields can be
+  added within a format, and anything renamed, removed or changing meaning takes a new one
+  (`docs/reference/json.md`). `status --json` prints what it knows about the machine even when
+  the configuration can't be read.
 - Builds show a line each as they start. On a terminal that line stays up to date with the
   build's time and latest output, and ends as `built NAME 42s`. `-v` shows everything each build
   prints. Each build's full output is kept in `build/work/logs/NAME.log` either way.

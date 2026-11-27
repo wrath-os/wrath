@@ -1,8 +1,7 @@
 //! Automatic upgrades, which `wrath-upgrade.timer` runs as `wrath apply --automatic`: the
 //! newest commit of what the machine follows, switched to now or at the next boot as the
 //! configuration's `updates.switch` says, whatever the running system came from. Each run's
-//! outcome is kept for `status`, and a failure is also shown as people log in, from a notice PAM
-//! reads.
+//! outcome is kept for `status`, and a failure is also shown as people log in.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -15,9 +14,8 @@ use crate::config_from::ConfigFrom;
 /// Where the machine at `root` keeps the outcome of the last automatic upgrade.
 const OUTCOME: &str = "wrath/system/upgrade.json";
 
-/// What logins show about automatic upgrades, there only while there's something to say. grapes'
-/// `updates` module has PAM show it.
-const NOTICE: &str = "wrath/system/notice";
+/// The subject of what logins show about automatic upgrades.
+const NOTICE: &str = "upgrade";
 
 /// What an automatic upgrade does once it has the new system, as `updates.switch` says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,15 +155,8 @@ pub fn applied_by_hand(
 }
 
 fn write_notice(root: &Path, outcome: Option<&Outcome>) -> Result<(), String> {
-    let path = root.join(NOTICE);
-    let failed = |e: std::io::Error| format!("{}: {e}", path.display());
-    match outcome.filter(|outcome| outcome.kind == Kind::Failed) {
-        Some(outcome) => std::fs::write(&path, format!("wrath: {outcome}\n")).map_err(failed),
-        None => match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(failed(e)),
-            _ => Ok(()),
-        },
-    }
+    let failed = outcome.filter(|outcome| outcome.kind == Kind::Failed);
+    crate::notice::set(root, NOTICE, failed.map(Outcome::to_string).as_deref())
 }
 
 /// How the last automatic upgrade on the machine at `root` went, when one ran.
@@ -227,7 +218,7 @@ mod tests {
     fn logins_show_a_failure_until_upgrades_work_or_what_is_followed_is_applied_by_hand() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("wrath/system")).unwrap();
-        let notice = || std::fs::read_to_string(root.path().join(NOTICE)).ok();
+        let notice = || crate::notice::get(root.path(), NOTICE);
         let follows = "github:johnae/machines//framework";
         let there = ConfigFrom::Url {
             url: follows.into(),
@@ -263,7 +254,7 @@ mod tests {
         std::fs::create_dir_all(root.path().join("wrath/system")).unwrap();
         keep(root.path(), Kind::Failed, "no network").unwrap();
         keep(root.path(), Kind::Waiting, "it would build 1 (jq)").unwrap();
-        assert!(!root.path().join(NOTICE).exists());
+        assert_eq!(crate::notice::get(root.path(), NOTICE), None);
         let last = last(root.path()).unwrap();
         assert_eq!(last.kind, Kind::Waiting);
         assert!(
