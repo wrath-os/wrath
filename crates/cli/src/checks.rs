@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use wrath_eval::RuntimePart;
 use wrath_model::Model;
 
 use crate::system::{self, ModuleOrder};
@@ -106,12 +107,17 @@ fn renders(case: &Path, modules: &Path, bless: bool) -> Result<bool, String> {
     Ok(passed)
 }
 
-/// What `model` writes, by where it goes under the root: files, units in
-/// `etc/systemd/system`, and each user's files and units in `home/<user>`.
+/// What `model` writes, by where it goes under the root: files, those filled in on the machine
+/// with each secret and machine value as `${...}`, units in `etc/systemd/system`, and each
+/// user's files and units in `home/<user>`.
 fn rendered(model: &Model) -> BTreeMap<String, String> {
     let mut written = BTreeMap::new();
     for (path, file) in &model.files {
         written.insert(path.trim_start_matches('/').to_owned(), file.text.clone());
+    }
+    for (path, template) in &model.templates {
+        let text = template.parts.iter().map(placeholder).collect();
+        written.insert(path.trim_start_matches('/').to_owned(), text);
     }
     for (name, unit) in &model.units {
         written.insert(format!("etc/systemd/system/{name}"), unit.text());
@@ -127,6 +133,17 @@ fn rendered(model: &Model) -> BTreeMap<String, String> {
         }
     }
     written
+}
+
+/// A part of a file filled in on the machine, as a configuration writes it.
+fn placeholder(part: &RuntimePart) -> String {
+    match part {
+        RuntimePart::Text(text) => text.clone(),
+        RuntimePart::Secret(name) | RuntimePart::QuotedSecret(name) => {
+            format!("${{secret.{name}}}")
+        }
+        RuntimePart::Machine(path) | RuntimePart::QuotedMachine(path) => format!("${{{path}}}"),
+    }
 }
 
 /// The files under `dir`, relative to it, sorted.
