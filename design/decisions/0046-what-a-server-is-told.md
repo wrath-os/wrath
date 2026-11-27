@@ -181,7 +181,7 @@ called `default` that covers every interface:
 interfaces = ["internal", "br*"]
 tcp = [22, 2379, 2380, 6443, "30000-32767"]
 udp = [53, 8472]
-from = ["2001:db8:100::/56"]          # optional; otherwise any source on these interfaces
+sources = ["2001:db8:100::/56"]       # optional; otherwise any source on these interfaces
 
 [networking.firewall.zones.external]
 interfaces = ["bond0.130"]
@@ -189,7 +189,7 @@ tcp = [80, 443]
 drop_spoofed = true                   # private, documentation and bogon sources dropped early
 
 [networking.firewall]
-forward = [["internal", "external"]]  # zones or interfaces allowed to forward between them
+forward = [{ source = "internal", to = "external" }]  # zones or interfaces
 clamp_mss = [{ out = "bond0.130", mss = 1460 }, { out = "bond0.130", mss = 1440, family = "ipv6" }]
 
 [networking.firewall.tables]
@@ -409,3 +409,21 @@ recipes against the kernel, the firmware command, a guard for draining.
   module.
 - How much of each `.netdev` kind to type; the rest stays in `sections`.
 - Whether firmware settings can be read back from every BMC well enough to report drift.
+
+## Built so far
+
+- Network (Order 1): `networking.links` (match by `names`, `driver`, `path` or `mac`; `mtu`,
+  `ring_buffers`), `networking.devices` (`bond`, `vlan`, `bridge`, `vrf`, `dummy`, with
+  `sections`), and on networks `addresses`, `routes`, `rules`, `vrf`, `mtu`, `rp_filter`,
+  `forwarding`; `networking.loopback`, `networking.hosts`. Addresses and routes take machine
+  values. A matched port keeps its predictable name. Bridges take `members`; the `on` plus
+  `vlan` shorthand isn't there. Changing a setting of a device that exists takes a boot, which
+  the plan doesn't show yet. `KeepConfiguration` isn't set.
+- Firewall (Order 2): zones with `interfaces`, `tcp`, `udp`, `sources` and `drop_spoofed`;
+  ranges as `"30000-32767"` checked in the module, so no core type was needed;
+  `forward = [{ source, to }]`, `clamp_mss`, and `tables` from files. The flat options render as
+  before. A removed table of your own stays loaded until a reboot.
+- A unit can restart or reload on a file filled in on the machine, and module tests check those
+  files, with machine values shown as `${...}`.
+- `scenarios/native-network.toml` waits for a kernel with bonding, VLANs, bridges and VRFs as
+  modules; the default kernel has none of them yet.
