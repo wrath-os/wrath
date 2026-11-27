@@ -102,8 +102,9 @@ fn encrypted_secrets(model: &Model) -> Result<BTreeMap<String, Vec<u8>>, String>
 
 /// Prints what getting to `model` takes: what would be fetched from each cache and what would be
 /// built. Asking the caches, which only traces answer, can't fail the plan; it says why instead.
-/// An error when getting there needs a build this machine has no seed for.
-pub fn print_takes(model: &Model) -> Result<(), String> {
+/// An error when getting there needs a build this machine has no seed for, unless `builds` is
+/// false: building is left to a cache, so it waits instead.
+pub fn print_takes(model: &Model, builds: bool) -> Result<(), String> {
     if crate::cache::offline() || !crate::known::recipes_here() {
         return Ok(());
     }
@@ -122,7 +123,7 @@ pub fn print_takes(model: &Model) -> Result<(), String> {
             if let Some(line) = takes_line(&takes, crate::cache::name_of) {
                 println!("{line}");
             }
-            if takes.seed == Seed::Missing {
+            if builds && takes.seed == Seed::Missing {
                 return Err(wrath_build::seed::MISSING.to_owned());
             }
         }
@@ -474,7 +475,8 @@ pub fn apply(
     if let Some(record) = &record {
         println!("{record}");
     }
-    let Some(tier) = planned(&model, rebuilt, yes)? else {
+    let builds_here = how != Switch::Automatic || crate::upgrade::builds(&model);
+    let Some(tier) = planned(&model, rebuilt, yes, builds_here)? else {
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     };
@@ -513,7 +515,7 @@ pub fn apply_built(system: &Path, how: Switch, yes: bool) -> Result<ExitCode, St
     if yes {
         return switched(system, how.resolved(&model, None), None);
     }
-    let Some(tier) = planned(&model, None, false)? else {
+    let Some(tier) = planned(&model, None, false, true)? else {
         println!("nothing changed");
         return Ok(ExitCode::SUCCESS);
     };
@@ -521,11 +523,13 @@ pub fn apply_built(system: &Path, how: Switch, yes: bool) -> Result<ExitCode, St
 }
 
 /// Shows the plan from the running system to `model` and asks whether to switch. Gives the tier
-/// to say when the switch takes full effect, or `None` when the answer is no.
+/// to say when the switch takes full effect, or `None` when the answer is no. `builds` says
+/// whether it would build here, which needs the seed.
 fn planned(
     model: &Model,
     rebuilt: Option<Vec<wrath_model::Change>>,
     yes: bool,
+    builds: bool,
 ) -> Result<Option<Option<Tier>>, String> {
     let running = here::switching_from_model().and_then(|path| crate::read_model(&path).ok());
     let plan = wrath_model::plan(running.as_ref().unwrap_or(&Model::default()), model);
@@ -537,7 +541,7 @@ fn planned(
             plan.summary(5)
         ),
     }
-    print_takes(model)?;
+    print_takes(model, builds)?;
     if !confirmed(yes, "switch to it?")? {
         return Ok(None);
     }
