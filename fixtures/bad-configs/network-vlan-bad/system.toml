@@ -1,0 +1,4 @@
+# A VLAN that doesn't say which interface it's on.
+[networking.devices.internal]
+kind = "vlan"
+vlan = 121

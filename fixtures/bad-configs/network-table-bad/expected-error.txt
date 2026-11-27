@@ -1,0 +1,6 @@
+error: `internt` isn't a routing table: name a VRF (`internet`), a number, or `main`
+ --> fixtures/bad-configs/network-table-bad/system.toml:8:10
+  |
+8 | routes = [{ via = "192.0.2.1", table = "internt" }]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `networking.networks.external.routes` is set here
+  = reported by modules/network.star

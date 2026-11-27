@@ -1,0 +1,6 @@
+error: `32767-30000` isn't a port or a range of ports such as `30000-32767`
+ --> fixtures/bad-configs/firewall-port-bad/system.toml:4:7
+  |
+4 | tcp = ["32767-30000"]
+  |       ^^^^^^^^^^^^^^^ `networking.firewall.zones.internal.tcp` is set here
+  = reported by modules/firewall.star

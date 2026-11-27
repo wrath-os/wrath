@@ -1,0 +1,8 @@
+# A route into a table that isn't a VRF, a number or `main`.
+[networking.devices.internet]
+kind = "vrf"
+table = 1001
+
+[networking.networks.external]
+match = ["enp1s0"]
+routes = [{ via = "192.0.2.1", table = "internt" }]

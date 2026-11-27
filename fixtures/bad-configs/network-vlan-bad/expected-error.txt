@@ -1,0 +1,6 @@
+error: a VLAN needs `on`, the interface it's on, and `vlan`, its id
+ --> fixtures/bad-configs/network-vlan-bad/system.toml:3:8
+  |
+3 | kind = "vlan"
+  |        ^^^^^^ `networking.devices.internal` is set here
+  = reported by modules/network.star

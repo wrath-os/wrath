@@ -1,0 +1,4 @@
+# A range of ports written backwards.
+[networking.firewall.zones.internal]
+interfaces = ["internal"]
+tcp = ["32767-30000"]
