@@ -124,6 +124,7 @@ directions, and the products the core has to allow, are in `vision.md`.
 - Servers and Kubernetes nodes, beyond what the fleet design in `vision.md` covers. systemd
   already does most of what the machine needs; the store does what A/B slots, sysext and confext
   would, with more than one release of rollback.
+  - What a server is configured with, bonds to firewall zones to BMC settings: 0046.
   - Rollback floors. A module declares state that only moves forward: etcd after a control-plane
     upgrade, a Postgres major version, a Ceph release. Once a generation has crossed one,
     `rollback`, `try` and the boot menu refuse generations below it, and the plan says so.

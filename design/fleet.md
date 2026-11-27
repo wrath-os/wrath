@@ -114,6 +114,9 @@ accepted, last status), runs rollouts, hands out reboot leases, records approval
 operations log. Its database can be rebuilt from git plus a status call to every machine, apart
 from history.
 
+Machines with `[notify] by = "coordinator"` (0045) leave notifying to it: it sends their events
+from the repository's `[notify]`, batched and routed by role.
+
 It serves a page for approvals and the fleet view over the same API the CLI uses: machines by
 role and channel, what each runs, rollouts in progress, what waits for a person and why.
 
@@ -303,6 +306,16 @@ Existing verbs, with targets, before any new command:
 when there's a coordinator, and SSH otherwise. One new command is likely, for admitting
 machines: `wrath machines` to list pending ones, accept, reject or reset. Everything else is a
 target on a verb that exists.
+
+## What a role configures
+
+Nothing fleet-specific: a server's kernel, networks, firewall, access, storage, time and
+updates are ordinary options (0046), shared through roles and profiles. What differs per machine
+(addresses, gateways, rack, management address) is a machine value, allocated at enrolment and
+pinned in the lock. Facts gain NICs by driver and PCI path, disks by path and the BMC model, so
+match rules can pick a role from hardware and a role can match ports without naming them. BIOS
+settings are applied through the BMC by a module command, with the same guards and windows as a
+kernel update.
 
 ## Kubernetes nodes
 
