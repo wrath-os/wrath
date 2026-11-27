@@ -626,6 +626,11 @@ fn run() -> ExitCode {
                 generations::following(follows)
             }
         }
+        // Without a configuration, its data still says what runs, as a boot that fell back needs.
+        Command::Status if json && let Err(e) = machine() => {
+            style::error(&e);
+            print_serde(&generations::status_json(None)).map(|_| ExitCode::FAILURE)
+        }
         Command::Status => machine().and_then(|config| {
             generations::warn_degraded();
             match model(&config, &modules) {

@@ -1,0 +1,29 @@
+# The generation that fails its boot check: a unit that must succeed never does.
+[system]
+hostname = "h-01"
+
+[disks.main]
+partitions.esp = { size = "512M", format = "vfat", mount = "/boot" }
+partitions.system = { size = "rest" }
+
+[filesystems.root]
+on = ["main.system"]
+subvolumes."@root" = { mount = "/" }
+subvolumes."@wrath" = { mount = "/wrath" }
+
+[files."/etc/notified.sh"]
+text = "#!/bin/sh\ncat > /var/lib/notified\n"
+mode = 0o755
+
+[notify.to.log]
+kind = "command"
+command = ["/etc/notified.sh"]
+
+[units."never-works.service"]
+Unit.Description = "A check that fails"
+Service.Type = "oneshot"
+Service.ExecStart = "/bin/false"
+
+[boot.health]
+checks = ["never-works.service"]
+within = "3min"

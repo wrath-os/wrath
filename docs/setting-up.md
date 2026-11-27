@@ -264,13 +264,50 @@ one again.
 
 Every generation also has an entry in the boot menu, so if a change breaks booting you can pick
 the previous one there. A generation that fails to boot three times stops being the default on
-its own.
+its own: the machine boots the last one that worked, makes it current again, and says so in
+`wrath status` and as people log in. Applying the failed configuration again gives it fresh tries.
 
 `wrath clean` removes old generations and what only they used. It keeps the current one, the
 one running and the one that booted (after a boot fell back, those differ), plus the three before
 the current one by default, and asks first. Anything copied into the store in the last hour stays
 too, in case a switch is about to use it. Disk images `wrath build --image` made go with their
 systems, except the copy `-o` put where you asked.
+
+## What a good boot takes
+
+By default a boot counts as good once the system is up. A machine nobody sits in front of can ask
+for more, so a generation that boots but can't do its job goes back on its own too:
+
+```toml
+[boot.health]
+checks = ["unbound.service"]          # units that must be running, or have finished fine
+ping = ["192.0.2.1"]
+resolve = ["example.com"]
+tcp = ["192.0.2.1:53"]                # host:port that must accept a connection
+http = ["http://localhost:8080/health"]
+within = "10min"                      # how long it has; the default is 15 minutes
+```
+
+A boot that fails a check, or doesn't pass them in time, reboots and uses up one of its tries.
+`no_failed_units = true` fails the boot on any failed unit, which is strict, so it's off unless
+you ask. A kernel panic reboots after 10 seconds (`boot.reboot_after_panic`), and
+`boot.watchdog = "30s"` has the hardware watchdog reset a machine that hangs.
+
+To be told when a generation didn't boot, or an automatic upgrade failed:
+
+```toml
+[notify.to.ops]
+kind = "webhook"
+url = "https://hooks.example.com/wrath"   # gets the event as JSON
+
+[notify.to.pager]
+kind = "command"
+command = ["/usr/local/bin/page"]          # gets the event as JSON on stdin
+events = ["boot_failed"]
+```
+
+Each place hears the events in its `events`, or else every event. The JSON says what happened,
+on which machine, when, and what `wrath status --json` says.
 
 ## Starting clean at every boot
 

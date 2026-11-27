@@ -179,3 +179,21 @@ with its methods.
   switched to by soft reboot could arm the same checks and switch back on failure, as `try` does.
 - Which hardware watchdogs the platforms know about, and whether a fact can say there's one.
 - Whether a check can say why it failed better than its unit's status, for the notice.
+
+## Built so far
+
+- `status` and `status --json` report a fallback (`boot_failed`), with `boots_next` saying what
+  the boot loader starts. `rollback` from a failed boot keeps a record until a newer generation is
+  made or the failed one is rolled back to. Logins show `/wrath/system/notice.d`, a file per
+  subject, on every machine. `status --json` prints the machine's part without a configuration.
+- grapes' `boot-health` module: `checks`, `ping`, `resolve`, `tcp`, `http`, `within`,
+  `no_failed_units`, `boot.watchdog`, `boot.reboot_after_panic` (in `base`), the fallback unit
+  and `wrath-boot-failed.target`. Checks gate `boot-complete.target` through a drop-in, since
+  units can't say `RequiredBy=` yet. A failed check reboots only on a boot the boot loader counts.
+- grapes' `notify` module: `webhook` and `command`, for `boot_failed` and `upgrade_failed`
+  (`wrath-upgrade-failed.target`, from the upgrade unit's `OnFailure=`). `by = "coordinator"`
+  sends nothing locally until there is a coordinator.
+- `scenarios/native-boot-health.toml`: a generation whose check fails falls back, is recorded,
+  notified and shown at login. The harness's `until` step waits through reboots the VM does on
+  its own.
+- Not yet: `boot.tries`, `try --boot`, module options such as `services.unbound.boot_health`.

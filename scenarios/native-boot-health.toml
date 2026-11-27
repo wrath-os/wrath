@@ -1,0 +1,26 @@
+title = "a generation that fails its boot check falls back, and the machine says so and tells someone"
+
+[vm]
+config = "scenarios/fixtures/native-state-installer"
+store = "wrath"
+blank_disks = ["8G"]
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { prepare_build = "scenarios/fixtures/native-boot-health" },
+  { run = "cp -r /run/wrath-share/configs/native-boot-health /tmp/config && wrath install -C /tmp/config --disk /dev/vdb --name h-01 --system $(cat /run/wrath-share/system) -y 2>&1; echo exit=$?", stdout_contains = "exit=0" },
+  { boot_installed = true },
+  { run = "ls /boot/loader/entries; grep -c motd_dir=/wrath/system/notice.d /etc/pam.d/login", stdout_contains = "wrath-1.conf\n1" },
+  # The failing generation boots next, with one try left so the scenario stays short.
+  { prepare_build = "scenarios/fixtures/native-boot-health-failing" },
+  { run = "wrath apply --boot -y $(cat /run/wrath-share/system) >/dev/null 2>&1; cd /boot/loader/entries && mv wrath-2+3.conf wrath-2+1.conf && sync && ls", stdout_contains = "wrath-1.conf\nwrath-2+1.conf" },
+  { reboot = true },
+  # Its check fails, so it reboots, out of tries; generation 1 boots, and is made current.
+  { until = "test -e /wrath/system/boot-failed.json" },
+  { run = "readlink /wrath/system/current; ls /boot/loader/entries; jq -c '{generation, tries, runs}' /wrath/system/boot-failed.json", stdout_contains = "generations/1\nwrath-1.conf\nwrath-2+0-1.conf\n{\"generation\":2,\"tries\":1,\"runs\":1}" },
+  { run = "journalctl -b -1 -u wrath-boot-health --no-pager | grep -o 'boot health check failed: unit never-works.service'", stdout_contains = "boot health check failed: unit never-works.service" },
+  { run = "cat /wrath/system/notice.d/boot", stdout_contains = "wrath: generation 2 didn't boot after 1 try, so generation 1 runs and was made current" },
+  { run = "wrath status --json 2>/dev/null | jq -c '{boots_next, failed: .boot_failed.generation}'", stdout_contains = "{\"boots_next\":1,\"failed\":2}" },
+  { until = "test -s /var/lib/notified" },
+  { run = "jq -r '.event, .machine, .status.boot_failed.generation' /var/lib/notified", stdout_contains = "boot_failed\nh-01\n2" },
+]
+timeout_secs = 1800

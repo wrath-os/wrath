@@ -100,6 +100,9 @@ pub enum Step {
     CacheBuild { config: String },
     /// Runs a command in the VM, like an expectation.
     Run(Expect),
+    /// Runs a command in the VM until it succeeds, reconnecting whenever the VM reboots on its
+    /// own, as a boot that fails its checks does.
+    Until(String),
     /// The VM has not rebooted since it booted for the scenario.
     ExpectNoReboot,
 }
@@ -152,7 +155,7 @@ impl TryFrom<RawVmSpec> for VmSpec {
 }
 
 /// Every field a step may have, so scenarios using steps from later milestones can wait for them.
-pub const STEP_FIELDS: [&str; 23] = [
+pub const STEP_FIELDS: [&str; 24] = [
     "run_as",
     "apply_config",
     "apply_host",
@@ -176,6 +179,7 @@ pub const STEP_FIELDS: [&str; 23] = [
     "reboot",
     "soft_reboot",
     "cache_build",
+    "until",
 ];
 
 #[derive(Deserialize)]
@@ -207,6 +211,7 @@ struct RawStep {
     reboot: Option<bool>,
     soft_reboot: Option<bool>,
     cache_build: Option<String>,
+    until: Option<String>,
 }
 
 impl TryFrom<RawStep> for Step {
@@ -237,6 +242,9 @@ impl TryFrom<RawStep> for Step {
         }
         if let Some(config) = raw.cache_build {
             return Ok(Self::CacheBuild { config });
+        }
+        if let Some(run) = raw.until {
+            return Ok(Self::Until(run));
         }
         if let Some(config) = raw.apply_host {
             return Ok(Self::ApplyHost { config });
@@ -273,7 +281,7 @@ impl TryFrom<RawStep> for Step {
             _ => Err(
                 "a step is one of `apply_config` (with `expect_plan`, `try_for` and `exit`), \
                  `apply_host`, `run` (with `run_as`, `exit` and `stdout_contains`), \
-                 `reboot = true` or `expect_no_reboot = true`"
+                 `until`, `reboot = true` or `expect_no_reboot = true`"
                     .into(),
             ),
         }
@@ -588,14 +596,7 @@ impl VmRun<'_> {
                     "if=virtio,format=qcow2,file=disk.qcow2".into(),
                 ]);
                 argv.extend(uefi_drives(firmware));
-                let store = self.host.store()?;
-                argv.extend([
-                    "-virtfs".into(),
-                    format!(
-                        "local,path={},mount_tag=wrath-store,security_model=none,readonly=on",
-                        store.display()
-                    ),
-                ]);
+                argv.extend(self.store_share()?);
                 // It reaches nothing but the cache it asked for, and only the host reaches it, at
                 // its SSH port.
                 let mut nic = String::from("user,model=virtio-net-pci,restrict=on");
@@ -632,6 +633,8 @@ impl VmRun<'_> {
                 }
                 argv.extend(["-m".into(), "2048".into()]);
                 argv.extend(uefi_drives(firmware));
+                // So later systems can be copied in, as into the image's.
+                argv.extend(self.store_share()?);
             }
         }
         for n in (0..self.spec.blank_disks.len()).filter(|n| !missing.contains(n)) {
@@ -655,6 +658,18 @@ impl VmRun<'_> {
             );
         }
         Ok(QemuArgs { argv, cid })
+    }
+
+    /// The host's store, shared read-only with the guest as `wrath-store`.
+    fn store_share(&self) -> Result<[String; 2], String> {
+        let store = self.host.store()?;
+        Ok([
+            "-virtfs".into(),
+            format!(
+                "local,path={},mount_tag=wrath-store,security_model=none,readonly=on",
+                store.display()
+            ),
+        ])
     }
 
     /// Writes `interactive.sh`, which boots this run's VM with the serial console on the terminal.
@@ -801,6 +816,7 @@ impl VmRun<'_> {
         deadline: Instant,
     ) -> Result<(), String> {
         let mut booted = boot_id(agent, deadline)?;
+        let mut cid = cid;
         let mut current = self.spec.config.as_str();
         for step in &self.spec.steps {
             match step {
@@ -846,7 +862,7 @@ impl VmRun<'_> {
                     if let Some(refused) = refused {
                         return self.boot_refused(qemu, firmware, &unlock, refused, deadline);
                     }
-                    self.boot_installed(qemu, agent, firmware, &unlock, missing, deadline)?;
+                    cid = self.boot_installed(qemu, agent, firmware, &unlock, missing, deadline)?;
                     booted = boot_id(agent, deadline)?;
                 }
                 Step::Reboot => {
@@ -856,6 +872,10 @@ impl VmRun<'_> {
                 Step::SoftReboot => *agent = self.soft_reboot(agent, qemu, cid, deadline)?,
                 Step::CacheBuild { config } => self.cache_build(config)?,
                 Step::Run(expect) => check_expect(agent, expect, deadline)?,
+                Step::Until(run) => {
+                    self.until(agent, qemu, cid, run, deadline)?;
+                    booted = boot_id(agent, deadline)?;
+                }
                 Step::ExpectNoReboot => {
                     if boot_id(agent, deadline)? != booted {
                         return Err("the VM rebooted".into());
@@ -934,6 +954,30 @@ impl VmRun<'_> {
         }
     }
 
+    /// Runs `run` in the VM until it exits 0, reconnecting to the agent of each boot when the VM
+    /// reboots on its own.
+    fn until(
+        &self,
+        agent: &mut Client<VsockStream>,
+        qemu: &mut KillOnDrop,
+        cid: u32,
+        run: &str,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        loop {
+            match run_shell(agent, argv(&["/bin/sh", "-c", run]), deadline) {
+                Ok((Some(0), ..)) => return Ok(()),
+                Ok(_) => {}
+                // The VM went down with the agent: wait for the next boot's.
+                Err(_) => *agent = self.connect(cid, &mut qemu.0, deadline)?,
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("`{run}` never succeeded"));
+            }
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+
     /// Soft-reboots the VM with `systemctl soft-reboot` and returns the agent of the userspace it
     /// starts, which keeps the boot's id: systemd counts soft reboots instead.
     fn soft_reboot(
@@ -968,10 +1012,10 @@ impl VmRun<'_> {
         unlock: &Unlock,
         missing: &[usize],
         deadline: Instant,
-    ) -> Result<(), String> {
+    ) -> Result<u32, String> {
         let cid = self.start_installed(qemu, firmware, unlock, missing, deadline)?;
         *agent = self.connect(cid, &mut qemu.0, deadline)?;
-        Ok(())
+        Ok(cid)
     }
 
     /// Starts the installed system and unlocks its disks as `unlock` says, expecting the boot to
