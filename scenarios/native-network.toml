@@ -1,0 +1,12 @@
+title = "a bond, VLANs on it, a VRF and loopback addresses come up, and firewall zones load"
+
+[vm]
+config = "fixtures/configs/native"
+store = "wrath"
+wait_for = ["agent", "unit:multi-user.target"]
+steps = [
+  { apply_config = "scenarios/fixtures/native-network", expect_plan = ["+ /etc/systemd/network/50-bond0.netdev"] },
+  { run = "for i in $(seq 30); do ip -6 addr show internal 2>/dev/null | grep -q 2001:db8:121::10 && break; sleep 1; done; ip -d link show bond0 | grep -o 'bond mode active-backup'; ip -d link show port0 | grep -o 'master bond0'; ip -d link show internal | grep -o 'vlan protocol 802.1Q id 121'; ip link show external | grep -o 'master internet'; ip -6 addr show internal | grep -o '2001:db8:121::10/64'; ip route show vrf internet | grep -o 'default via 192.0.2.1'; ip -6 route show | grep -o '2001:db8::/32 via 2001:db8:121::1'; ip addr show lo | grep -o 'fd00:0:0:1::2000/128'; getent hosts api.cluster.internal | grep -o api.cluster.internal", stdout_contains = "bond mode active-backup\nmaster bond0\nvlan protocol 802.1Q id 121\nmaster internet\n2001:db8:121::10/64\ndefault via 192.0.2.1\n2001:db8::/32 via 2001:db8:121::1\nfd00:0:0:1::2000/128\napi.cluster.internal" },
+  { run = "nft list table inet wrath | grep -o -e 'tcp dport { 6443, 30000-32767 } accept' -e 'chain forward' -e 'maxseg size set 1460' -e 'chain spoofed'; nft list table inet prefilter | grep -o 'tcp dport 9 drop'", stdout_contains = "tcp dport { 6443, 30000-32767 } accept\nchain forward\nmaxseg size set 1460\nchain spoofed\ntcp dport 9 drop" },
+]
+timeout_secs = 600

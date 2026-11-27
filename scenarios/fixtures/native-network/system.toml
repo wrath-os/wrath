@@ -1,0 +1,70 @@
+[system]
+hostname = "native"
+
+[users.john]
+extra_groups = ["wheel"]
+
+# Two dummy ports stand in for a server's two NICs.
+[networking.devices.port0]
+kind = "dummy"
+
+[networking.devices.port1]
+kind = "dummy"
+
+[networking.devices.bond0]
+kind = "bond"
+members = ["port0", "port1"]
+bond = { mode = "active-backup", miimon = "100ms" }
+
+[networking.devices.internal]
+kind = "vlan"
+on = "bond0"
+vlan = 121
+
+[networking.devices.external]
+kind = "vlan"
+on = "bond0"
+vlan = 130
+
+[networking.devices.internet]
+kind = "vrf"
+table = 1001
+
+[networking.networks.internal]
+match = ["internal"]
+dhcp = "no"
+accept_ra = false
+required_for_online = false
+addresses = ["2001:db8:121::10/64"]
+routes = [{ to = "2001:db8::/32", via = "2001:db8:121::1" }]
+
+[networking.networks.external]
+match = ["external"]
+dhcp = "no"
+required_for_online = false
+vrf = "internet"
+addresses = ["192.0.2.10/24"]
+routes = [{ via = "192.0.2.1", table = "internet" }]
+
+[networking.loopback]
+addresses = ["fd00:0:0:1::2000/128"]
+
+[networking.hosts]
+"fd00:0:0:1::2000" = ["api.cluster.internal"]
+
+[networking.firewall]
+forward = [{ source = "internal", to = "external" }]
+clamp_mss = [{ out = "external", mss = 1460, family = "ipv4" }]
+
+[networking.firewall.zones.internal]
+interfaces = ["internal"]
+tcp = [6443, "30000-32767"]
+sources = ["2001:db8:100::/56"]
+
+[networking.firewall.zones.external]
+interfaces = ["external"]
+tcp = [443]
+drop_spoofed = true
+
+[networking.firewall.tables."inet prefilter"]
+file = "nft/prefilter.nft"

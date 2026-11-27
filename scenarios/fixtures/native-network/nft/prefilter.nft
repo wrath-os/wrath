@@ -1,0 +1,6 @@
+table inet prefilter {
+  chain prerouting {
+    type filter hook prerouting priority -310; policy accept;
+    iifname "external" tcp dport 9 drop
+  }
+}
