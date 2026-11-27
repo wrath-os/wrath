@@ -75,15 +75,12 @@ directions, and the products the core has to allow, are in `vision.md`.
     record. Install carries it from the blank-slate system onto the disk, and rollback never
     touches it, so going back a generation never makes a machine a stranger to its fleet.
   - The machine's identity is its SSH host key, which `wrath secret machine` makes before
-    install and secrets are already encrypted to. A machine that joins starmole later keeps it:
-    a starmole node key is an ed25519 seed, the same kind of key, so the SSH fingerprint and the
-    node id are one public key and nothing is re-keyed. starmole reads its key from the systemd
-    credential `starmole.identity`, but only as a line of hex; it should also take an OpenSSH
-    private key (it already depends on `ssh_key`), so a module passes
-    `/etc/ssh/ssh_host_ed25519_key` as that credential, sealed by the TPM with
-    `LoadCredentialEncrypted` when there is one, with no second copy to keep in step. A separate
-    starmole key cross-signed by the host key is the fallback if the two ever need rotating
-    apart.
+    install and secrets are already encrypted to. starmole gets a node key of its own, passed as
+    the systemd credential `starmole.identity` and sealed by the TPM with
+    `LoadCredentialEncrypted`, which the identity signs at enrolment. The coordinator checks the
+    signature against the identity it knows. A lost node key is then replaced without the machine
+    becoming a stranger, and a bug in the network-facing daemon can't give away the host key.
+    starmole will design the binding verifier; its SSH sign-in verifier is the starting point.
   - The agent's services are iroh ALPNs on its starmole node: the API, logs, maybe metrics. The
     journal stays on the machine; the log ALPN streams copies to a collector, so losing the
     collector loses no logs.
@@ -211,10 +208,10 @@ directions, and the products the core has to allow, are in `vision.md`.
     tokens couldn't work; a per-machine token not persisted across boots; boot metadata
     surviving a reset; one port serving two TLS identities, self-signed before install and the
     cluster CA after, with nothing saying which. In wrath the identity is the machine's
-    starmole key, made at first boot and carried by install, so the blank-slate system and the
-    installed one answer as the same node, and the invite is spent once: later connections use
-    the certificate. That lifecycle is written down for users, including what reset and
-    rollback keep.
+    host key. The blank-slate system enrols with a throwaway node key, and the installed one
+    binds its own node key to the identity with a signature, so the coordinator knows both are
+    the same machine. The invite is spent once: later connections use the certificate. That
+    lifecycle is written down for users, including what reset and rollback keep.
   - A hostname change pushed to all control planes at once restarted etcd on all three within
     30ms. Fleet rollouts know which services hold quorum and restart them one machine at a time.
   - Kubernetes and add-on upgrades, bootstrap and re-bootstrap were left to tooling outside the

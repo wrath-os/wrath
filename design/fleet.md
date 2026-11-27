@@ -49,7 +49,8 @@ Kubernetes fleet on an immutable, API-only OS, into one design. Status: proposed
 | Repository | Roles, `machines.toml`, the lock, secrets | git |
 | Role | A kind of machine, built and locked once (0008) | `roles/NAME.toml` |
 | Machine | A name, a role, machine values, an identity | `machines.toml`, the machine |
-| Identity | One ed25519 key: SSH host key, secrets recipient, starmole node | the machine |
+| Identity | The SSH host key: secrets recipient, the key other keys hang off | the machine |
+| Node key | The machine's starmole key, signed by the identity at enrolment | the machine |
 | Facts | Detected: SMBIOS UUID, CPU, memory, disks by path, NICs, TPM | the agent |
 | Channel | A git ref machines follow: `prod`, `canary`, `test` | git |
 | Rollout | One channel moving to a commit, wave by wave | coordinator |
@@ -140,20 +141,33 @@ machine waits on a build at rollout time; `[updates] build = false` makes that a
 
 ## Identity
 
-A machine's identity is one ed25519 key: its SSH host key. `wrath secret machine` makes it
-before install, secrets are encrypted to it, and when the machine joins starmole it uses the same
-key as its node key, passed as the systemd credential `starmole.identity` and sealed by the TPM
-with `LoadCredentialEncrypted` when there is one. The SSH fingerprint and the node id are one
-public key. (starmole reads hex keys today and needs to read an OpenSSH private key too.)
+A machine's identity is an ed25519 key: its SSH host key. `wrath secret machine` makes it
+before install and secrets are encrypted to it. The other keys a machine has hang off it.
 
-- A blank-slate machine makes its key at first boot. Install carries it onto the disk, so the
-  discovery system and the installed one are the same node.
+When the machine joins starmole it gets a node key of its own, passed as the systemd credential
+`starmole.identity` and sealed by the TPM with `LoadCredentialEncrypted` when there is one. At
+enrolment the identity signs the node key, and the coordinator checks that signature against the
+identity it already knows, records the binding, and can carry the identity in the certificate so
+peers see it too. Keeping the two apart means:
+
+- A leaked or lost node key is cheap to replace: a new key and certificate, the same machine, no
+  secrets re-encrypted.
+- The starmole daemon is the most network-facing code on the machine. A bug there can't give away
+  sshd's host key or the key secrets are decrypted with.
+- The host key already signs for sshd and works as an age recipient; a third protocol would add
+  to that.
+
+The rest:
+
+- A blank-slate machine enrols with a throwaway node key before it has an identity. The
+  installed system binds its real node key to the identity when it joins.
 - Rollback never touches it. A reset or reprovision chooses: keep the identity (same machine,
   new disk) or start over (a new machine that enrols again).
 - An invite is spent once, at the first join. Every later connection uses the certificate. A
   join with a clock that's behind keeps the certificate and uses it once NTP sets the clock.
 - Revoking the certificate cuts the machine off everywhere within seconds.
-- One TLS identity per machine, the same before and after install.
+- One TLS identity at a time: the throwaway key until install, then the node key the identity
+  signed.
 
 The user docs say all of this: what's made when, what reset and rollback keep, what to do when a
 board with the TPM is replaced.
@@ -339,7 +353,7 @@ providers, the discovery role and image, match rules, Kubernetes modules.
 
 1. On the machine: `plan --json` and `status --json` as a contract, health checks gating
    `boot-complete.target`, operations and module commands, floors.
-2. The agent over starmole with the host key as identity; `--host` and selectors through it.
+2. The agent over starmole with a node key the identity signs; `--host` and selectors through it.
 3. Channels and leases in `[updates]`; the coordinator with rollouts, waves, windows, guards and
    approvals; its page.
 4. Enrolment: the discovery image, invites, match rules, role keys, one provider (Hetzner Robot),
